@@ -9,10 +9,12 @@ import json
 import os
 from types import SimpleNamespace
 
+from sqlalchemy import select
+
 from src.config import Config
 from src.repositories.research_note_repo import ResearchNoteRepository
 from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncService
-from src.storage import DatabaseManager
+from src.storage import DatabaseManager, EssayAnalysisRecord
 
 
 class FakeMcpClient:
@@ -56,6 +58,34 @@ def test_direct_mcp_page_is_ingested_without_local_media_download(tmp_path):
         assert state["last_status"] == "success"
         assert state["last_media_downloaded"] == 0
         assert state["last_topic_at"].startswith("2026-08-19T08:53:01")
+    finally:
+        DatabaseManager.reset_instance(); Config.reset_instance()
+        if previous is None:
+            os.environ.pop("DATABASE_PATH", None)
+        else:
+            os.environ["DATABASE_PATH"] = previous
+
+
+def test_history_page_is_ingested_without_creating_ai_tasks(tmp_path):
+    previous = os.environ.get("DATABASE_PATH")
+    os.environ["DATABASE_PATH"] = str(tmp_path / "zsxq-history.db")
+    Config.reset_instance(); DatabaseManager.reset_instance()
+    try:
+        db = DatabaseManager.get_instance()
+        repo = ResearchNoteRepository(db)
+        service = ZsxqMcpSyncService(repo)
+        result = asyncio.run(service._sync_group(
+            FakeMcpClient(),
+            {"group_id": "group-1", "name": "调研纪要"},
+            None,
+            history_cutoff=datetime(2026, 1, 1),
+            enqueue_analysis=False,
+            max_pages=20,
+        ))
+        assert result["created"] == 1
+        assert result["analysis_enqueued"] is False
+        with db.get_session() as session:
+            assert session.execute(select(EssayAnalysisRecord)).scalars().all() == []
     finally:
         DatabaseManager.reset_instance(); Config.reset_instance()
         if previous is None:

@@ -71,3 +71,7 @@ class ResearchNoteImportResponse(BaseModel):
     has_more: Optional[bool] = None
     next_end_time: Optional[str] = None
     analysis_queue: Optional[Dict[str, int]] = None
+
+
+class ZsxqHistoryBackfillRequest(BaseModel):
+    years: int = Field(1, ge=1, le=2, description="历史同步范围，只支持 1 年或 2 年")

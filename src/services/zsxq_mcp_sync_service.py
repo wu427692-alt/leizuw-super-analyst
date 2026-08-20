@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import os
@@ -56,22 +56,63 @@ class ZsxqMcpSyncService:
         except Exception as exc:
             raise ZsxqMcpSyncError(f"知识星球 MCP 增量同步失败：{type(exc).__name__}") from exc
 
-    async def _sync_async(self, url: str) -> Dict[str, Any]:
+    def sync_history(self, *, days: int) -> Dict[str, Any]:
+        """Backfill raw notes for research without automatically spending AI tokens."""
+        safe_days = max(1, min(int(days), 730))
+        url = self._mcp_url()
+        if not url:
+            raise ZsxqMcpSyncError("未配置 ZSXQ MCP；请设置 ZSXQ_MCP_URL 或 Codex mcp_servers.zsxq")
+        try:
+            return asyncio.run(self._sync_async(
+                url,
+                history_days=safe_days,
+                enqueue_analysis=False,
+                max_pages=max(1, min(int(os.getenv("ZSXQ_MCP_HISTORY_MAX_PAGES", "500")), 2000)),
+            ))
+        except ZsxqMcpSyncError:
+            raise
+        except Exception as exc:
+            raise ZsxqMcpSyncError(f"知识星球 MCP 历史同步失败：{type(exc).__name__}") from exc
+
+    async def _sync_async(
+        self,
+        url: str,
+        *,
+        history_days: Optional[int] = None,
+        enqueue_analysis: bool = True,
+        max_pages: Optional[int] = None,
+    ) -> Dict[str, Any]:
         from mcp import Client
 
         latest = self.repo.latest_created_by_group()
         totals = {"groups": 0, "received": 0, "created": 0, "updated": 0, "unchanged": 0,
-                  "media_downloaded": 0, "failed_groups": 0}
+                  "media_downloaded": 0, "failed_groups": 0, "incomplete_groups": 0}
+        history_cutoff = utc_naive_now() - timedelta(days=history_days) if history_days else None
         async with Client(url, read_timeout_seconds=self.timeout) as client:
             groups = await self._configured_groups(client)
             for group in groups:
-                result = await self._sync_group(client, group, latest.get(group["group_id"]))
+                result = await self._sync_group(
+                    client,
+                    group,
+                    latest.get(group["group_id"]),
+                    history_cutoff=history_cutoff,
+                    enqueue_analysis=enqueue_analysis,
+                    max_pages=max_pages,
+                )
                 totals["groups"] += 1
                 for key in ("received", "created", "updated", "unchanged", "media_downloaded"):
                     totals[key] += int(result.get(key) or 0)
                 if result.get("status") == "failed":
                     totals["failed_groups"] += 1
-        return {"totals": totals, "states": self.repo.list_sync_states()}
+                elif history_days and not result.get("history_complete"):
+                    totals["incomplete_groups"] += 1
+        return {
+            "mode": "history_backfill" if history_days else "incremental",
+            "history_days": history_days,
+            "analysis_enqueued": enqueue_analysis,
+            "totals": totals,
+            "states": self.repo.list_sync_states(),
+        }
 
     async def _configured_groups(self, client: Any) -> List[Dict[str, str]]:
         configured = str(os.getenv("ZSXQ_MCP_GROUPS") or "").strip()
@@ -93,13 +134,26 @@ class ZsxqMcpSyncService:
         return [{"group_id": str(row["group_id"]), "name": str(row.get("name") or row["group_id"])}
                 for row in payload.get("groups") or []]
 
-    async def _sync_group(self, client: Any, group: Dict[str, str], cursor: Optional[datetime]) -> Dict[str, Any]:
+    async def _sync_group(
+        self,
+        client: Any,
+        group: Dict[str, str],
+        cursor: Optional[datetime],
+        *,
+        history_cutoff: Optional[datetime] = None,
+        enqueue_analysis: bool = True,
+        max_pages: Optional[int] = None,
+    ) -> Dict[str, Any]:
         group_id, group_name = group["group_id"], group["name"]
         self.repo.update_sync_state(group_id, group_name, last_attempt_at=utc_naive_now(), last_status="running", last_error=None)
         received: List[Dict[str, Any]] = []
         end_time: Optional[str] = None
+        pages_fetched = 0
+        history_complete = history_cutoff is None
         try:
-            for _ in range(self.max_pages):
+            page_limit = max_pages or self.max_pages
+            for _ in range(page_limit):
+                pages_fetched += 1
                 args: Dict[str, Any] = {"group_id": group_id, "limit": 30, "scope": "all"}
                 if end_time:
                     args["end_time"] = end_time
@@ -109,20 +163,36 @@ class ZsxqMcpSyncService:
                 topics = page.get("topics_brief") or []
                 if not isinstance(topics, list):
                     raise ZsxqMcpSyncError("知识星球主题页缺少 topics_brief")
-                received.extend(topic for topic in topics if isinstance(topic, dict))
+                valid_topics = [topic for topic in topics if isinstance(topic, dict)]
+                if history_cutoff is not None:
+                    valid_topics = [
+                        topic for topic in valid_topics
+                        if _parse_datetime(topic.get("create_time"), field_name="create_time") >= history_cutoff
+                    ]
+                received.extend(valid_topics)
                 if not topics or not page.get("has_more"):
+                    history_complete = True
                     break
                 oldest = min((_parse_datetime(topic.get("create_time"), field_name="create_time") for topic in topics), default=None)
-                if cursor is not None and oldest is not None and oldest <= cursor:
+                if history_cutoff is not None and oldest is not None and oldest <= history_cutoff:
+                    history_complete = True
+                    break
+                if history_cutoff is None and cursor is not None and oldest is not None and oldest <= cursor:
                     break
                 end_time = str(page.get("next_end_time") or "") or None
                 if not end_time:
+                    history_complete = True
                     break
             deduped = {str(topic.get("topic_id")): topic for topic in received if topic.get("topic_id")}
             topics = list(deduped.values())
             aggregate = {"created": 0, "updated": 0, "unchanged": 0}
             for offset in range(0, len(topics), 200):
-                saved = self.notes.import_topics(topics[offset:offset + 200], group_id=group_id, group_name=group_name)
+                saved = self.notes.import_topics(
+                    topics[offset:offset + 200],
+                    group_id=group_id,
+                    group_name=group_name,
+                    enqueue_analysis=enqueue_analysis,
+                )
                 for key in aggregate:
                     aggregate[key] += int(saved.get(key) or 0)
             newest = max(topics, key=lambda topic: str(topic.get("create_time") or ""), default=None)
@@ -135,7 +205,9 @@ class ZsxqMcpSyncService:
                 total_saved=(next((row["total_saved"] for row in self.repo.list_sync_states() if row["group_id"] == group_id), 0) + saved_count),
             )
             return {"group_id": group_id, "status": "success", "received": len(topics),
-                    "media_downloaded": 0, "media_storage": "remote_only", **aggregate}
+                    "media_downloaded": 0, "media_storage": "remote_only",
+                    "analysis_enqueued": enqueue_analysis, "pages_fetched": pages_fetched,
+                    "history_complete": history_complete, **aggregate}
         except Exception as exc:
             safe = f"{type(exc).__name__}: {str(exc)[:400]}"
             self.repo.update_sync_state(group_id, group_name, last_status="failed", last_error=safe)
@@ -235,6 +307,16 @@ class ZsxqMcpSyncWorker:
         self._last_sync_at: Optional[float] = None
         self._last_result: Optional[Dict[str, Any]] = None
         self._last_error: Optional[str] = None
+        self._history_thread: Optional[threading.Thread] = None
+        self._history_state: Dict[str, Any] = {
+            "running": False,
+            "lookback_days": None,
+            "analysis_enqueued": False,
+            "started_at": None,
+            "finished_at": None,
+            "result": None,
+            "error": None,
+        }
 
     @classmethod
     def get_instance(cls) -> "ZsxqMcpSyncWorker":
@@ -268,12 +350,37 @@ class ZsxqMcpSyncWorker:
         finally:
             self._sync_lock.release()
 
+    def start_history_backfill(self, *, days: int) -> Dict[str, Any]:
+        safe_days = 365 if int(days) <= 365 else 730
+        with self._state_lock:
+            if self._history_thread is not None and self._history_thread.is_alive():
+                return {"status": "already_running", "history_backfill": dict(self._history_state)}
+            self._history_state = {
+                "running": True,
+                "lookback_days": safe_days,
+                "analysis_enqueued": False,
+                "started_at": self._iso(time.time()),
+                "finished_at": None,
+                "result": None,
+                "error": None,
+            }
+            self._history_thread = threading.Thread(
+                target=self._run_history_backfill,
+                args=(safe_days,),
+                name="zsxq-history-backfill-worker",
+                daemon=True,
+            )
+            self._history_thread.start()
+            return {"status": "started", "history_backfill": dict(self._history_state)}
+
     def status(self) -> Dict[str, Any]:
         with self._state_lock:
             return {"running": bool(self._thread and self._thread.is_alive()), "poll_seconds": self.interval,
                     "syncing": self._sync_lock.locked(),
                     "last_sync_at": self._iso(self._last_sync_at), "last_result": self._last_result,
-                    "last_error": self._last_error, **ZsxqMcpSyncService().status()}
+                    "last_error": self._last_error,
+                    "history_backfill": dict(self._history_state),
+                    **ZsxqMcpSyncService().status()}
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -285,6 +392,29 @@ class ZsxqMcpSyncWorker:
                 with self._state_lock:
                     self._last_error = safe
             self._stop.wait(self.interval)
+
+    def _run_history_backfill(self, days: int) -> None:
+        self._sync_lock.acquire()
+        try:
+            result = ZsxqMcpSyncService().sync_history(days=days)
+            with self._state_lock:
+                self._history_state.update({
+                    "running": False,
+                    "finished_at": self._iso(time.time()),
+                    "result": result.get("totals"),
+                    "error": None,
+                })
+        except Exception as exc:
+            safe = f"{type(exc).__name__}: {str(exc)[:400]}"
+            logger.warning("[zsxq-mcp] history backfill failed: %s", safe)
+            with self._state_lock:
+                self._history_state.update({
+                    "running": False,
+                    "finished_at": self._iso(time.time()),
+                    "error": safe,
+                })
+        finally:
+            self._sync_lock.release()
 
     @staticmethod
     def _iso(value: Optional[float]) -> Optional[str]:

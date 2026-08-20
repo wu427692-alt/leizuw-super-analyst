@@ -53,6 +53,7 @@ const EssayRadarPage = () => {
   const [query, setQuery] = useState('');
   const [sentiment, setSentiment] = useState('');
   const [category, setCategory] = useState('');
+  const [historyYears, setHistoryYears] = useState<1 | 2>(1);
   const [page, setPage] = useState(1);
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [listLoading, setListLoading] = useState(true);
@@ -100,7 +101,7 @@ const EssayRadarPage = () => {
   useEffect(() => { void loadOverview(); }, [loadOverview]);
   useEffect(() => { void loadList(); }, [loadList]);
   useEffect(() => {
-    if (!status?.worker.running && !status?.progress.pending && !status?.progress.processing) return;
+    if (!status?.worker.running && !status?.progress.pending && !status?.progress.processing && !status?.mcpSync.historyBackfill?.running) return;
     const timer = window.setInterval(async () => {
       try {
         setStatus(await essayRadarApi.status(30));
@@ -109,7 +110,7 @@ const EssayRadarPage = () => {
       }
     }, 10000);
     return () => window.clearInterval(timer);
-  }, [status?.progress.pending, status?.progress.processing, status?.worker.running]);
+  }, [status?.mcpSync.historyBackfill?.running, status?.progress.pending, status?.progress.processing, status?.worker.running]);
 
   const act = async (action: () => Promise<unknown>) => {
     setActionLoading(true);
@@ -122,6 +123,12 @@ const EssayRadarPage = () => {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const analyzeHistoryOnDemand = () => {
+    const days = historyYears * 365;
+    if (!window.confirm(`将近 ${historyYears} 年历史纪要加入 AI 分析队列，可能消耗较多模型额度。确认继续？`)) return;
+    void act(() => essayRadarApi.backfill(days));
   };
 
   const sentimentData = useMemo(() => (dashboard?.sentiment ?? []).map((item) => ({
@@ -141,7 +148,7 @@ const EssayRadarPage = () => {
         <PageHeader
           eyebrow="DEEPSEEK · KNOWLEDGE PLANET MCP"
           title="小作文雷达"
-          description="持续分析近 30 天调研纪要，提取观点、标签、催化剂、风险和股票热度。"
+          description="新增纪要实时分析；1 年或 2 年历史默认只入库供检索与回测，需要时再手动加入 AI 队列。"
           actions={<>
             <a href="/essay-quant" className="btn-secondary inline-flex items-center gap-2"><FlaskConical className="h-4 w-4" />量化利用</a>
             <button className="btn-secondary inline-flex items-center gap-2" disabled={actionLoading} onClick={() => void act(() => essayRadarApi.syncMcp())}>
@@ -181,6 +188,10 @@ const EssayRadarPage = () => {
 
         <Card padding="sm" className="border-success/20 bg-success/5">
           <div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-3"><span className={`h-2.5 w-2.5 rounded-full ${status?.mcpSync.running ? 'animate-pulse bg-success' : 'bg-warning'}`} /><div><p className="font-medium text-foreground">{status?.mcpSync.running ? '知识星球 MCP 增量同步运行中' : '知识星球 MCP 增量同步已停止'}</p><p className="text-xs text-secondary-text">直接 MCP → SQLite · 附件仅存远端链接 · 每 {status?.mcpSync.pollSeconds ?? 30} 秒 · 最近成功 {formatTime(status?.mcpSync.groups[0]?.lastSuccessAt)}</p></div></div><button className="btn-secondary" disabled={actionLoading || !status?.mcpSync.available} onClick={() => void act(() => status?.mcpSync.running ? essayRadarApi.stopMcpWorker() : essayRadarApi.startMcpWorker())}>{status?.mcpSync.running ? '停止 MCP 同步' : '启动 MCP 同步'}</button></div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-success/20 bg-card/60 px-3 py-3 text-xs">
+            <div><p className="font-medium text-foreground">历史纪要库</p><p className="mt-1 text-secondary-text">可回填 1 年或 2 年；默认只入库供检索与回测，不创建 AI 任务。</p>{status?.mcpSync.historyBackfill?.running ? <p className="mt-1 text-success">正在回填近 {(status.mcpSync.historyBackfill.lookbackDays ?? 365) / 365} 年历史…</p> : status?.mcpSync.historyBackfill?.error ? <p className="mt-1 text-danger">{status.mcpSync.historyBackfill.error}</p> : status?.mcpSync.historyBackfill?.result ? <p className="mt-1 text-secondary-text">最近完成：新增 {Number(status.mcpSync.historyBackfill.result.created ?? 0)} 条、更新 {Number(status.mcpSync.historyBackfill.result.updated ?? 0)} 条{Number(status.mcpSync.historyBackfill.result.incompleteGroups ?? 0) > 0 ? `；${Number(status.mcpSync.historyBackfill.result.incompleteGroups)} 个星球受分页上限影响，尚未完整覆盖` : '；已覆盖所选时间范围'}</p> : null}</div>
+            <div className="flex flex-wrap items-center gap-2"><select aria-label="知识星球历史范围" value={historyYears} onChange={(event) => setHistoryYears(Number(event.target.value) as 1 | 2)} className="h-9 rounded border border-border bg-card px-3"><option value={1}>近 1 年</option><option value={2}>近 2 年</option></select><button className="btn-secondary" disabled={actionLoading || !status?.mcpSync.available || status?.mcpSync.historyBackfill?.running} onClick={() => void act(() => essayRadarApi.backfillMcpHistory(historyYears))}><Database className="mr-1 inline h-4 w-4" />只同步入库</button><button className="btn-secondary" disabled={actionLoading} onClick={analyzeHistoryOnDemand}><Brain className="mr-1 inline h-4 w-4" />按需 AI 分析</button></div>
+          </div>
           <div className="mt-3 grid gap-2 md:grid-cols-2">{status?.mcpSync.groups.map((group) => <div key={group.groupId} className="rounded-lg border border-border/50 bg-card/50 px-3 py-2 text-xs"><div className="flex justify-between gap-3"><span className="font-medium text-foreground">{group.groupName}</span><Badge variant={group.lastStatus === 'success' ? 'success' : group.lastStatus === 'failed' ? 'danger' : 'default'}>{group.lastStatus}</Badge></div><p className="mt-1 text-secondary-text">本轮 {group.lastReceived} 条 · 入库 {group.lastSaved} 条 · 附件按需查看 · 游标 {formatTime(group.lastTopicAt)}</p>{group.lastError ? <p className="mt-1 text-danger">{group.lastError}</p> : null}</div>)}</div>
         </Card>
 

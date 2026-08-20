@@ -59,6 +59,36 @@ def test_custom_rule_is_persisted(quant):
     assert quant.list_rules()["total"] == 1
 
 
+def test_unanalyzed_history_with_explicit_symbol_is_available_to_backtest(quant, monkeypatch):
+    monkeypatch.setattr("src.services.essay_quant_service.utc_naive_now", lambda: datetime(2026, 8, 10))
+    with quant.db.get_session() as session:
+        session.add(ResearchNote(
+            topic_id="topic-raw", group_id="group-1", group_name="卖方研究纪要",
+            title="【华泰电子组】重点推荐历史样本", content="胜宏科技明确看好，订单增长",
+            author_name="华泰电子组", topic_type="talk", symbol_codes="",
+            content_hash="raw-hash", created_at=datetime(2026, 8, 1, 3, 0),
+        ))
+        for offset, close in enumerate((20.0, 20.5, 21.0, 21.5, 22.0, 22.5)):
+            session.add(StockDaily(
+                code="300476", date=date(2026, 8, 2) + timedelta(days=offset),
+                open=20.0 if offset == 0 else close - .2, close=close, data_source="test",
+            ))
+        session.commit()
+
+    result = quant.run(
+        {"lookback_days": 30, "holding_periods": [5], "min_importance": 99, "min_confidence": 1.0},
+        refresh_prices=False,
+        persist=False,
+    )
+    raw_event = next(item for item in result["events"] if item["topic_id"] == "topic-raw")
+    assert raw_event["analysis_status"] == "raw_unanalyzed"
+    assert raw_event["symbol"] == "300476.SZ"
+    assert raw_event["stock_name"] == "胜宏科技"
+    assert raw_event["stance"] == "bullish"
+    assert raw_event["returns"]["5"] == 10.0
+    assert result["data_quality"]["raw_unanalyzed_event_count"] == 1
+
+
 def test_company_name_is_not_misclassified_as_research_group():
     note = ResearchNote(title="【东方电气】订单跟踪", content="公司经营更新", author_name="立秋")
     assert EssayQuantService._research_group(note) == "其他来源"

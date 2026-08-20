@@ -79,6 +79,10 @@ export const essayRadarApi = {
     const response = await apiClient.post('/api/v1/financial-data/zsxq/sync');
     return toCamelCase(response.data);
   },
+  backfillMcpHistory: async (years: 1 | 2): Promise<unknown> => {
+    const response = await apiClient.post('/api/v1/financial-data/zsxq/history/backfill', { years });
+    return toCamelCase(response.data);
+  },
   startMcpWorker: async (): Promise<unknown> => {
     const response = await apiClient.post('/api/v1/financial-data/zsxq/sync/worker/start');
     return toCamelCase(response.data);

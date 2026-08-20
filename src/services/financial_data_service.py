@@ -129,6 +129,7 @@ class ResearchNoteService:
         *,
         group_id: Optional[str] = None,
         group_name: Optional[str] = None,
+        enqueue_analysis: bool = True,
     ) -> Dict[str, Any]:
         raw_topics = list(topics)
         if len(raw_topics) > _MAX_IMPORT_BATCH:
@@ -144,16 +145,17 @@ class ResearchNoteService:
         # unavailable.  A running essay worker will pick these durable tasks up
         # immediately; changed notes are reset by their content hash.
         changed_topic_ids = list(stats.pop("_changed_topic_ids", []))
-        try:
-            from src.services.essay_analysis_service import EssayAnalysisService
+        queue_stats = {"created": 0, "reset": 0, "unchanged": 0}
+        if enqueue_analysis:
+            try:
+                from src.services.essay_analysis_service import EssayAnalysisService
 
-            queue_stats = (
-                EssayAnalysisService().enqueue_topic_ids(changed_topic_ids)
-                if changed_topic_ids else {"created": 0, "reset": 0, "unchanged": 0}
-            )
-        except Exception as exc:  # noqa: BLE001 - ingestion must not depend on AI availability.
-            logger.warning("Failed to enqueue imported research notes for analysis: %s", exc)
-            queue_stats = {"created": 0, "reset": 0, "unchanged": 0}
+                queue_stats = (
+                    EssayAnalysisService().enqueue_topic_ids(changed_topic_ids)
+                    if changed_topic_ids else queue_stats
+                )
+            except Exception as exc:  # noqa: BLE001 - ingestion must not depend on AI availability.
+                logger.warning("Failed to enqueue imported research notes for analysis: %s", exc)
         return {
             "received": len(raw_topics),
             "saved": stats["created"] + stats["updated"],
@@ -167,6 +169,7 @@ class ResearchNoteService:
         *,
         group_id: Optional[str] = None,
         group_name: Optional[str] = None,
+        enqueue_analysis: bool = True,
     ) -> Dict[str, Any]:
         if payload.get("success") is False:
             message = str(payload.get("error") or "ZSXQ MCP returned an unsuccessful response")
@@ -174,7 +177,12 @@ class ResearchNoteService:
         topics = payload.get("topics_brief")
         if not isinstance(topics, list):
             raise FinancialDataValidationError("MCP payload must contain a topics_brief list")
-        result = self.import_topics(topics, group_id=group_id, group_name=group_name)
+        result = self.import_topics(
+            topics,
+            group_id=group_id,
+            group_name=group_name,
+            enqueue_analysis=enqueue_analysis,
+        )
         result.update(
             {
                 "has_more": bool(payload.get("has_more")),

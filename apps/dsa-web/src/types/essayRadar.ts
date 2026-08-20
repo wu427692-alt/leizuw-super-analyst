@@ -31,6 +31,11 @@ export type ZsxqSyncStatus = {
   running: boolean; syncing: boolean; available: boolean; pollSeconds: number; lastSyncAt?: string | null;
   lastError?: string | null; lastResult?: Record<string, number> | null; groups: ZsxqSyncGroup[];
   mediaStorage: 'remote_only' | string; mode: string;
+  historyBackfill?: {
+    running: boolean; lookbackDays?: number | null; analysisEnqueued: boolean;
+    startedAt?: string | null; finishedAt?: string | null;
+    result?: Record<string, number> | null; error?: string | null;
+  };
 };
 export type EssayStatus = { progress: EssayProgress; worker: EssayWorkerStatus; mcpSync: ZsxqSyncStatus; dailyReportWorker: EssayDailyReportWorkerStatus };
 export type CountRow = { name: string; count: number };

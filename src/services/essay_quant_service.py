@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import math
+import os
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -142,22 +143,30 @@ class EssayQuantService:
         cutoff = now - timedelta(days=rule["lookback_days"] + rule["first_mention_window_days"])
         with self.db.get_session() as session:
             rows = session.execute(
-                select(EssayAnalysisRecord, ResearchNote)
-                .join(ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
-                .where(EssayAnalysisRecord.status == "completed", ResearchNote.created_at >= cutoff)
+                select(ResearchNote, EssayAnalysisRecord)
+                .outerjoin(EssayAnalysisRecord, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
+                .where(ResearchNote.created_at >= cutoff)
                 .order_by(ResearchNote.created_at)
             ).all()
         raw_events: List[Dict[str, Any]] = []
         query = rule["source_query"].lower()
-        for analysis, note in rows:
+        for note, analysis in rows:
             searchable = " ".join((note.group_name or "", note.author_name or "", note.title or "", note.content or "")).lower()
             if query and query not in searchable:
                 continue
-            if int(analysis.importance_score or 0) < rule["min_importance"] or float(analysis.confidence_score or 0) < rule["min_confidence"]:
+            completed = analysis is not None and analysis.status == "completed"
+            if completed and (
+                int(analysis.importance_score or 0) < rule["min_importance"]
+                or float(analysis.confidence_score or 0) < rule["min_confidence"]
+            ):
                 continue
-            raw = _loads(analysis.raw_response, {})
+            raw = _loads(analysis.raw_response, {}) if completed else {}
             novelty = int(raw.get("novelty_score") or 0)
-            for mention in _loads(analysis.stock_mentions_json, []):
+            mentions = _loads(analysis.stock_mentions_json, []) if completed else []
+            if not mentions:
+                stance = self._raw_note_stance(searchable)
+                mentions = self._raw_note_mentions(note, stance)
+            for mention in mentions:
                 symbol = self._canonical_code(mention.get("ts_code"))
                 if not symbol:
                     continue
@@ -166,19 +175,23 @@ class EssayQuantService:
                     continue
                 if rule["signal_direction"] == "bearish" and stance != "bearish":
                     continue
-                text = f"{note.title or ''} {analysis.summary or ''} {note.content or ''}"
-                hype = min(100, int(analysis.importance_score or 0) // 2 + novelty // 4 + sum(word in text for word in _HYPE_WORDS) * 6)
+                summary = str(analysis.summary or "") if completed else str(note.title or note.content or "")[:180]
+                importance = int(analysis.importance_score or 0) if completed else 0
+                confidence = float(analysis.confidence_score or 0) if completed else 0.0
+                text = f"{note.title or ''} {summary} {note.content or ''}"
+                hype = min(100, importance // 2 + novelty // 4 + sum(word in text for word in _HYPE_WORDS) * 6)
                 local_time = note.created_at.replace(tzinfo=timezone.utc).astimezone(_SH_TZ)
                 raw_events.append({
                     "topic_id": note.topic_id, "symbol": symbol,
                     "stock_name": str(mention.get("name") or symbol), "stance": stance,
                     "event_at": local_time.isoformat(), "event_date": local_time.date(),
-                    "title": note.title, "summary": analysis.summary,
+                    "title": note.title, "summary": summary,
                     "source_group": note.group_name, "research_group": self._research_group(note),
-                    "importance_score": int(analysis.importance_score or 0),
-                    "confidence_score": float(analysis.confidence_score or 0),
+                    "importance_score": importance,
+                    "confidence_score": confidence,
                     "novelty_score": novelty, "hype_score": hype,
                     "rationale": str(mention.get("rationale") or ""),
+                    "analysis_status": "completed" if completed else "raw_unanalyzed",
                     "url": f"https://wx.zsxq.com/group/{note.group_id}/topic/{note.topic_id}",
                 })
         first_seen: Dict[str, date] = {}
@@ -194,6 +207,44 @@ class EssayQuantService:
                 continue
             result.append(event)
         return result
+
+    @staticmethod
+    def _raw_note_stance(text: str) -> str:
+        bullish_words = ("推荐", "看好", "买入", "增持", "上调", "超预期", "景气", "增长")
+        bearish_words = ("看空", "卖出", "减持", "下调", "不及预期", "风险", "下滑", "恶化")
+        bullish = sum(word in text for word in bullish_words)
+        bearish = sum(word in text for word in bearish_words)
+        if bullish > bearish:
+            return "bullish"
+        if bearish > bullish:
+            return "bearish"
+        return "neutral"
+
+    @staticmethod
+    def _raw_note_mentions(note: ResearchNote, stance: str) -> List[Dict[str, Any]]:
+        matches: Dict[str, str] = {}
+        for value in (note.symbol_codes or "").split(","):
+            symbol = EssayQuantService._canonical_code(value)
+            if symbol:
+                matches[symbol] = symbol
+        text = f"{note.title or ''} {note.content or ''}"
+        configured = os.getenv("ESSAY_WATCHLIST") or "603306.SH:华懋科技,300476.SZ:胜宏科技"
+        for item in configured.split(","):
+            raw_symbol, _, raw_name = item.strip().partition(":")
+            symbol = EssayQuantService._canonical_code(raw_symbol)
+            name = raw_name.strip()
+            if symbol and name and name in text:
+                matches[symbol] = name
+        return [
+            {
+                "ts_code": symbol,
+                "name": name,
+                "stance": stance,
+                "confidence": 0.0,
+                "rationale": "原文代码或关注股名称确定性匹配，未做 AI 分析",
+            }
+            for symbol, name in matches.items()
+        ]
 
     def _hydrate_prices(self, symbols: Sequence[str], benchmark: str, days: int) -> Tuple[Dict[str, Dict[date, float]], List[str]]:
         if not self.tushare.available:
@@ -368,7 +419,8 @@ class EssayQuantService:
             "first_mentions_30d": [self._public_event(event) for event in first_mentions[:50]],
             "hype_analysis": hype_buckets, "trend_signals": trend_signals[:30], "portfolio": portfolio,
             "events": [self._public_event(event) for event in sorted(events, key=lambda item: item["event_at"], reverse=True)[:100]],
-            "data_quality": {"essay_source": "research_notes + essay_analysis_records", "price_source": "stock_daily / Tushare daily",
+            "data_quality": {"essay_source": "research_notes + optional essay_analysis_records", "price_source": "stock_daily / Tushare daily",
+                             "raw_unanalyzed_event_count": sum(event.get("analysis_status") == "raw_unanalyzed" for event in events),
                              "price_basis": "Tushare复权因子" if adjusted else "本地原始日线（未复权）",
                              "price_cutoff": cutoff.isoformat() if cutoff else None,
                              "entry_rule": "事件后首个交易日开盘", "exit_rule": "第N个交易日收盘",

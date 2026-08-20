@@ -17,6 +17,7 @@ from api.v1.schemas.financial_data import (
     ResearchNoteItem,
     ResearchNoteListResponse,
     TushareQueryRequest,
+    ZsxqHistoryBackfillRequest,
 )
 from src.services.financial_data_service import (
     FinancialDataService,
@@ -190,6 +191,19 @@ def zsxq_sync_now():
         return ZsxqMcpSyncWorker.get_instance().sync_now()
     except ZsxqMcpSyncError as exc:
         raise _upstream_error(exc)
+
+
+@router.post(
+    "/zsxq/history/backfill",
+    summary="后台同步近 1 年或 2 年知识星球历史纪要，默认不做 AI 分析",
+)
+def zsxq_history_backfill(request: ZsxqHistoryBackfillRequest):
+    if request.years not in {1, 2}:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_history_range", "message": "years 只支持 1 或 2"},
+        )
+    return ZsxqMcpSyncWorker.get_instance().start_history_backfill(days=request.years * 365)
 
 
 @router.post("/zsxq/sync/worker/start", summary="启动知识星球 MCP 近实时增量同步")

@@ -200,6 +200,19 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 AI 结果完成后更新同一事件。小作文雷达会分别显示 MCP 拉取状态和 DeepSeek 分析状态，
 不再把“只轮询本地数据库”描述成实时获取。
 
+### 一年 / 两年历史纪要
+
+小作文雷达可选择回填近 1 年或近 2 年知识星球主题。历史任务从最新主题向前分页，达到目标日期
+后停止，并以 `topic_id` 幂等写入 `research_notes`。历史纪要默认不创建 DeepSeek 任务，只供原文
+检索、首次提及统计和量化事件研究使用；点赞等互动数变化仍不会触发数据库更新。
+
+- `POST /api/v1/financial-data/zsxq/history/backfill`：请求体为 `{"years":1}` 或 `{"years":2}`，后台执行历史同步。
+- `GET /api/v1/financial-data/zsxq/sync/status`：通过 `history_backfill` 查看运行范围、开始时间、完成结果和错误。
+- 需要分析历史内容时，在小作文雷达明确点击“按需 AI 分析”；系统会先提示可能产生的模型消耗，再把所选时间范围加入持久化队列。
+
+`ZSXQ_MCP_HISTORY_MAX_PAGES` 控制单次历史任务的分页上限，默认 500，最大 2000。达到上限但仍未
+覆盖目标日期时，状态中的实际入库数量可用于判断是否需要提高上限后重跑；已经入库的主题不会重复写入。
+
 ## 数据源状态
 
 `GET /api/v1/financial-data/sources` 返回 Tushare 是否配置、已同步的知识星球、纪要数量、
