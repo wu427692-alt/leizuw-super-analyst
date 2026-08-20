@@ -19,9 +19,15 @@ from api.v1.endpoints import (
     auth,
     backtest,
     decision_signals,
+    data_acquisition,
+    essay_radar,
+    essay_quant,
+    financial_data,
     health,
+    home_dashboard,
     history,
     intelligence,
+    investment_monitor,
     portfolio,
     stocks,
     system_config,
@@ -54,6 +60,12 @@ router.include_router(
     history.router,
     prefix="/history",
     tags=["History"]
+)
+
+router.include_router(
+    home_dashboard.router,
+    prefix="/home-dashboard",
+    tags=["HomeDashboard"]
 )
 
 router.include_router(
@@ -108,6 +120,36 @@ router.include_router(
     intelligence.router,
     prefix="/intelligence",
     tags=["Intelligence"]
+)
+
+router.include_router(
+    financial_data.router,
+    prefix="/financial-data",
+    tags=["FinancialData"]
+)
+
+router.include_router(
+    data_acquisition.router,
+    prefix="/data-acquisition",
+    tags=["DataAcquisition"]
+)
+
+router.include_router(
+    essay_radar.router,
+    prefix="/essay-radar",
+    tags=["EssayRadar"]
+)
+
+router.include_router(
+    essay_quant.router,
+    prefix="/essay-quant",
+    tags=["EssayQuant"]
+)
+
+router.include_router(
+    investment_monitor.router,
+    prefix="/investment-monitor",
+    tags=["InvestmentMonitor"]
 )
 
 router.include_router(

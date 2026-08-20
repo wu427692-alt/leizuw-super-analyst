@@ -524,14 +524,17 @@ const ChatPage: React.FC = () => {
 
   // Handle follow-up from report page: ?stock=600519&name=贵州茅台&recordId=xxx
   useEffect(() => {
+    const preparedPrompt = searchParams.get('prompt')?.trim();
+    if (preparedPrompt) {
+      setInput(preparedPrompt.slice(0, 12000));
+      setSearchParams({}, { replace: true });
+      return;
+    }
     const stock = sanitizeFollowUpStockCode(searchParams.get('stock'));
     const name = sanitizeFollowUpStockName(searchParams.get('name'));
     const recordId = parseFollowUpRecordId(searchParams.get('recordId'));
 
-    if (!stock) {
-      setSearchParams({}, { replace: true });
-      return;
-    }
+    if (!stock) return;
 
     const hydrationToken = ++followUpHydrationTokenRef.current;
     setInput(buildFollowUpPrompt(stock, name));

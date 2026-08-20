@@ -32,6 +32,8 @@ lark-oapi>=1.0.0             # Feishu API
 pandas>=2.0.0               # Data analysis
 pypinyin>=0.50.0            # Name-to-code resolver (pinyin matching)
 openpyxl>=3.1.0             # Excel (.xlsx) parsing for import
+pypdf>=5.0.0                # CNInfo announcement PDF text extraction
+mcp>=2.0.0,<3.0.0           # Direct Streamable HTTP client for ZSXQ incremental sync
 numpy>=1.24.0               # Numeric computing
 json-repair>=0.55.1         # JSON repair
 

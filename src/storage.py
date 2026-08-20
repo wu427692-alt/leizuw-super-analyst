@@ -83,6 +83,16 @@ def to_utc_naive_datetime(value: datetime) -> datetime:
     return value
 
 
+def normalize_daily_storage_code(value: str) -> str:
+    """Keep A-share daily bars under one six-digit storage key."""
+    code = str(value or "").strip().upper()
+    if len(code) == 9 and code[:6].isdigit() and code[6:] in {".SH", ".SZ", ".BJ"}:
+        return code[:6]
+    if len(code) == 8 and code[:2] in {"SH", "SZ", "BJ"} and code[2:].isdigit():
+        return code[2:]
+    return code
+
+
 # === 数据模型定义 ===
 
 class DatabaseSchemaMigration(Base):
@@ -270,6 +280,259 @@ class IntelligenceItem(Base):
         ),
         Index('ix_intel_item_scope_time', 'scope_type', 'scope_value', 'market', 'published_at'),
         Index('ix_intel_item_fetch_time', 'fetched_at'),
+    )
+
+
+class ResearchNote(Base):
+    """通过知识星球 MCP 同步的调研纪要。"""
+
+    __tablename__ = 'research_notes'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    topic_id = Column(String(32), nullable=False, unique=True, index=True)
+    group_id = Column(String(32), nullable=False, index=True)
+    group_name = Column(String(100), nullable=False, index=True)
+    title = Column(String(500), nullable=False)
+    content = Column(Text)
+    author_id = Column(String(32), index=True)
+    author_name = Column(String(100), index=True)
+    topic_type = Column(String(32), nullable=False, default='talk', index=True)
+    text_type = Column(String(32))
+    digested = Column(Boolean, nullable=False, default=False, index=True)
+    sticky = Column(Boolean, nullable=False, default=False, index=True)
+    symbol_codes = Column(Text, nullable=False, default='')
+    files_json = Column(Text)
+    images_json = Column(Text)
+    counts_json = Column(Text)
+    raw_payload = Column(Text)
+    content_hash = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, index=True)
+    modified_at = Column(DateTime, index=True)
+    synced_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index('ix_research_note_group_time', 'group_id', 'created_at'),
+        Index('ix_research_note_digest_time', 'digested', 'created_at'),
+    )
+
+
+class ZsxqSyncState(Base):
+    """Per-group cursor and health state for direct MCP incremental sync."""
+
+    __tablename__ = 'zsxq_sync_states'
+
+    group_id = Column(String(32), primary_key=True)
+    group_name = Column(String(100), nullable=False)
+    last_topic_id = Column(String(32))
+    last_topic_at = Column(DateTime, index=True)
+    last_attempt_at = Column(DateTime, index=True)
+    last_success_at = Column(DateTime, index=True)
+    last_status = Column(String(20), nullable=False, default='pending', index=True)
+    last_error = Column(Text)
+    last_received = Column(Integer, nullable=False, default=0)
+    last_saved = Column(Integer, nullable=False, default=0)
+    last_media_downloaded = Column(Integer, nullable=False, default=0)
+    total_saved = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+
+class EssayAnalysisRecord(Base):
+    """DeepSeek 对知识星球调研纪要生成的结构化标签与股票观点。"""
+
+    __tablename__ = 'essay_analysis_records'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    topic_id = Column(
+        String(32),
+        ForeignKey('research_notes.topic_id', ondelete='CASCADE'),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    model = Column(String(100), nullable=False)
+    prompt_version = Column(String(32), nullable=False, index=True)
+    input_hash = Column(String(64), nullable=False, index=True)
+    summary = Column(Text)
+    primary_category = Column(String(40), index=True)
+    sentiment = Column(String(20), index=True)
+    time_horizon = Column(String(20), index=True)
+    importance_score = Column(Integer, index=True)
+    confidence_score = Column(Float)
+    tags_json = Column(Text)
+    industries_json = Column(Text)
+    themes_json = Column(Text)
+    stock_mentions_json = Column(Text)
+    key_points_json = Column(Text)
+    catalysts_json = Column(Text)
+    risks_json = Column(Text)
+    raw_response = Column(Text)
+    error_message = Column(Text)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+    started_at = Column(DateTime, index=True)
+    completed_at = Column(DateTime, index=True)
+    next_retry_at = Column(DateTime, index=True)
+
+    __table_args__ = (
+        Index('ix_essay_analysis_status_retry', 'status', 'next_retry_at'),
+        Index('ix_essay_analysis_category_sentiment', 'primary_category', 'sentiment'),
+    )
+
+
+class EssayDailyReportRecord(Base):
+    """One model's durable synthesis of the previous Shanghai calendar day."""
+
+    __tablename__ = 'essay_daily_reports'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_date = Column(String(10), nullable=False, index=True)
+    model = Column(String(100), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    prompt_version = Column(String(32), nullable=False, index=True)
+    source_count = Column(Integer, nullable=False, default=0)
+    source_hash = Column(String(64), nullable=False, default='', index=True)
+    report_json = Column(Text)
+    error_message = Column(Text)
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)
+    started_at = Column(DateTime, index=True)
+    completed_at = Column(DateTime, index=True)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('report_date', 'model', name='uix_essay_daily_report_date_model'),
+        Index('ix_essay_daily_report_status_date', 'status', 'report_date'),
+    )
+
+
+class EssayQuantRuleRecord(Base):
+    """User-defined rule that converts essay evidence into event-study signals."""
+
+    __tablename__ = 'essay_quant_rules'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(120), nullable=False)
+    source_query = Column(String(200), nullable=False, default='')
+    signal_direction = Column(String(20), nullable=False, default='bullish')
+    lookback_days = Column(Integer, nullable=False, default=365)
+    holding_periods_json = Column(Text, nullable=False, default='[5,10,20]')
+    first_mention_only = Column(Boolean, nullable=False, default=False)
+    first_mention_window_days = Column(Integer, nullable=False, default=180)
+    min_importance = Column(Integer, nullable=False, default=60)
+    min_confidence = Column(Float, nullable=False, default=0.5)
+    benchmark_code = Column(String(16), nullable=False, default='000300.SH')
+    portfolio_size = Column(Integer, nullable=False, default=10)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+
+
+class EssayQuantRunRecord(Base):
+    """Immutable, reproducible snapshot of one essay quantitative backtest."""
+
+    __tablename__ = 'essay_quant_runs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rule_id = Column(Integer, ForeignKey('essay_quant_rules.id', ondelete='SET NULL'), index=True)
+    rule_json = Column(Text, nullable=False)
+    result_json = Column(Text, nullable=False)
+    source_hash = Column(String(64), nullable=False, index=True)
+    price_cutoff = Column(String(10), index=True)
+    event_count = Column(Integer, nullable=False, default=0)
+    mature_event_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+
+class MonitoringSourceRecord(Base):
+    """可插拔投资情报源及其健康状态。"""
+
+    __tablename__ = 'monitoring_sources'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_key = Column(String(100), nullable=False, unique=True, index=True)
+    name = Column(String(120), nullable=False)
+    adapter_type = Column(String(32), nullable=False, index=True)
+    provider = Column(String(64), nullable=False, index=True)
+    category = Column(String(32), nullable=False, default='news', index=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    poll_interval_seconds = Column(Integer, nullable=False, default=300)
+    config_json = Column(Text)
+    last_status = Column(String(20), index=True)
+    last_error = Column(Text)
+    last_started_at = Column(DateTime, index=True)
+    last_success_at = Column(DateTime, index=True)
+    last_item_count = Column(Integer, nullable=False, default=0)
+    total_item_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index('ix_monitoring_source_due', 'enabled', 'last_success_at'),
+    )
+
+
+class MonitoringEventRecord(Base):
+    """来自行情、新闻、小作文、公司和机构数据的统一投资事件。"""
+
+    __tablename__ = 'monitoring_events'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_key = Column(String(100), nullable=False, index=True)
+    source_name = Column(String(120), nullable=False, index=True)
+    source_type = Column(String(32), nullable=False, index=True)
+    external_id = Column(String(160), nullable=False)
+    event_type = Column(String(40), nullable=False, index=True)
+    perspective = Column(String(20), nullable=False, index=True)
+    title = Column(String(500), nullable=False)
+    summary = Column(Text)
+    url = Column(String(1000))
+    symbol_codes = Column(Text, nullable=False, default='', index=True)
+    sentiment = Column(String(20), nullable=False, default='neutral', index=True)
+    importance_score = Column(Integer, nullable=False, default=50, index=True)
+    confidence_score = Column(Float, nullable=False, default=0.5)
+    tags_json = Column(Text)
+    actors_json = Column(Text)
+    metrics_json = Column(Text)
+    raw_payload = Column(Text)
+    event_at = Column(DateTime, nullable=False, index=True)
+    ingested_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('source_key', 'external_id', name='uix_monitoring_event_source_external'),
+        Index('ix_monitoring_event_perspective_time', 'perspective', 'event_at'),
+        Index('ix_monitoring_event_type_time', 'event_type', 'event_at'),
+        Index('ix_monitoring_event_source_time', 'source_key', 'event_at'),
+    )
+
+
+class WatchlistBackfillRecord(Base):
+    """Durable six-month source backfill requested when a symbol joins the watchlist."""
+
+    __tablename__ = 'watchlist_backfill_jobs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(16), nullable=False, index=True)
+    stock_name = Column(String(120))
+    days = Column(Integer, nullable=False, default=183)
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    channel_status_json = Column(Text, nullable=False, default='{}')
+    error = Column(Text)
+    requested_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    started_at = Column(DateTime, index=True)
+    completed_at = Column(DateTime, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+    __table_args__ = (
+        Index('ix_watchlist_backfill_symbol_time', 'symbol', 'requested_at'),
     )
 
 
@@ -1590,6 +1853,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         # 在周末/节假日/非交易日运行时，即使数据库已有最新交易日数据，这里也会返回 False。
         # 该行为目前保留（按需求不改逻辑）。
         
+        code = normalize_daily_storage_code(code)
         with self.get_session() as session:
             result = session.execute(
                 select(StockDaily).where(
@@ -1619,6 +1883,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         Returns:
             StockDaily 对象列表（按日期降序）
         """
+        code = normalize_daily_storage_code(code)
         with self.get_session() as session:
             results = session.execute(
                 select(StockDaily)
@@ -2347,6 +2612,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         Returns:
             StockDaily 对象列表
         """
+        code = normalize_daily_storage_code(code)
         with self.get_session() as session:
             results = session.execute(
                 select(StockDaily)
@@ -2387,6 +2653,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         if df is None or df.empty:
             logger.warning(f"保存数据为空，跳过 {code}")
             return 0
+
+        code = normalize_daily_storage_code(code)
 
         now = datetime.now()
         records_by_date: Dict[date, Dict[str, Any]] = {}

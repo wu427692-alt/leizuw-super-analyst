@@ -2303,7 +2303,7 @@ class AlphaSiftOpportunitiesApiTestCase(unittest.TestCase):
         self.assertEqual(runtime_env["DAILY_SOURCE"], "auto")
         self.assertEqual(runtime_env["DAILY_FETCH_RETRIES"], "3")
         self.assertEqual(runtime_env["DAILY_FETCH_MAX_WORKERS"], "1")
-        self.assertEqual(runtime_env["SNAPSHOT_SOURCE_PRIORITY"], "sina,efinance,akshare_em,em_datacenter")
+        self.assertEqual(runtime_env["SNAPSHOT_SOURCE_PRIORITY"], "tushare,sina,efinance,akshare_em,em_datacenter")
         self.assertEqual(runtime_env["ALPHASIFT_DATA_DIR"], str(alphasift_service.DSA_ALPHASIFT_DATA_DIR))
         self.assertEqual(
             runtime_env["ALPHASIFT_FALLBACK_SNAPSHOT_PATH"],

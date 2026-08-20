@@ -277,10 +277,87 @@ async def app_lifespan(app: FastAPI):
     app.state.system_config_service = SystemConfigService(
         runtime_scheduler=app.state.runtime_scheduler_service,
     )
+    essay_worker = None
+    essay_daily_report_worker = None
+    zsxq_sync_worker = None
+    investment_monitor_worker = None
+    icloud_knowledge_worker = None
+    if os.getenv("ESSAY_ANALYSIS_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.essay_analysis_worker import EssayAnalysisWorker
+
+            essay_worker = EssayAnalysisWorker.get_instance()
+            essay_worker.start()
+            app.state.essay_analysis_worker = essay_worker
+        except Exception as exc:  # noqa: BLE001 - optional worker must not prevent API startup.
+            logger.warning("Essay analysis worker did not start: %s", exc)
+    daily_report_auto = os.getenv("ESSAY_DAILY_REPORT_AUTO_START", os.getenv("ESSAY_ANALYSIS_AUTO_START", ""))
+    if daily_report_auto.strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.essay_daily_report_worker import EssayDailyReportWorker
+
+            essay_daily_report_worker = EssayDailyReportWorker.get_instance()
+            essay_daily_report_worker.start()
+            app.state.essay_daily_report_worker = essay_daily_report_worker
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Essay daily report worker did not start: %s", exc)
+    if os.getenv("ZSXQ_MCP_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncWorker
+
+            zsxq_sync_worker = ZsxqMcpSyncWorker.get_instance()
+            zsxq_sync_worker.start()
+            app.state.zsxq_sync_worker = zsxq_sync_worker
+        except Exception as exc:  # noqa: BLE001 - optional MCP worker must not prevent API startup.
+            logger.warning("ZSXQ MCP sync worker did not start: %s", exc)
+    if os.getenv("INVESTMENT_MONITOR_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.investment_monitor_worker import InvestmentMonitorWorker
+
+            investment_monitor_worker = InvestmentMonitorWorker.get_instance()
+            investment_monitor_worker.start()
+            app.state.investment_monitor_worker = investment_monitor_worker
+        except Exception as exc:  # noqa: BLE001 - optional worker must not prevent API startup.
+            logger.warning("Investment monitor worker did not start: %s", exc)
+    try:
+        from src.services.watchlist_backfill_worker import WatchlistBackfillWorker
+
+        app.state.watchlist_backfill_worker = WatchlistBackfillWorker.get_instance()
+    except Exception as exc:  # noqa: BLE001 - failed history backfill must not block the API.
+        logger.warning("Watchlist backfill worker did not start: %s", exc)
+    if os.getenv("ICLOUD_KNOWLEDGE_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.icloud_knowledge_service import ICloudKnowledgeWorker
+
+            icloud_knowledge_worker = ICloudKnowledgeWorker.get_instance()
+            icloud_knowledge_worker.start()
+            app.state.icloud_knowledge_worker = icloud_knowledge_worker
+        except Exception as exc:  # noqa: BLE001 - optional cloud sync must not prevent API startup.
+            logger.warning("iCloud knowledge worker did not start: %s", exc)
     _schedule_stock_index_background_refresh(app, "startup")
     try:
         yield
     finally:
+        if essay_daily_report_worker is not None:
+            essay_daily_report_worker.stop()
+            if hasattr(app.state, "essay_daily_report_worker"):
+                delattr(app.state, "essay_daily_report_worker")
+        if zsxq_sync_worker is not None:
+            zsxq_sync_worker.stop()
+            if hasattr(app.state, "zsxq_sync_worker"):
+                delattr(app.state, "zsxq_sync_worker")
+        if icloud_knowledge_worker is not None:
+            icloud_knowledge_worker.stop()
+            if hasattr(app.state, "icloud_knowledge_worker"):
+                delattr(app.state, "icloud_knowledge_worker")
+        if investment_monitor_worker is not None:
+            investment_monitor_worker.stop()
+            if hasattr(app.state, "investment_monitor_worker"):
+                delattr(app.state, "investment_monitor_worker")
+        if essay_worker is not None:
+            essay_worker.stop()
+            if hasattr(app.state, "essay_analysis_worker"):
+                delattr(app.state, "essay_analysis_worker")
         refresh_task = getattr(app.state, "stock_index_refresh_task", None)
         if refresh_task is not None and not refresh_task.done():
             refresh_task.cancel()

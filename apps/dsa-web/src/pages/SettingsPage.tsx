@@ -542,15 +542,15 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
   }, [hasSchedulerSettings, refreshSchedulerStatus, statusRefreshToken]);
 
   useEffect(() => {
-    const isRuntimeDerived = isEnabledConfigValue(scheduleEnabledItem?.value) === status?.enabled;
-    if (!status) {
+    if (scheduleEnabledOverride === null || !status) {
       return;
     }
 
-    if (scheduleEnabledOverride === null && isRuntimeDerived) {
+    const savedEnabled = isEnabledConfigValue(scheduleEnabledItem?.value);
+    if (savedEnabled === scheduleEnabledOverride && status.enabled === scheduleEnabledOverride) {
       setScheduleEnabledOverride(null);
     }
-  }, [scheduleEnabledItem?.value, scheduleEnabledOverride, statusRefreshToken]);
+  }, [scheduleEnabledItem?.value, scheduleEnabledOverride, status, statusRefreshToken]);
 
   useEffect(() => {
     if (!onSchedulerStateChange) {

@@ -820,5 +820,22 @@ class TestStorage(unittest.TestCase):
             temp_dir.cleanup()
             DatabaseManager.reset_instance()
 
+    def test_daily_data_normalizes_a_share_exchange_suffix(self):
+        DatabaseManager.reset_instance()
+        db = DatabaseManager(db_url="sqlite:///:memory:")
+        frame = pd.DataFrame([{
+            "date": date(2026, 8, 19), "open": 10, "high": 11, "low": 9,
+            "close": 10.5, "volume": 100, "amount": 1050, "pct_chg": 1.2,
+        }])
+        try:
+            self.assertEqual(db.save_daily_data(frame, "603306.SH", "test"), 1)
+            self.assertEqual(db.save_daily_data(frame, "603306", "test"), 0)
+            self.assertEqual(len(db.get_data_range("603306.SH", date(2026, 8, 19), date(2026, 8, 19))), 1)
+            with db.get_session() as session:
+                codes = session.execute(select(StockDaily.code)).scalars().all()
+            self.assertEqual(codes, ["603306"])
+        finally:
+            DatabaseManager.reset_instance()
+
 if __name__ == '__main__':
     unittest.main()

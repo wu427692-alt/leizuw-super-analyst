@@ -14,6 +14,9 @@
 | 使用 Bot / IM 接入 | [Bot 命令与接入](bot-command.md) | [Bot 平台配置](bot/) |
 | 排查运行问题 | [FAQ](FAQ.md) | [更新日志](CHANGELOG.md) |
 | 处理数据源失败或降级 | [数据源稳定性与故障处理图示](data-source-stability.md) | [FAQ](FAQ.md) |
+| 统一调用 Tushare 与知识星球调研纪要 | [统一财经数据 API](financial-data-api.md) | [Tushare 股票列表指南](TUSHARE_STOCK_LIST_GUIDE.md) |
+| 按自然语言需求跨渠道取数并下载数据包 | [数据一站式获取](data-acquisition.md) | [统一财经数据 API](financial-data-api.md) |
+| 查看整体行情、海外市场和自选股情报 | [首页市场大看板](home-dashboard.md) | [投资情报台](investment-monitor.md) |
 | 参与开发或提交 PR | [贡献指南](CONTRIBUTING.md) | [API 规格](architecture/api_spec.json) |
 
 ## 快速开始
@@ -36,6 +39,11 @@
 | [LiteLLM YAML 示例](examples/litellm_config.example.yaml) | LiteLLM 多渠道配置示例 |
 | [通知能力基线](notifications.md) | 企业微信、飞书、Telegram、Discord、Slack、邮件等通知渠道配置 |
 | [Tushare 股票列表指南](TUSHARE_STOCK_LIST_GUIDE.md) | Tushare 股票列表相关配置和使用说明 |
+| [统一财经数据 API](financial-data-api.md) | Tushare 全 api_name 调用、知识星球 MCP 调研纪要同步与统一查询契约 |
+| [数据一站式获取](data-acquisition.md) | DeepSeek 规划多渠道取数，生成 JSON、CSV、Excel、ZIP 和来源清单 |
+| [投资情报台](investment-monitor.md) | 自选股行情、新闻小作文、公司事件、机构预测三视角监控与外部 API/MCP 接入 |
+| [小作文量化回测与数据利用](essay-quant.md) | 自定义卖方规则、事件收益、研究组胜率、首次提及、吹票强度、趋势信号与组合研究 |
+| [首页市场大看板](home-dashboard.md) | A 股及海外行情、市场温度、北向资金、自选股超级看板和五分钟缓存策略 |
 
 ## 使用专题
 

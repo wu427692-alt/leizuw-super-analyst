@@ -1,0 +1,177 @@
+export type CountRow = { name: string; count: number };
+
+export type MonitorEvent = {
+  id: number;
+  sourceKey: string;
+  sourceName: string;
+  sourceType: string;
+  externalId: string;
+  eventType: string;
+  perspective: 'investor' | 'company' | 'institution';
+  title: string;
+  summary?: string | null;
+  url?: string | null;
+  symbols: string[];
+  sentiment: 'bullish' | 'bearish' | 'neutral' | 'mixed';
+  importanceScore: number;
+  confidenceScore: number;
+  tags: string[];
+  actors: string[];
+  metrics: Record<string, unknown>;
+  eventAt: string;
+  ingestedAt?: string | null;
+};
+
+export type WatchlistCard = {
+  symbol: string;
+  name: string;
+  eventCount: number;
+  highPriorityCount: number;
+  opportunityScore: number;
+  riskScore: number;
+  perspectives: Record<string, number>;
+  sentiment: Record<string, number>;
+  latestQuote?: Record<string, unknown> | null;
+  institutionRatingCount: number;
+  latestRating?: string | null;
+  latestEventAt?: string | null;
+  todayEventCount?: number;
+};
+
+export type MonitoringSource = {
+  sourceKey: string;
+  name: string;
+  category: string;
+  provider: string;
+  adapterType: string;
+  enabled: boolean;
+  pollIntervalSeconds: number;
+  lastStatus?: string | null;
+  lastError?: string | null;
+  lastSuccessAt?: string | null;
+  lastItemCount: number;
+  totalItemCount: number;
+  storedEventCount?: number;
+  latestEventAt?: string | null;
+  latestIngestedAt?: string | null;
+  dataAgeSeconds?: number | null;
+  freshnessStatus?: 'fresh' | 'stale' | 'empty';
+  config?: { evidenceLevel?: string; originApis?: string[]; [key: string]: unknown };
+};
+
+export type InvestmentMonitorDashboard = {
+  days: number;
+  generatedAt: string;
+  watchlist: WatchlistCard[];
+  summary: {
+    eventCount: number;
+    watchlistCount: number;
+    highPriorityCount: number;
+    bullishCount: number;
+    bearishCount: number;
+    activeSourceCount: number;
+    factualCount: number;
+    unverifiedCount: number;
+    originalLinkCount: number;
+    originalLinkCoverage: number;
+  };
+  perspectives: CountRow[];
+  eventTypes: CountRow[];
+  sourceActivity: CountRow[];
+  evidenceLevels: CountRow[];
+  channels: CountRow[];
+  latestEvents: MonitorEvent[];
+  highPriority: MonitorEvent[];
+};
+
+export type MonitorStatus = {
+  worker: { running: boolean; pollSeconds: number; lastSyncAt?: string | null; lastError?: string | null };
+  sources: SourceHealthSummary;
+};
+
+export type SourceHealthSummary = {
+  items: MonitoringSource[]; total: number; healthy: number; enabled: number;
+  withData?: number; fresh?: number; stale?: number; empty?: number;
+};
+
+export type MonitorEventList = { items: MonitorEvent[]; total: number; page: number; pageSize: number; startDate?: string; endDate?: string };
+
+export type IntelligenceDashboard = {
+  days: number;
+  generatedAt: string;
+  summary: {
+    eventCount: number; previousEventCount: number; eventChangePct: number; factualCount: number;
+    highPriorityCount: number; watchlistHits: number; sourceCount: number;
+  };
+  dailyTrend: Array<{ date: string; total?: number; factual?: number; unverified?: number; highPriority?: number }>;
+  channels: Array<{ name: string; count: number; previousCount: number; changePct: number; highPriority?: number; bullish?: number; bearish?: number }>;
+  watchlist: WatchlistCard[];
+  signalEvents: MonitorEvent[];
+  pulse: MonitorEvent[];
+  contradictions: Array<{ symbol: string; name: string; bullishCount: number; bearishCount: number; bullishEvidence: MonitorEvent; bearishEvidence: MonitorEvent }>;
+  sources: SourceHealthSummary;
+};
+
+export type MonitorSymbolDetail = {
+  symbol: string; name: string; scorecard: WatchlistCard;
+  perspectives: Record<'investor' | 'company' | 'institution', MonitorEvent[]>;
+  events: MonitorEvent[]; total: number;
+};
+
+export type SuperWatchlistStock = {
+  symbol: string; name: string;
+  history: Array<{ date: string; open?: number | null; high?: number | null; low?: number | null; close?: number | null; volume?: number | null; amount?: number | null; pctChg?: number | null }>;
+  market: { price?: number | null; changePct?: number | null; open?: number | null; high?: number | null; low?: number | null; amount?: number | null; updatedAt?: string | null };
+  valuation: { pe?: number | null; peTtm?: number | null; pb?: number | null; psTtm?: number | null; totalMv?: number | null; turnoverRate?: number | null; volumeRatio?: number | null };
+  technical: Record<string, number | string | null | undefined>;
+  fundamentals: { period?: string | null; revenue?: number | null; netProfit?: number | null; operatingCashflow?: number | null; revenueYoy?: number | null; netProfitYoy?: number | null; grossMargin?: number | null; netMargin?: number | null; roe?: number | null; debtRatio?: number | null; currentRatio?: number | null; eps?: number | null };
+  capital: { winnerRate?: number | null; weightedCost?: number | null; cost50pct?: number | null; cost85pct?: number | null; moneyflow: Record<string, unknown>; margin: Record<string, unknown>; northbound: Record<string, unknown>; chipDistribution: Array<{ price?: number; percent?: number }> };
+  ownership: { pledge: Record<string, unknown>; shareUnlock: Array<Record<string, unknown>>; holderTrades: Array<Record<string, unknown>>; repurchases: Array<Record<string, unknown>> };
+  institution: { researchCount: number; latest: MonitorEvent[]; institutions: CountRow[] };
+  company: { profile: Record<string, unknown>; announcementCount: number; announcements: MonitorEvent[] };
+  alternative: { essayCount: number; essays: MonitorEvent[]; catalysts: string[]; risks: string[] };
+  signals: Array<{ kind: 'catalyst' | 'risk' | 'watch'; title: string; detail: string; eventId?: number | null; eventAt?: string | null; sourceName?: string | null }>;
+  coverage: Array<{ name: string; count: number; latestAt?: string | null; available: boolean }>;
+  evidence: { eventCount: number; rawEventCount: number; factualCount: number; unverifiedCount: number; sourceCount: number; originalLinkCount: number; originalLinkCoverage: number; channels: CountRow[] };
+  timeline: MonitorEvent[];
+};
+
+export type SuperWatchlistDashboard = {
+  version: string; generatedAt: string; days: number; stocks: SuperWatchlistStock[];
+  backfillJobs: WatchlistBackfillJob[];
+  comparison: Array<Record<string, string | number | null | undefined>>;
+  iterations: Array<{ version: string; name: string; result: string }>;
+};
+
+export type WatchlistBackfillJob = {
+  id: number; symbol: string; stockName?: string | null; days: number;
+  status: 'pending' | 'running' | 'completed' | 'partial' | 'failed'; progress: number;
+  channels: Record<string, { status: string; created?: number; updated?: number; received?: number; error?: string | null; note?: string }>;
+  error?: string | null; requestedAt?: string | null; startedAt?: string | null; completedAt?: string | null;
+};
+
+export type AnnouncementCategory = { code: string; name: string };
+export type AnnouncementCategoryList = { items: AnnouncementCategory[]; total: number };
+export type AnnouncementSyncRequest = {
+  startDate: string;
+  endDate: string;
+  symbols?: string[];
+  categories?: string[];
+  keyword?: string;
+  maxPages?: number;
+};
+
+export type CloudKnowledgeStatus = {
+  storage: {
+    available: boolean;
+    enabled: boolean;
+    cloudDir: string;
+    retention: number;
+    snapshotCount: number;
+    latest?: { filename: string; createdAt: string; sizeBytes: number; tables: Record<string, number> } | null;
+    mode: string;
+    multiDeviceWrites: boolean;
+  };
+  worker: { running: boolean; intervalSeconds: number; lastError?: string | null };
+  snapshots: Array<{ filename: string; createdAt: string; sizeBytes: number; present: boolean }>;
+};

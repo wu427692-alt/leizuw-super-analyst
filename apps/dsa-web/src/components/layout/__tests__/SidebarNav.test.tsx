@@ -60,7 +60,7 @@ describe('SidebarNav', () => {
     expect(await screen.findByRole('link', { name: '选股' })).toHaveAttribute('href', '/screening');
   });
 
-  it('places screening directly after chat when AlphaSift is enabled', async () => {
+  it('keeps monitoring routes before screening when AlphaSift is enabled', async () => {
     mockGetAlphaSiftStatus.mockResolvedValueOnce({ enabled: true, available: false, installSpecIsDefault: false });
 
     render(
@@ -71,7 +71,17 @@ describe('SidebarNav', () => {
 
     await screen.findByRole('link', { name: '选股' });
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs.slice(0, 5)).toEqual(['/', '/chat', '/screening', '/portfolio', '/decision-signals']);
+    expect(hrefs.slice(0, 9)).toEqual([
+      '/',
+      '/chat',
+      '/essay-radar',
+      '/essay-quant',
+      '/investment-monitor',
+      '/data-acquisition',
+      '/screening',
+      '/portfolio',
+      '/decision-signals',
+    ]);
   });
 
   it('refreshes the screening navigation item after any config save event', async () => {

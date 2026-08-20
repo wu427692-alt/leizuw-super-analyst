@@ -40,6 +40,7 @@ from src.services.import_parser import (
 )
 from src.services.stock_service import StockService
 from src.services.system_config_service import SystemConfigService
+from src.services.watchlist_backfill_worker import WatchlistBackfillWorker
 from data_provider.base import normalize_stock_code
 
 logger = logging.getLogger(__name__)
@@ -358,6 +359,7 @@ def add_to_watchlist(
         if _watchlist_match_key(validated) not in existing_keys:
             codes.append(request.stock_code.strip())
             _write_watchlist_codes(service, codes)
+            WatchlistBackfillWorker.get_instance().enqueue(validated, days=183)
         return WatchlistResponse(stock_codes=codes, message=f"已加入 {request.stock_code.strip()}")
     except HTTPException:
         raise

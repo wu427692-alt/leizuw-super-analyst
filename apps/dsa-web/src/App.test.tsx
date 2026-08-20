@@ -27,7 +27,7 @@ vi.mock('./stores/agentChatStore', () => ({
   useAgentChatStore: useAgentChatStoreMock,
 }));
 
-vi.mock('./pages/HomePage', () => ({
+vi.mock('./pages/MarketDashboardPage', () => ({
   default: () => <div data-testid="home-page">Home</div>,
 }));
 
