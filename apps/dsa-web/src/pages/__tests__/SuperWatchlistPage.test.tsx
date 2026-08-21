@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SuperWatchlistDashboard, SuperWatchlistStock } from '../../types/investmentMonitor';
 import SuperWatchlistPage from '../SuperWatchlistPage';
 
-const { mockLoad, mockEvent, mockRemove, mockQuotes, mockNote, mockRefresh, mockAnalyzeConsensus, mockEssayConsensus } = vi.hoisted(() => ({
+const { mockAdd, mockLoad, mockEvent, mockRemove, mockQuotes, mockNote, mockRefresh, mockAnalyzeConsensus, mockEssayConsensus } = vi.hoisted(() => ({
+  mockAdd: vi.fn(),
   mockLoad: vi.fn(),
   mockEvent: vi.fn(),
   mockRemove: vi.fn(),
@@ -28,9 +29,22 @@ vi.mock('../../api/investmentMonitor', () => ({
 
 vi.mock('../../api/systemConfig', () => ({
   systemConfigApi: {
-    addToWatchlist: vi.fn(),
+    addToWatchlist: mockAdd,
     removeFromWatchlist: mockRemove,
   },
+}));
+
+vi.mock('../../hooks/useStockIndex', () => ({
+  useStockIndex: () => ({
+    index: [
+      { canonicalCode: '300476.SZ', displayCode: '300476', nameZh: '胜宏科技', pinyinFull: 'shenghongkeji', pinyinAbbr: 'shkj', aliases: [], market: 'CN', assetType: 'stock', active: true, popularity: 100 },
+      { canonicalCode: '603306.SH', displayCode: '603306', nameZh: '华懋科技', pinyinFull: 'huamaokeji', pinyinAbbr: 'hmkj', aliases: [], market: 'CN', assetType: 'stock', active: true, popularity: 100 },
+    ],
+    loading: false,
+    fallback: false,
+    error: null,
+    loaded: true,
+  }),
 }));
 
 vi.mock('../../api/essayRadar', () => ({
@@ -93,6 +107,7 @@ describe('SuperWatchlistPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuotes.clear();
+    mockAdd.mockResolvedValue(['603306', '300476']);
     mockRemove.mockResolvedValue(['300476']);
     mockNote.mockResolvedValue({
       topicId: 'topic-88', groupId: '1', groupName: '测试星球',
@@ -105,6 +120,20 @@ describe('SuperWatchlistPage', () => {
       createdAt: '2026-08-20T08:00:00Z',
     });
     mockEvent.mockReset();
+  });
+
+  it('adds a watchlist stock by selecting its Chinese name', async () => {
+    mockLoad.mockResolvedValue(dashboard([stock('603306.SH', '华懋科技')]));
+
+    render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
+
+    const input = await screen.findByPlaceholderText('输入股票名称或代码');
+    fireEvent.change(input, { target: { value: '胜宏科技' } });
+    const suggestion = await screen.findByRole('option', { name: /胜宏科技.*300476/ });
+    fireEvent.click(suggestion);
+
+    await waitFor(() => expect(mockAdd).toHaveBeenCalledWith('300476.SZ'));
+    await waitFor(() => expect(input).toHaveValue(''));
   });
 
   it('uses the realtime quote for the large price instead of the historical dashboard snapshot', async () => {

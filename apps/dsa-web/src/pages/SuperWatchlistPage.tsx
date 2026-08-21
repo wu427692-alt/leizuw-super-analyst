@@ -8,6 +8,7 @@ import { systemConfigApi } from '../api/systemConfig';
 import { AppPage, ConfirmDialog, Drawer, EmptyState } from '../components/common';
 import { eventTime } from '../components/investmentMonitor/investmentMonitorMeta';
 import { MarketTimeframeChart } from '../components/market';
+import { StockAutocomplete } from '../components/StockAutocomplete/StockAutocomplete';
 import type { EssayConsensusAnalysis, MonitorEvent, SuperWatchlistDashboard, SuperWatchlistStock, WatchlistBackfillJob } from '../types/investmentMonitor';
 import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import type { RealtimeQuote } from '../api/realtimeQuotes';
@@ -330,7 +331,15 @@ export default function SuperWatchlistPage() {
   const activeLiveQuote = active ? liveQuotes.get(quoteKey(active.symbol)) : undefined;
   const hasActiveLiveQuote = Boolean(activeLiveQuote && activeLiveQuote.currentPrice > 0);
   const job = data?.backfillJobs.find(row => row.symbol === active?.symbol);
-  const addStock = async (event: FormEvent) => { event.preventDefault(); if (!newSymbol.trim()) return; setBusy(true); try { await systemConfigApi.addToWatchlist(newSymbol.trim()); setNewSymbol(''); await load(); } catch (err) { setError(err instanceof Error ? err.message : '添加失败'); } finally { setBusy(false); } };
+  const submitStock = async (rawSymbol: string) => {
+    const symbol = rawSymbol.trim();
+    if (!symbol || busy) return;
+    setBusy(true); setError('');
+    try { await systemConfigApi.addToWatchlist(symbol); setNewSymbol(''); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : '添加失败'); }
+    finally { setBusy(false); }
+  };
+  const addStock = (event: FormEvent) => { event.preventDefault(); void submitStock(newSymbol); };
   const removeStock = async () => {
     if (!pendingDelete) return;
     const removed = pendingDelete;
@@ -389,7 +398,7 @@ export default function SuperWatchlistPage() {
     {error ? <div className="border-b border-[#FDA29B] bg-[#FEF3F2] px-4 py-2 text-[11px] text-[#B42318]">{error}</div> : null}
     <div className={`super-watchlist-grid grid grid-cols-1 ${section === 'consensus' ? 'is-consensus' : ''}`}>
       <aside className="super-watchlist-sidebar border-b border-r border-[#D8DADF] bg-[#FAFBFC] xl:border-b-0">
-        <form onSubmit={addStock} className="border-b border-[#D8DADF] p-3"><div className="flex"><input value={newSymbol} onChange={e => setNewSymbol(e.target.value)} placeholder="股票代码，如 603306" className="h-8 min-w-0 flex-1 border border-[#C9CCD2] px-2 text-[11px] outline-none focus:border-[#155EEF]" /><button disabled={busy} className="flex h-8 w-8 items-center justify-center bg-[#155EEF] text-white"><Plus className="h-4 w-4" /></button></div><p className="mt-1.5 text-[9px] text-[#7B7F87]">加入后自动全渠道补齐最近半年</p></form>
+        <form onSubmit={addStock} className="border-b border-[#D8DADF] p-3"><div className="flex"><div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy} placeholder="输入股票名称或代码" className="h-8 rounded-none border-[#C9CCD2] px-2 text-[11px] focus:border-[#155EEF]" /></div><button type="submit" disabled={busy || !newSymbol.trim()} aria-label="加入自选股" className="flex h-8 w-8 shrink-0 items-center justify-center bg-[#155EEF] text-white disabled:opacity-40"><Plus className="h-4 w-4" /></button></div><p className="mt-1.5 text-[9px] text-[#7B7F87]">支持中文名称、拼音简称和股票代码；选择候选后自动加入并补齐最近半年</p></form>
         {stocks.map(stock => {
           const selected = stock.symbol === active?.symbol;
           const stockJob = data?.backfillJobs.find(row => row.symbol === stock.symbol);
@@ -409,7 +418,7 @@ export default function SuperWatchlistPage() {
         <nav className="super-detail-nav flex h-10 border-b border-[#D8DADF] px-2">{SECTIONS.map(item => <button key={item.key} onClick={() => setSection(item.key)} className={`border-b-2 px-4 text-[11px] font-semibold ${section === item.key ? 'border-[#155EEF] text-[#155EEF]' : 'border-transparent text-[#62666D]'}`}>{item.label}</button>)}</nav>
         <DetailSection section={section} stock={activeForDetail ?? active} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} onAnalyzeConsensus={() => void analyzeConsensus()} analyzingConsensus={analyzingConsensus} consensusMessage={consensusMessage} />
         {section !== 'consensus' ? <section className="overflow-x-auto border-t border-[#D8DADF]"><div className="flex items-center justify-between px-3 py-2"><h3 className="text-[12px] font-bold">事实时间线</h3><Link to={`/investment-monitor/feed?symbol=${encodeURIComponent(active.symbol)}`} className="text-[10px] font-semibold text-[#155EEF]">查看全部证据</Link></div>{active.timeline.slice(0, 6).map(event => <EvidenceRow key={event.id} event={event} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} />)}</section> : null}
-      </> : !loading ? <EmptyState title="暂无自选股" description="在左侧输入股票代码加入，自选后会自动触发半年回填。" /> : null}</main>
+      </> : !loading ? <EmptyState title="暂无自选股" description="在左侧输入股票名称或代码加入，自选后会自动触发半年回填。" /> : null}</main>
       {section !== 'consensus' ? <BackfillRail job={job} coverage={active?.coverage} onRetry={() => void retry()} busy={busy} /> : null}
     </div>
     {selectedEssay ? <EssayOriginalDrawer key={selectedEssay.externalId} event={selectedEssay} onClose={() => setSelectedEssay(null)} /> : null}
