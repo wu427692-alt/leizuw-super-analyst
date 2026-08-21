@@ -3,28 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiError, createParsedApiError } from '../../api/error';
 import { AuthProvider, useAuth } from '../AuthContext';
 
-const { getStatus, login, changePassword, logout, resetDashboardState } = vi.hoisted(() => ({
+const { getStatus, login, updateSettings, changePassword, logout } = vi.hoisted(() => ({
   getStatus: vi.fn(),
   login: vi.fn(),
+  updateSettings: vi.fn(),
   changePassword: vi.fn(),
   logout: vi.fn(),
-  resetDashboardState: vi.fn(),
 }));
 
 vi.mock('../../api/auth', () => ({
   authApi: {
     getStatus,
     login,
+    updateSettings,
     changePassword,
     logout,
-  },
-}));
-
-vi.mock('../../stores', () => ({
-  useStockPoolStore: {
-    getState: () => ({
-      resetDashboardState,
-    }),
   },
 }));
 
@@ -48,6 +41,17 @@ const Probe = () => {
 describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('does not query administrator session state on public pages', () => {
+    render(
+      <AuthProvider initialize={false}>
+        <Probe />
+      </AuthProvider>
+    );
+
+    expect(screen.getByTestId('status')).toHaveTextContent('logged-out');
+    expect(getStatus).not.toHaveBeenCalled();
   });
 
   it('refreshes auth state after a successful login', async () => {
@@ -106,7 +110,6 @@ describe('AuthContext', () => {
     fireEvent.click(screen.getByRole('button', { name: 'trigger-logout' }));
 
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('logged-out'));
-    expect(resetDashboardState).toHaveBeenCalled();
   });
 
   it('does not reset dashboard state when auth is disabled', async () => {
@@ -125,7 +128,7 @@ describe('AuthContext', () => {
     );
 
     await screen.findByTestId('status');
-    expect(resetDashboardState).not.toHaveBeenCalled();
+    expect(login).not.toHaveBeenCalled();
   });
 
   it('treats a 401 logout as already signed out after status refresh', async () => {
@@ -167,6 +170,32 @@ describe('AuthContext', () => {
     fireEvent.click(screen.getByRole('button', { name: 'trigger-logout' }));
 
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('logged-out'));
-    expect(resetDashboardState).toHaveBeenCalled();
+  });
+
+  it('creates the administrator password when the control plane is not configured', async () => {
+    getStatus
+      .mockResolvedValueOnce({ authEnabled: false, loggedIn: false, passwordSet: false, passwordChangeable: false, setupState: 'no_password' })
+      .mockResolvedValueOnce({ authEnabled: true, loggedIn: true, passwordSet: true, passwordChangeable: true, setupState: 'enabled' });
+    updateSettings.mockResolvedValue(undefined);
+
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await screen.findByTestId('status');
+    fireEvent.click(screen.getByRole('button', { name: 'trigger-login' }));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith(true, 'passwd6', 'passwd6'));
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it('re-enables the control plane with the retained administrator password', async () => {
+    getStatus
+      .mockResolvedValueOnce({ authEnabled: false, loggedIn: false, passwordSet: false, passwordChangeable: false, setupState: 'password_retained' })
+      .mockResolvedValueOnce({ authEnabled: true, loggedIn: true, passwordSet: true, passwordChangeable: true, setupState: 'enabled' });
+    updateSettings.mockResolvedValue(undefined);
+
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await screen.findByTestId('status');
+    fireEvent.click(screen.getByRole('button', { name: 'trigger-login' }));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith(true, undefined, undefined, 'passwd6'));
   });
 });

@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Tests for LLM usage dashboard API."""
 
+import os
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -70,11 +72,16 @@ class FakeUsageDbManager:
 class UsageDashboardApiTestCase(unittest.TestCase):
     def test_dashboard_returns_token_summary_and_recent_calls(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            app = create_app(static_dir=Path(temp_dir))
-            app.dependency_overrides[get_database_manager] = lambda: FakeUsageDbManager()
-            client = TestClient(app)
-
-            response = client.get("/api/v1/usage/dashboard?period=today&limit=10")
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text("ADMIN_AUTH_ENABLED=false\n", encoding="utf-8")
+            from src.auth import refresh_auth_state
+            with patch.dict(os.environ, {"ENV_FILE": str(env_path)}, clear=False):
+                refresh_auth_state()
+                app = create_app(static_dir=Path(temp_dir))
+                app.dependency_overrides[get_database_manager] = lambda: FakeUsageDbManager()
+                client = TestClient(app)
+                response = client.get("/api/v1/usage/dashboard?period=today&limit=10")
+            refresh_auth_state()
 
         self.assertEqual(response.status_code, 200)
         body = response.json()

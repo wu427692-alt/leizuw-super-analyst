@@ -444,6 +444,7 @@ daily_stock_analysis/
 |--------|------|--------|
 | `STOCK_LIST` | 自选股代码（逗号分隔） | - |
 | `ADMIN_AUTH_ENABLED` | Web 登录：设为 `true` 启用密码保护；首次访问在网页设置初始密码，可在「系统设置 > 修改密码」修改；忘记密码执行 `python -m src.auth reset_password`。Web 的 `.env` 备份导入导出仅在开启该开关后可用（桌面端不受此限制）。 | `false` |
+| `USER_ACCESS_ENABLED` | 前台用户访问控制：姓名和密码注册后等待管理员在 `/admin/access` 审批；批准时信任注册 IP，成功密码登录会绑定新 IP。同一 IP 对应多个账号时要求密码登录。自选股、问股会话、分析历史与任务、持仓、告警、AI 建议信号、量化规则/运行记录和传统回测按账号隔离。 | `false` |
 | `TRUST_X_FORWARDED_FOR` | 单层可信反向代理部署时设为 `true`，取 `X-Forwarded-For` 最右值作为真实客户端 IP（用于登录限流等）；直连公网时保持 `false` 防伪造。多级代理/CDN 场景下限流 key 可能退化为边缘代理 IP，需额外评估 | `false` |
 | `MAX_WORKERS` | 并发线程数 | `3` |
 | `MARKET_REVIEW_ENABLED` | 启用大盘复盘 | `true` |
@@ -1328,7 +1329,7 @@ python main.py --debug
 
 ### SQLite 写入稳态配置
 
-默认文件型 SQLite 会在连接建立时启用 `WAL` 并设置 `busy_timeout`，`save_daily_data()` 也已改为按 `(code, date)` 批量原子 upsert，以降低批量更新和并发回写时的锁竞争。
+默认文件型 SQLite 会在连接建立时启用 `WAL` 并设置 `busy_timeout`，`save_daily_data()` 也已改为按 `(code, date)` 批量原子 upsert，以降低批量更新和并发回写时的锁竞争。大库读取默认给每个连接 16MiB 页面缓存；多连接桌面进程默认关闭 mmap，避免同一数据库文件被多个连接重复计入常驻映射。
 
 如需调整，可在 `.env` 中设置：
 
@@ -1338,6 +1339,15 @@ python main.py --debug
 | `SQLITE_BUSY_TIMEOUT_MS` | `5000` | SQLite 等锁超时（毫秒） |
 | `SQLITE_WRITE_RETRY_MAX` | `3` | 遇到 `database is locked` / `database table is locked` 时的最大重试次数 |
 | `SQLITE_WRITE_RETRY_BASE_DELAY` | `0.1` | 写入重试基础退避时间（秒，按指数退避递增） |
+| `SQLITE_CACHE_SIZE_KIB` | `16384` | 单个 SQLite 连接允许使用的页面缓存上限（KiB，限制为 2048～65536） |
+| `SQLITE_MMAP_SIZE_MB` | `0` | 只读 mmap 地址窗口（MiB）；桌面默认关闭，资源充足的单机服务可按实测开启 |
+| `USER_SESSION_CACHE_SECONDS` | `20` | 已签名普通用户会话的数据库校验缓存；账号批准、拒绝或停用时立即失效 |
+
+Web 页面切换只等待首次组件 effects 发出的核心请求；正常情况下核心请求结束后立即展示，如果某个附属接口卡住，最长 1.4 秒后展示页面自己的加载骨架并继续后台请求，不再让全站导航跟随单个接口的 30 秒超时。实时股票/指数的相同参数请求在同一秒内合并，隐藏浏览器标签页暂停非必要仪表盘轮询。
+
+桌面后台启动脚本默认设置 `LITELLM_LOCAL_MODEL_COST_MAP=True`，直接读取 LiteLLM 随包模型目录，避免启动阶段为可选价格表访问 GitHub。该设置不改变实际模型、API Key、Base URL 或调用计费。
+
+`APP_STARTUP_WARMUP_PROFILE` 默认为 `essential`，只预热小作文状态、首批信息流和情报首批索引；`full` 还会在启动后计算首页、洞察、超级看板与关键词索引，适合资源充足且更看重后续冷页速度的服务器。桌面与公网隧道建议保留 `essential`，避免服务刚启动时出现 30 秒以上高 CPU。
 
 ---
 

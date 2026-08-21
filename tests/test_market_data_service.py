@@ -5,7 +5,13 @@ import pytest
 
 from src.config import Config
 from src.repositories.market_data_repo import MarketDataRepository
-from src.services.market_data_service import MarketDataService, _parse_tencent_day_minutes
+from src.services.market_data_service import (
+    MarketDataService,
+    _legacy_snapshot_timestamp,
+    _latest_a_share_close_timestamp,
+    _latest_completed_a_share_session,
+    _parse_tencent_day_minutes,
+)
 from src.storage import DatabaseManager, StockDaily
 
 
@@ -108,6 +114,76 @@ def test_realtime_tick_is_upserted_and_returned_from_sqlite(market_db, monkeypat
     assert result["data"][0]["close"] == 74.84
     assert result["pre_close"] == 70.11
     assert service.status()["tick_rows"] == 1
+
+
+def test_legacy_snapshot_uses_exchange_date_and_time_instead_of_poll_time():
+    fallback = datetime(2026, 8, 22, 0, 23, 57)
+    parsed = _legacy_snapshot_timestamp(
+        {"date": "2026-08-21", "time": "15:00:03"}, fallback,
+    )
+
+    assert parsed == datetime(2026, 8, 21, 15, 0, 3)
+
+
+def test_latest_completed_a_share_session_handles_after_close_and_weekend():
+    assert _latest_completed_a_share_session(datetime(2026, 8, 21, 14, 0)) == date(2026, 8, 20)
+    assert _latest_completed_a_share_session(datetime(2026, 8, 21, 16, 0)) == date(2026, 8, 21)
+    assert _latest_completed_a_share_session(datetime(2026, 8, 22, 10, 0)) == date(2026, 8, 21)
+
+
+def test_missing_legacy_exchange_time_falls_back_to_latest_session_close():
+    assert _latest_a_share_close_timestamp(datetime(2026, 8, 22, 0, 23, 57)) == datetime(2026, 8, 21, 15, 0)
+
+
+def test_latest_quotes_prefers_completed_daily_close_over_partial_same_day_tick(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_ticks([{
+        "code": "603306", "timestamp": datetime(2026, 8, 21, 11, 29, 58),
+        "price": 73.8, "pre_close": 74.28,
+    }], source="test.tick")
+    with market_db.get_session() as session:
+        session.add_all([
+            StockDaily(code="603306", date=date(2026, 8, 20), close=74.28, data_source="test.daily"),
+            StockDaily(
+                code="603306", date=date(2026, 8, 21), open=74.2, high=75.65, low=72.24,
+                close=74.26, volume=105087.53, amount=781333567, data_source="test.daily",
+            ),
+        ])
+        session.commit()
+    monkeypatch.setattr(
+        "src.services.market_data_service.datetime",
+        type("FixedDateTime", (datetime,), {"now": classmethod(lambda cls: datetime(2026, 8, 22, 10, 0))}),
+    )
+
+    quote = MarketDataService(
+        repository=repo, fetcher=_NoNetworkFetcher(), tushare=_UnavailableGateway(),
+    ).latest_quotes(["603306"])[0]
+
+    assert quote["current_price"] == 74.26
+    assert quote["prev_close"] == 74.28
+    assert quote["update_time"] == "2026-08-21T15:00:00"
+    assert quote["source"] == "test.daily"
+
+
+def test_intraday_series_ignores_impossible_overnight_a_share_tick(market_db):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_ticks([{
+        "code": "603306", "timestamp": datetime(2026, 8, 22, 0, 23, 57),
+        "price": 74.26, "pre_close": 74.28,
+    }], source="tushare.legacy_snapshot")
+    repo.upsert_intraday("603306", [{
+        "timestamp": datetime(2026, 8, 21, 15, 0),
+        "open": 74.0, "high": 76.0, "low": 72.0, "close": 74.28,
+    }], source="tushare.rt_min")
+    service = MarketDataService(
+        repository=repo, fetcher=_NoNetworkFetcher(), tushare=_UnavailableGateway(),
+        realtime_batch_fetcher=lambda _codes: [], minute_history_fetcher=lambda _symbol: [],
+    )
+
+    result = service.get_series("603306", period="intraday", range_key="1d")
+
+    assert result["latest_at"] == "2026-08-21T15:00"
+    assert result["data"][-1]["close"] == 74.28
 
 
 def test_intraday_zero_axis_uses_displayed_sessions_prior_close_after_close_is_saved(market_db, monkeypatch):

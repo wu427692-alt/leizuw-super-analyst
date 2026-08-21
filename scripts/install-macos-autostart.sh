@@ -32,6 +32,7 @@ fi
 APP_PATH="${APP_PARENT}/${APP_NAME}"
 LOG_DIR="${RUNTIME_ROOT}/logs"
 RUNNER="${RUNTIME_ROOT}/scripts/run-macos-background.sh"
+PID_FILE="${RUNTIME_ROOT}/.run/server.pid"
 APP_LAUNCHER="${PROJECT_ROOT}/scripts/macos-app-launcher.sh"
 PLIST_TMP="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/dsa-launchagent.XXXXXX")"
 
@@ -50,6 +51,30 @@ done
 if /bin/launchctl print "gui/$UID/${LABEL}" >/dev/null 2>&1; then
   echo "Existing LaunchAgent did not finish unloading within 15 seconds." >&2
   exit 1
+fi
+
+# launchctl can forget a job before a Python process with slow application
+# shutdown hooks has actually exited.  Do not copy over a live runtime or
+# start another Uvicorn process while that old process still owns the port.
+if [[ -f "${PID_FILE}" ]]; then
+  OLD_PID="$(/bin/cat "${PID_FILE}" 2>/dev/null || true)"
+  if [[ "${OLD_PID}" =~ ^[0-9]+$ ]] && /bin/kill -0 "${OLD_PID}" 2>/dev/null; then
+    OLD_COMMAND="$(/bin/ps -p "${OLD_PID}" -o command= 2>/dev/null || true)"
+    if [[ "${OLD_COMMAND}" == *"uvicorn server:app"* ]]; then
+      /bin/kill -TERM "${OLD_PID}" 2>/dev/null || true
+      for _ in {1..120}; do
+        if ! /bin/kill -0 "${OLD_PID}" 2>/dev/null; then
+          break
+        fi
+        /bin/sleep 0.25
+      done
+      if /bin/kill -0 "${OLD_PID}" 2>/dev/null; then
+        echo "Server process ${OLD_PID} did not stop within 30 seconds; forcing the exact stale process to exit." >&2
+        /bin/kill -KILL "${OLD_PID}" 2>/dev/null || true
+      fi
+    fi
+  fi
+  /bin/rm -f "${PID_FILE}"
 fi
 
 /bin/mkdir -p "${LAUNCH_AGENTS_DIR}" "${APP_PARENT}" "${RUNTIME_ROOT}" "${LOG_DIR}" "${RUNTIME_ROOT}/scripts"
@@ -102,6 +127,7 @@ fi
 /usr/bin/plutil -insert WorkingDirectory -string "${RUNTIME_ROOT}" "${PLIST_TMP}"
 /usr/bin/plutil -insert RunAtLoad -bool true "${PLIST_TMP}"
 /usr/bin/plutil -insert KeepAlive -bool true "${PLIST_TMP}"
+/usr/bin/plutil -insert ExitTimeOut -integer 60 "${PLIST_TMP}"
 /usr/bin/plutil -insert ProcessType -string Background "${PLIST_TMP}"
 /usr/bin/plutil -insert LimitLoadToSessionType -string Aqua "${PLIST_TMP}"
 /usr/bin/plutil -insert ThrottleInterval -integer 10 "${PLIST_TMP}"

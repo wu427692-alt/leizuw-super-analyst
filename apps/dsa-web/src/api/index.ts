@@ -19,6 +19,9 @@ type RetryableRequestConfig = InternalAxiosRequestConfig & {
   __dsaRouteLoadToken?: RouteLoadToken | null;
 };
 
+export const BACKGROUND_ROUTE_HEADER = 'X-DSA-Route-Load';
+export const BACKGROUND_ROUTE_HEADERS = { [BACKGROUND_ROUTE_HEADER]: 'background' } as const;
+
 const TRANSIENT_HTTP_STATUSES = new Set([408, 425, 500, 502, 503, 504]);
 
 function isRetryableRead(error: unknown): boolean {
@@ -41,6 +44,11 @@ function completeTrackedRequest(config?: RetryableRequestConfig) {
 }
 
 apiClient.interceptors.request.use((config: RetryableRequestConfig) => {
+  if (config.headers?.get(BACKGROUND_ROUTE_HEADER) === 'background') {
+    config.headers.delete(BACKGROUND_ROUTE_HEADER);
+    config.__dsaRouteLoadToken = null;
+    return config;
+  }
   if (config.__dsaRouteLoadToken === undefined) {
     config.__dsaRouteLoadToken = startRouteRequest();
   }
@@ -61,9 +69,15 @@ apiClient.interceptors.response.use(
     }
     if (error.response?.status === 401) {
       const path = window.location.pathname + window.location.search;
-      if (!path.startsWith('/login')) {
+      if (path.startsWith('/admin') && !path.startsWith('/admin/login')) {
         const redirect = encodeURIComponent(path);
-        window.location.assign(`/login?redirect=${redirect}`);
+        window.location.assign(`/admin/login?redirect=${redirect}`);
+      } else if (
+        !path.startsWith('/access')
+        && error.response?.data?.error === 'user_login_required'
+      ) {
+        const redirect = encodeURIComponent(path);
+        window.location.assign(`/access?redirect=${redirect}`);
       }
     }
     const requestConfig = error.config as RetryableRequestConfig | undefined;

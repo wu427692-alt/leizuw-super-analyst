@@ -37,6 +37,7 @@ def _watchdog(monkeypatch, *, investment, zsxq, market, due=()):
     monkeypatch.setenv("INVESTMENT_MONITOR_AUTO_START", "true")
     monkeypatch.setenv("ZSXQ_MCP_AUTO_START", "true")
     monkeypatch.setenv("MARKET_DATA_AUTO_START", "true")
+    monkeypatch.setenv("CNINFO_WATCHLIST_AUTO_START", "false")
     return SyncWatchdogWorker(
         investment_worker=investment,
         zsxq_worker=zsxq,

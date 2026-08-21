@@ -27,6 +27,7 @@ from src.storage import (
     StockDaily,
     normalize_daily_storage_code,
 )
+from src.request_identity import current_owner_id
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class PortfolioRepository:
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
+        self.owner_id = current_owner_id()
 
     # ------------------------------------------------------------------
     # Account CRUD
@@ -63,7 +65,7 @@ class PortfolioRepository:
     ) -> PortfolioAccount:
         with self.db.get_session() as session:
             row = PortfolioAccount(
-                owner_id=owner_id,
+                owner_id=self.owner_id or owner_id,
                 name=name,
                 broker=broker,
                 market=market,
@@ -86,6 +88,8 @@ class PortfolioRepository:
     def list_accounts(self, include_inactive: bool = False) -> List[PortfolioAccount]:
         with self.db.get_session() as session:
             query = select(PortfolioAccount)
+            if self.owner_id:
+                query = query.where(PortfolioAccount.owner_id == self.owner_id)
             if not include_inactive:
                 query = query.where(PortfolioAccount.is_active.is_(True))
             rows = session.execute(query.order_by(PortfolioAccount.id.asc())).scalars().all()
@@ -99,6 +103,8 @@ class PortfolioRepository:
         include_inactive: bool = False,
     ) -> Optional[PortfolioAccount]:
         conditions = [PortfolioAccount.id == account_id]
+        if self.owner_id:
+            conditions.append(PortfolioAccount.owner_id == self.owner_id)
         if not include_inactive:
             conditions.append(PortfolioAccount.is_active.is_(True))
         return session.execute(
@@ -107,9 +113,11 @@ class PortfolioRepository:
 
     def update_account(self, account_id: int, fields: Dict[str, Any]) -> Optional[PortfolioAccount]:
         with self.db.get_session() as session:
-            row = session.execute(
-                select(PortfolioAccount).where(PortfolioAccount.id == account_id).limit(1)
-            ).scalar_one_or_none()
+            conditions = [PortfolioAccount.id == account_id]
+            if self.owner_id:
+                conditions.append(PortfolioAccount.owner_id == self.owner_id)
+                fields = {key: value for key, value in fields.items() if key != "owner_id"}
+            row = session.execute(select(PortfolioAccount).where(and_(*conditions)).limit(1)).scalar_one_or_none()
             if row is None:
                 return None
             for key, value in fields.items():
@@ -121,9 +129,10 @@ class PortfolioRepository:
 
     def deactivate_account(self, account_id: int) -> bool:
         with self.db.get_session() as session:
-            row = session.execute(
-                select(PortfolioAccount).where(PortfolioAccount.id == account_id).limit(1)
-            ).scalar_one_or_none()
+            conditions = [PortfolioAccount.id == account_id]
+            if self.owner_id:
+                conditions.append(PortfolioAccount.owner_id == self.owner_id)
+            row = session.execute(select(PortfolioAccount).where(and_(*conditions)).limit(1)).scalar_one_or_none()
             if row is None:
                 return False
             row.is_active = False
@@ -600,6 +609,8 @@ class PortfolioRepository:
                 PortfolioAccount.id == PortfolioTrade.account_id,
             )
             conditions.append(PortfolioAccount.is_active.is_(True))
+            if self.owner_id:
+                conditions.append(PortfolioAccount.owner_id == self.owner_id)
             if conditions:
                 where_clause = and_(*conditions)
                 data_query = data_query.where(where_clause)
@@ -644,6 +655,8 @@ class PortfolioRepository:
                 PortfolioAccount.id == PortfolioCashLedger.account_id,
             )
             conditions.append(PortfolioAccount.is_active.is_(True))
+            if self.owner_id:
+                conditions.append(PortfolioAccount.owner_id == self.owner_id)
             if conditions:
                 where_clause = and_(*conditions)
                 data_query = data_query.where(where_clause)
@@ -691,6 +704,8 @@ class PortfolioRepository:
                 PortfolioAccount.id == PortfolioCorporateAction.account_id,
             )
             conditions.append(PortfolioAccount.is_active.is_(True))
+            if self.owner_id:
+                conditions.append(PortfolioAccount.owner_id == self.owner_id)
             if conditions:
                 where_clause = and_(*conditions)
                 data_query = data_query.where(where_clause)
@@ -816,6 +831,8 @@ class PortfolioRepository:
             )
             if account_id is not None:
                 query = query.where(PortfolioDailySnapshot.account_id == account_id)
+            if self.owner_id:
+                query = query.where(PortfolioAccount.owner_id == self.owner_id)
             rows = session.execute(
                 query.order_by(
                     PortfolioDailySnapshot.snapshot_date.asc(),
@@ -845,6 +862,8 @@ class PortfolioRepository:
             )
             if account_id is not None:
                 query = query.where(PortfolioPosition.account_id == account_id)
+            if self.owner_id:
+                query = query.where(PortfolioAccount.owner_id == self.owner_id)
             rows = session.execute(
                 query.order_by(
                     PortfolioPosition.market.asc(),

@@ -9,7 +9,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -146,7 +146,7 @@ async def get_strategies():
     )
 
 @router.post("/chat", response_model=ChatResponse)
-async def agent_chat(request: ChatRequest):
+async def agent_chat(body: ChatRequest, http_request: Request):
     """
     Chat with the AI Agent.
     """
@@ -155,16 +155,22 @@ async def agent_chat(request: ChatRequest):
     if not config.is_agent_available():
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
         
-    session_id = request.session_id or str(uuid.uuid4())
+    user_id = int(getattr(http_request.state, "user_id", 0) or 0)
+    client_session_id = body.session_id or str(uuid.uuid4())
+    if user_id > 0:
+        from src.services.user_account_service import scope_session_id
+        session_id = scope_session_id(user_id, client_session_id)
+    else:
+        session_id = client_session_id
     
     try:
-        skills = request.effective_skills
+        skills = body.effective_skills
         executor = _build_executor(config, skills or None)
 
         # Pass explicit skills into context for the orchestrator.
         # Direct assignment so caller-provided skills always take precedence
         # over any stale value carried in the context dict.
-        ctx = dict(request.context or {})
+        ctx = dict(body.context or {})
         if skills is not None:
             ctx["skills"] = skills
 
@@ -172,14 +178,14 @@ async def agent_chat(request: ChatRequest):
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
-            lambda: executor.chat(message=request.message, session_id=session_id,
-                                  context=_enrich_with_unified_stock_context(ctx)),
+            lambda: executor.chat(message=body.message, session_id=session_id,
+                                  context=_enrich_with_unified_stock_context(ctx, body.message)),
         )
 
         return ChatResponse(
             success=result.success,
             content=result.content,
-            session_id=session_id,
+            session_id=client_session_id,
             error=result.error
         )
             
@@ -205,7 +211,7 @@ class SessionMessagesResponse(BaseModel):
 
 
 @router.get("/chat/sessions", response_model=SessionsResponse)
-async def list_chat_sessions(limit: int = 50, user_id: Optional[str] = None):
+async def list_chat_sessions(request: Request, limit: int = 50, user_id: Optional[str] = None):
     """获取聊天会话列表
 
     Args:
@@ -217,27 +223,44 @@ async def list_chat_sessions(limit: int = 50, user_id: Optional[str] = None):
             ``feishu_ou_abc``.
     """
     from src.storage import get_db
-    sessions = get_db().get_chat_sessions(
-        limit=limit,
-        session_prefix=user_id,
-        extra_session_ids=[user_id] if user_id else None,
-    )
+    current_user_id = int(getattr(request.state, "user_id", 0) or 0)
+    if current_user_id > 0:
+        from src.services.user_account_service import unscope_session_id, user_session_namespace
+        sessions = get_db().get_chat_sessions(limit=limit, session_prefix=user_session_namespace(current_user_id))
+        for item in sessions:
+            item["session_id"] = unscope_session_id(current_user_id, item["session_id"])
+    else:
+        sessions = get_db().get_chat_sessions(
+            limit=limit,
+            session_prefix=user_id,
+            extra_session_ids=[user_id] if user_id else None,
+        )
     return SessionsResponse(sessions=sessions)
 
 
 @router.get("/chat/sessions/{session_id}", response_model=SessionMessagesResponse)
-async def get_chat_session_messages(session_id: str, limit: int = 100):
+async def get_chat_session_messages(session_id: str, request: Request, limit: int = 100):
     """获取单个会话的完整消息"""
     from src.storage import get_db
-    messages = get_db().get_conversation_messages(session_id, limit=limit)
+    current_user_id = int(getattr(request.state, "user_id", 0) or 0)
+    storage_session_id = session_id
+    if current_user_id > 0:
+        from src.services.user_account_service import scope_session_id
+        storage_session_id = scope_session_id(current_user_id, session_id)
+    messages = get_db().get_conversation_messages(storage_session_id, limit=limit)
     return SessionMessagesResponse(session_id=session_id, messages=messages)
 
 
 @router.delete("/chat/sessions/{session_id}")
-async def delete_chat_session(session_id: str):
+async def delete_chat_session(session_id: str, request: Request):
     """删除指定会话"""
     from src.storage import get_db
-    count = get_db().delete_conversation_session(session_id)
+    current_user_id = int(getattr(request.state, "user_id", 0) or 0)
+    storage_session_id = session_id
+    if current_user_id > 0:
+        from src.services.user_account_service import scope_session_id
+        storage_session_id = scope_session_id(current_user_id, session_id)
+    count = get_db().delete_conversation_session(storage_session_id)
     return {"deleted": count}
 
 
@@ -276,26 +299,15 @@ def _build_executor(config, skills: Optional[List[str]] = None):
     return build_agent_executor(config, skills=skills)
 
 
-def _enrich_with_unified_stock_context(context: Dict[str, Any]) -> Dict[str, Any]:
-    """Attach shared factual data while keeping chat available on degradation."""
-    enriched = dict(context)
-    stock_code = str(enriched.get("stock_code") or "").strip()
-    if not stock_code:
-        return enriched
+def _enrich_with_unified_stock_context(context: Dict[str, Any], message: str = "") -> Dict[str, Any]:
+    """Resolve names and attach local-first facts with direct API fallback."""
     try:
-        from src.services.investment_monitor_service import InvestmentMonitorService
+        from src.services.agent_stock_context_service import hydrate_agent_stock_context
 
-        shared = InvestmentMonitorService().stock_workspace(stock_code, days=365)
-        agent_context = dict(shared.get("agent_context") or {})
-        previous_summary = str(enriched.get("analysis_context_pack_summary") or "").strip()
-        shared_summary = str(agent_context.get("analysis_context_pack_summary") or "").strip()
-        enriched.update(agent_context)
-        if previous_summary and shared_summary:
-            enriched["analysis_context_pack_summary"] = f"{previous_summary}\n{shared_summary}"
-        enriched["unified_context_version"] = shared.get("version")
+        return hydrate_agent_stock_context(dict(context), message)
     except Exception as exc:  # noqa: BLE001 - a data source issue must not break chat.
-        logger.info("Unified stock context unavailable for %s: %s", stock_code, type(exc).__name__)
-    return enriched
+        logger.info("Unified stock context unavailable: %s", type(exc).__name__)
+        return dict(context)
 
 
 async def _run_research_in_background(
@@ -393,7 +405,7 @@ async def agent_research(request: ResearchRequest):
 
 
 @router.post("/chat/stream")
-async def agent_chat_stream(request: ChatRequest):
+async def agent_chat_stream(body: ChatRequest, http_request: Request):
     """
     Chat with the AI Agent, streaming progress via SSE.
     Each SSE event is a JSON object with a 'type' field:
@@ -408,14 +420,20 @@ async def agent_chat_stream(request: ChatRequest):
     if not config.is_agent_available():
         raise HTTPException(status_code=400, detail="Agent mode is not enabled")
 
-    session_id = request.session_id or str(uuid.uuid4())
+    user_id = int(getattr(http_request.state, "user_id", 0) or 0)
+    client_session_id = body.session_id or str(uuid.uuid4())
+    if user_id > 0:
+        from src.services.user_account_service import scope_session_id
+        session_id = scope_session_id(user_id, client_session_id)
+    else:
+        session_id = client_session_id
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     # Pass explicit skills into context for the orchestrator.
     # Direct assignment so caller-provided skills always take precedence.
-    skills = request.effective_skills
-    stream_ctx = dict(request.context or {})
+    skills = body.effective_skills
+    stream_ctx = dict(body.context or {})
     if skills is not None:
         stream_ctx["skills"] = skills
 
@@ -429,11 +447,12 @@ async def agent_chat_stream(request: ChatRequest):
     def run_sync():
         try:
             executor = _build_executor(config, skills or None)
+            progress_callback({"type": "thinking", "message": "正在核对本地数据库，缺失项将自动调用上游接口…"})
             result = executor.chat(
-                message=request.message,
+                message=body.message,
                 session_id=session_id,
                 progress_callback=progress_callback,
-                context=_enrich_with_unified_stock_context(stream_ctx),
+                context=_enrich_with_unified_stock_context(stream_ctx, body.message),
             )
             asyncio.run_coroutine_threadsafe(
                 queue.put({
@@ -442,7 +461,7 @@ async def agent_chat_stream(request: ChatRequest):
                     "content": result.content,
                     "error": result.error,
                     "total_steps": result.total_steps,
-                    "session_id": session_id,
+                    "session_id": client_session_id,
                 }),
                 loop,
             )

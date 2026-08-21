@@ -26,6 +26,18 @@ from src.services.system_config_service import ConfigConflictError, ConfigImport
 class SystemConfigServiceTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
+        # api.app loads the repository .env into process state at import time.
+        # Remove only those inherited project keys for this isolated service
+        # test, otherwise test order changes validation of the temporary .env.
+        from dotenv import dotenv_values
+        project_env = Path(__file__).resolve().parents[1] / ".env"
+        self._inherited_project_env = {
+            str(key): os.environ[str(key)]
+            for key in dotenv_values(project_env, interpolate=False)
+            if key is not None and str(key) in os.environ
+        } if project_env.exists() else {}
+        for key in self._inherited_project_env:
+            os.environ.pop(key, None)
         self.env_path = Path(self.temp_dir.name) / ".env"
         self.env_path.write_text(
             "\n".join(
@@ -48,6 +60,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         Config.reset_instance()
         os.environ.pop("ENV_FILE", None)
+        os.environ.update(self._inherited_project_env)
         self.temp_dir.cleanup()
 
     def _rewrite_env(self, *lines: str) -> None:

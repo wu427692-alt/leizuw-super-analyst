@@ -119,7 +119,7 @@ def _payload(**overrides):
     return payload
 
 
-def test_decision_signal_api_requires_session_when_admin_auth_enabled(tmp_path) -> None:
+def test_decision_signal_api_remains_public_when_admin_auth_enabled(tmp_path) -> None:
     old_env_file = os.environ.get("ENV_FILE")
     old_database_path = os.environ.get("DATABASE_PATH")
     env_path = tmp_path / ".env"
@@ -147,8 +147,7 @@ def test_decision_signal_api_requires_session_when_admin_auth_enabled(tmp_path) 
     try:
         client = TestClient(create_app(static_dir=Path(static_dir)))
         resp = client.get("/api/v1/decision-signals")
-        assert resp.status_code == 401
-        assert resp.json()["error"] == "unauthorized"
+        assert resp.status_code == 200
     finally:
         DatabaseManager.reset_instance()
         Config.reset_instance()

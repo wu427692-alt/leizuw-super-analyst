@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, Query, Body, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.deps import get_config_dep
@@ -98,6 +98,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+\u3400-\u9fff\s]+$")
+
+
+def _task_prefix(request: Optional[Request]) -> str:
+    user_id = int(getattr(getattr(request, "state", None), "user_id", 0) or 0)
+    return f"u{user_id}_" if user_id > 0 else ""
+
+
+def _assert_task_access(request: Optional[Request], task_id: str) -> None:
+    prefix = _task_prefix(request)
+    if prefix and not str(task_id).startswith(prefix):
+        raise api_error(404, "not_found", "任务不存在")
 
 
 def _get_task_trace_id(task: Any) -> Optional[str]:
@@ -242,6 +253,7 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
 )
 def trigger_analysis(
         request: AnalyzeRequest,
+        http_request: Request = None,
         config: Config = Depends(get_config_dep)
 ) -> Union[AnalysisResultResponse, JSONResponse]:
     """
@@ -309,15 +321,16 @@ def trigger_analysis(
                 "validation_error",
                 "同步模式仅支持单只股票分析，请使用 async_mode=true 进行批量分析",
             )
-        return _handle_sync_analysis(stock_codes[0], request)
+        return _handle_sync_analysis(stock_codes[0], request, task_id_prefix=_task_prefix(http_request))
 
     # Async mode submits one task per stock.
-    return _handle_async_analysis_batch(stock_codes, request)
+    return _handle_async_analysis_batch(stock_codes, request, task_id_prefix=_task_prefix(http_request))
 
 
 def _handle_async_analysis_batch(
     stock_codes: list,
-    request: AnalyzeRequest
+    request: AnalyzeRequest,
+    task_id_prefix: str = "",
 ) -> JSONResponse:
     """
     Handle asynchronous analysis requests, including batch submission.
@@ -348,6 +361,8 @@ def _handle_async_analysis_batch(
         force_refresh=request.force_refresh,
         notify=notify,
     )
+    if task_id_prefix:
+        submit_kwargs["task_id_prefix"] = task_id_prefix
     if report_language:
         submit_kwargs["report_language"] = report_language
     if skills is not None:
@@ -417,7 +432,8 @@ def _handle_async_analysis_batch(
 
 def _handle_sync_analysis(
     stock_code: str,
-    request: AnalyzeRequest
+    request: AnalyzeRequest,
+    task_id_prefix: str = "",
 ) -> AnalysisResultResponse:
     """
     处理同步分析请求
@@ -427,7 +443,7 @@ def _handle_sync_analysis(
     import uuid
     from src.services.analysis_service import AnalysisService
     
-    query_id = uuid.uuid4().hex
+    query_id = f"{task_id_prefix}{uuid.uuid4().hex}"
     
     try:
         service = AnalysisService()
@@ -495,6 +511,7 @@ def _handle_sync_analysis(
     description="提交一个后台大盘复盘任务，复用 CLI 的大盘复盘运行时装配并保存报告。该人工触发入口不按交易日检查跳过；接口内部仅提供进程内/单机防重，如多实例（多 Worker/多容器）部署，需结合外部幂等机制避免重复触发。",
 )
 def trigger_market_review(
+    http_request: Request = None,
     request: Optional[MarketReviewRequest] = Body(None),
     config: Config = Depends(get_config_dep),
 ) -> MarketReviewAccepted:
@@ -511,7 +528,7 @@ def trigger_market_review(
         raise api_error(409, "duplicate_market_review", "大盘复盘正在执行中，请稍后再试")
 
     try:
-        task_id = uuid.uuid4().hex
+        task_id = f"{_task_prefix(http_request)}{uuid.uuid4().hex}"
         logger.info(
             "[MarketReview] component=market_review action=submit trigger_source=api "
             "task_id=%s region=%s send_notification=%s",
@@ -559,6 +576,7 @@ def trigger_market_review(
     description="获取当前所有分析任务，可按状态筛选"
 )
 def get_task_list(
+    request: Request = None,
     status: Optional[str] = Query(
         None,
         description="筛选状态：pending, processing, completed, failed, cancel_requested, cancelled（支持逗号分隔多个）"
@@ -578,7 +596,10 @@ def get_task_list(
     task_queue = get_task_queue()
     
     # 获取所有任务
-    all_tasks = task_queue.list_all_tasks(limit=limit)
+    prefix = _task_prefix(request)
+    all_tasks = task_queue.list_all_tasks(limit=max(limit, 100 if prefix else limit))
+    if prefix:
+        all_tasks = [task for task in all_tasks if task.task_id.startswith(prefix)][:limit]
     
     # 状态筛选
     if status:
@@ -586,7 +607,11 @@ def get_task_list(
         all_tasks = [t for t in all_tasks if t.status.value in status_list]
     
     # 统计信息
-    stats = task_queue.get_task_stats()
+    stats = task_queue.get_task_stats() if not prefix else {
+        "total": len(all_tasks),
+        "pending": sum(task.status == TaskStatusEnum.PENDING for task in all_tasks),
+        "processing": sum(task.status == TaskStatusEnum.PROCESSING for task in all_tasks),
+    }
     
     # 转换为 Schema
     task_infos = [
@@ -631,7 +656,7 @@ def get_task_list(
     summary="任务状态 SSE 流",
     description="通过 Server-Sent Events 实时推送任务状态变化"
 )
-async def task_stream():
+async def task_stream(request: Request = None):
     """
     SSE 任务状态流
     
@@ -647,6 +672,8 @@ async def task_stream():
     Returns:
         StreamingResponse: SSE 事件流
     """
+    prefix = _task_prefix(request)
+
     async def event_generator():
         task_queue = get_task_queue()
         event_queue: asyncio.Queue = asyncio.Queue()
@@ -656,6 +683,8 @@ async def task_stream():
         
         # 发送当前进行中的任务
         pending_tasks = task_queue.list_pending_tasks()
+        if prefix:
+            pending_tasks = [task for task in pending_tasks if task.task_id.startswith(prefix)]
         for task in pending_tasks:
             yield _format_sse_event("task_created", task.to_dict())
         
@@ -667,7 +696,9 @@ async def task_stream():
                 try:
                     # 等待事件，超时发送心跳
                     event = await asyncio.wait_for(event_queue.get(), timeout=30)
-                    yield _format_sse_event(event["type"], event["data"])
+                    event_task_id = str((event.get("data") or {}).get("task_id") or "")
+                    if not prefix or event_task_id.startswith(prefix):
+                        yield _format_sse_event(event["type"], event["data"])
                 except asyncio.TimeoutError:
                     # 心跳
                     yield _format_sse_event("heartbeat", {
@@ -743,13 +774,14 @@ def _load_history_run_flow_by_query_id(
     summary="获取分析任务运行流",
     description="根据 task_id 查询任务数据流/信息流快照；活跃任务缺少诊断时返回骨架流。",
 )
-def get_task_run_flow(task_id: str) -> RunFlowSnapshot:
+def get_task_run_flow(task_id: str, request: Request = None) -> RunFlowSnapshot:
     """
     查询分析任务运行流。
 
     Active tasks are served from the in-memory task queue. Completed tasks try
     to hydrate from persisted history diagnostics using the same task_id/query_id.
     """
+    _assert_task_access(request, task_id)
     task_queue = get_task_queue()
     task = task_queue.get_task(task_id)
 
@@ -964,7 +996,7 @@ def _build_task_analysis_result(task: Any) -> AnalysisResultResponse:
     summary="查询分析任务状态",
     description="根据 task_id 查询单个任务的状态"
 )
-def get_analysis_status(task_id: str) -> TaskStatus:
+def get_analysis_status(task_id: str, request: Request = None) -> TaskStatus:
     """
     查询分析任务状态
     
@@ -980,6 +1012,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
         HTTPException: 404 - 任务不存在
     """
     # 1. 先从任务队列查询
+    _assert_task_access(request, task_id)
     task_queue = get_task_queue()
     task = task_queue.get_task(task_id)
     

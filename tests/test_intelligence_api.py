@@ -23,8 +23,14 @@ RSS_FIXTURE = b'<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0"><chan
 class IntelligenceApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temp_dir = tempfile.TemporaryDirectory()
+        self._previous_env_file = os.environ.get("ENV_FILE")
+        self._env_path = Path(self._temp_dir.name) / ".env"
+        self._env_path.write_text("ADMIN_AUTH_ENABLED=false\n", encoding="utf-8")
+        os.environ["ENV_FILE"] = str(self._env_path)
         os.environ["DATABASE_PATH"] = os.path.join(self._temp_dir.name, "api_intel.db")
         Config._instance = None
+        from src.auth import refresh_auth_state
+        refresh_auth_state()
         DatabaseManager.reset_instance()
         self._dns_patcher = patch(
             "src.services.intelligence_service.socket.getaddrinfo",
@@ -38,6 +44,12 @@ class IntelligenceApiTestCase(unittest.TestCase):
         DatabaseManager.reset_instance()
         Config._instance = None
         os.environ.pop("DATABASE_PATH", None)
+        if self._previous_env_file is None:
+            os.environ.pop("ENV_FILE", None)
+        else:
+            os.environ["ENV_FILE"] = self._previous_env_file
+        from src.auth import refresh_auth_state
+        refresh_auth_state()
         self._temp_dir.cleanup()
 
     def _mock_response(self):

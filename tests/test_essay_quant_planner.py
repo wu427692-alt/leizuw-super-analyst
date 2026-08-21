@@ -50,3 +50,19 @@ def test_natural_language_plan_is_bounded_and_code_is_valid_template():
     assert result["safety"]["confirmation_required"] is True
     assert "exec(" not in result["code"]
     compile(result["code"], "<quant-plan>", "exec")
+
+
+def test_natural_language_plan_removes_generic_corpus_source_query():
+    class GenericCorpusAnalyzer(FakeAnalyzer):
+        def _post_with_retry(self, payload):
+            return {"choices": [{"message": {"content": json.dumps({
+                "title": "全量小作文事件研究",
+                "source_query": "小作文",
+                "signal_direction": "bullish",
+                "lookback_days": 60,
+                "holding_periods": [5],
+            }, ensure_ascii=False)}}]}
+
+    planner = EssayQuantNaturalLanguagePlanner(analyzer=GenericCorpusAnalyzer(), service=FakeService())
+    result = planner.plan("回测最近60天全部看多小作文持有5个交易日")
+    assert result["rule"]["source_query"] == ""

@@ -129,6 +129,27 @@ def test_research_catalog_and_run_history_use_real_local_tables(quant, monkeypat
     assert quant.list_runs()["items"][0]["event_count"] == 1
 
 
+def test_each_research_method_has_its_own_template_and_execution_path(quant, monkeypatch):
+    monkeypatch.setattr("src.services.essay_quant_service.utc_naive_now", lambda: datetime(2026, 8, 10))
+    methods = quant.research_catalog()["methods"]
+
+    assert {item["key"] for item in methods} == {
+        "event_study", "multi_factor", "hybrid_intelligence", "institution_track", "portfolio",
+    }
+    assert len({item["template"]["strategy_type"] for item in methods}) == 5
+    assert all(item["used_data"] and item["engine"] and item["output"] for item in methods)
+
+    results = [
+        quant.run({**item["template"], "lookback_days": 30, "holding_periods": [5]}, refresh_prices=False, persist=False)
+        for item in methods
+    ]
+    assert len({result["method_analysis"]["selection_rule"] for result in results}) == 5
+    assert [result["rule"]["strategy_type"] for result in results] == [
+        "essay_event", "multi_factor", "hybrid_intelligence", "institution_track", "portfolio",
+    ]
+    assert all("selected_event_count" in result["method_analysis"] for result in results)
+
+
 def test_company_name_is_not_misclassified_as_research_group():
     note = ResearchNote(title="【东方电气】订单跟踪", content="公司经营更新", author_name="立秋")
     assert EssayQuantService._research_group(note) == "其他来源"
@@ -145,3 +166,101 @@ def test_raw_note_rejects_date_like_six_digit_false_symbol():
     mentions = EssayQuantService._raw_note_mentions(note, "bullish")
     assert all(item["ts_code"] != "260820.SZ" for item in mentions)
     assert any(item["ts_code"] == "301358.SZ" and item["name"] == "湖南裕能" for item in mentions)
+
+
+class _CrossSectionTushare:
+    available = True
+
+    def __init__(self):
+        self.calls = []
+
+    def query(self, api_name, *, params=None, fields=None):
+        self.calls.append((api_name, dict(params or {})))
+        if api_name == "trade_cal":
+            return {"rows": [
+                {"cal_date": "20260819", "is_open": 1},
+                {"cal_date": "20260820", "is_open": 1},
+            ]}
+        if api_name == "daily":
+            trade_date = params["trade_date"]
+            return {"rows": [
+                {"ts_code": "000001.SZ", "trade_date": trade_date, "open": 12.0,
+                 "high": 12.6, "low": 11.8, "close": 12.5, "pct_chg": 1.2,
+                 "vol": 1234.0, "amount": 5678.0},
+                # A cross-sectional response contains the whole market; the
+                # quant synchronizer must persist only its resolved universe.
+                {"ts_code": "600000.SH", "trade_date": trade_date, "open": 9.0,
+                 "high": 9.1, "low": 8.9, "close": 9.0, "pct_chg": 0.0,
+                 "vol": 100.0, "amount": 200.0},
+            ]}
+        if api_name == "index_daily":
+            return {"rows": [
+                {"ts_code": "000300.SH", "trade_date": "20260819", "open": 100.0,
+                 "high": 101.0, "low": 99.0, "close": 100.5, "pct_chg": 0.5,
+                 "vol": 1.0, "amount": 2.0},
+                {"ts_code": "000300.SH", "trade_date": "20260820", "open": 100.5,
+                 "high": 102.0, "low": 100.0, "close": 101.0, "pct_chg": 0.5,
+                 "vol": 1.0, "amount": 2.0},
+            ]}
+        raise AssertionError(f"unexpected Tushare API: {api_name}")
+
+
+def test_cross_section_refresh_updates_every_resolved_symbol_and_reports_honest_freshness(quant, monkeypatch):
+    monkeypatch.setenv("ESSAY_QUANT_RECENT_TRADE_DAYS", "2")
+    fake = _CrossSectionTushare()
+    quant.tushare = fake
+
+    target, refreshed_count, warnings = quant._hydrate_market_freshness(["000001.SZ"], "000300.SH")
+    assert target == date(2026, 8, 20)
+    assert refreshed_count == 1
+    assert warnings == []
+    assert [call[0] for call in fake.calls].count("daily") == 2
+    assert not any(call[0] == "daily" and "ts_code" in call[1] for call in fake.calls)
+
+    quant._target_price_date = target
+    quality = quant._price_freshness(
+        [{"symbol": "000001.SZ"}],
+        quant._price_map(["000001.SZ"], 60),
+    )
+    assert quality["price_target_date"] == "2026-08-20"
+    assert quality["price_freshness_ratio"] == 100.0
+    assert quality["current_price_symbol_count"] == 1
+    assert quality["stale_price_symbol_count"] == 0
+    with quant.db.get_session() as session:
+        refreshed = session.query(StockDaily).filter_by(code="000001", date=date(2026, 8, 20)).one()
+        assert refreshed.close == 12.5
+        assert refreshed.data_source == "tushare:daily:cross_section"
+        assert session.query(StockDaily).filter_by(code="600000", date=date(2026, 8, 20)).count() == 0
+
+
+def test_price_freshness_is_cross_sectional_not_global_max(quant):
+    quant._target_price_date = date(2026, 8, 20)
+    events = [{"symbol": "000001.SZ"}, {"symbol": "600000.SH"}]
+    prices = {
+        "000001": [{"date": date(2026, 8, 20)}],
+        "600000": [{"date": date(2026, 8, 19)}],
+    }
+    quality = quant._price_freshness(events, prices)
+    assert quality["price_latest_date"] == "2026-08-20"
+    assert quality["price_oldest_symbol_date"] == "2026-08-19"
+    assert quality["current_price_symbol_count"] == 1
+    assert quality["stale_price_symbol_count"] == 1
+    assert quality["price_freshness_ratio"] == 50.0
+    assert quality["freshness_status"] == "stale"
+
+
+def test_source_query_uses_terms_and_does_not_require_direction_word(quant, monkeypatch):
+    monkeypatch.setattr("src.services.essay_quant_service.utc_naive_now", lambda: datetime(2026, 8, 10))
+    result = quant.run(
+        {"source_query": "中信电子组 看多", "signal_direction": "bullish", "lookback_days": 30,
+         "holding_periods": [5], "transaction_cost_bps": 0},
+        refresh_prices=False,
+        persist=False,
+    )
+    assert result["summary"]["event_count"] == 1
+    assert result["events"][0]["research_group"] == "中信电子组"
+
+
+def test_source_query_ignores_generic_corpus_words():
+    assert EssayQuantService._source_query_terms("小作文 看多") == []
+    assert EssayQuantService._source_query_terms("研报观点 语料") == []

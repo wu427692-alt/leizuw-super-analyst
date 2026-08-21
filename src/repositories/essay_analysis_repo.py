@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy import and_, asc, case, desc, func, or_, select
 
 from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, utc_naive_now
+from src.utils.essay_analysis_quality import LOW_QUALITY_SUMMARY_MARKERS
 from src.utils.essay_topic_taxonomy import topic_search_terms
 
 
@@ -75,6 +76,15 @@ class EssayAnalysisRepository:
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
+
+    def cache_revision(self) -> Tuple[int, str]:
+        """Cheap token for invalidating aggregate caches after ingest/analysis."""
+        with self.db.get_session() as session:
+            latest_note_id = session.execute(select(func.max(ResearchNote.id))).scalar() or 0
+            latest_analysis_update = session.execute(
+                select(func.max(EssayAnalysisRecord.updated_at))
+            ).scalar()
+        return int(latest_note_id), latest_analysis_update.isoformat() if latest_analysis_update else ""
 
     def enqueue_recent(
         self,
@@ -246,6 +256,49 @@ class EssayAnalysisRepository:
                 row.status = "pending"
                 row.started_at = None
                 row.updated_at = utc_naive_now()
+            session.commit()
+            return len(rows)
+
+    def requeue_low_quality_completed(
+        self,
+        *,
+        model: str,
+        prompt_version: str,
+        limit: int = 5000,
+    ) -> int:
+        """Return placeholder summaries to the durable queue after a code upgrade.
+
+        This only targets completed rows whose summary is empty or matches a
+        known placeholder.  Legitimate low-confidence analysis is untouched.
+        """
+        safe_limit = max(1, min(int(limit), 50000))
+        quality_conditions = [
+            EssayAnalysisRecord.summary.is_(None),
+            func.length(func.trim(EssayAnalysisRecord.summary)) == 0,
+            *(EssayAnalysisRecord.summary.like(f"%{marker}%") for marker in LOW_QUALITY_SUMMARY_MARKERS),
+        ]
+        now = utc_naive_now()
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(EssayAnalysisRecord)
+                .where(
+                    EssayAnalysisRecord.status == "completed",
+                    or_(*quality_conditions),
+                )
+                .order_by(desc(EssayAnalysisRecord.completed_at), desc(EssayAnalysisRecord.id))
+                .limit(safe_limit)
+            ).scalars().all()
+            for row in rows:
+                row.status = "pending"
+                row.model = model
+                row.prompt_version = prompt_version
+                row.summary = None
+                row.error_message = "正在自动重新分析"
+                row.attempt_count = 0
+                row.started_at = None
+                row.completed_at = None
+                row.next_retry_at = None
+                row.updated_at = now
             session.commit()
             return len(rows)
 

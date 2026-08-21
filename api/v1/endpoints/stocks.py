@@ -379,10 +379,16 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
     description="返回当前 STOCK_LIST 配置中的所有股票代码。",
 )
 def get_watchlist(
+    request: Request = None,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> WatchlistResponse:
     try:
-        codes = _read_watchlist_codes(service)
+        user_id = int(getattr(getattr(request, "state", None), "user_id", 0) or 0)
+        if user_id > 0:
+            from src.services.user_account_service import UserAccountService
+            codes = UserAccountService().list_watchlist(user_id)
+        else:
+            codes = _read_watchlist_codes(service)
         return WatchlistResponse(stock_codes=codes, message=f"当前自选 {len(codes)} 只股票")
     except Exception as e:
         logger.error(f"获取自选队列失败: {e}", exc_info=True)
@@ -404,20 +410,41 @@ def get_watchlist(
     description="将指定股票代码加入 STOCK_LIST。",
 )
 def add_to_watchlist(
-    request: WatchlistRequest,
+    body: WatchlistRequest,
+    request: Request = None,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> WatchlistResponse:
     try:
-        validated = _validate_and_normalize_stock_code(request.stock_code)
-        codes = _read_watchlist_codes(service)
-        existing_keys = [_watchlist_match_key(c) for c in codes]
-        if _watchlist_match_key(validated) not in existing_keys:
-            codes.append(request.stock_code.strip())
-            _write_watchlist_codes(service, codes)
-            WatchlistBackfillWorker.get_instance().enqueue(validated, days=183)
-            from src.services.market_data_worker import MarketDataWorker
-            MarketDataWorker.get_instance().register_symbol(validated)
-        return WatchlistResponse(stock_codes=codes, message=f"已加入 {request.stock_code.strip()}")
+        validated = _validate_and_normalize_stock_code(body.stock_code)
+        user_id = int(getattr(getattr(request, "state", None), "user_id", 0) or 0)
+        global_codes = _read_watchlist_codes(service)
+        global_keys = [_watchlist_match_key(c) for c in global_codes]
+        is_new_global = _watchlist_match_key(validated) not in global_keys
+        if user_id > 0:
+            from src.services.user_account_service import UserAccountService
+            codes = UserAccountService().add_watchlist(
+                user_id, _watchlist_match_key(validated), body.stock_code.strip(),
+            )
+            # The collection pool is shared intentionally: users own membership,
+            # while one market-data worker can fetch the same symbol for everyone.
+            if is_new_global:
+                global_codes.append(body.stock_code.strip())
+                _write_watchlist_codes(service, global_codes)
+        else:
+            codes = global_codes
+            if is_new_global:
+                codes.append(body.stock_code.strip())
+                _write_watchlist_codes(service, codes)
+        if is_new_global:
+            try:
+                WatchlistBackfillWorker.get_instance().enqueue(validated, days=183)
+                from src.services.watchlist_announcement_sync_worker import WatchlistAnnouncementSyncWorker
+                WatchlistAnnouncementSyncWorker.get_instance().register_symbol(validated)
+                from src.services.market_data_worker import MarketDataWorker
+                MarketDataWorker.get_instance().register_symbol(validated)
+            except Exception as exc:  # config is already durable; watchdog repairs workers
+                logger.warning("自选股已加入，但后台同步唤醒失败 %s: %s", validated, type(exc).__name__)
+        return WatchlistResponse(stock_codes=codes, message=f"已加入 {body.stock_code.strip()}")
     except HTTPException:
         raise
     except Exception as e:
@@ -440,11 +467,17 @@ def add_to_watchlist(
     description="从 STOCK_LIST 中移除指定股票代码。",
 )
 def remove_from_watchlist(
-    request: WatchlistRequest,
+    body: WatchlistRequest,
+    request: Request = None,
     service: SystemConfigService = Depends(get_system_config_service),
 ) -> WatchlistResponse:
     try:
-        validated = _validate_and_normalize_stock_code(request.stock_code)
+        validated = _validate_and_normalize_stock_code(body.stock_code)
+        user_id = int(getattr(getattr(request, "state", None), "user_id", 0) or 0)
+        if user_id > 0:
+            from src.services.user_account_service import UserAccountService
+            codes = UserAccountService().remove_watchlist(user_id, _watchlist_match_key(validated))
+            return WatchlistResponse(stock_codes=codes, message=f"已移除 {body.stock_code.strip()}")
         codes = _read_watchlist_codes(service)
         existing_keys = [_watchlist_match_key(c) for c in codes]
         requested_key = _watchlist_match_key(validated)
@@ -452,9 +485,12 @@ def remove_from_watchlist(
             idx = existing_keys.index(requested_key)
             codes.pop(idx)
             _write_watchlist_codes(service, codes)
-            from src.services.market_data_worker import MarketDataWorker
-            MarketDataWorker.get_instance().unregister_symbol(validated)
-        return WatchlistResponse(stock_codes=codes, message=f"已移除 {request.stock_code.strip()}")
+            try:
+                from src.services.market_data_worker import MarketDataWorker
+                MarketDataWorker.get_instance().unregister_symbol(validated)
+            except Exception as exc:  # config is already durable; watchdog repairs workers
+                logger.warning("自选股已移除，但行情 worker 注销延后 %s: %s", validated, type(exc).__name__)
+        return WatchlistResponse(stock_codes=codes, message=f"已移除 {body.stock_code.strip()}")
     except HTTPException:
         raise
     except Exception as e:

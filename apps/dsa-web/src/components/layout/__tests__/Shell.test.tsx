@@ -70,7 +70,7 @@ describe('Shell', () => {
     expect(await screen.findByRole('menu', { name: '主题模式' })).toBeInTheDocument();
   });
 
-  it('shows a confirmation dialog before logout', async () => {
+  it('keeps the public shell open and links administration separately', () => {
     render(
       <MemoryRouter initialEntries={['/chat']}>
         <ThemeProvider>
@@ -81,10 +81,7 @@ describe('Shell', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '退出' }));
-
-    expect(await screen.findByRole('heading', { name: '退出登录' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '确认退出' }));
-    expect(mockLogout).toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: '管理员' })).toHaveAttribute('href', '/admin');
+    expect(screen.queryByRole('button', { name: '退出' })).not.toBeInTheDocument();
   });
 });

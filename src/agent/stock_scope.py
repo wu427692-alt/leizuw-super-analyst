@@ -131,6 +131,20 @@ def extract_stock_codes(text: str) -> List[str]:
         for match in _LOWERCASE_TICKER_PATTERN.finditer(text):
             _append_candidate(candidates, match.group(1), text)
 
+    # Users naturally ask with Chinese stock names ("分析华懋科技") rather
+    # than tickers.  Reuse the same generated index as frontend autocomplete
+    # and put exact name matches through the normal scope guard.
+    if not candidates:
+        try:
+            from src.data.stock_index_loader import resolve_stock_mentions
+
+            for item in resolve_stock_mentions(text, limit=5):
+                _append_candidate(candidates, str(item.get("stock_code") or ""), text)
+        except Exception:
+            # Scope extraction must remain fail-open when the optional index cache
+            # is temporarily unavailable during startup.
+            pass
+
     return candidates
 
 
@@ -194,26 +208,25 @@ def resolve_stock_scope(
         current_code = ""
 
     if not current_code:
-        if invalid_context_code:
-            candidates = extract_stock_codes(message_text)
-            allowed = set(candidates)
-            expected = candidates[0] if len(candidates) == 1 else ""
-            effective_context = dict(original_context)
-            mode = "switch" if expected else ("compare" if len(candidates) > 1 else "maintain")
-            if expected:
-                effective_context["stock_code"] = expected
-                effective_context["stock_name"] = ""
-            return StockScopeResolution(
-                effective_context=_with_skills(effective_context, skills),
-                stock_scope=StockScope(
+        candidates = extract_stock_codes(message_text)
+        allowed = set(candidates)
+        expected = candidates[0] if len(candidates) == 1 else ""
+        effective_context = dict(original_context)
+        mode = "switch" if expected else ("compare" if len(candidates) > 1 else "maintain")
+        if expected:
+            effective_context["stock_code"] = expected
+            effective_context["stock_name"] = ""
+        return StockScopeResolution(
+            effective_context=_with_skills(effective_context, skills),
+            stock_scope=(
+                StockScope(
                     expected_stock_code=expected,
                     allowed_stock_codes=allowed,
                     mode=mode,
-                ),
-            )
-        return StockScopeResolution(
-            effective_context=_with_skills(original_context, skills),
-            stock_scope=None,
+                )
+                if candidates or invalid_context_code
+                else None
+            ),
         )
 
     candidates = extract_stock_codes(message_text)

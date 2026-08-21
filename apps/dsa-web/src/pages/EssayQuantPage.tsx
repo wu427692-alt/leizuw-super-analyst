@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity, Archive, BarChart3, Blocks, Bot, Braces, CheckCircle2, ChevronRight,
@@ -14,7 +14,7 @@ import { essayQuantApi } from '../api/essayQuant';
 import { AppPage, EmptyState } from '../components/common';
 import type {
   EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan, EssayQuantPrecomputeStatus,
-  EssayQuantRule, EssayQuantRunHistory, QuantMetric,
+  EssayQuantMethod, EssayQuantRule, EssayQuantRunHistory, QuantMetric,
 } from '../types/essayQuant';
 import './EssayQuantPage.css';
 
@@ -49,6 +49,13 @@ const pct = (value?: number | null, digits = 1) => value == null ? '—' : `${va
 const compact = (value?: number | null) => value == null ? '—' : new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 const tone = (value?: number | null) => value == null ? 'quant-muted' : value >= 0 ? 'quant-positive' : 'quant-negative';
 
+const buildMethodRule = (method: EssayQuantMethod): EssayQuantRule => ({
+  ...DEFAULT_RULE,
+  ...method.template,
+  name: method.template.name || method.name,
+  strategyType: method.template.strategyType || (method.key === 'event_study' ? 'essay_event' : method.key),
+});
+
 function SectionTitle({ icon: Icon, title, note, aside }: { icon: typeof Activity; title: string; note?: string; aside?: React.ReactNode }) {
   return <div className="quant-section-head"><div className="quant-section-title"><Icon aria-hidden="true" /><div><h2>{title}</h2>{note ? <p>{note}</p> : null}</div></div>{aside}</div>;
 }
@@ -59,9 +66,31 @@ function LoadingScreen({ progress }: { progress: number }) {
   return <div className="quant-loading" role="status"><RadioTower /><h1>正在装载量化研究工作台</h1><p>读取研究方法、真实数据资产、最近运行和后台状态</p><div><span style={{ width: `${progress}%` }} /></div><strong>{progress}%</strong></div>;
 }
 
+function StableChart({ children }: { children: React.ReactElement }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const measure = () => {
+      const next = { width: Math.floor(host.clientWidth), height: Math.floor(host.clientHeight) };
+      if (next.width > 0 && next.height > 0) {
+        setSize(current => current.width === next.width && current.height === next.height ? current : next);
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={hostRef} className="quant-chart-host">{size.width > 0 && size.height > 0 ? <ResponsiveContainer width={size.width} height={size.height}>{children}</ResponsiveContainer> : null}</div>;
+}
+
 export default function EssayQuantPage() {
   const location = useLocation(); const navigate = useNavigate();
-  const active = (new URLSearchParams(location.search).get('section') || location.pathname.split('/')[2] || 'overview') as typeof NAV[number][0];
+  const searchParams = new URLSearchParams(location.search);
+  const active = (searchParams.get('section') || location.pathname.split('/')[2] || 'overview') as typeof NAV[number][0];
+  const requestedMethodKey = searchParams.get('method');
   const [data, setData] = useState<EssayQuantDashboard | null>(null);
   const [catalog, setCatalog] = useState<EssayQuantCatalog | null>(null);
   const [history, setHistory] = useState<EssayQuantRunHistory>({ items: [], total: 0 });
@@ -87,10 +116,31 @@ export default function EssayQuantPage() {
     if (failed) setMessage(`${failed} 个后台模块尚未就绪，页面已保留其余真实数据；可稍后重试。`);
     window.setTimeout(() => setLoading(false), 160);
   }, []);
-  useEffect(() => { void load(); document.title = '量化回测与数据利用 - DSA'; }, [load]);
+  const refreshLive = useCallback(async () => {
+    const [precomputeJob, dashboardJob] = await Promise.allSettled([
+      essayQuantApi.precomputeStatus(),
+      active === 'overview' ? essayQuantApi.dashboard() : Promise.resolve(null),
+    ] as const);
+    if (precomputeJob.status === 'fulfilled') setPrecompute(precomputeJob.value);
+    if (dashboardJob.status === 'fulfilled' && dashboardJob.value) setData(dashboardJob.value);
+  }, [active]);
+  useEffect(() => {
+    void load(); document.title = '量化回测与数据利用 - DSA';
+  }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => void refreshLive(), 30_000);
+    const onVisibility = () => { if (document.visibilityState === 'visible') void refreshLive(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility); };
+  }, [refreshLive]);
+  useEffect(() => {
+    if (!catalog || !requestedMethodKey) return;
+    const method = catalog.methods.find(item => item.key === requestedMethodKey);
+    if (method) setRule(buildMethodRule(method));
+  }, [catalog, requestedMethodKey]);
 
   const run = async (target = rule) => {
-    setRunning(true); setMessage('正在补齐行情、聚类事件并执行稳健性检验…');
+    setRunning(true); setMessage('正在读取本地最新行情、聚类事件并执行稳健性检验…');
     try { const result = await essayQuantApi.run(target); setData(result); setRule({ ...DEFAULT_RULE, ...result.rule }); setHistory(await essayQuantApi.runs()); navigate('/essay-quant?section=results'); setMessage(`研究完成：${result.summary.matureEventCount} 个到期有效样本，结果已保存。`); }
     catch (error) { setMessage(error instanceof Error ? error.message : '回测执行失败'); }
     finally { setRunning(false); }
@@ -116,34 +166,40 @@ export default function EssayQuantPage() {
   const primary = Math.max(...(rule.holdingPeriods.length ? rule.holdingPeriods : [20]));
   const metric = (period: number, excess = false): QuantMetric | undefined => (excess ? data?.summary.excessMetrics : data?.summary.metrics)?.find(item => item.period === period);
   const portfolioChart = useMemo(() => { let peak = 0; return (data?.portfolio.curve ?? []).map(item => { const value = (item.value - 1) * 100; peak = Math.max(peak, item.value); return { ...item, value, drawdown: peak ? (item.value / peak - 1) * 100 : 0 }; }); }, [data]);
+  const freshness = data?.dataQuality.priceFreshnessRatio ?? 0;
+  const activeMethod = catalog?.methods.find(item => (
+    item.template.strategyType || (item.key === 'event_study' ? 'essay_event' : item.key)
+  ) === rule.strategyType) ?? null;
 
   if (loading) return <AppPage className="aurora-workbench max-w-[1720px] px-3 py-3"><LoadingScreen progress={progress} /></AppPage>;
   return <AppPage className="aurora-workbench max-w-[1760px] px-2 pb-8 pt-2 md:px-3"><div className="essay-quant-terminal">
-    <header className="quant-header"><div><span className="quant-eyebrow"><FlaskConical /> QUANT RESEARCH OS</span><h1>量化回测与数据利用</h1><p>把非结构化情报、行情、基本面和资金数据变成可复现、可解释、可质疑的研究结果。</p></div><div className="quant-header-actions"><Status ok={!precompute?.dirty && !precompute?.computing}>{precompute?.computing ? '机构基线计算中' : precompute?.dirty ? '等待增量重算' : '机构基线已就绪'}</Status><button onClick={() => void load()}><RadioTower />刷新数据</button></div></header>
+    <header className="quant-header"><div><span className="quant-eyebrow"><FlaskConical /> QUANT RESEARCH OS</span><h1>量化回测与数据利用</h1><p>把非结构化情报、行情、基本面和资金数据变成可复现、可解释、可质疑的研究结果。</p></div><div className="quant-header-actions"><Status ok={!precompute?.dirty && !precompute?.computing}>{precompute?.computing ? '机构基线计算中' : precompute?.dirty ? '等待增量重算' : '机构基线已就绪'}</Status><Status ok={freshness >= 98}>行情 {data?.dataQuality.priceTargetDate || '检测中'} · {freshness.toFixed(1)}%</Status><span className="quant-auto-sync"><RadioTower />自动同步</span></div></header>
     <nav className="quant-tabs" aria-label="量化研究栏目">{NAV.map(([key, label, Icon]) => <button key={key} className={active === key ? 'is-active' : ''} onClick={() => navigate(key === 'overview' ? '/essay-quant' : `/essay-quant?section=${key}`)}><Icon />{label}</button>)}</nav>
     {message ? <div className="quant-message" aria-live="polite">{running ? <LoaderCircle className="is-spinning" /> : <Activity />}{message}</div> : null}
-    {active === 'overview' && <Overview catalog={catalog} data={data} onMethod={(key) => { setRule(current => ({ ...current, strategyType: key === 'event_study' ? 'essay_event' : key })); navigate('/essay-quant?section=builder'); }} onNatural={() => navigate('/essay-quant?section=natural-language')} />}
-    {active === 'builder' && <Builder rule={rule} rules={rules} running={running} setRule={setRule} onRun={() => void run()} onSave={() => void save()} />}
+    {data && freshness < 98 ? <div className="quant-message is-warning"><TriangleAlert />当前仅 {data.dataQuality.currentPriceSymbolCount ?? 0}/{data.dataQuality.resolvedSymbolCount ?? 0} 个量化标的覆盖目标交易日，后台正在自动补齐；历史结果仍可查看。</div> : null}
+    {active === 'overview' && <Overview catalog={catalog} data={data} onMethod={(method) => { setRule(buildMethodRule(method)); navigate(`/essay-quant?section=builder&method=${encodeURIComponent(method.key)}`); }} onNatural={() => navigate('/essay-quant?section=natural-language')} />}
+    {active === 'builder' && <Builder method={activeMethod} rule={rule} rules={rules} running={running} setRule={setRule} onRun={() => void run()} onSave={() => void save()} />}
     {active === 'natural-language' && <NaturalLanguage prompt={prompt} setPrompt={setPrompt} plan={plan} running={running} onGenerate={() => void generatePlan()} onExecute={() => void executePlan()} />}
-    {active === 'results' && <Results data={data} primary={primary} metric={metric} portfolioChart={portfolioChart} onBuilder={() => navigate('/essay-quant?section=builder')} />}
+    {active === 'results' && <Results data={data} primary={primary} metric={metric} portfolioChart={portfolioChart} onBuilder={() => navigate(`/essay-quant?section=builder${activeMethod ? `&method=${encodeURIComponent(activeMethod.key)}` : ''}`)} />}
     {active === 'data' && <DataAssets catalog={catalog} data={data} />}
     {active === 'history' && <RunHistory history={history} />}
     <footer className="quant-footer"><ShieldCheck /> 历史结果不构成投资建议；研究结论必须结合样本外检验、成交约束和数据截止时间解释。</footer>
   </div></AppPage>;
 }
 
-function Overview({ catalog, data, onMethod, onNatural }: { catalog: EssayQuantCatalog | null; data: EssayQuantDashboard | null; onMethod: (key: string) => void; onNatural: () => void }) {
+function Overview({ catalog, data, onMethod, onNatural }: { catalog: EssayQuantCatalog | null; data: EssayQuantDashboard | null; onMethod: (method: EssayQuantMethod) => void; onNatural: () => void }) {
   return <main className="quant-page"><section className="quant-pipeline">{PIPELINE.map(([title, note, Icon], index) => <div key={title} className="quant-pipeline-step"><span>{index + 1}</span><Icon /><div><strong>{title}</strong><p>{note}</p><Status ok={index < 2}>{index < 2 ? '数据已连接' : index === 2 ? '等待配置' : '等待运行'}</Status></div>{index < PIPELINE.length - 1 ? <ChevronRight className="quant-pipe-arrow" /> : null}</div>)}</section>
-    <div className="quant-overview-grid"><section className="quant-panel quant-methods"><SectionTitle icon={Layers3} title="研究方法" note="每个入口都写清楚目的、使用的数据和输出，不再让你猜按钮用途。" /><div className="quant-method-grid">{(catalog?.methods ?? []).map((method, index) => { const Icon = [Target, Blocks, Sparkles, RadioTower, CircleDollarSign][index] ?? FlaskConical; return <article key={method.key}><Icon /><h3>{method.name}</h3><small>目的</small><p>{method.purpose}</p><small>输出</small><p>{method.output}</p><button onClick={() => onMethod(method.key)}>新建研究<ChevronRight /></button></article>; })}</div></section>
+    <div className="quant-overview-grid"><section className="quant-panel quant-methods"><SectionTitle icon={Layers3} title="研究方法" note="五个入口分别载入独立样本规则、执行逻辑和专属结果，不再共用同一个默认策略。" /><div className="quant-method-grid">{(catalog?.methods ?? []).map((method, index) => { const Icon = [Target, Blocks, Sparkles, RadioTower, CircleDollarSign][index] ?? FlaskConical; return <article key={method.key}><Icon /><h3>{method.name}</h3><small>研究目的</small><p>{method.purpose}</p><small>使用数据</small><div className="quant-method-data">{method.usedData.map(item => <span key={item}>{item}</span>)}</div><small>执行方法</small><p>{method.engine}</p><small>专属输出</small><p>{method.output}</p><button onClick={() => onMethod(method)}>进入{method.name}<ChevronRight /></button></article>; })}</div></section>
       <section className="quant-panel quant-natural-card"><SectionTitle icon={Bot} title="自然语言回测" note="描述研究想法，模型负责拆任务；执行仍走安全白名单引擎。" /><blockquote>“筛选近30日首次被机构提及、盈利预期上调的股票，持有20日并计算超额收益。”</blockquote><ol><li>生成结构化假设与规则</li><li>显示受约束可复现代码</li><li>确认后执行并保存快照</li></ol><button className="quant-primary" onClick={onNatural}><Sparkles />打开自然语言工作台</button></section>
       <section className="quant-panel quant-assets-preview"><SectionTitle icon={Database} title="数据资产实况" note="以下数量和时间直接读取本地数据库。" aside={<Status ok>{catalog?.assets.filter(item => item.status === 'ready').length ?? 0} 个可用</Status>} /><table><thead><tr><th>数据集</th><th>本地数据</th><th>最近更新</th><th>可用于</th><th>状态</th></tr></thead><tbody>{(catalog?.assets ?? []).map(item => <tr key={item.key}><td>{item.name}</td><td className="mono">{compact(item.count)}</td><td className="mono">{item.latestAt?.slice(0, 16) || '—'}</td><td>{item.usage}</td><td><Status ok={item.status === 'ready'}>{item.status === 'ready' ? '可用' : item.status === 'empty' ? '暂无数据' : '待接入'}</Status></td></tr>)}</tbody></table></section>
       <section className="quant-panel quant-last-run"><SectionTitle icon={BarChart3} title="最近一次研究" note={data?.generatedAt ? `运行于 ${new Date(data.generatedAt).toLocaleString('zh-CN')}` : '等待运行'} />{data ? <div className="quant-mini-results"><div><small>有效事件</small><strong>{data.summary.eventCount}</strong><span>到期 {data.summary.matureEventCount}</span></div><div><small>平均超额</small><strong className={tone(data.robustness?.averageExcessReturn)}>{pct(data.robustness?.averageExcessReturn, 2)}</strong><span>95% CI {n(data.robustness?.confidenceInterval95?.[0], 2)} ~ {n(data.robustness?.confidenceInterval95?.[1], 2)}</span></div><div><small>重复信号过滤</small><strong>{data.dataQuality.duplicateEventCount ?? 0}</strong><span>{data.rule.dedupeWindowDays} 日聚类窗口</span></div><div><small>交易成本</small><strong>{data.rule.transactionCostBps}bp</strong><span>已从个股收益扣除</span></div></div> : <EmptyState title="等待首次运行" description="从研究方法或自然语言回测开始。" />}</section>
     </div></main>;
 }
 
-function Builder({ rule, rules, running, setRule, onRun, onSave }: { rule: EssayQuantRule; rules: EssayQuantRule[]; running: boolean; setRule: (rule: EssayQuantRule) => void; onRun: () => void; onSave: () => void }) {
+function Builder({ method, rule, rules, running, setRule, onRun, onSave }: { method: EssayQuantMethod | null; rule: EssayQuantRule; rules: EssayQuantRule[]; running: boolean; setRule: (rule: EssayQuantRule) => void; onRun: () => void; onSave: () => void }) {
   const update = <K extends keyof EssayQuantRule>(key: K, value: EssayQuantRule[K]) => setRule({ ...rule, [key]: value });
   return <main className="quant-page quant-builder-page"><section className="quant-panel"><SectionTitle icon={SlidersHorizontal} title="策略工坊" note="按信号、样本、交易和验证四步配置；右侧随时显示完整研究定义。" aside={<div className="quant-action-row"><select aria-label="载入保存规则" value={rule.id ?? ''} onChange={event => setRule(rules.find(item => item.id === Number(event.target.value)) ?? DEFAULT_RULE)}><option value="">新建规则</option>{rules.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={onSave} disabled={running}><Save />保存</button><button className="quant-primary" onClick={onRun} disabled={running}><Play />{running ? '执行中' : '运行研究'}</button></div>} />
+    {method ? <section className="quant-method-context"><div><span>当前方法</span><h2>{method.name}</h2><p>{method.purpose}</p></div><dl><div><dt>真实数据</dt><dd>{method.usedData.join(' · ')}</dd></div><div><dt>执行逻辑</dt><dd>{method.engine}</dd></div><div><dt>专属输出</dt><dd>{method.output}</dd></div></dl></section> : null}
     <div className="quant-builder-grid"><div className="quant-form-stack"><fieldset><legend><span>1</span>定义信号</legend><label>研究名称<input value={rule.name} onChange={event => update('name', event.target.value)} /></label><div className="quant-form-row"><label>机构 / 来源关键词<input value={rule.sourceQuery} onChange={event => update('sourceQuery', event.target.value)} placeholder="空白 = 全部来源" /></label><label>观点方向<select value={rule.signalDirection} onChange={event => update('signalDirection', event.target.value as EssayQuantRule['signalDirection'])}><option value="bullish">看多</option><option value="bearish">看空</option><option value="all">全部</option></select></label></div><label className="quant-toggle"><input type="checkbox" checked={rule.rawNotePolicy === 'include'} onChange={event => update('rawNotePolicy', event.target.checked ? 'include' : 'exclude')} /><span><strong>纳入未做 AI 分析的原始语料</strong><small>仅适合探索。默认关闭，避免关键词展开把事件样本放大。</small></span></label></fieldset>
       <fieldset><legend><span>2</span>样本筛选</legend><div className="quant-form-row three"><label>回看周期<select value={rule.lookbackDays} onChange={event => update('lookbackDays', Number(event.target.value))}><option value={90}>90日</option><option value={180}>180日</option><option value={365}>1年</option><option value={730}>2年</option></select></label><label>最低重要度<input type="number" min="0" max="100" value={rule.minImportance} onChange={event => update('minImportance', Number(event.target.value))} /></label><label>最低置信度<input type="number" min="0" max="1" step="0.1" value={rule.minConfidence} onChange={event => update('minConfidence', Number(event.target.value))} /></label></div><div className="quant-form-row"><label>重复信号聚类窗口<input type="number" min="0" max="30" value={rule.dedupeWindowDays} onChange={event => update('dedupeWindowDays', Number(event.target.value))} /><small>同股、同机构、同方向在窗口内只计一次</small></label><label className="quant-toggle compact"><input type="checkbox" checked={rule.firstMentionOnly} onChange={event => update('firstMentionOnly', event.target.checked)} /><span><strong>只看首次提及</strong><small>{rule.firstMentionWindowDays} 日内无同股观点</small></span></label></div></fieldset>
       <fieldset><legend><span>3</span>交易约束</legend><div className="quant-form-row three"><label>持有期<div className="quant-checks">{[5, 10, 20, 30, 60].map(period => <button type="button" key={period} className={rule.holdingPeriods.includes(period) ? 'is-active' : ''} onClick={() => update('holdingPeriods', rule.holdingPeriods.includes(period) ? rule.holdingPeriods.filter(item => item !== period) : [...rule.holdingPeriods, period].sort((a, b) => a - b).slice(0, 3))}>{period}日</button>)}</div></label><label>交易成本（bp）<input type="number" min="0" max="200" value={rule.transactionCostBps} onChange={event => update('transactionCostBps', Number(event.target.value))} /></label><label>组合股票数<input type="number" min="2" max="30" value={rule.portfolioSize} onChange={event => update('portfolioSize', Number(event.target.value))} /></label></div></fieldset>
@@ -156,15 +212,30 @@ function NaturalLanguage({ prompt, setPrompt, plan, running, onGenerate, onExecu
   {plan ? <section className="quant-panel quant-plan"><SectionTitle icon={ClipboardCheck} title={plan.plan.title} note={plan.plan.hypothesis} aside={<button className="quant-primary" onClick={onExecute} disabled={running}><Play />确认并执行</button>} /><div className="quant-plan-grid"><div><h3>结构化研究任务</h3><dl><dt>股票范围</dt><dd>{plan.plan.universe}</dd><dt>数据源</dt><dd>{plan.plan.signalSources.join(' / ')}</dd><dt>持有期</dt><dd>{plan.rule.holdingPeriods.join('、')} 日</dd><dt>成本 / 去重</dt><dd>{plan.rule.transactionCostBps}bp / {plan.rule.dedupeWindowDays} 日</dd><dt>验证</dt><dd>{plan.rule.validationMethod}</dd></dl><h4>研究假设</h4><ul>{plan.plan.assumptions.length ? plan.plan.assumptions.map(item => <li key={item}>{item}</li>) : <li>模型未补充额外假设</li>}</ul>{plan.plan.unsupportedRequests.length ? <div className="quant-warning"><TriangleAlert /><div><strong>暂不支持</strong>{plan.plan.unsupportedRequests.map(item => <p key={item}>{item}</p>)}</div></div> : null}</div><div className="quant-code"><div><Braces />可复现模板代码 <span>待你确认后执行</span></div><pre>{plan.code}</pre></div></div></section> : null}</main>;
 }
 
+function MethodResultFocus({ data }: { data: EssayQuantDashboard }) {
+  const analysis = data.methodAnalysis;
+  if (!analysis) return null;
+  const strategy = analysis.strategyType;
+  return <section className="quant-panel quant-method-result"><SectionTitle icon={Target} title={`${analysis.name} · 专属结果`} note={analysis.selectionRule} aside={<span className="quant-method-count">{analysis.selectedEventCount} / {analysis.sourceEventCount} 入选</span>} />
+    <div className="quant-method-diagnostics">{analysis.diagnostics.map(item => <article key={item.label}><small>{item.label}</small><strong>{item.value ?? '—'}</strong><p>{item.note}</p></article>)}</div>
+    {strategy === 'essay_event' ? <div className="quant-method-output"><h3>多事件窗验证</h3>{data.summary.excessMetrics.map(item => <p key={item.period}><span>{item.period}日</span><strong className={tone(item.averageReturn)}>{pct(item.averageReturn, 2)}</strong><small>{item.sampleCount}个到期样本 · 胜率 {pct(item.winRate)}</small></p>)}</div> : null}
+    {strategy === 'multi_factor' ? <div className="quant-method-output"><h3>因子高低组差</h3>{data.factorAnalysis.map(item => <p key={item.factor}><span>{item.label}</span><strong className={tone(item.highLowSpread)}>{pct(item.highLowSpread, 2)}</strong><small>高分组减低分组</small></p>)}</div> : null}
+    {strategy === 'hybrid_intelligence' ? <div className="quant-method-output"><h3>共振信号</h3>{data.events.slice(0, 8).map(item => <p key={`${item.topicId}-${item.symbol}`}><span>{item.stockName}</span><strong>{item.stance === 'bearish' ? '看空 × 下行' : '看多 × 上行'}</strong><small>事前MA5 {n(item.preEventMa5, 2)} / MA20 {n(item.preEventMa20, 2)}</small></p>)}</div> : null}
+    {strategy === 'institution_track' ? <div className="quant-method-output"><h3>机构校正排名</h3>{data.researchGroupRankings.slice(0, 8).map(item => <p key={item.researchGroup}><span>{item.researchGroup}</span><strong>{pct(item.adjustedWinRate)}</strong><small>{item.matureCount}个到期样本 · 超额 {pct(item.averageExcessReturn, 2)}</small></p>)}</div> : null}
+    {strategy === 'portfolio' ? <div className="quant-method-output"><h3>实际组合候选</h3>{data.portfolio.components.map(item => <p key={item.symbol}><span>{item.stockName}</span><strong>{item.weight.toFixed(1)}%</strong><small>{item.symbol} · {item.trigger}</small></p>)}</div> : null}
+  </section>;
+}
+
 function Results({ data, primary, metric, portfolioChart, onBuilder }: { data: EssayQuantDashboard | null; primary: number; metric: (period: number, excess?: boolean) => QuantMetric | undefined; portfolioChart: Array<Record<string, string | number>>; onBuilder: () => void }) {
   if (!data) return <main className="quant-page"><section className="quant-panel"><EmptyState title="还没有回测结果" description="先在策略工坊或自然语言工作台运行一个研究任务。" /><button className="quant-primary centered" onClick={onBuilder}>进入策略工坊</button></section></main>;
   const ci = data.robustness?.confidenceInterval95 ?? [null, null];
   return <main className="quant-page quant-results-page"><section className="quant-kpis"><div><small>有效事件 / 到期</small><strong>{data.summary.eventCount} <span>/ {data.summary.matureEventCount}</span></strong><p>AI语料口径：{data.rule.rawNotePolicy === 'exclude' ? '严格' : '探索'}</p></div><div><small>{primary}日平均超额</small><strong className={tone(data.robustness?.averageExcessReturn)}>{pct(data.robustness?.averageExcessReturn, 2)}</strong><p>95% CI {n(ci[0], 2)}% ~ {n(ci[1], 2)}%</p></div><div><small>t 值 / 盈亏比</small><strong>{n(data.robustness?.tStat, 2)} <span>/ {n(data.robustness?.payoffRatio, 2)}</span></strong><p>正收益率 {pct(data.robustness?.positiveRate)}</p></div><div><small>最大回撤</small><strong className="quant-negative">{pct(data.portfolio.maxDrawdown, 2)}</strong><p>组合年化 {pct(data.portfolio.annualizedReturn, 2)}</p></div><div><small>样本质量</small><strong>{data.dataQuality.duplicateEventCount ?? 0}</strong><p>重复信号已过滤 · 成本 {data.rule.transactionCostBps}bp</p></div></section>
-    <div className="quant-result-grid"><section className="quant-panel span-2"><SectionTitle icon={LineChartIcon} title="组合收益与回撤" note="收益曲线与水下回撤共享时间轴；只展示真实运行结果。" /><div className="quant-chart tall"><ResponsiveContainer><ComposedChart data={portfolioChart}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="date" tickFormatter={value => String(value).slice(5)} /><YAxis yAxisId="left" tickFormatter={value => `${value}%`} /><YAxis yAxisId="right" orientation="right" tickFormatter={value => `${value}%`} /><Tooltip formatter={(value) => `${n(Number(value), 2)}%`} /><Legend/><ReferenceLine yAxisId="left" y={0} stroke="var(--quant-muted)"/><Line yAxisId="left" type="monotone" dataKey="value" name="组合收益" stroke="var(--quant-lime)" strokeWidth={2} dot={false}/><Bar yAxisId="right" dataKey="drawdown" name="回撤" fill="var(--quant-risk)" opacity={.45}/></ComposedChart></ResponsiveContainer></div></section>
-      <section className="quant-panel"><SectionTitle icon={Archive} title="收益分布与置信区间" note={`主观察窗 ${primary} 日，样本 ${data.robustness?.sampleCount ?? 0}`} /><div className="quant-chart"><ResponsiveContainer><BarChart data={data.robustness?.distribution ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="midpoint" tickFormatter={value => `${n(Number(value), 0)}%`} /><YAxis /><Tooltip labelFormatter={value => `${n(Number(value), 2)}%`} /><Bar dataKey="count" name="样本数" fill="var(--quant-cyan)" /></BarChart></ResponsiveContainer></div><div className="quant-ci">95% 自助法区间 <strong>{n(ci[0], 2)}% ~ {n(ci[1], 2)}%</strong></div></section>
-      <section className="quant-panel"><SectionTitle icon={Activity} title="事件后路径" note="每个点只使用已经走满该交易日的事件。" /><div className="quant-chart"><ResponsiveContainer><LineChart data={data.eventCurve}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="day"/><YAxis tickFormatter={value => `${value}%`}/><Tooltip formatter={value => `${n(Number(value), 2)}%`}/><Legend/><ReferenceLine y={0} stroke="var(--quant-muted)"/><Line dataKey="strategy" name="事件策略" stroke="var(--quant-lime)" dot={false}/><Line dataKey="benchmark" name="市场基准" stroke="var(--quant-cyan)" dot={false}/></LineChart></ResponsiveContainer></div></section>
-      <section className="quant-panel"><SectionTitle icon={SlidersHorizontal} title="成本敏感性" note="观察结论是否依赖过低交易成本假设。" /><div className="quant-chart"><ResponsiveContainer><BarChart data={data.robustness?.sensitivity ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="label"/><YAxis tickFormatter={value => `${value}%`}/><Tooltip formatter={value => `${n(Number(value), 2)}%`}/><ReferenceLine y={0} stroke="var(--quant-muted)"/><Bar dataKey="averageExcessReturn" name="平均超额收益">{(data.robustness?.sensitivity ?? []).map(row => <Cell key={row.label} fill={row.averageExcessReturn >= 0 ? 'var(--quant-lime)' : 'var(--quant-risk)'} />)}</Bar></BarChart></ResponsiveContainer></div></section>
-      <section className="quant-panel span-2"><SectionTitle icon={History} title="时间队列稳定性" note="按事件月份展示样本量、平均超额和胜率；用于识别只在单一行情阶段有效的策略。" /><div className="quant-chart"><ResponsiveContainer><ComposedChart data={data.robustness?.cohorts ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="period"/><YAxis yAxisId="left" tickFormatter={value => `${value}%`}/><YAxis yAxisId="right" orientation="right"/><Tooltip/><Legend/><ReferenceLine yAxisId="left" y={0} stroke="var(--quant-muted)"/><Bar yAxisId="right" dataKey="sampleCount" name="样本数" fill="var(--quant-panel-3)"/><Line yAxisId="left" dataKey="averageExcessReturn" name="平均超额" stroke="var(--quant-lime)"/><Line yAxisId="left" dataKey="winRate" name="胜率" stroke="var(--quant-cyan)"/></ComposedChart></ResponsiveContainer></div></section>
+    <MethodResultFocus data={data} />
+    <div className="quant-result-grid"><section className="quant-panel span-2"><SectionTitle icon={LineChartIcon} title="组合收益与回撤" note="收益曲线与水下回撤共享时间轴；只展示真实运行结果。" /><div className="quant-chart tall"><StableChart><ComposedChart data={portfolioChart}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="date" tickFormatter={value => String(value).slice(5)} /><YAxis yAxisId="left" tickFormatter={value => `${value}%`} /><YAxis yAxisId="right" orientation="right" tickFormatter={value => `${value}%`} /><Tooltip formatter={(value) => `${n(Number(value), 2)}%`} /><Legend/><ReferenceLine yAxisId="left" y={0} stroke="var(--quant-muted)"/><Line yAxisId="left" type="monotone" dataKey="value" name="组合收益" stroke="var(--quant-lime)" strokeWidth={2} dot={false}/><Bar yAxisId="right" dataKey="drawdown" name="回撤" fill="var(--quant-risk)" opacity={.45}/></ComposedChart></StableChart></div></section>
+      <section className="quant-panel"><SectionTitle icon={Archive} title="收益分布与置信区间" note={`主观察窗 ${primary} 日，样本 ${data.robustness?.sampleCount ?? 0}`} /><div className="quant-chart"><StableChart><BarChart data={data.robustness?.distribution ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="midpoint" tickFormatter={value => `${n(Number(value), 0)}%`} /><YAxis /><Tooltip labelFormatter={value => `${n(Number(value), 2)}%`} /><Bar dataKey="count" name="样本数" fill="var(--quant-cyan)" /></BarChart></StableChart></div><div className="quant-ci">95% 自助法区间 <strong>{n(ci[0], 2)}% ~ {n(ci[1], 2)}%</strong></div></section>
+      <section className="quant-panel"><SectionTitle icon={Activity} title="事件后路径" note="每个点只使用已经走满该交易日的事件。" /><div className="quant-chart"><StableChart><LineChart data={data.eventCurve}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="day"/><YAxis tickFormatter={value => `${value}%`}/><Tooltip formatter={value => `${n(Number(value), 2)}%`}/><Legend/><ReferenceLine y={0} stroke="var(--quant-muted)"/><Line dataKey="strategy" name="事件策略" stroke="var(--quant-lime)" dot={false}/><Line dataKey="benchmark" name="市场基准" stroke="var(--quant-cyan)" dot={false}/></LineChart></StableChart></div></section>
+      <section className="quant-panel"><SectionTitle icon={SlidersHorizontal} title="成本敏感性" note="观察结论是否依赖过低交易成本假设。" /><div className="quant-chart"><StableChart><BarChart data={data.robustness?.sensitivity ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="label"/><YAxis tickFormatter={value => `${value}%`}/><Tooltip formatter={value => `${n(Number(value), 2)}%`}/><ReferenceLine y={0} stroke="var(--quant-muted)"/><Bar dataKey="averageExcessReturn" name="平均超额收益">{(data.robustness?.sensitivity ?? []).map(row => <Cell key={row.label} fill={row.averageExcessReturn >= 0 ? 'var(--quant-lime)' : 'var(--quant-risk)'} />)}</Bar></BarChart></StableChart></div></section>
+      <section className="quant-panel span-2"><SectionTitle icon={History} title="时间队列稳定性" note="按事件月份展示样本量、平均超额和胜率；用于识别只在单一行情阶段有效的策略。" /><div className="quant-chart"><StableChart><ComposedChart data={data.robustness?.cohorts ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="period"/><YAxis yAxisId="left" tickFormatter={value => `${value}%`}/><YAxis yAxisId="right" orientation="right"/><Tooltip/><Legend/><ReferenceLine yAxisId="left" y={0} stroke="var(--quant-muted)"/><Bar yAxisId="right" dataKey="sampleCount" name="样本数" fill="var(--quant-panel-3)"/><Line yAxisId="left" dataKey="averageExcessReturn" name="平均超额" stroke="var(--quant-lime)"/><Line yAxisId="left" dataKey="winRate" name="胜率" stroke="var(--quant-cyan)"/></ComposedChart></StableChart></div></section>
       {data.robustness.validation ? <section className="quant-panel span-2"><SectionTitle icon={ShieldCheck} title="时间顺序样本外验证" note={`前70%训练观察 / 后30%样本外验证 · 切分日 ${data.robustness.validation.splitDate || '—'}`} /><div className="quant-validation"><div><small>训练观察</small><strong className={tone(data.robustness.validation.trainAverageExcessReturn)}>{pct(data.robustness.validation.trainAverageExcessReturn, 2)}</strong><span>{data.robustness.validation.trainSampleCount} 样本</span></div><ChevronRight/><div><small>样本外</small><strong className={tone(data.robustness.validation.testAverageExcessReturn)}>{pct(data.robustness.validation.testAverageExcessReturn, 2)}</strong><span>{data.robustness.validation.testSampleCount} 样本</span></div><div className="quant-folds">{data.robustness.validation.walkForwardFolds.map(fold => <p key={fold.fold}><b>F{fold.fold}</b><span>{fold.startAt.slice(5)}~{fold.endAt.slice(5)}</span><strong className={tone(fold.averageExcessReturn)}>{pct(fold.averageExcessReturn, 2)}</strong></p>)}</div></div></section> : null}
       <section className="quant-panel span-2"><SectionTitle icon={Blocks} title="非结构化因子分层" note="把重要度、置信度、信息增量和观点强度按样本三等分，观察高分组是否稳定优于低分组。" /><div className="quant-factor-grid">{data.factorAnalysis.map(factor => <article key={factor.factor}><header><strong>{factor.label}</strong><span className={tone(factor.highLowSpread)}>高-低 {pct(factor.highLowSpread, 2)}</span></header><div>{factor.buckets.map(bucket => <p key={bucket.bucket}><b>{bucket.bucket}</b><span className={tone(bucket.averageExcessReturn)}>{pct(bucket.averageExcessReturn, 2)}</span><small>{bucket.sampleCount} 样本 · 胜率 {pct(bucket.winRate)}</small></p>)}</div></article>)}</div></section>
       <section className="quant-panel"><SectionTitle icon={Target} title="多持有期对照" note="同时比较绝对收益与相对基准超额。" /><table><thead><tr><th>持有期</th><th>样本</th><th>胜率</th><th>平均</th><th>平均超额</th></tr></thead><tbody>{data.rule.holdingPeriods.map(period => <tr key={period}><td>{period}日</td><td>{metric(period)?.sampleCount ?? 0}</td><td>{pct(metric(period)?.winRate)}</td><td className={tone(metric(period)?.averageReturn)}>{pct(metric(period)?.averageReturn, 2)}</td><td className={tone(metric(period, true)?.averageReturn)}>{pct(metric(period, true)?.averageReturn, 2)}</td></tr>)}</tbody></table></section>

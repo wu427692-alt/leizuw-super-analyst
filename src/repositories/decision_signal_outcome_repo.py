@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, desc, func, select
 
+from src.request_identity import current_owner_id
 from src.storage import (
     DatabaseManager,
     DecisionSignalFeedbackRecord,
@@ -21,6 +22,12 @@ class DecisionSignalOutcomeRepository:
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
+        self.owner_id = current_owner_id()
+
+    def _owner_condition(self):
+        if self.owner_id is not None:
+            return DecisionSignalRecord.owner_id == self.owner_id
+        return DecisionSignalRecord.owner_id.is_(None)
 
     def list_candidate_signals(
         self,
@@ -36,7 +43,7 @@ class DecisionSignalOutcomeRepository:
     ) -> List[DecisionSignalRecord]:
         safe_limit = max(1, min(int(limit), 500))
         safe_offset = max(0, int(offset))
-        conditions = []
+        conditions = [self._owner_condition()]
         if signal_id is not None:
             conditions.append(DecisionSignalRecord.id == signal_id)
         if stock_codes:
@@ -71,9 +78,11 @@ class DecisionSignalOutcomeRepository:
         with self.db.get_session() as session:
             rows = session.execute(
                 select(DecisionSignalOutcomeRecord)
+                .join(DecisionSignalRecord, DecisionSignalRecord.id == DecisionSignalOutcomeRecord.signal_id)
                 .where(
                     DecisionSignalOutcomeRecord.signal_id.in_(signal_ids),
                     DecisionSignalOutcomeRecord.engine_version == engine_version,
+                    self._owner_condition(),
                 )
             ).scalars().all()
             return list(rows)
@@ -88,10 +97,12 @@ class DecisionSignalOutcomeRepository:
         with self.db.get_session() as session:
             return session.execute(
                 select(DecisionSignalOutcomeRecord)
+                .join(DecisionSignalRecord, DecisionSignalRecord.id == DecisionSignalOutcomeRecord.signal_id)
                 .where(
                     DecisionSignalOutcomeRecord.signal_id == signal_id,
                     DecisionSignalOutcomeRecord.horizon == horizon,
                     DecisionSignalOutcomeRecord.engine_version == engine_version,
+                    self._owner_condition(),
                 )
                 .limit(1)
             ).scalar_one_or_none()
@@ -99,6 +110,13 @@ class DecisionSignalOutcomeRepository:
     def upsert_outcome(self, fields: Dict[str, Any]) -> Tuple[DecisionSignalOutcomeRecord, bool]:
         now = utc_naive_now()
         with self.db.get_session() as session:
+            owned_signal = session.execute(
+                select(DecisionSignalRecord.id).where(
+                    DecisionSignalRecord.id == fields["signal_id"], self._owner_condition(),
+                )
+            ).scalar_one_or_none()
+            if owned_signal is None:
+                raise ValueError("Decision signal not found")
             existing = session.execute(
                 select(DecisionSignalOutcomeRecord)
                 .where(
@@ -137,7 +155,7 @@ class DecisionSignalOutcomeRepository:
     ) -> Tuple[List[DecisionSignalOutcomeRecord], int]:
         safe_page = max(1, int(page))
         safe_page_size = max(1, min(int(page_size), 100))
-        conditions = []
+        conditions = [self._owner_condition()]
         if signal_id is not None:
             conditions.append(DecisionSignalOutcomeRecord.signal_id == signal_id)
         if horizon:
@@ -154,10 +172,12 @@ class DecisionSignalOutcomeRepository:
             total = session.execute(
                 select(func.count(DecisionSignalOutcomeRecord.id))
                 .select_from(DecisionSignalOutcomeRecord)
+                .join(DecisionSignalRecord, DecisionSignalRecord.id == DecisionSignalOutcomeRecord.signal_id)
                 .where(where_clause)
             ).scalar() or 0
             rows = session.execute(
                 select(DecisionSignalOutcomeRecord)
+                .join(DecisionSignalRecord, DecisionSignalRecord.id == DecisionSignalOutcomeRecord.signal_id)
                 .where(where_clause)
                 .order_by(desc(DecisionSignalOutcomeRecord.updated_at), desc(DecisionSignalOutcomeRecord.id))
                 .offset(offset)
@@ -172,7 +192,7 @@ class DecisionSignalOutcomeRepository:
         horizons: Optional[List[str]] = None,
         statuses: Optional[List[str]] = None,
     ) -> List[DecisionSignalOutcomeRecord]:
-        conditions = [DecisionSignalOutcomeRecord.engine_version == engine_version]
+        conditions = [DecisionSignalOutcomeRecord.engine_version == engine_version, self._owner_condition()]
         if horizons:
             conditions.append(DecisionSignalOutcomeRecord.horizon.in_(horizons))
         if statuses:
@@ -189,13 +209,21 @@ class DecisionSignalOutcomeRepository:
         with self.db.get_session() as session:
             return session.execute(
                 select(DecisionSignalFeedbackRecord)
-                .where(DecisionSignalFeedbackRecord.signal_id == signal_id)
+                .join(DecisionSignalRecord, DecisionSignalRecord.id == DecisionSignalFeedbackRecord.signal_id)
+                .where(DecisionSignalFeedbackRecord.signal_id == signal_id, self._owner_condition())
                 .limit(1)
             ).scalar_one_or_none()
 
     def upsert_feedback(self, fields: Dict[str, Any]) -> DecisionSignalFeedbackRecord:
         now = utc_naive_now()
         with self.db.get_session() as session:
+            owned_signal = session.execute(
+                select(DecisionSignalRecord.id).where(
+                    DecisionSignalRecord.id == fields["signal_id"], self._owner_condition(),
+                )
+            ).scalar_one_or_none()
+            if owned_signal is None:
+                raise ValueError("Decision signal not found")
             existing = session.execute(
                 select(DecisionSignalFeedbackRecord)
                 .where(DecisionSignalFeedbackRecord.signal_id == fields["signal_id"])

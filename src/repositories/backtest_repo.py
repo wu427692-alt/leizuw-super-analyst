@@ -15,6 +15,7 @@ from sqlalchemy import and_, delete, desc, func, or_, select
 
 from data_provider.base import is_bse_code
 from src.core.backtest_engine import OVERALL_SENTINEL_CODE
+from src.request_identity import get_current_user_id
 from src.services.stock_code_utils import normalize_code as normalize_backtest_code
 
 from src.storage import BacktestResult, BacktestSummary, DatabaseManager, AnalysisHistory
@@ -38,6 +39,8 @@ class BacktestRepository:
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
+        user_id = get_current_user_id()
+        self.owner_query_prefix = f"u{user_id}_" if user_id is not None and user_id > 0 else None
 
     def get_candidates(
         self,
@@ -55,6 +58,8 @@ class BacktestRepository:
 
         with self.db.get_session() as session:
             conditions = [AnalysisHistory.created_at <= cutoff_dt]
+            if self.owner_query_prefix:
+                conditions.append(AnalysisHistory.query_id.like(f"{self.owner_query_prefix}%"))
             if code:
                 conditions.extend(self._build_code_conditions(AnalysisHistory.code, code))
             conditions.append(
@@ -109,6 +114,8 @@ class BacktestRepository:
                     AnalysisHistory.report_type != MARKET_REVIEW_REPORT_TYPE,
                 ),
             ]
+            if self.owner_query_prefix:
+                conditions.append(AnalysisHistory.query_id.like(f"{self.owner_query_prefix}%"))
             if code:
                 conditions.extend(self._build_code_conditions(AnalysisHistory.code, code))
 
@@ -316,6 +323,7 @@ class BacktestRepository:
             count = session.execute(
                 select(func.count(BacktestResult.id))
                 .select_from(BacktestResult)
+                .join(AnalysisHistory, AnalysisHistory.id == BacktestResult.analysis_history_id)
                 .where(where_clause)
             ).scalar() or 0
             return int(count)
@@ -343,6 +351,7 @@ class BacktestRepository:
             where_clause = and_(*conditions) if conditions else True
             query = (
                 select(BacktestResult)
+                .join(AnalysisHistory, AnalysisHistory.id == BacktestResult.analysis_history_id)
                 .where(where_clause)
                 .order_by(desc(BacktestResult.analysis_date), desc(BacktestResult.evaluated_at))
             )
@@ -405,6 +414,10 @@ class BacktestRepository:
         eval_window_days: Optional[int] = None,
         engine_version: str,
     ) -> Optional[BacktestSummary]:
+        if self.owner_query_prefix:
+            # Persisted summaries are global legacy aggregates. Approved users
+            # receive a dynamic summary from their own linked analysis rows.
+            return None
         with self.db.get_session() as session:
             conditions = [
                 BacktestSummary.scope == scope,
@@ -470,14 +483,15 @@ class BacktestRepository:
             where_clause = and_(*conditions) if conditions else True
             rows = session.execute(
                 select(BacktestResult.eval_window_days)
+                .join(AnalysisHistory, AnalysisHistory.id == BacktestResult.analysis_history_id)
                 .where(where_clause)
                 .distinct()
                 .order_by(BacktestResult.eval_window_days)
             ).scalars().all()
             return [int(w) for w in rows if w is not None]
 
-    @staticmethod
     def _build_result_conditions(
+        self,
         *,
         code: Optional[str],
         eval_window_days: Optional[int],
@@ -487,6 +501,8 @@ class BacktestRepository:
         days: Optional[int],
     ) -> List[object]:
         conditions = []
+        if self.owner_query_prefix:
+            conditions.append(AnalysisHistory.query_id.like(f"{self.owner_query_prefix}%"))
         if code:
             conditions.extend(BacktestRepository._build_code_conditions(BacktestResult.code, code))
         if eval_window_days is not None:

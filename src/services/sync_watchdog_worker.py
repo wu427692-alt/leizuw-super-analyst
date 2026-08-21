@@ -37,6 +37,7 @@ class SyncWatchdogWorker:
         investment_worker: Any = None,
         zsxq_worker: Any = None,
         market_worker: Any = None,
+        announcement_worker: Any = None,
         repository_factory: Callable[[], InvestmentMonitorRepository] = InvestmentMonitorRepository,
         clock: Callable[[], float] = time.time,
     ):
@@ -45,6 +46,7 @@ class SyncWatchdogWorker:
         self._investment_worker = investment_worker
         self._zsxq_worker = zsxq_worker
         self._market_worker = market_worker
+        self._announcement_worker = announcement_worker
         self._repository_factory = repository_factory
         self._clock = clock
         self._thread: Optional[threading.Thread] = None
@@ -121,7 +123,10 @@ class SyncWatchdogWorker:
             workers["investment_monitor"] = state
             overdue = []
             try:
-                overdue = [item["source_key"] for item in self._repository_factory().due_sources()]
+                overdue = [
+                    item["source_key"] for item in self._repository_factory().due_sources()
+                    if item["source_key"] != "cninfo.announcements"
+                ]
             except Exception as exc:  # noqa: BLE001 - worker liveness repair should still proceed.
                 errors.append(f"source_schedule:{type(exc).__name__}")
             if not state.get("running"):
@@ -136,7 +141,7 @@ class SyncWatchdogWorker:
                 })
             workers["investment_monitor"] = worker.status()
 
-        if _enabled("ZSXQ_MCP_AUTO_START", "false"):
+        if _enabled("ZSXQ_MCP_AUTO_START", "true"):
             worker = self._get_zsxq_worker()
             state = worker.status()
             workers["zsxq_mcp"] = state
@@ -164,6 +169,18 @@ class SyncWatchdogWorker:
                 worker.trigger()
                 repairs.append({"worker": "market_data", "action": "wake"})
             workers["market_data"] = worker.status()
+
+        if _enabled("CNINFO_WATCHLIST_AUTO_START", "true"):
+            worker = self._get_announcement_worker()
+            state = worker.status()
+            workers["cninfo_watchlist"] = state
+            if not state.get("running"):
+                worker.start()
+                repairs.append({"worker": "cninfo_watchlist", "action": "restart"})
+            elif self._heartbeat_stale(state, "last_run_age_seconds", "poll_seconds", 120):
+                worker.trigger()
+                repairs.append({"worker": "cninfo_watchlist", "action": "wake"})
+            workers["cninfo_watchlist"] = worker.status()
 
         result = {
             "status": "degraded" if errors else "repaired" if repairs else "healthy",
@@ -232,6 +249,13 @@ class SyncWatchdogWorker:
 
             self._market_worker = MarketDataWorker.get_instance()
         return self._market_worker
+
+    def _get_announcement_worker(self) -> Any:
+        if self._announcement_worker is None:
+            from src.services.watchlist_announcement_sync_worker import WatchlistAnnouncementSyncWorker
+
+            self._announcement_worker = WatchlistAnnouncementSyncWorker.get_instance()
+        return self._announcement_worker
 
     @staticmethod
     def _iso(value: Optional[float]) -> Optional[str]:

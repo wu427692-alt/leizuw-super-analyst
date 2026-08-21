@@ -37,9 +37,10 @@ function publish(next: RouteLoadSnapshot) {
 export function beginRouteLoad(routeKey: string): number {
   const now = Date.now();
   const sessionId = ++nextSessionId;
-  // Initial page effects normally dispatch together. Keep a short admission
-  // window so later live polling never holds the page gate open forever.
-  acceptingUntil = now + 2_000;
+  // React effects dispatch immediately after the route mounts. Admit that
+  // first batch only; delayed polling and secondary panels must never keep the
+  // whole route behind the loading gate.
+  acceptingUntil = now + 750;
   publish({
     sessionId,
     routeKey,
@@ -62,7 +63,7 @@ export function startRouteRequest(): RouteLoadToken | null {
   if (!snapshot.active) return null;
   const now = Date.now();
   const insideInitialWindow = now <= acceptingUntil;
-  const chainedToInitialLoad = snapshot.pending > 0 && now - snapshot.startedAt <= 15_000;
+  const chainedToInitialLoad = snapshot.pending > 0 && now - snapshot.startedAt <= 3_000;
   if (!insideInitialWindow && !chainedToInitialLoad) return null;
   const token = { sessionId: snapshot.sessionId, requestId: ++nextRequestId };
   publish({

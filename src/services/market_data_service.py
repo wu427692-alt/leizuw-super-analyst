@@ -85,16 +85,16 @@ class MarketDataService:
             refreshed = self.refresh_ticks([code]) > 0 if refresh else False
             session_count = 5 if selected_range == "5d" else 1
             storage_days = 14 if session_count == 5 else 7
-            tick_rows = self._tick_rows(code, storage_days)
-            minute_rows = self._intraday_rows(code, storage_days)
+            tick_rows = self._regular_session_rows(self._tick_rows(code, storage_days), code)
+            minute_rows = self._regular_session_rows(self._intraday_rows(code, storage_days), code)
             available_dates = {row.timestamp.date() for row in [*tick_rows, *minute_rows]}
             if refresh or len(available_dates) < session_count:
                 refreshed = self.refresh_historical_intraday([code], sessions=session_count) > 0 or refreshed
-                tick_rows = self._tick_rows(code, storage_days)
-                minute_rows = self._intraday_rows(code, storage_days)
+                tick_rows = self._regular_session_rows(self._tick_rows(code, storage_days), code)
+                minute_rows = self._regular_session_rows(self._intraday_rows(code, storage_days), code)
             if not tick_rows and not minute_rows:
                 refreshed = self.refresh_ticks([code]) > 0 or refreshed
-                tick_rows = self._tick_rows(code, storage_days)
+                tick_rows = self._regular_session_rows(self._tick_rows(code, storage_days), code)
             rows = _merge_second_and_minute_rows(tick_rows, minute_rows, sessions=session_count)
             pre_close = _intraday_pre_close(
                 rows,
@@ -152,9 +152,47 @@ class MarketDataService:
             self.refresh_ticks(missing)
             rows = self.repo.latest_ticks(codes)
         now = datetime.now()
+        daily_rows = self.repo.latest_daily(codes)
+        completed_session = _latest_completed_a_share_session(now)
         result: List[Dict[str, Any]] = []
         for code in codes:
             row = rows.get(code)
+            daily = daily_rows.get(code)
+            use_daily_close = daily is not None and (
+                row is None
+                or daily.date > row.timestamp.date()
+                or (
+                    daily.date == row.timestamp.date()
+                    and daily.date <= completed_session
+                    and row.timestamp.time() < datetime.strptime("15:00", "%H:%M").time()
+                )
+            )
+            if use_daily_close:
+                update_at = datetime.combine(daily.date, datetime.min.time()).replace(hour=15)
+                previous_close = self.repo.previous_daily_close(code, daily.date)
+                change = daily.close - previous_close if daily.close is not None and previous_close is not None else None
+                change_percent = change / previous_close * 100 if change is not None and previous_close else None
+                age = max(0.0, (now - update_at).total_seconds())
+                result.append({
+                    "stock_code": code,
+                    "stock_name": None,
+                    "current_price": daily.close,
+                    "change": change,
+                    "change_percent": change_percent,
+                    "open": daily.open,
+                    "high": daily.high,
+                    "low": daily.low,
+                    "prev_close": previous_close,
+                    "volume": daily.volume * 100 if daily.volume is not None else None,
+                    "amount": daily.amount,
+                    "second_volume": None,
+                    "second_amount": None,
+                    "update_time": update_at.isoformat(timespec="seconds"),
+                    "source": daily.data_source or "local.sqlite.daily",
+                    "stale_seconds": round(age, 1),
+                    "is_stale": True,
+                })
+                continue
             if row is None:
                 continue
             age = max(0.0, (now - row.timestamp).total_seconds())
@@ -189,6 +227,7 @@ class MarketDataService:
                 return 0
             saved = 0
             collected_at = datetime.now().replace(microsecond=0)
+            exchange_fallback = _latest_a_share_close_timestamp(collected_at)
             rows_by_code = {str(row.get("code") or "").zfill(6): row for _, row in frame.iterrows()}
             for symbol in requested:
                 row = rows_by_code.get(symbol.split(".")[0])
@@ -197,7 +236,8 @@ class MarketDataService:
                 price = _float_or_none(row.get("price")); pre_close = _float_or_none(row.get("pre_close"))
                 change_pct = (price - pre_close) / pre_close * 100 if price is not None and pre_close else None
                 saved += self.repo.upsert_index(symbol, [{
-                    "timestamp": collected_at, "open": row.get("open"), "high": row.get("high"),
+                    "timestamp": _legacy_snapshot_timestamp(row, exchange_fallback),
+                    "open": row.get("open"), "high": row.get("high"),
                     "low": row.get("low"), "close": price, "volume": row.get("volume"),
                     "amount": row.get("amount"), "change_percent": change_pct,
                 }], frequency="1SEC", source="tushare.legacy_snapshot")
@@ -391,7 +431,7 @@ class MarketDataService:
         rows = self.repo.index_range(qualified, start, end, frequency=frequency)
         expected = max(1, int(lookback_days * .45))
         latest_date = rows[-1].timestamp.date() if rows else None
-        stale = latest_date is not None and (date.today() - latest_date).days > 10
+        stale = latest_date is not None and latest_date < _latest_completed_a_share_session()
         # A newly listed symbol cannot fill a multi-year lookback.  A fresh
         # local tail is sufficient and must not trigger a full download on
         # every process restart.
@@ -404,13 +444,21 @@ class MarketDataService:
             session_count = 5 if selected_range == "5d" else 1
             storage_days = 14 if session_count == 5 else 7
             broad_start = end - timedelta(days=storage_days)
-            second_rows = self.repo.index_range(qualified, broad_start, end, frequency="1SEC")
-            minute_rows = self.repo.index_range(qualified, broad_start, end, frequency="1MIN")
+            second_rows = self._regular_session_rows(
+                self.repo.index_range(qualified, broad_start, end, frequency="1SEC"), qualified,
+            )
+            minute_rows = self._regular_session_rows(
+                self.repo.index_range(qualified, broad_start, end, frequency="1MIN"), qualified,
+            )
             available_dates = {row.timestamp.date() for row in [*second_rows, *minute_rows]}
             if refresh or len(available_dates) < session_count:
                 self.refresh_historical_index_intraday([qualified], sessions=session_count)
-                second_rows = self.repo.index_range(qualified, broad_start, end, frequency="1SEC")
-                minute_rows = self.repo.index_range(qualified, broad_start, end, frequency="1MIN")
+                second_rows = self._regular_session_rows(
+                    self.repo.index_range(qualified, broad_start, end, frequency="1SEC"), qualified,
+                )
+                minute_rows = self._regular_session_rows(
+                    self.repo.index_range(qualified, broad_start, end, frequency="1MIN"), qualified,
+                )
             rows = _merge_second_and_minute_rows(second_rows, minute_rows, sessions=session_count)
             pre_close = _intraday_pre_close(
                 rows,
@@ -502,7 +550,7 @@ class MarketDataService:
         rows = self.repo.daily_range(code, start, end)
         expected_minimum = max(1, int(lookback_days * 0.45))
         latest_date = rows[-1].date if rows else None
-        stale = latest_date is not None and (end - latest_date).days > 10
+        stale = latest_date is not None and latest_date < _latest_completed_a_share_session()
         incomplete_short_range = lookback_days <= 365 and len(rows) < expected_minimum
         should_fetch = refresh or not rows or stale or incomplete_short_range
         fetched = False
@@ -519,6 +567,23 @@ class MarketDataService:
         end = datetime.now()
         start = end - timedelta(days=lookback_days)
         return self.repo.intraday_range(code, start, end)
+
+    @staticmethod
+    def _regular_session_rows(rows: List[Any], symbol: str) -> List[Any]:
+        """Discard impossible off-session A-share intraday snapshots.
+
+        Legacy quote endpoints keep returning the last close overnight. Such
+        responses are useful as close values, but stamping them with the poll
+        time creates a fake next-day intraday point and a false date label.
+        """
+        normalized = str(symbol or "").upper().replace(".SS", ".SH")
+        pure = normalized.split(".", 1)[0]
+        mainland = pure.isdigit() and len(pure) == 6 and (
+            "." not in normalized or normalized.endswith((".SH", ".SZ", ".BJ"))
+        )
+        if not mainland:
+            return rows
+        return [row for row in rows if _is_a_share_intraday_timestamp(row.timestamp)]
 
     def _tick_rows(self, code: str, lookback_days: int) -> List[Any]:
         end = datetime.now()
@@ -606,6 +671,48 @@ def _parse_minute_time(value: Any) -> Optional[datetime]:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
     except ValueError:
         return None
+
+
+def _latest_completed_a_share_session(now: Optional[datetime] = None) -> date:
+    """Return the newest weekday whose A-share close should be available."""
+    current = now or datetime.now()
+    candidate = current.date()
+    if candidate.weekday() < 5 and current.time() < datetime.strptime("15:10", "%H:%M").time():
+        candidate -= timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _latest_a_share_close_timestamp(now: Optional[datetime] = None) -> datetime:
+    """Fallback for legacy quotes that omit exchange date/time after close."""
+    current = now or datetime.now()
+    return datetime.combine(_latest_completed_a_share_session(current), datetime.min.time()).replace(hour=15)
+
+
+def _legacy_snapshot_timestamp(row: Any, fallback: datetime) -> datetime:
+    """Use the exchange timestamp returned by the legacy quote endpoint."""
+    raw_date = str(row.get("date") or "").strip()
+    raw_time = str(row.get("time") or "").strip()
+    candidates = [f"{raw_date} {raw_time}".strip(), raw_date]
+    formats = (
+        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+        "%Y%m%d %H:%M:%S", "%Y%m%d %H:%M", "%Y%m%d",
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        for fmt in formats:
+            try:
+                return datetime.strptime(candidate, fmt)
+            except ValueError:
+                continue
+    return fallback
+
+
+def _is_a_share_intraday_timestamp(value: datetime) -> bool:
+    minutes = value.hour * 60 + value.minute
+    return 9 * 60 + 15 <= minutes <= 11 * 60 + 30 or 13 * 60 <= minutes <= 15 * 60 + 5
 
 
 def _float_or_none(value: Any) -> Optional[float]:
@@ -853,13 +960,15 @@ def _legacy_realtime_snapshots(codes: List[str]) -> List[Dict[str, Any]]:
         return []
     result: List[Dict[str, Any]] = []
     collected_at = datetime.now().replace(microsecond=0)
+    exchange_fallback = _latest_a_share_close_timestamp(collected_at)
     for _, row in frame.iterrows():
         price = _float_or_none(row.get("price"))
         pre_close = _float_or_none(row.get("pre_close"))
         change = price - pre_close if price is not None and pre_close is not None else None
         change_percent = change / pre_close * 100 if change is not None and pre_close else None
         result.append({
-            "code": normalize_stock_code(str(row.get("code") or "")), "timestamp": collected_at,
+            "code": normalize_stock_code(str(row.get("code") or "")),
+            "timestamp": _legacy_snapshot_timestamp(row, exchange_fallback),
             "price": price, "open": row.get("open"), "high": row.get("high"), "low": row.get("low"),
             "pre_close": pre_close, "volume": row.get("volume"), "amount": row.get("amount"),
             "change": change, "change_percent": change_percent,

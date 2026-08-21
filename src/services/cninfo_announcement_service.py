@@ -44,6 +44,7 @@ class CninfoAnnouncementService:
         self.timeout = max(3.0, min(float(timeout), 60.0))
         self.retries = max(0, min(int(retries), 5))
         self.request_interval = max(0.0, min(float(request_interval), 2.0))
+        self._security_cache: Dict[str, Dict[str, str]] = {}
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                           "AppleWebKit/537.36 Chrome/124 Safari/537.36",
@@ -60,13 +61,18 @@ class CninfoAnnouncementService:
         code = str(symbol or "").strip().upper().split(".", 1)[0]
         if len(code) != 6 or not code.isdigit():
             raise CninfoAnnouncementError(f"无效 A 股代码：{symbol}")
+        cached = self._security_cache.get(code)
+        if cached is not None:
+            return dict(cached)
         rows = self._post_json(CNINFO_SEARCH_URL, {"keyWord": code, "maxNum": 10})
         if not isinstance(rows, list):
             raise CninfoAnnouncementError("巨潮证券检索返回格式异常")
         row = next((item for item in rows if str(item.get("code")) == code), None)
         if not row or not row.get("orgId"):
             raise CninfoAnnouncementError(f"巨潮未找到证券：{code}")
-        return {"code": code, "org_id": str(row["orgId"]), "name": str(row.get("zwjc") or code)}
+        resolved = {"code": code, "org_id": str(row["orgId"]), "name": str(row.get("zwjc") or code)}
+        self._security_cache[code] = resolved
+        return dict(resolved)
 
     def fetch(
         self, *, start_date: date, end_date: date, symbols: Sequence[str] = (),

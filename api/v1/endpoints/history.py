@@ -12,7 +12,7 @@
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Depends, Body
+from fastapi import APIRouter, HTTPException, Query, Depends, Body, Request
 
 from api.deps import get_database_manager
 from api.v1.schemas.history import (
@@ -59,6 +59,17 @@ from src.market_phase_summary import extract_market_phase_summary
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _history_query_prefix(request: Optional[Request]) -> Optional[str]:
+    user_id = int(getattr(getattr(request, "state", None), "user_id", 0) or 0)
+    return f"u{user_id}_" if user_id > 0 else None
+
+
+def _ensure_history_result_access(request: Optional[Request], result: Optional[dict]) -> None:
+    prefix = _history_query_prefix(request)
+    if prefix and (not result or not str(result.get("query_id") or "").startswith(prefix)):
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "未找到该分析记录"})
 
 
 def _normalize_code_for_grouping(code: str) -> str:
@@ -123,6 +134,7 @@ def _coalesce_int(*values: Any) -> Optional[int]:
     description="分页获取历史分析记录摘要，支持按股票代码和日期范围筛选"
 )
 def get_history_list(
+    request: Request,
     stock_code: Optional[str] = Query(None, description="股票代码筛选"),
     report_type: Optional[str] = Query(None, description="报告类型筛选，如 market_review"),
     start_date: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
@@ -158,7 +170,8 @@ def get_history_list(
             start_date=start_date,
             end_date=end_date,
             page=page,
-            limit=limit
+            limit=limit,
+            query_id_prefix=_history_query_prefix(request),
         )
         
         # 转换为响应模型
@@ -217,11 +230,14 @@ def get_history_list(
 )
 def delete_history_by_code(
     stock_code: str,
+    request: Request,
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> DeleteHistoryResponse:
     try:
         candidates = HistoryService._history_code_filter_candidates(stock_code)
-        records, _ = db_manager.get_analysis_history_paginated(code=candidates, limit=10000)
+        records, _ = db_manager.get_analysis_history_paginated(
+            code=candidates, limit=10000, query_id_prefix=_history_query_prefix(request),
+        )
         record_ids = [r.id for r in records if r.id is not None]
         if not record_ids:
             return DeleteHistoryResponse(deleted=0)
@@ -247,13 +263,14 @@ def delete_history_by_code(
     description="按历史记录主键 ID 批量删除分析历史"
 )
 def delete_history_records(
-    request: DeleteHistoryRequest = Body(...),
+    request: Request,
+    body: DeleteHistoryRequest = Body(...),
     db_manager: DatabaseManager = Depends(get_database_manager)
 ) -> DeleteHistoryResponse:
     """
     按主键 ID 批量删除历史分析记录。
     """
-    record_ids = sorted({record_id for record_id in request.record_ids if record_id is not None})
+    record_ids = sorted({record_id for record_id in body.record_ids if record_id is not None})
     if not record_ids:
         raise HTTPException(
             status_code=400,
@@ -265,7 +282,15 @@ def delete_history_records(
 
     try:
         service = HistoryService(db_manager)
-        deleted = service.delete_history_records(record_ids)
+        prefix = _history_query_prefix(request)
+        allowed_ids = record_ids
+        if prefix:
+            allowed_ids = []
+            for record_id in record_ids:
+                detail = service.get_history_detail_by_id(record_id)
+                if detail and str(detail.get("query_id") or "").startswith(prefix):
+                    allowed_ids.append(record_id)
+        deleted = service.delete_history_records(allowed_ids)
         return DeleteHistoryResponse(deleted=deleted)
     except HTTPException:
         raise
@@ -397,6 +422,7 @@ def get_stock_bar(
 )
 def get_history_detail(
     record_id: str,
+    request: Request = None,
     db_manager: DatabaseManager = Depends(get_database_manager)
 ) -> AnalysisReport:
     """
@@ -420,6 +446,7 @@ def get_history_detail(
         
         # Try integer ID first, fall back to query_id string lookup
         result = service.resolve_and_get_detail(record_id)
+        _ensure_history_result_access(request, result)
         
         if result is None:
             raise HTTPException(
@@ -561,6 +588,7 @@ def get_history_detail(
 )
 def get_history_diagnostics(
     record_id: str,
+    request: Request = None,
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> RunDiagnosticSummaryResponse:
     """
@@ -568,6 +596,7 @@ def get_history_diagnostics(
     """
     try:
         service = HistoryService(db_manager)
+        _ensure_history_result_access(request, service.resolve_and_get_detail(record_id))
         summary = service.resolve_and_get_diagnostics(record_id)
         if summary is None:
             raise HTTPException(
@@ -604,6 +633,7 @@ def get_history_diagnostics(
 )
 def get_history_run_flow(
     record_id: str,
+    request: Request = None,
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> RunFlowSnapshot:
     """
@@ -611,6 +641,7 @@ def get_history_run_flow(
     """
     try:
         service = HistoryService(db_manager)
+        _ensure_history_result_access(request, service.resolve_and_get_detail(record_id))
         snapshot = service.resolve_and_get_run_flow(record_id)
         if snapshot is None:
             raise HTTPException(
@@ -646,6 +677,7 @@ def get_history_run_flow(
 )
 def get_history_news(
     record_id: str,
+    request: Request = None,
     limit: int = Query(20, ge=1, le=100, description="返回数量限制"),
     db_manager: DatabaseManager = Depends(get_database_manager)
 ) -> NewsIntelResponse:
@@ -665,6 +697,7 @@ def get_history_news(
     """
     try:
         service = HistoryService(db_manager)
+        _ensure_history_result_access(request, service.resolve_and_get_detail(record_id))
         items = service.resolve_and_get_news(record_id=record_id, limit=limit)
 
         response_items = [
@@ -705,6 +738,7 @@ def get_history_news(
 )
 def get_history_markdown(
     record_id: str,
+    request: Request = None,
     db_manager: DatabaseManager = Depends(get_database_manager)
 ) -> MarkdownReportResponse:
     """
@@ -724,6 +758,7 @@ def get_history_markdown(
         HTTPException: 500 - 报告生成失败（服务器内部错误）
     """
     service = HistoryService(db_manager)
+    _ensure_history_result_access(request, service.resolve_and_get_detail(record_id))
 
     try:
         markdown_content = service.get_markdown_report(record_id)

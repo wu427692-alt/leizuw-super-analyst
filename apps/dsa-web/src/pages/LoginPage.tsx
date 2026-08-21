@@ -23,14 +23,14 @@ const LoginPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const rawRedirect = searchParams.get('redirect') ?? '';
   const redirect =
-    rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/';
+    rawRedirect.startsWith('/admin') && !rawRedirect.startsWith('//') ? rawRedirect : '/admin';
 
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | ParsedApiError | null>(null);
 
-  const isFirstTime = setupState === 'no_password' || !passwordSet;
+  const isFirstTime = setupState === 'no_password' || (setupState === 'enabled' && !passwordSet);
 
   // 3D Tilt effect values
   const mouseX = useMotionValue(0);
@@ -123,11 +123,11 @@ const LoginPage: React.FC = () => {
 
           <div className="mt-8 flex flex-col items-center">
             <h2 className="text-4xl font-extrabold tracking-tighter text-[var(--login-text-primary)] sm:text-6xl">
-              <span className="bg-gradient-to-r from-[var(--login-text-primary)] via-[var(--login-text-primary)] to-[var(--login-text-secondary)] bg-clip-text text-transparent">DAILY </span>
-              <span className="bg-gradient-to-r from-[var(--login-brand-start)] to-[var(--login-brand-end)] bg-clip-text text-transparent drop-shadow-[0_0_20px_var(--login-accent-glow)]">STOCK</span>
+              <span className="bg-gradient-to-r from-[var(--login-text-primary)] via-[var(--login-text-primary)] to-[var(--login-text-secondary)] bg-clip-text text-transparent">DSA </span>
+              <span className="bg-gradient-to-r from-[var(--login-brand-start)] to-[var(--login-brand-end)] bg-clip-text text-transparent drop-shadow-[0_0_20px_var(--login-accent-glow)]">ADMIN</span>
             </h2>
             <h3 className="mt-1 text-xl font-bold uppercase tracking-[0.5em] text-[var(--login-text-muted)]">
-              Analysis Engine
+              Private Control Plane
             </h3>
           </div>
 
@@ -138,7 +138,7 @@ const LoginPage: React.FC = () => {
             className="mt-6 flex items-center gap-2 rounded-full border border-[var(--login-accent-border)] bg-[var(--login-accent-soft)] px-3 py-1 text-[10px] font-medium text-[var(--login-accent-text)] backdrop-blur-sm"
           >
             <Network className="h-3 w-3" />
-            <span>V3.X QUANTITATIVE SYSTEM</span>
+            <span>PUBLIC SITE · PROTECTED OPERATIONS</span>
           </motion.div>
         </motion.div>
 

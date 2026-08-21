@@ -31,4 +31,18 @@ describe('essayQuantApi', () => {
     expect(result.running).toBe(true);
     expect(result.lastResult?.rankedGroupCount).toBe(8);
   });
+
+  it('runs interactive research from the auto-synced local market database', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { summary: {}, rule: {} } });
+    await essayQuantApi.run({
+      name: '事件研究', sourceQuery: '', signalDirection: 'all', lookbackDays: 365,
+      holdingPeriods: [5, 10, 20], firstMentionOnly: false, firstMentionWindowDays: 180,
+      minImportance: 60, minConfidence: 0.5, benchmarkCode: '000300.SH', portfolioSize: 10,
+      strategyType: 'essay_event', rawNotePolicy: 'exclude', dedupeWindowDays: 3,
+      transactionCostBps: 12, validationMethod: 'walk_forward',
+    });
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/essay-quant/run', expect.objectContaining({
+      strategy_type: 'essay_event', refresh_prices: false,
+    }), { timeout: 180000 });
+  });
 });

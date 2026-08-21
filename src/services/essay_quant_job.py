@@ -34,6 +34,10 @@ def main() -> int:
         "generated_at": result.get("generated_at"),
         "resolved_symbol_count": quality.get("resolved_symbol_count", 0),
         "priced_symbol_count": quality.get("priced_symbol_count", 0),
+        "current_price_symbol_count": quality.get("current_price_symbol_count", 0),
+        "stale_price_symbol_count": quality.get("stale_price_symbol_count", 0),
+        "price_freshness_ratio": quality.get("price_freshness_ratio", 0),
+        "price_target_date": quality.get("price_target_date"),
     }, ensure_ascii=False))
     return 0
 

@@ -3,9 +3,11 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import * as AuthContext from './contexts/AuthContext';
+import * as UserAccessContext from './contexts/UserAccessContext';
 import { UI_LANGUAGE_STORAGE_KEY } from './utils/uiLanguage';
 
 type AuthState = ReturnType<typeof AuthContext.useAuth>;
+type UserAccessState = ReturnType<typeof UserAccessContext.useUserAccess>;
 
 const { chatPageShouldThrow, setCurrentRoute, useAgentChatStoreMock } = vi.hoisted(() => {
   const setCurrentRoute = vi.fn();
@@ -23,12 +25,25 @@ vi.mock('./contexts/AuthContext', () => ({
   useAuth: vi.fn(),
 }));
 
+vi.mock('./contexts/UserAccessContext', () => ({
+  UserAccessProvider: ({ children }: { children: ReactNode }) => children,
+  useUserAccess: vi.fn(),
+}));
+
 vi.mock('./stores/agentChatStore', () => ({
   useAgentChatStore: useAgentChatStoreMock,
 }));
 
+vi.mock('./components/admin', () => ({
+  AdminShell: ({ children }: { children: ReactNode }) => <div data-testid="admin-shell">{children}</div>,
+}));
+
 vi.mock('./pages/MarketDashboardPage', () => ({
   default: () => <div data-testid="home-page">Home</div>,
+}));
+
+vi.mock('./pages/LandingPage', () => ({
+  default: () => <div data-testid="landing-page">Landing</div>,
 }));
 
 vi.mock('./pages/ChatPage', () => ({
@@ -72,6 +87,14 @@ vi.mock('./pages/LoginPage', () => ({
   default: () => <div data-testid="login-page">Login</div>,
 }));
 
+vi.mock('./pages/UserAccessPage', () => ({
+  default: () => <div data-testid="user-access-page">User access</div>,
+}));
+
+vi.mock('./pages/AdminConsolePage', () => ({
+  default: () => <div data-testid="admin-console-page">Admin console</div>,
+}));
+
 function makeAuthState(overrides: Partial<AuthState> = {}): AuthState {
   return {
     authEnabled: false,
@@ -89,24 +112,57 @@ function makeAuthState(overrides: Partial<AuthState> = {}): AuthState {
   };
 }
 
+function makeUserAccessState(overrides: Partial<UserAccessState> = {}): UserAccessState {
+  return {
+    accessEnabled: true,
+    loggedIn: true,
+    user: { id: 1, name: '测试用户', status: 'approved' },
+    authMethod: 'session',
+    isLoading: false,
+    register: vi.fn().mockResolvedValue({ success: true, pending: true }),
+    login: vi.fn().mockResolvedValue({ success: true }),
+    logout: vi.fn().mockResolvedValue(undefined),
+    refresh: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   chatPageShouldThrow.value = false;
   window.history.pushState({}, '', '/');
   localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, 'zh');
   vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState());
+  vi.mocked(UserAccessContext.useUserAccess).mockReturnValue(makeUserAccessState());
 });
 
 describe('App routing behavior', () => {
-  it('shows loading fallback while auth status is initializing', () => {
+  it('shows the introduction at the public root and keeps the dashboard at /app', async () => {
+    render(<App />);
+
+    expect(await screen.findByTestId('landing-page')).toBeInTheDocument();
+    expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
+  });
+
+  it('renders the market dashboard inside the application route', async () => {
+    window.history.pushState({}, '', '/app');
+
+    render(<App />);
+
+    expect(await screen.findByTestId('home-page')).toBeInTheDocument();
+    expect(screen.queryByTestId('landing-page')).not.toBeInTheDocument();
+  });
+
+  it('shows loading fallback while an admin route is initializing auth', () => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({ isLoading: true }));
+    window.history.pushState({}, '', '/admin');
 
     render(<App />);
 
     expect(screen.getByRole('progressbar', { name: '页面加载进度' })).toBeInTheDocument();
   });
 
-  it('redirects protected routes to login when auth is enabled but user is not logged in', async () => {
+  it('keeps public routes available when admin auth is enabled but user is not logged in', async () => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({
       authEnabled: true,
       loggedIn: false,
@@ -116,9 +172,24 @@ describe('App routing behavior', () => {
 
     render(<App />);
 
+    expect(await screen.findByTestId('portfolio-page')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/portfolio');
+    expect(screen.queryByTestId('login-page')).not.toBeInTheDocument();
+  });
+
+  it('redirects protected admin routes to the dedicated admin login', async () => {
+    vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({
+      authEnabled: true,
+      loggedIn: false,
+      setupState: 'enabled',
+    }));
+    window.history.pushState({}, '', '/admin/settings');
+
+    render(<App />);
+
     expect(await screen.findByTestId('login-page')).toBeInTheDocument();
-    expect(window.location.pathname).toBe('/login');
-    expect(window.location.search).toBe('?redirect=%2Fportfolio');
+    expect(window.location.pathname).toBe('/admin/login');
+    expect(window.location.search).toBe('?redirect=%2Fadmin%2Fsettings');
   });
 
   it('renders the current route page after auth is ready', async () => {
@@ -132,13 +203,14 @@ describe('App routing behavior', () => {
     expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
   });
 
-  it('routes /usage to the token usage page after auth is ready', async () => {
-    window.history.pushState({}, '', '/usage');
+  it('routes /admin/usage to the token usage page after auth is ready', async () => {
+    vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({ authEnabled: true, loggedIn: true, setupState: 'enabled' }));
+    window.history.pushState({}, '', '/admin/usage');
 
     render(<App />);
 
     expect(await screen.findByTestId('token-usage-page')).toBeInTheDocument();
-    expect(setCurrentRoute).toHaveBeenCalledWith('/usage');
+    expect(setCurrentRoute).toHaveBeenCalledWith('/admin/usage');
     expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
   });
 
@@ -152,17 +224,17 @@ describe('App routing behavior', () => {
     expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
   });
 
-  it('redirects authenticated login visits back to the home page', async () => {
+  it('redirects authenticated admin login visits to the admin console', async () => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({
       authEnabled: true,
       loggedIn: true,
       setupState: 'enabled',
     }));
-    window.history.pushState({}, '', '/login');
+    window.history.pushState({}, '', '/admin/login');
 
     render(<App />);
 
-    expect(await screen.findByTestId('home-page')).toBeInTheDocument();
+    expect(await screen.findByTestId('admin-console-page')).toBeInTheDocument();
     expect(screen.queryByTestId('login-page')).not.toBeInTheDocument();
   });
 

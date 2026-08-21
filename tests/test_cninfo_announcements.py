@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 import os
 import zipfile
@@ -15,6 +15,7 @@ from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.services.cninfo_announcement_service import CninfoAnnouncementError, CninfoAnnouncementService
 from src.services.announcement_artifact_service import AnnouncementArtifactService
 from src.services.investment_monitor_service import InvestmentMonitorService
+from src.services.watchlist_announcement_sync_worker import WatchlistAnnouncementSyncWorker
 from src.storage import DatabaseManager
 
 
@@ -116,8 +117,8 @@ class FakeCninfo:
 
     @staticmethod
     def fetch_recent(symbols, days=2):
-        del symbols, days
-        return []
+        del days
+        return FakeCninfo.fetch() if symbols else []
 
     @staticmethod
     def fetch_recent_market(days=2, max_pages=30):
@@ -152,19 +153,131 @@ def test_manual_announcement_sync_is_idempotent_and_queryable(tmp_path):
             os.environ["DATABASE_PATH"] = previous
 
 
-def test_automatic_announcement_source_uses_full_market_recent_fetch(tmp_path):
+def test_automatic_announcement_source_queries_watchlist_explicitly(tmp_path):
     previous = os.environ.get("DATABASE_PATH")
     os.environ["DATABASE_PATH"] = str(tmp_path / "automatic-announcements.db")
     Config.reset_instance(); DatabaseManager.reset_instance()
     try:
         repo = InvestmentMonitorRepository(DatabaseManager.get_instance())
         service = InvestmentMonitorService(repository=repo, cninfo=FakeCninfo())
-        service.equity_watchlist = lambda: []
+        service.equity_watchlist = lambda: ["600519.SH"]
 
         result = service.sync_source("cninfo.announcements")
 
         assert result["received"] == 1
         assert service.list_announcements(days=3650)["total"] == 1
+    finally:
+        DatabaseManager.reset_instance(); Config.reset_instance()
+        if previous is None:
+            os.environ.pop("DATABASE_PATH", None)
+        else:
+            os.environ["DATABASE_PATH"] = previous
+
+
+def test_generic_due_loop_leaves_cninfo_to_durable_watchlist_worker(tmp_path):
+    previous = os.environ.get("DATABASE_PATH")
+    os.environ["DATABASE_PATH"] = str(tmp_path / "cninfo-dedicated-worker.db")
+    Config.reset_instance(); DatabaseManager.reset_instance()
+    try:
+        repo = InvestmentMonitorRepository(DatabaseManager.get_instance())
+        service = InvestmentMonitorService(repository=repo, cninfo=FakeCninfo())
+        cninfo_source = repo.get_source("cninfo.announcements")
+        repo.due_sources = lambda: [cninfo_source]
+
+        result = service.sync_due_sources()
+
+        assert result["sources"] == []
+        assert result["totals"].get("sources", 0) == 0
+    finally:
+        DatabaseManager.reset_instance(); Config.reset_instance()
+        if previous is None:
+            os.environ.pop("DATABASE_PATH", None)
+        else:
+            os.environ["DATABASE_PATH"] = previous
+
+
+class WindowCninfo:
+    def __init__(self):
+        self.calls = []
+        self.fail_once = False
+
+    @staticmethod
+    def categories():
+        return []
+
+    def fetch(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail_once:
+            self.fail_once = False
+            raise CninfoAnnouncementError("temporary upstream failure")
+        start = kwargs["start_date"]
+        end = kwargs["end_date"]
+        announcement_id = f"ann-{start.isoformat()}-{end.isoformat()}"
+        return [{
+            "announcement_id": announcement_id, "code": "600519", "name": "贵州茅台",
+            "title": "贵州茅台公告", "announcement_at": datetime.combine(end, datetime.min.time()),
+            "pdf_url": f"https://static.cninfo.com.cn/finalpage/{announcement_id}.PDF",
+            "category_names": [], "category_codes": [], "size_kb": 1,
+            "file_type": "PDF", "org_id": "org", "raw": {"announcementId": announcement_id},
+        }]
+
+
+def test_watchlist_announcement_worker_backfills_one_year_in_durable_windows(tmp_path, monkeypatch):
+    previous = os.environ.get("DATABASE_PATH")
+    os.environ["DATABASE_PATH"] = str(tmp_path / "watchlist-announcements.db")
+    Config.reset_instance(); DatabaseManager.reset_instance()
+    try:
+        repo = InvestmentMonitorRepository(DatabaseManager.get_instance())
+        cninfo = WindowCninfo()
+        service = InvestmentMonitorService(repository=repo, cninfo=cninfo)
+        worker = WatchlistAnnouncementSyncWorker(repository=repo, service=service)
+        worker.max_windows_per_cycle = 24
+        worker._watchlist_symbols = lambda: ["600519.SH"]
+
+        result = worker.run_once()
+        state = worker.status()["symbols"][0]
+
+        assert result["status"] == "success"
+        assert state["history_progress"] == 100.0
+        assert state["status"] == "live"
+        assert date.fromisoformat(state["target_end"]) - date.fromisoformat(state["target_start"]) == timedelta(days=365)
+        assert len(result["backfill"]) >= 12
+        assert all(call["symbols"] == ["600519.SH"] for call in cninfo.calls)
+        assert service.list_announcements(days=3650, symbol="600519.SH")["total"] >= 12
+    finally:
+        DatabaseManager.reset_instance(); Config.reset_instance()
+        if previous is None:
+            os.environ.pop("DATABASE_PATH", None)
+        else:
+            os.environ["DATABASE_PATH"] = previous
+
+
+def test_watchlist_announcement_worker_keeps_failed_window_for_retry(tmp_path):
+    previous = os.environ.get("DATABASE_PATH")
+    os.environ["DATABASE_PATH"] = str(tmp_path / "watchlist-announcement-retry.db")
+    Config.reset_instance(); DatabaseManager.reset_instance()
+    try:
+        repo = InvestmentMonitorRepository(DatabaseManager.get_instance())
+        cninfo = WindowCninfo()
+        service = InvestmentMonitorService(repository=repo, cninfo=cninfo)
+        worker = WatchlistAnnouncementSyncWorker(repository=repo, service=service)
+        worker.max_windows_per_cycle = 1
+        worker._watchlist_symbols = lambda: ["600519.SH"]
+        cninfo.fail_once = True
+
+        first = worker.run_once()
+        state = repo.list_announcement_sync_states(["600519.SH"])[0]
+
+        assert first["incremental"][0]["status"] == "failed"
+        assert state["status"] == "retry"
+        assert state["completed_windows"] == []
+        assert state["next_retry_at"] is not None
+
+        repo.update_announcement_sync_state("600519.SH", next_retry_at=None)
+        second = worker.run_once()
+        assert second["incremental"][0]["status"] == "success"
+        assert second["backfill"][0]["status"] == "success"
+        assert len(repo.list_announcement_sync_states(["600519.SH"])[0]["completed_windows"]) == 1
     finally:
         DatabaseManager.reset_instance(); Config.reset_instance()
         if previous is None:

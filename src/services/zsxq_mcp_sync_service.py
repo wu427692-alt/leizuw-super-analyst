@@ -504,7 +504,7 @@ class ZsxqMcpSyncWorker:
     _lock = threading.Lock()
 
     def __init__(self):
-        self.interval = max(10.0, min(float(os.getenv("ZSXQ_MCP_POLL_SEC", "30")), 3600.0))
+        self.interval = max(10.0, min(float(os.getenv("ZSXQ_MCP_POLL_SEC", "10")), 3600.0))
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._wake = threading.Event()

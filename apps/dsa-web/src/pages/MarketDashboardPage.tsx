@@ -12,7 +12,7 @@ import { getMarketSeries } from '../api/marketSeries';
 import type { HomeDashboard, HomeWatchlistCard, MarketIndexCard, MarketPoint } from '../types/homeDashboard';
 import type { MonitorEvent } from '../types/investmentMonitor';
 import { useRealtimeIndices, useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
-import { isCurrentShanghaiQuote, marketQuoteSession } from '../utils/marketQuoteDate';
+import { marketQuoteSession } from '../utils/marketQuoteDate';
 import './MarketDashboardPage.css';
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -30,14 +30,19 @@ const DATA_SOURCE_LABELS: Record<string, string> = {
   'akshare.sina_sector_spot': '新浪行业板块实时行情',
 };
 
-const HOME_CACHE_KEY = 'dsa:home-dashboard:last-good:v1';
+const HOME_CACHE_KEY = 'dsa:home-dashboard:last-good:v2';
+const HOME_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1_000;
 let memoryDashboardCache: HomeDashboard | null = null;
 
 function readDashboardCache(): HomeDashboard | null {
   if (memoryDashboardCache) return memoryDashboardCache;
   try {
-    const raw = window.sessionStorage.getItem(HOME_CACHE_KEY);
-    memoryDashboardCache = raw ? JSON.parse(raw) as HomeDashboard : null;
+    const raw = window.localStorage.getItem(HOME_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as { storedAt?: number; data?: HomeDashboard };
+    memoryDashboardCache = cached.data && cached.storedAt && Date.now() - cached.storedAt <= HOME_CACHE_MAX_AGE_MS
+      ? cached.data
+      : null;
   } catch {
     memoryDashboardCache = null;
   }
@@ -46,7 +51,7 @@ function readDashboardCache(): HomeDashboard | null {
 
 function rememberDashboard(value: HomeDashboard) {
   memoryDashboardCache = value;
-  try { window.sessionStorage.setItem(HOME_CACHE_KEY, JSON.stringify(value)); } catch { /* optional cache */ }
+  try { window.localStorage.setItem(HOME_CACHE_KEY, JSON.stringify({ storedAt: Date.now(), data: value })); } catch { /* optional cache */ }
 }
 
 function sourceLabel(value?: string | null) {
@@ -55,7 +60,11 @@ function sourceLabel(value?: string | null) {
 
 function shortTime(value?: string | null) {
   if (!value) return '时间未标注';
-  if (/^\d{8}$/.test(value)) return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+  if (/^\d{8}/.test(value)) {
+    const date = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+    const suffix = value.slice(8).replace(/^T/, ' ');
+    return `${date}${suffix}`;
+  }
   return value.replace('T', ' ').slice(0, 19);
 }
 
@@ -137,10 +146,6 @@ function DistributionHistogram({ items }: { items: Array<{ label: string; count:
   </div>;
 }
 
-function AvailabilityNotice({ message }: { message: string }) {
-  return <div className="market-data-unavailable"><RadioTower className="h-4 w-4" /><div><p>当日数据暂不可用</p><p>{message}</p></div></div>;
-}
-
 function IntelligenceLine({ event }: { event?: MonitorEvent | null }) {
   if (!event) return <span className="text-secondary-text">暂无新增信息</span>;
   return <span aria-label={event.title}>{event.title}</span>;
@@ -202,13 +207,23 @@ const MarketDashboardPage = () => {
   const watchlistSymbols = useMemo(() => (data?.watchlist ?? []).map(card => card.symbol), [data]);
   const watchlistSymbolKey = watchlistSymbols.join('|');
   useEffect(() => {
-    if (!watchlistSymbols.length) return;
-    // Warm every visible watchlist chart from the shared local cache. Requests
-    // are deduplicated by getMarketSeries, so the currently visible stock does
-    // not issue a second request and later switches become immediate.
-    void Promise.allSettled(watchlistSymbols.map(symbol => (
-      getMarketSeries(symbol, 'intraday', '1d', false, 'stock')
-    )));
+    const remainingSymbols = watchlistSymbols.slice(1, 5);
+    if (!remainingSymbols.length) return undefined;
+    let cancelled = false;
+    let cursor = 0;
+    const warmNext = () => {
+      if (cancelled || document.visibilityState === 'hidden' || cursor >= remainingSymbols.length) return;
+      const symbol = remainingSymbols[cursor++];
+      void getMarketSeries(symbol, 'intraday', '1d', false, 'stock', false)
+        .catch(() => undefined)
+        .finally(() => {
+          if (!cancelled && cursor < remainingSymbols.length) window.setTimeout(warmNext, 1_500);
+        });
+    };
+    // The selected chart loads immediately. Warm a few alternative symbols
+    // only after the public dashboard and live quote calls have settled.
+    const timer = window.setTimeout(warmNext, 6_000);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   // A primitive key prevents dashboard refreshes with the same symbols from
   // re-running the warmup effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -216,7 +231,7 @@ const MarketDashboardPage = () => {
   const { quotes: liveQuotes, keyFor: quoteKey } = useRealtimeQuotes(watchlistSymbols);
   const liveWatchlist = useMemo(() => (data?.watchlist ?? []).map(card => {
     const live = liveQuotes.get(quoteKey(card.symbol));
-    return live ? { ...card, latestQuote: {
+    return live && !live.isStale ? { ...card, latestQuote: {
       ...card.latestQuote, currentPrice: live.currentPrice, change: live.change ?? undefined,
       changePercent: live.changePercent ?? undefined, open: live.open ?? undefined,
       high: live.high ?? undefined, low: live.low ?? undefined, prevClose: live.prevClose ?? undefined,
@@ -231,7 +246,7 @@ const MarketDashboardPage = () => {
   const liveIndices = useRealtimeIndices((data?.cnIndices ?? []).map(item => item.code));
   const cnIndices = useMemo(() => (data?.cnIndices ?? []).map(item => {
     const live = liveIndices.get(item.code.toUpperCase());
-    if (!live) return item;
+    if (!live || live.isStale) return item;
     const history = live.close == null
       ? item.history
       : [...item.history, { date: live.updateTime, value: live.close }].slice(-12);
@@ -242,8 +257,8 @@ const MarketDashboardPage = () => {
   const leadIndex = cnIndices.find(item => item.code === selectedIndexCode) ?? cnIndices[0];
   const leadIndexSession = marketQuoteSession(leadIndex?.updateTime ?? leadIndex?.tradeDate, leadIndex?.source);
   const leadIndexChangePct = leadIndexSession.canShowChange ? leadIndex?.changePct : null;
-  const breadthAvailable = Boolean(data?.breadth.available && isCurrentShanghaiQuote(data.breadth.updatedAt ?? data.breadth.tradeDate));
-  const sectorDistributionAvailable = Boolean(data?.sectorDistribution.available && isCurrentShanghaiQuote(data.sectorDistribution.updatedAt ?? data.sectorDistribution.tradeDate));
+  const breadthAvailable = Boolean(data?.breadth.available && (data.breadth.total ?? 0) > 0);
+  const sectorDistributionAvailable = Boolean(data?.sectorDistribution.available && (data.sectorDistribution.total ?? 0) > 0);
   const breadthTotal = Math.max(1, data?.breadth.total ?? 0);
   const aiActions = [
     { label: '个股深度分析', note: '多维度研判', icon: BrainCircuit, action: () => navigate('/chat') },
@@ -265,33 +280,31 @@ const MarketDashboardPage = () => {
       </section>
 
       {error ? <div role="status" className="border border-warning/25 bg-warning/5 px-3 py-2 text-xs text-secondary-text">{error}</div> : null}
-      {data?.warnings.length ? <div className="flex flex-wrap gap-1">{data.warnings.map((warning) => <Badge key={warning} variant="warning">{warning}</Badge>)}</div> : null}
-
       <section className="market-panel border border-border/70 bg-card/90 p-3">
         <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border/55 pb-2"><div><p className="text-[9px] text-secondary-text">大盘主行情 · K线 · {leadIndexSession.label} · {sourceLabel(leadIndex?.source)}</p><div className="mt-1 flex items-baseline gap-3"><h2 className="text-sm font-semibold">{leadIndex?.name ?? '上证指数'}</h2><Badge>{leadIndex?.code ?? '000001.SH'}</Badge><p className={`text-2xl font-semibold tabular-nums ${tone(leadIndexChangePct)}`}>{formatNumber(leadIndex?.close)}</p><span className={`text-xs ${tone(leadIndexChangePct)}`}>{leadIndexSession.canShowChange ? percent(leadIndexChangePct) : '涨跌幅待核验'}</span></div></div><div className="text-right text-[9px] text-secondary-text"><p>上方八个核心指数均可切换主K线</p><p>分时 / 日K / 周K / 月K / 年K均跟随当前指数</p></div></div>
         <MarketTimeframeChart key={leadIndex?.code ?? '000001.SH'} symbol={leadIndex?.code ?? '000001.SH'} assetType="index" initialPeriod="intraday" initialRange="1d" className="mt-2" />
       </section>
 
-      <div className="grid gap-2 xl:grid-cols-2">
-        <section className="market-panel border border-border/70 bg-card/90 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">当日市场广度</h2><p className="mt-0.5 text-[9px] text-secondary-text">{breadthAvailable ? `${shortTime(data?.breadth.updatedAt ?? data?.breadth.tradeDate)} · ${sourceLabel(data?.breadth.source)}` : '仅展示上海当日全A股事实快照'}</p></div>{breadthAvailable ? <div className="flex gap-3 text-[10px]"><span className="text-danger">上涨 {data?.breadth.up}</span><span className="text-success">下跌 {data?.breadth.down}</span><span className="text-secondary-text">平盘 {data?.breadth.flat}</span></div> : null}</div>
-          {breadthAvailable ? <>
+      {breadthAvailable || sectorDistributionAvailable ? <div className={`grid gap-2 ${breadthAvailable && sectorDistributionAvailable ? 'xl:grid-cols-2' : ''}`}>
+        {breadthAvailable ? <section className="market-panel border border-border/70 bg-card/90 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">市场广度</h2><p className="mt-0.5 text-[9px] text-secondary-text">{shortTime(data?.breadth.updatedAt ?? data?.breadth.tradeDate)} 收盘 · {sourceLabel(data?.breadth.source)}</p></div><div className="flex gap-3 text-[10px]"><span className="text-danger">上涨 {data?.breadth.up}</span><span className="text-success">下跌 {data?.breadth.down}</span><span className="text-secondary-text">平盘 {data?.breadth.flat}</span></div></div>
+          <>
             <div className="market-breadth-ratio mt-3" aria-label={`上涨${data?.breadth.up}家，下跌${data?.breadth.down}家，平盘${data?.breadth.flat}家`}><span className="is-up" style={{ width: `${(data?.breadth.up ?? 0) / breadthTotal * 100}%` }} /><span className="is-flat" style={{ width: `${(data?.breadth.flat ?? 0) / breadthTotal * 100}%` }} /><span className="is-down" style={{ width: `${(data?.breadth.down ?? 0) / breadthTotal * 100}%` }} /></div>
             <DistributionHistogram items={data?.breadth.distribution ?? []} />
             <div className="mt-2 grid grid-cols-3 gap-px border border-border/60 bg-border/60 text-center text-[9px]"><div className="bg-background/70 p-2"><p className="text-secondary-text">有效交易股票</p><p className="mt-1 text-xs">{data?.breadth.total}</p></div><div className="bg-background/70 p-2"><p className="text-secondary-text">涨停</p><p className="mt-1 text-xs text-danger">{data?.breadth.limitUp}</p></div><div className="bg-background/70 p-2"><p className="text-secondary-text">跌停</p><p className="mt-1 text-xs text-success">{data?.breadth.limitDown}</p></div></div>
-          </> : <AvailabilityNotice message={data?.breadth.reason ?? '实时源尚未返回今日全市场行情。'} />}
-        </section>
-        <section className="market-panel border border-border/70 bg-card/90 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">当日涨跌板块分布</h2><p className="mt-0.5 text-[9px] text-secondary-text">{sectorDistributionAvailable ? `${shortTime(data?.sectorDistribution.updatedAt ?? data?.sectorDistribution.tradeDate)} · ${sourceLabel(data?.sectorDistribution.source)}` : '仅展示上海当日行业板块事实快照'}</p></div>{sectorDistributionAvailable ? <div className="flex gap-3 text-[10px]"><span className="text-danger">上涨 {data?.sectorDistribution.up}</span><span className="text-success">下跌 {data?.sectorDistribution.down}</span><span className="text-secondary-text">平盘 {data?.sectorDistribution.flat}</span></div> : null}</div>
-          {sectorDistributionAvailable ? <>
+          </>
+        </section> : null}
+        {sectorDistributionAvailable ? <section className="market-panel border border-border/70 bg-card/90 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">行业涨跌分布</h2><p className="mt-0.5 text-[9px] text-secondary-text">{shortTime(data?.sectorDistribution.updatedAt ?? data?.sectorDistribution.tradeDate)} 收盘 · {sourceLabel(data?.sectorDistribution.source)}</p></div><div className="flex gap-3 text-[10px]"><span className="text-danger">上涨 {data?.sectorDistribution.up}</span><span className="text-success">下跌 {data?.sectorDistribution.down}</span><span className="text-secondary-text">平盘 {data?.sectorDistribution.flat}</span></div></div>
+          <>
             <DistributionHistogram items={data?.sectorDistribution.distribution ?? []} />
             <div className="market-sector-movers mt-2">
               <div><p className="market-sector-movers__title text-danger">领涨行业</p>{(data?.sectorDistribution.leaders ?? []).slice(0, 4).map(item => <div className="market-sector-movers__row" key={`up-${item.name}`}><span>{item.name}</span><span className="text-danger">{percent(item.changePct)}</span></div>)}</div>
               <div><p className="market-sector-movers__title text-success">领跌行业</p>{(data?.sectorDistribution.laggards ?? []).slice(0, 4).map(item => <div className="market-sector-movers__row" key={`down-${item.name}`}><span>{item.name}</span><span className="text-success">{percent(item.changePct)}</span></div>)}</div>
             </div>
-          </> : <AvailabilityNotice message={data?.sectorDistribution.reason ?? '实时源尚未返回今日行业板块行情。'} />}
-        </section>
-      </div>
+          </>
+        </section> : null}
+      </div> : null}
 
       <section className="market-panel border border-border/70 bg-card/90"><div className="flex items-center justify-between border-b border-border/55 px-3 py-2"><div><h2 className="text-sm font-semibold">海外市场最近收盘</h2><p className="text-[9px] text-secondary-text">逐项显示实际交易日 · 不混入A股当日广度</p></div><Globe2 className="h-4 w-4 text-cyan" /></div><div className="grid md:grid-cols-2 xl:grid-cols-3">{(data?.globalIndices ?? []).map((item) => <OverseasCard key={item.code} item={item} />)}</div></section>
 

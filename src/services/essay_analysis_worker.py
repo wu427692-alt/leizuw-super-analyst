@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from src.repositories.essay_analysis_repo import EssayAnalysisRepository
 from src.services.essay_analysis_service import (
     DeepSeekEssayAnalyzer,
+    ESSAY_PROMPT_VERSION,
     EssayAnalysisError,
     EssayAnalysisService,
 )
@@ -103,6 +104,13 @@ class EssayAnalysisWorker:
             recovered = repository.recover_stale()
             if recovered:
                 logger.info("[essay-radar] recovered %s stale processing tasks", recovered)
+            repaired = repository.requeue_low_quality_completed(
+                model=DeepSeekEssayAnalyzer().model,
+                prompt_version=ESSAY_PROMPT_VERSION,
+                limit=max(1, min(int(os.getenv("ESSAY_ANALYSIS_AUTO_REPAIR_LIMIT", "5000")), 50000)),
+            )
+            if repaired:
+                logger.warning("[essay-radar] automatically requeued %s placeholder summaries", repaired)
             if bootstrap_recent:
                 service.enqueue_recent(days=self.backfill_days)
             with ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="essay-deepseek") as executor:
@@ -146,8 +154,9 @@ class EssayAnalysisWorker:
     def _process_batch(self, batch: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         repository = EssayAnalysisRepository()
         topic_ids = [str(item["topic_id"]) for item in batch]
+        analyzer = DeepSeekEssayAnalyzer()
         try:
-            response = DeepSeekEssayAnalyzer().analyze_batch(batch)
+            response = analyzer.analyze_batch(batch)
             results = list(response["items"])
             saved = repository.save_successes(
                 results,
@@ -156,13 +165,39 @@ class EssayAnalysisWorker:
             )
             successful_ids = {str(item["topic_id"]) for item in results}
             missing_ids = [topic_id for topic_id in topic_ids if topic_id not in successful_ids]
+            recovered_ids: set[str] = set()
+            recovery_errors: List[str] = []
+            if missing_ids and len(batch) > 1:
+                work_by_id = {str(item["topic_id"]): item for item in batch}
+                # A large JSON response can omit or under-fill one item while
+                # all other entries are valid. Retry only those topics as
+                # single-note requests before waiting for the durable queue.
+                for topic_id in missing_ids:
+                    try:
+                        single_response = analyzer.analyze_batch([work_by_id[topic_id]])
+                        single_results = list(single_response["items"])
+                        if not single_results:
+                            continue
+                        saved += repository.save_successes(
+                            single_results,
+                            raw_response=single_response["raw_response"],
+                            usage=single_response["usage"],
+                        )
+                        recovered_ids.add(topic_id)
+                    except Exception as exc:  # noqa: BLE001 - remaining item stays retryable.
+                        recovery_errors.append(f"{topic_id}:{type(exc).__name__}")
+            missing_ids = [topic_id for topic_id in missing_ids if topic_id not in recovered_ids]
             if missing_ids:
                 repository.save_failures(
                     missing_ids,
-                    error_message="DeepSeek response omitted one or more requested topic_ids",
+                    error_message="DeepSeek omitted the topic or returned a placeholder summary",
                     retry_delay_seconds=30,
                 )
-            return {"saved": saved, "failed": len(missing_ids), "error": None}
+            return {
+                "saved": saved,
+                "failed": len(missing_ids),
+                "error": "; ".join(recovery_errors[:5]) or None,
+            }
         except Exception as exc:  # noqa: BLE001 - persist retryable task state for every batch failure.
             delay = min(30 * (2 ** max(int(item.get("attempt_count") or 1) - 1 for item in batch)), 900)
             safe_error = f"{type(exc).__name__}: {str(exc)[:500]}"

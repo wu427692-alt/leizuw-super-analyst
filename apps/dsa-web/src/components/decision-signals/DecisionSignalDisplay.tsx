@@ -113,6 +113,30 @@ function formatJsonish(value: unknown): string | null {
   }
 }
 
+function formatSignalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  if (!normalized.startsWith('[') && !normalized.startsWith('{')) return normalized;
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
+    if (Array.isArray(parsed)) {
+      const items = parsed
+        .map((item) => (typeof item === 'string' || typeof item === 'number' ? String(item).trim() : ''))
+        .filter(Boolean);
+      return items.length ? items.join('；') : normalized;
+    }
+    if (parsed && typeof parsed === 'object') {
+      const items = Object.values(parsed)
+        .map((item) => (typeof item === 'string' || typeof item === 'number' ? String(item).trim() : ''))
+        .filter(Boolean);
+      return items.length ? items.join('；') : normalized;
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
 function asJsonViewerData(value: unknown): Record<string, unknown> | unknown[] | null {
   if (Array.isArray(value)) return value;
   if (value && typeof value === 'object') return value as Record<string, unknown>;
@@ -188,7 +212,7 @@ type SignalTextBlockProps = {
 };
 
 const SignalTextBlock: React.FC<SignalTextBlockProps> = ({ label, value, tone = 'default', clamp = true }) => {
-  const normalized = value?.trim();
+  const normalized = formatSignalText(value);
   if (!normalized) return null;
   return (
     <div className={cn('rounded-xl border px-3 py-2.5', textToneClass[tone])}>

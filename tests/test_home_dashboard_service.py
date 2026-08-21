@@ -50,7 +50,12 @@ class FakeMonitor:
         }
 
 
-def test_home_dashboard_aggregates_market_and_watchlist_with_cache(monkeypatch):
+def test_home_dashboard_aggregates_market_and_watchlist_with_cache(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME_DASHBOARD_CACHE_PATH", str(tmp_path / "home-dashboard.json"))
+    # This contract verifies the live breadth preference.  Pin that market
+    # phase explicitly so the test does not switch to the post-close Tushare
+    # fallback when the suite happens to run before 09:15 or on a weekend.
+    monkeypatch.setattr(HomeDashboardService, "_live_snapshot_allowed", staticmethod(lambda *_args: True))
     monkeypatch.setattr(
         "src.services.market_data_service.MarketDataService.latest_quotes",
         lambda _self, _symbols, refresh_missing=True: [],
@@ -151,3 +156,22 @@ def test_current_day_breadth_rejects_previous_session_rows():
     assert result["total"] == 0
     assert result["trade_date"] == "20260820"
     assert "旧交易日" in warnings[0]
+
+
+def test_closed_day_uses_latest_index_session_for_market_summary(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME_DASHBOARD_CACHE_PATH", str(tmp_path / "home-dashboard.json"))
+    monkeypatch.setattr(HomeDashboardService, "_is_trading_day", lambda _self, _date: False)
+    monkeypatch.setattr(
+        "src.services.market_data_service.MarketDataService.latest_quotes",
+        lambda _self, _symbols, refresh_missing=True: [],
+    )
+    service = HomeDashboardService(
+        tushare=FakeTushare(), monitor=FakeMonitor(), cache_seconds=300,
+    )
+
+    result = service._build()
+
+    assert result["trade_date"] == "20260819"
+    assert result["breadth"]["available"] is True
+    assert result["breadth"]["trade_date"] == "20260819"
+    assert result["breadth"]["total"] == 3

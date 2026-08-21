@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import time
 import threading
 from collections.abc import Awaitable, Callable
@@ -20,6 +21,12 @@ import starlette.testclient
 from anyio._backends import _asyncio
 
 T = TypeVar("T")
+
+# Production may enforce approved front-office users. Most historical API
+# tests exercise endpoint contracts rather than login, so keep the suite
+# deterministic and let the dedicated user-account tests enable access
+# control explicitly with monkeypatch.
+os.environ["USER_ACCESS_ENABLED"] = "false"
 
 _original_call_soon_threadsafe = asyncio.BaseEventLoop.call_soon_threadsafe
 

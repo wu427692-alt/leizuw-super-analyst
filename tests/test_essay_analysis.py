@@ -23,6 +23,7 @@ from src.services.essay_analysis_service import (
     _deep_insights_cache,
 )
 from src.services.essay_analysis_worker import EssayAnalysisWorker
+import src.services.essay_analysis_worker as essay_worker_module
 from src.services.financial_data_service import ResearchNoteService
 from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, StockDaily
 from src.utils.essay_topic_taxonomy import canonicalize_topic, canonicalize_topics, topic_search_terms
@@ -92,6 +93,63 @@ def test_analyzer_normalizes_json_output_and_stock_codes(monkeypatch) -> None:
     payload = session.post.call_args.kwargs["json"]
     assert payload["response_format"] == {"type": "json_object"}
     assert payload["thinking"] == {"type": "disabled"}
+
+
+def test_analyzer_rejects_placeholder_summary_for_retry() -> None:
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": """{
+          "items": [{
+            "topic_id": "topic-1",
+            "summary": "信息不足，未形成有效摘要",
+            "primary_category": "other",
+            "sentiment": "neutral",
+            "time_horizon": "unclear"
+          }]
+        }"""}}],
+        "usage": {},
+    }
+    session = MagicMock()
+    session.post.return_value = response
+    analyzer = DeepSeekEssayAnalyzer(api_key="test-key", session=session)
+
+    result = analyzer.analyze_batch([{
+        "topic_id": "topic-1",
+        "title": "只有标题也应形成摘要",
+        "content": "",
+        "existing_symbols": [],
+    }])
+
+    assert result["items"] == []
+
+
+def test_worker_retries_only_missing_batch_item_as_single(monkeypatch) -> None:
+    repository = MagicMock()
+    repository.save_successes.side_effect = [1, 1]
+    analyzer = MagicMock()
+    analyzer.analyze_batch.side_effect = [
+        {
+            "items": [{"topic_id": "topic-good"}],
+            "raw_response": "batch",
+            "usage": {},
+        },
+        {
+            "items": [{"topic_id": "topic-retry"}],
+            "raw_response": "single",
+            "usage": {},
+        },
+    ]
+    monkeypatch.setattr(essay_worker_module, "EssayAnalysisRepository", lambda: repository)
+    monkeypatch.setattr(essay_worker_module, "DeepSeekEssayAnalyzer", lambda: analyzer)
+
+    result = EssayAnalysisWorker()._process_batch([
+        {"topic_id": "topic-good"},
+        {"topic_id": "topic-retry"},
+    ])
+
+    assert [len(call.args[0]) for call in analyzer.analyze_batch.call_args_list] == [2, 1]
+    assert result == {"saved": 2, "failed": 0, "error": None}
+    repository.save_failures.assert_not_called()
 
 
 def test_topic_taxonomy_merges_optical_communication_synonyms_without_duplicate_record_hits() -> None:
@@ -213,6 +271,42 @@ def test_queue_claim_save_and_dashboard_are_restart_safe(essay_service) -> None:
     assert deep["pulse"] == []
     assert deep["period"]["start_date"] <= "2026-08-19" <= deep["period"]["end_date"]
     assert deep["evidence_funnel"][2] == {"name": "匹配有效股票代码", "count": 1}
+
+
+def test_completed_placeholder_summary_is_automatically_requeued(essay_service) -> None:
+    claimed = essay_service.repo.claim_batch(limit=1, max_attempts=4)
+    essay_service.repo.save_successes([{
+        "topic_id": claimed[0]["topic_id"],
+        "summary": "信息不足，未形成有效摘要",
+        "primary_category": "other",
+        "sentiment": "neutral",
+        "time_horizon": "unclear",
+        "importance_score": 0,
+        "confidence_score": 0,
+        "tags": [],
+        "industries": [],
+        "themes": [],
+        "stock_mentions": [],
+        "key_points": [],
+        "catalysts": [],
+        "risks": [],
+    }], raw_response="{}", usage={})
+
+    repaired = essay_service.repo.requeue_low_quality_completed(
+        model="deepseek-v4-flash",
+        prompt_version="quality-v3",
+    )
+
+    assert repaired == 1
+    with essay_service.repo.db.get_session() as session:
+        row = session.execute(
+            select(EssayAnalysisRecord).where(EssayAnalysisRecord.topic_id == "topic-1")
+        ).scalar_one()
+        assert row.status == "pending"
+        assert row.attempt_count == 0
+        assert row.prompt_version == "quality-v3"
+        assert row.summary is None
+        assert row.error_message == "正在自动重新分析"
 
 
 def test_deep_insights_links_deduplicated_essay_days_to_local_prices(essay_service) -> None:

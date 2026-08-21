@@ -32,6 +32,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.gzip import GZipMiddleware
+
+# LiteLLM otherwise performs an optional remote GitHub fetch while importing
+# its model registry. The package includes a local map, so startup does not
+# need to depend on that external request.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +314,7 @@ async def app_lifespan(app: FastAPI):
     essay_daily_report_worker = None
     zsxq_sync_worker = None
     investment_monitor_worker = None
+    watchlist_announcement_worker = None
     sync_watchdog_worker = None
     icloud_knowledge_worker = None
     market_data_worker = None
@@ -331,16 +338,19 @@ async def app_lifespan(app: FastAPI):
             app.state.market_data_worker = market_data_worker
         except Exception as exc:  # noqa: BLE001 - market cache must not prevent API startup.
             logger.warning("Market data worker did not start: %s", exc)
-    if os.getenv("ESSAY_ANALYSIS_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("ESSAY_ANALYSIS_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.essay_analysis_worker import EssayAnalysisWorker
 
             essay_worker = EssayAnalysisWorker.get_instance()
-            essay_worker.start()
+            # New MCP imports create durable analysis jobs themselves.  Do not
+            # rescan an arbitrary recent window on every server restart: older
+            # unanalysed notes stay available for explicit, count-limited use.
+            essay_worker.start(bootstrap_recent=False)
             app.state.essay_analysis_worker = essay_worker
         except Exception as exc:  # noqa: BLE001 - optional worker must not prevent API startup.
             logger.warning("Essay analysis worker did not start: %s", exc)
-    daily_report_auto = os.getenv("ESSAY_DAILY_REPORT_AUTO_START", os.getenv("ESSAY_ANALYSIS_AUTO_START", ""))
+    daily_report_auto = os.getenv("ESSAY_DAILY_REPORT_AUTO_START", "true")
     if daily_report_auto.strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.essay_daily_report_worker import EssayDailyReportWorker
@@ -350,7 +360,7 @@ async def app_lifespan(app: FastAPI):
             app.state.essay_daily_report_worker = essay_daily_report_worker
         except Exception as exc:  # noqa: BLE001
             logger.warning("Essay daily report worker did not start: %s", exc)
-    if os.getenv("ZSXQ_MCP_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("ZSXQ_MCP_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncWorker
 
@@ -377,6 +387,15 @@ async def app_lifespan(app: FastAPI):
             app.state.investment_monitor_worker = investment_monitor_worker
         except Exception as exc:  # noqa: BLE001 - optional worker must not prevent API startup.
             logger.warning("Investment monitor worker did not start: %s", exc)
+    if os.getenv("CNINFO_WATCHLIST_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.watchlist_announcement_sync_worker import WatchlistAnnouncementSyncWorker
+
+            watchlist_announcement_worker = WatchlistAnnouncementSyncWorker.get_instance()
+            watchlist_announcement_worker.start()
+            app.state.watchlist_announcement_worker = watchlist_announcement_worker
+        except Exception as exc:  # noqa: BLE001 - announcement repair must not prevent API startup.
+            logger.warning("CNInfo watchlist sync worker did not start: %s", exc)
     try:
         from src.services.watchlist_backfill_worker import WatchlistBackfillWorker
 
@@ -440,6 +459,10 @@ async def app_lifespan(app: FastAPI):
             investment_monitor_worker.stop()
             if hasattr(app.state, "investment_monitor_worker"):
                 delattr(app.state, "investment_monitor_worker")
+        if watchlist_announcement_worker is not None:
+            watchlist_announcement_worker.stop()
+            if hasattr(app.state, "watchlist_announcement_worker"):
+                delattr(app.state, "watchlist_announcement_worker")
         if essay_worker is not None:
             essay_worker.stop()
             if hasattr(app.state, "essay_analysis_worker"):
@@ -488,8 +511,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "- 历史记录：查询历史分析报告\n"
             "- 股票数据：获取行情数据\n\n"
             "## 认证方式\n"
-            "支持可选管理员认证：ADMIN_AUTH_ENABLED=true 时，除登录、状态、健康检查和 "
-            "OpenAPI 文档外，/api/v1/* 需要有效管理员会话 Cookie；关闭时不强制认证。"
+            "USER_ACCESS_ENABLED=true 时，前台接口要求已批准用户的会话或唯一可信 IP；"
+            "自选股、问股、持仓、告警和分析任务按账号隔离。ADMIN_AUTH_ENABLED=true 时，"
+            "系统配置、API 密钥、同步控制、用量审计和用户审批接口另需有效管理员会话 Cookie。"
         ),
         version="1.0.0",
         lifespan=app_lifespan,
@@ -525,6 +549,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.add_middleware(GZipMiddleware, minimum_size=1_024, compresslevel=5)
 
     add_auth_middleware(app)
     

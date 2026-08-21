@@ -20,7 +20,7 @@ export const essayQuantApi = {
   catalog: async (): Promise<EssayQuantCatalog> => toCamelCase((await apiClient.get('/api/v1/essay-quant/research-catalog')).data),
   runs: async (): Promise<EssayQuantRunHistory> => toCamelCase((await apiClient.get('/api/v1/essay-quant/runs')).data),
   plan: async (prompt: string): Promise<EssayQuantPlan> => toCamelCase((await apiClient.post('/api/v1/essay-quant/natural-language/plan', { prompt })).data),
-  executePlan: async (rule: EssayQuantRule): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.post('/api/v1/essay-quant/natural-language/execute', { rule: payload(rule), refresh_prices: true })).data),
+  executePlan: async (rule: EssayQuantRule): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.post('/api/v1/essay-quant/natural-language/execute', { rule: payload(rule), refresh_prices: false }, { timeout: 180000 })).data),
   rules: async (): Promise<{ items: EssayQuantRule[]; total: number }> => toCamelCase((await apiClient.get('/api/v1/essay-quant/rules')).data),
   saveRule: async (rule: EssayQuantRule): Promise<EssayQuantRule> => {
     const response = rule.id
@@ -29,8 +29,8 @@ export const essayQuantApi = {
     return toCamelCase(response.data);
   },
   run: async (rule: EssayQuantRule): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.post('/api/v1/essay-quant/run', {
-    ...payload(rule), rule_id: rule.id, refresh_prices: true, max_symbols: 30,
-  })).data),
+    ...payload(rule), rule_id: rule.id, refresh_prices: false, max_symbols: 30,
+  }, { timeout: 180000 })).data),
 };
 
 function normalizeDashboard(data: unknown): EssayQuantDashboard {

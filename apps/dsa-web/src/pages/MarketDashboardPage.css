@@ -198,27 +198,6 @@
   white-space: nowrap;
 }
 
-.market-command-center .market-data-unavailable {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-height: 196px;
-  margin-top: 10px;
-  padding: 18px;
-  border: 1px dashed hsl(var(--border));
-  color: hsl(var(--secondary-text));
-  font-size: 10px;
-}
-
-.market-command-center .market-data-unavailable p:first-child {
-  color: hsl(var(--foreground));
-  font-weight: 600;
-}
-
-.market-command-center .market-data-unavailable p + p {
-  margin-top: 4px;
-}
-
 @media (max-width: 767px) {
   .market-command-center {
     background-size: 24px 24px;

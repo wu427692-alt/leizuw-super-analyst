@@ -386,6 +386,7 @@ class AnalysisTaskQueue:
         notify: bool = True,
         skills: Optional[List[str]] = None,
         report_language: Optional[str] = None,
+        task_id_prefix: str = "",
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
@@ -412,7 +413,7 @@ class AnalysisTaskQueue:
                     duplicates.append(DuplicateTaskError(stock_code, existing_task_id))
                     continue
 
-                task_id = uuid.uuid4().hex
+                task_id = f"{task_id_prefix}{uuid.uuid4().hex}"
                 task_skills = list(skills) if skills is not None else None
                 task_info = TaskInfo(
                     task_id=task_id,

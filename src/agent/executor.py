@@ -642,10 +642,17 @@ class AgentExecutor:
             )
             if daily_market_context_section:
                 context_parts.append(daily_market_context_section.strip())
+            # The API pre-hydrates this bounded, source-labelled package from
+            # the shared local database and direct upstream fallback.  Chat
+            # previously discarded it here, leaving the model with only the
+            # ticker even though the data had already been collected.
+            analysis_context_pack_summary = context.get("analysis_context_pack_summary")
+            if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary.strip():
+                context_parts.append(analysis_context_pack_summary.strip())
             if context_parts:
                 context_msg = "[系统提供的历史分析上下文，可供参考对比]\n" + "\n".join(context_parts)
                 messages.append({"role": "user", "content": context_msg})
-                messages.append({"role": "assistant", "content": "好的，我已了解该股票的历史分析数据。请告诉我你想了解什么？"})
+                messages.append({"role": "assistant", "content": "已收到本轮事实底稿；我会优先引用带时间和来源的数据，缺失项再调用工具。"})
 
         messages.append({"role": "user", "content": message})
         baseline_len = len(messages)

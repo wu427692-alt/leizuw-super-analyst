@@ -1,4 +1,4 @@
-import apiClient from './index';
+import apiClient, { BACKGROUND_ROUTE_HEADERS } from './index';
 import { toCamelCase } from './utils';
 import type { MarketPeriod, MarketRange, MarketSeries } from '../types/marketSeries';
 
@@ -12,6 +12,7 @@ export async function getMarketSeries(
   range: MarketRange,
   refresh = false,
   assetType: 'stock' | 'index' = 'stock',
+  trackRoute = true,
 ): Promise<MarketSeries> {
   const key = `${assetType}:${symbol}:${period}:${range}`;
   const cached = cache.get(key);
@@ -24,6 +25,7 @@ export async function getMarketSeries(
     : `/api/v1/stocks/${encodeURIComponent(symbol)}/history`;
   const request = apiClient.get(path, {
     params: { period, range, refresh, max_points: period === 'intraday' ? 2000 : undefined },
+    headers: trackRoute ? undefined : BACKGROUND_ROUTE_HEADERS,
     // These endpoints read the local SQLite market store. A two-minute wait
     // makes a transient lock look like a frozen page; fail fast so the chart's
     // recovery loop can retry without blocking stock switching.

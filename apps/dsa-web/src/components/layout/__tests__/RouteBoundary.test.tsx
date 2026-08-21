@@ -53,6 +53,28 @@ describe('RouteOutletBoundary', () => {
     expect(screen.queryByRole('progressbar', { name: '页面加载进度' })).not.toBeInTheDocument();
   });
 
+  it('reveals the page shell when an ancillary request is slow instead of freezing navigation', async () => {
+    const SlowPage = () => {
+      useEffect(() => {
+        startRouteRequest();
+      }, []);
+      return <div data-testid="slow-page">页面自身加载状态</div>;
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/slow']}>
+        <Routes>
+          <Route element={<RouteOutletBoundary />}>
+            <Route path="/slow" element={<SlowPage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('slow-page')).not.toBeVisible();
+    await waitFor(() => expect(screen.getByTestId('slow-page')).toBeVisible(), { timeout: 2_000 });
+  });
+
   it('catches rejected lazy route imports inside the shell and resets on navigation', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const BrokenLazyRoute = lazy(() => (

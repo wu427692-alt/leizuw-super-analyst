@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { SidebarNav } from '../SidebarNav';
@@ -72,7 +72,7 @@ describe('SidebarNav', () => {
     await screen.findByRole('link', { name: '选股' });
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
     expect(hrefs.slice(0, 10)).toEqual([
-      '/',
+      '/app',
       '/chat',
       '/essay-radar',
       '/essay-quant',
@@ -162,17 +162,14 @@ describe('SidebarNav', () => {
     expect(signalsLink).toHaveClass('font-medium');
   });
 
-  it('opens the logout confirmation and confirms logout', async () => {
+  it('keeps logout out of the public navigation and links administration', () => {
     render(
       <MemoryRouter initialEntries={['/chat']}>
         <SidebarNav />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '退出' }));
-
-    expect(await screen.findByRole('heading', { name: '退出登录' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '确认退出' }));
-    expect(mockLogout).toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: '管理员' })).toHaveAttribute('href', '/admin');
+    expect(screen.queryByRole('button', { name: '退出' })).not.toBeInTheDocument();
   });
 });

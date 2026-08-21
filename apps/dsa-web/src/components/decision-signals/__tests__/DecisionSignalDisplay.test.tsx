@@ -74,6 +74,20 @@ describe('DecisionSignalCard', () => {
     expect(screen.queryByRole('button', { name: '查看 贵州茅台 AI 建议详情' })).not.toBeInTheDocument();
   });
 
+  it('renders JSON-encoded model text as readable Chinese sentences', () => {
+    window.localStorage.setItem('dsa.uiLanguage', 'zh');
+    render(
+      <UiLanguageProvider>
+        <DecisionSignalCard
+          item={{ ...signal, riskSummary: '["估值偏高", "跌破均线需止损"]' }}
+        />
+      </UiLanguageProvider>,
+    );
+
+    expect(screen.getByText('估值偏高；跌破均线需止损')).toBeInTheDocument();
+    expect(screen.queryByText('["估值偏高", "跌破均线需止损"]')).not.toBeInTheDocument();
+  });
+
   it('hides missing optional plan text for sparse legacy signals', () => {
     window.localStorage.setItem('dsa.uiLanguage', 'zh');
     render(

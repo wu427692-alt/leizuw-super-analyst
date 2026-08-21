@@ -18,6 +18,7 @@ from src.storage import (
     AlertTriggerRecord,
     DatabaseManager,
 )
+from src.request_identity import current_owner_id
 
 
 class AlertRepository:
@@ -25,10 +26,11 @@ class AlertRepository:
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
+        self.owner_id = current_owner_id()
 
     def create_rule(self, fields: Dict[str, Any]) -> AlertRuleRecord:
         with self.db.get_session() as session:
-            row = AlertRuleRecord(**fields)
+            row = AlertRuleRecord(**{**fields, **({"owner_id": self.owner_id} if self.owner_id else {})})
             session.add(row)
             session.commit()
             session.refresh(row)
@@ -36,15 +38,18 @@ class AlertRepository:
 
     def get_rule(self, rule_id: int) -> Optional[AlertRuleRecord]:
         with self.db.get_session() as session:
-            return session.execute(
-                select(AlertRuleRecord).where(AlertRuleRecord.id == rule_id).limit(1)
-            ).scalar_one_or_none()
+            conditions = [AlertRuleRecord.id == rule_id]
+            if self.owner_id:
+                conditions.append(AlertRuleRecord.owner_id == self.owner_id)
+            return session.execute(select(AlertRuleRecord).where(and_(*conditions)).limit(1)).scalar_one_or_none()
 
     def update_rule(self, rule_id: int, fields: Dict[str, Any]) -> Optional[AlertRuleRecord]:
         with self.db.get_session() as session:
-            row = session.execute(
-                select(AlertRuleRecord).where(AlertRuleRecord.id == rule_id).limit(1)
-            ).scalar_one_or_none()
+            conditions = [AlertRuleRecord.id == rule_id]
+            if self.owner_id:
+                conditions.append(AlertRuleRecord.owner_id == self.owner_id)
+                fields = {key: value for key, value in fields.items() if key != "owner_id"}
+            row = session.execute(select(AlertRuleRecord).where(and_(*conditions)).limit(1)).scalar_one_or_none()
             if row is None:
                 return None
             for key, value in fields.items():
@@ -56,7 +61,10 @@ class AlertRepository:
 
     def delete_rule(self, rule_id: int) -> bool:
         with self.db.get_session() as session:
-            result = session.execute(delete(AlertRuleRecord).where(AlertRuleRecord.id == rule_id))
+            conditions = [AlertRuleRecord.id == rule_id]
+            if self.owner_id:
+                conditions.append(AlertRuleRecord.owner_id == self.owner_id)
+            result = session.execute(delete(AlertRuleRecord).where(and_(*conditions)))
             session.commit()
             return bool(result.rowcount)
 
@@ -72,6 +80,8 @@ class AlertRepository:
         page_size: int = 20,
     ) -> Tuple[List[AlertRuleRecord], int]:
         conditions = []
+        if self.owner_id:
+            conditions.append(AlertRuleRecord.owner_id == self.owner_id)
         if enabled is not None:
             conditions.append(AlertRuleRecord.enabled.is_(enabled))
         if alert_type:
@@ -276,16 +286,20 @@ class AlertRepository:
             conditions.append(AlertTriggerRecord.target == target)
         if status:
             conditions.append(AlertTriggerRecord.status == status)
+        if self.owner_id:
+            conditions.append(AlertRuleRecord.owner_id == self.owner_id)
 
         where_clause = and_(*conditions) if conditions else True
         offset = (page - 1) * page_size
         with self.db.get_session() as session:
-            total = session.execute(
-                select(func.count(AlertTriggerRecord.id)).select_from(AlertTriggerRecord).where(where_clause)
-            ).scalar() or 0
+            count_query = select(func.count(AlertTriggerRecord.id)).select_from(AlertTriggerRecord)
+            data_query = select(AlertTriggerRecord)
+            if self.owner_id:
+                count_query = count_query.join(AlertRuleRecord, AlertRuleRecord.id == AlertTriggerRecord.rule_id)
+                data_query = data_query.join(AlertRuleRecord, AlertRuleRecord.id == AlertTriggerRecord.rule_id)
+            total = session.execute(count_query.where(where_clause)).scalar() or 0
             rows = session.execute(
-                select(AlertTriggerRecord)
-                .where(where_clause)
+                data_query.where(where_clause)
                 .order_by(desc(AlertTriggerRecord.triggered_at), desc(AlertTriggerRecord.id))
                 .offset(offset)
                 .limit(page_size)
@@ -309,17 +323,19 @@ class AlertRepository:
         if success is not None:
             conditions.append(AlertNotificationRecord.success.is_(success))
 
+        if self.owner_id:
+            conditions.append(AlertRuleRecord.owner_id == self.owner_id)
         where_clause = and_(*conditions) if conditions else True
         offset = (page - 1) * page_size
         with self.db.get_session() as session:
-            total = session.execute(
-                select(func.count(AlertNotificationRecord.id))
-                .select_from(AlertNotificationRecord)
-                .where(where_clause)
-            ).scalar() or 0
+            count_query = select(func.count(AlertNotificationRecord.id)).select_from(AlertNotificationRecord)
+            data_query = select(AlertNotificationRecord)
+            if self.owner_id:
+                count_query = count_query.join(AlertTriggerRecord, AlertTriggerRecord.id == AlertNotificationRecord.trigger_id).join(AlertRuleRecord, AlertRuleRecord.id == AlertTriggerRecord.rule_id)
+                data_query = data_query.join(AlertTriggerRecord, AlertTriggerRecord.id == AlertNotificationRecord.trigger_id).join(AlertRuleRecord, AlertRuleRecord.id == AlertTriggerRecord.rule_id)
+            total = session.execute(count_query.where(where_clause)).scalar() or 0
             rows = session.execute(
-                select(AlertNotificationRecord)
-                .where(where_clause)
+                data_query.where(where_clause)
                 .order_by(desc(AlertNotificationRecord.created_at), desc(AlertNotificationRecord.id))
                 .offset(offset)
                 .limit(page_size)

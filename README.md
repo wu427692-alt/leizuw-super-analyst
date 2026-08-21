@@ -211,7 +211,7 @@ ADMIN_AUTH_ENABLED=true
 DATABASE_PATH=./data/stock_analysis.db
 
 ZSXQ_MCP_AUTO_START=true
-ZSXQ_MCP_POLL_SEC=30
+ZSXQ_MCP_POLL_SEC=10
 ZSXQ_MCP_GROUPS=28855458518111:调研纪要
 
 ESSAY_ANALYSIS_AUTO_START=true
@@ -222,6 +222,9 @@ ESSAY_WATCHLIST=603306.SH:华懋科技,300476.SZ:胜宏科技
 
 INVESTMENT_MONITOR_AUTO_START=true
 INVESTMENT_MONITOR_POLL_SEC=10
+CNINFO_WATCHLIST_AUTO_START=true
+CNINFO_WATCHLIST_POLL_SEC=60
+CNINFO_WATCHLIST_HISTORY_DAYS=365
 ```
 
 `ZSXQ_MCP_URL` 属于敏感配置，优先由部署环境注入。本机未配置时，服务可读取 Codex 中已经配置的知识星球 MCP 地址。
@@ -313,10 +316,13 @@ npm run build
 
 - `.env`、SQLite、日志、报告、下载文件和本地运行目录已加入忽略规则。
 - API 凭据只从环境变量或本机认证状态读取。
+- 前台可启用多用户访问：用户只需姓名和密码提交申请，管理员在 `/admin/access` 审批；批准后可通过可信 IP 自动进入，换网时仍可密码登录。
+- 自选股、问股会话、分析历史与任务、持仓账户、告警规则、AI 建议信号、量化规则/运行记录和传统回测按账号隔离；行情、公告、研报和小作文等事实库由后台共享更新，浏览器不会获得第三方 API 密钥。
+- 管理后台入口为 `/admin`，用户审批、API 与模型、数据源、同步控制、用量审计和系统设置均要求独立管理员会话。
 - 知识星球图片和附件默认不落盘，只在用户点击时获取临时链接。
 - 巨潮附件只允许可信 PDF 域名，并设置文件大小与打包数量限制。
 - 单个数据源故障不会中断其他渠道，页面会显示来源健康状态和降级原因。
-- 对外开放 WebUI 前必须启用登录认证，并通过可信反向代理配置 HTTPS。
+- 对外开放 WebUI 前必须启用 `ADMIN_AUTH_ENABLED=true` 保护管理控制面，并通过可信反向代理配置 HTTPS。
 
 ## 文档
 

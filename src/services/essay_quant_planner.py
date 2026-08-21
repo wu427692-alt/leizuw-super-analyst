@@ -26,6 +26,8 @@ benchmark_code, portfolio_size, raw_note_policy, dedupe_window_days, transaction
 validation_method, universe, signal_sources, assumptions, unsupported_requests。
 strategy_type 只能为 essay_event；signal_direction 只能 bullish/bearish/all；raw_note_policy 只能 exclude/include；
 validation_method 只能 walk_forward/time_split/none。默认排除未AI分析原文，默认成本12bp，默认3日重复信号聚类。
+source_query 只填写机构、研究组、股票或主题关键词，不要填写“小作文/文章/语料/纪要/研报观点”等数据集通称，
+也不要重复“看多/看空”等方向词；方向只放在 signal_direction。
 如果需求超出能力，在 unsupported_requests 列出，不要伪装已支持。"""
 
 
@@ -58,6 +60,8 @@ class EssayQuantNaturalLanguagePlanner:
         except EssayAnalysisError as exc:
             raise EssayQuantError(f"研究方案生成失败：{exc}") from exc
         rule = self.service._normalize_rule(parsed)
+        if not EssayQuantService._source_query_terms(rule["source_query"]):
+            rule["source_query"] = ""
         plan = {
             "title": str(parsed.get("title") or rule["name"])[:120],
             "hypothesis": str(parsed.get("hypothesis") or normalized_prompt)[:1000],

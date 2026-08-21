@@ -25,7 +25,7 @@ describe('LoginPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.documentElement.className = 'light';
-    useSearchParamsMock.mockReturnValue([new URLSearchParams('redirect=%2Fsettings')]);
+    useSearchParamsMock.mockReturnValue([new URLSearchParams('redirect=%2Fadmin%2Fsettings')]);
   });
 
   it('blocks first-time setup when confirmation does not match', async () => {
@@ -60,7 +60,7 @@ describe('LoginPage', () => {
     fireEvent.change(screen.getByLabelText('登录密码'), { target: { value: 'passwd6' } });
     fireEvent.click(screen.getByRole('button', { name: '授权进入工作台' }));
 
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/settings', { replace: true }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/admin/settings', { replace: true }));
     expect(screen.getByLabelText('登录密码')).toHaveAttribute('data-appearance', 'login');
   });
 

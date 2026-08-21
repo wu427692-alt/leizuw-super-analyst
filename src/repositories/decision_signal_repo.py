@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, desc, func, or_, select
 
+from src.request_identity import current_owner_id
 from src.storage import (
     DatabaseManager,
     DecisionSignalRecord,
@@ -49,13 +50,15 @@ class DecisionSignalRepository:
         "action",
         "horizon",
         "market_phase",
+        "owner_id",
     })
 
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
+        self.owner_id = current_owner_id()
 
     def create(self, fields: Dict[str, Any]) -> DecisionSignalRecord:
-        fields = self._normalize_datetime_fields(fields)
+        fields = {**self._normalize_datetime_fields(fields), "owner_id": self.owner_id}
         with self.db.get_session() as session:
             row = DecisionSignalRecord(**fields)
             session.add(row)
@@ -70,7 +73,7 @@ class DecisionSignalRepository:
         allow_relaxed_horizon_fill: bool = False,
     ) -> DecisionSignalCreateResult:
         self.expire_due_signals()
-        fields = self._normalize_datetime_fields(fields)
+        fields = {**self._normalize_datetime_fields(fields), "owner_id": self.owner_id}
         with self.db.get_session() as session:
             existing = self._find_existing_in_session(session=session, fields=fields)
             if existing is not None:
@@ -148,7 +151,10 @@ class DecisionSignalRepository:
         self.expire_due_signals()
         with self.db.get_session() as session:
             return session.execute(
-                select(DecisionSignalRecord).where(DecisionSignalRecord.id == signal_id).limit(1)
+                select(DecisionSignalRecord).where(
+                    DecisionSignalRecord.id == signal_id,
+                    self._owner_condition(),
+                ).limit(1)
             ).scalar_one_or_none()
 
     def list(
@@ -177,6 +183,7 @@ class DecisionSignalRepository:
         expires_from = self._normalize_optional_datetime(expires_from)
         expires_to = self._normalize_optional_datetime(expires_to)
         conditions = self._build_conditions(
+            owner_id=self.owner_id,
             stock_codes=stock_codes,
             stock_identities=stock_identities,
             market=market,
@@ -222,6 +229,7 @@ class DecisionSignalRepository:
         self.expire_due_signals()
         safe_limit = max(1, min(int(limit), 100))
         conditions = [
+            self._owner_condition(),
             DecisionSignalRecord.status == "active",
             DecisionSignalRecord.stock_code.in_(stock_codes),
         ]
@@ -248,6 +256,7 @@ class DecisionSignalRepository:
         if not actions:
             return []
         conditions = [
+            self._owner_condition(),
             DecisionSignalRecord.status == "active",
             DecisionSignalRecord.market == market,
             DecisionSignalRecord.stock_code == stock_code,
@@ -273,7 +282,10 @@ class DecisionSignalRepository:
     ) -> Optional[DecisionSignalRecord]:
         with self.db.get_session() as session:
             row = session.execute(
-                select(DecisionSignalRecord).where(DecisionSignalRecord.id == signal_id).limit(1)
+                select(DecisionSignalRecord).where(
+                    DecisionSignalRecord.id == signal_id,
+                    self._owner_condition(),
+                ).limit(1)
             ).scalar_one_or_none()
             if row is None:
                 return None
@@ -290,6 +302,7 @@ class DecisionSignalRepository:
         with self.db.get_session() as session:
             rows = session.execute(
                 select(DecisionSignalRecord).where(
+                    self._owner_condition(),
                     DecisionSignalRecord.status == "active",
                     DecisionSignalRecord.expires_at.is_not(None),
                     DecisionSignalRecord.expires_at <= now_value,
@@ -366,6 +379,11 @@ class DecisionSignalRepository:
             ]
         else:
             return None
+        owner_id = fields.get("owner_id")
+        conditions.append(
+            DecisionSignalRecord.owner_id == owner_id
+            if owner_id is not None else DecisionSignalRecord.owner_id.is_(None)
+        )
         return session.execute(
             select(DecisionSignalRecord)
             .where(and_(*conditions))
@@ -391,6 +409,8 @@ class DecisionSignalRepository:
             DecisionSignalRecord.market == fields.get("market"),
             DecisionSignalRecord.stock_code == fields.get("stock_code"),
             DecisionSignalRecord.action == fields.get("action"),
+            DecisionSignalRecord.owner_id == fields.get("owner_id")
+            if fields.get("owner_id") is not None else DecisionSignalRecord.owner_id.is_(None),
         ]
         if source_report_id is not None:
             conditions.append(DecisionSignalRecord.source_report_id == source_report_id)
@@ -460,6 +480,7 @@ class DecisionSignalRepository:
     @staticmethod
     def _build_conditions(
         *,
+        owner_id: Optional[str],
         stock_codes: Optional[List[str]],
         stock_identities: Optional[List[Tuple[str, str]]],
         market: Optional[str],
@@ -476,6 +497,10 @@ class DecisionSignalRepository:
         expires_to: Optional[datetime],
     ) -> List[Any]:
         conditions: List[Any] = []
+        conditions.append(
+            DecisionSignalRecord.owner_id == owner_id
+            if owner_id is not None else DecisionSignalRecord.owner_id.is_(None)
+        )
         if stock_identities:
             identity_conditions = [
                 and_(
@@ -512,3 +537,8 @@ class DecisionSignalRepository:
         if expires_to:
             conditions.append(DecisionSignalRecord.expires_at <= expires_to)
         return conditions
+
+    def _owner_condition(self):
+        if self.owner_id is not None:
+            return DecisionSignalRecord.owner_id == self.owner_id
+        return DecisionSignalRecord.owner_id.is_(None)

@@ -14,6 +14,7 @@ export type EssayWorkerStatus = {
   running: boolean;
   batchSize: number;
   concurrency: number;
+  pollSeconds: number;
   lastBatchAt?: string | null;
   lastError?: string | null;
 };

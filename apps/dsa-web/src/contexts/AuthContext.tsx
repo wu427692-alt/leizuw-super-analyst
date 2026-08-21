@@ -2,7 +2,6 @@ import type React from 'react';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createParsedApiError, getParsedApiError, type ParsedApiError } from '../api/error';
 import { authApi } from '../api/auth';
-import { useStockPoolStore } from '../stores';
 
 type AuthContextValue = {
   authEnabled: boolean;
@@ -38,7 +37,13 @@ function extractLoginError(err: unknown): ParsedApiError {
   return parsed;
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({
+  children,
+  initialize = true,
+}: {
+  children: React.ReactNode;
+  initialize?: boolean;
+}) {
   const [authEnabled, setAuthEnabled] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
   const [passwordSet, setPasswordSet] = useState(false);
@@ -58,9 +63,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setPasswordSet(status.passwordSet ?? false);
       setPasswordChangeable(status.passwordChangeable ?? false);
       setSetupState(status.setupState);
-      if (status.authEnabled && !status.loggedIn) {
-        useStockPoolStore.getState().resetDashboardState();
-      }
     } catch (err) {
       setLoadError(getParsedApiError(err));
       // A temporary status-endpoint failure is not proof that the session or
@@ -73,8 +75,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void fetchStatus();
-  }, [fetchStatus]);
+    if (initialize) {
+      void fetchStatus();
+    } else {
+      // Authentication protects only the administrator area. Public pages do
+      // not need to spend a tunnel round-trip on session discovery.
+      setIsLoading(false);
+    }
+  }, [fetchStatus, initialize]);
 
   useEffect(() => {
     if (!loadError) return undefined;
@@ -88,14 +96,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       passwordConfirm?: string
     ): Promise<{ success: boolean; error?: ParsedApiError }> => {
       try {
-        await authApi.login(password, passwordConfirm);
+        if (authEnabled) {
+          await authApi.login(password, passwordConfirm);
+        } else if (setupState === 'password_retained') {
+          await authApi.updateSettings(true, undefined, undefined, password);
+        } else {
+          await authApi.updateSettings(true, password, passwordConfirm ?? '');
+        }
         await fetchStatus();
         return { success: true };
       } catch (err: unknown) {
         return { success: false, error: extractLoginError(err) };
       }
     },
-    [fetchStatus]
+    [authEnabled, fetchStatus, setupState]
   );
 
   const changePassword = useCallback(

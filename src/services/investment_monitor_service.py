@@ -45,6 +45,9 @@ logger = logging.getLogger(__name__)
 _STOCK_WORKSPACE_CACHE_TTL_SECONDS = 20
 _stock_workspace_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _stock_workspace_cache_lock = threading.Lock()
+_SUPER_WATCHLIST_CACHE_TTL_SECONDS = 30
+_super_watchlist_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_super_watchlist_cache_lock = threading.Lock()
 
 PERSPECTIVES = ("investor", "company", "institution")
 SENTIMENTS = ("bullish", "bearish", "neutral", "mixed")
@@ -379,7 +382,12 @@ class InvestmentMonitorService:
         return {"source_key": source_key, **result}
 
     def sync_due_sources(self) -> Dict[str, Any]:
-        sources = self.repo.due_sources()
+        # CNInfo watchlist coverage has its own per-symbol durable worker. Do
+        # not issue a second overlapping request from the generic source loop.
+        sources = [
+            source for source in self.repo.due_sources()
+            if source["source_key"] != "cninfo.announcements"
+        ]
         return self._sync_sources(sources)
 
     def sync_all(self, *, categories: Optional[Sequence[str]] = None) -> Dict[str, Any]:
@@ -799,10 +807,20 @@ class InvestmentMonitorService:
             "total": result["total"],
         }
 
-    def super_watchlist(self, *, days: int = 365) -> Dict[str, Any]:
+    def super_watchlist(self, *, days: int = 365, symbols: Optional[List[str]] = None) -> Dict[str, Any]:
         """Build every watchlist card from shared stores, never page-local fetches."""
         safe_days = max(30, min(int(days), 3650))
-        symbols = self.watchlist()
+        symbols = (
+            list(dict.fromkeys(self._canonical_ts_code(value) for value in symbols if value))
+            if symbols is not None else self.watchlist()
+        )
+        revision = self.repo.cache_revision()
+        database_key = str(getattr(self.repo.db, "_db_url", id(self.repo.db)))
+        cache_key = f"{database_key}:{safe_days}:{','.join(symbols)}:{revision!r}"
+        with _super_watchlist_cache_lock:
+            cached = _super_watchlist_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] <= _SUPER_WATCHLIST_CACHE_TTL_SECONDS:
+            return {**cached[1], "cache": {"hit": True, "ttl_seconds": _SUPER_WATCHLIST_CACHE_TTL_SECONDS}}
         try:
             quote_rows = MarketDataService().latest_quotes(symbols, refresh_missing=False)
         except Exception as exc:  # noqa: BLE001 - evidence must still render if quote cache is unavailable.
@@ -821,7 +839,7 @@ class InvestmentMonitorService:
             )
             for symbol in symbols
         ]
-        return {
+        payload = {
             "version": "5.1-shared-store",
             "generated_at": utc_naive_now().isoformat() + "Z",
             "days": safe_days,
@@ -859,6 +877,12 @@ class InvestmentMonitorService:
                 {"version": "V5", "name": "研判闭环", "result": "事实底稿、催化、风险、待验证问题和大模型证据包联动"},
             ],
         }
+        with _super_watchlist_cache_lock:
+            _super_watchlist_cache[cache_key] = (time.monotonic(), payload)
+            if len(_super_watchlist_cache) > 16:
+                oldest = min(_super_watchlist_cache, key=lambda key: _super_watchlist_cache[key][0])
+                _super_watchlist_cache.pop(oldest, None)
+        return {**payload, "cache": {"hit": False, "ttl_seconds": _SUPER_WATCHLIST_CACHE_TTL_SECONDS}}
 
     def stock_workspace(
         self, symbol: str, *, days: int = 365, refresh: bool = False,
@@ -1469,7 +1493,13 @@ class InvestmentMonitorService:
         if key == "tianyancha.enterprise":
             return self._tianyancha_events(source)
         if key == "cninfo.announcements":
-            return self._announcement_events(source, self.cninfo.fetch_recent_market(days=2, max_pages=30))
+            # Watchlist symbols are mandatory and queried explicitly. A capped
+            # full-market page scan can miss them whenever disclosure volume is
+            # high, so it is not a correctness mechanism for personal coverage.
+            return self._announcement_events(
+                source,
+                self.cninfo.fetch_recent(self.equity_watchlist(), days=3),
+            )
         if key == "zsxq.essays":
             return self._zsxq_events(source)
         if key == "akshare.stock_comments":

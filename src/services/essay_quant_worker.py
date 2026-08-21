@@ -22,8 +22,9 @@ class EssayQuantWorker:
     _instance_lock = threading.Lock()
 
     def __init__(self) -> None:
-        self.min_interval = max(300.0, min(float(os.getenv("ESSAY_QUANT_MIN_INTERVAL_SEC", "1800")), 86400.0))
-        self.price_refresh_interval = max(3600.0, min(float(os.getenv("ESSAY_QUANT_PRICE_REFRESH_SEC", "21600")), 604800.0))
+        self.min_interval = max(120.0, min(float(os.getenv("ESSAY_QUANT_MIN_INTERVAL_SEC", "300")), 86400.0))
+        self.price_refresh_interval = max(300.0, min(float(os.getenv("ESSAY_QUANT_PRICE_REFRESH_SEC", "900")), 604800.0))
+        self.startup_delay = max(30.0, min(float(os.getenv("ESSAY_QUANT_STARTUP_DELAY_SEC", "120")), 900.0))
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -92,8 +93,9 @@ class EssayQuantWorker:
             }
 
     def _loop(self) -> None:
-        # Let API startup and the initial MCP cursor check settle first.
-        self._stop.wait(8.0)
+        # The baseline is CPU-heavy. Keep the first minutes after a restart
+        # responsive for health checks, dashboards and interactive research.
+        self._stop.wait(self.startup_delay)
         while not self._stop.is_set():
             with self._state_lock:
                 dirty = self._dirty
@@ -103,8 +105,12 @@ class EssayQuantWorker:
                 # Materialize a complete local ranking first; network hydration
                 # starts from the next throttled cycle so the page is useful
                 # within seconds after application startup.
-                price_due = bool(previous) and (coverage_pending or time.time() - (self._last_price_refresh_at or 0.0) >= self.price_refresh_interval)
-            if dirty and time.time() - last_completed >= self.min_interval and self._run_lock.acquire(blocking=False):
+                price_due = (
+                    not previous
+                    or coverage_pending
+                    or time.time() - (self._last_price_refresh_at or 0.0) >= self.price_refresh_interval
+                )
+            if (dirty or price_due) and time.time() - last_completed >= self.min_interval and self._run_lock.acquire(blocking=False):
                 try:
                     self._compute(refresh_prices=price_due)
                 finally:
@@ -119,6 +125,8 @@ class EssayQuantWorker:
             command = [sys.executable, "-m", "src.services.essay_quant_job"]
             if refresh_prices:
                 command.append("--refresh-prices")
+            if os.name == "posix" and Path("/usr/bin/nice").exists():
+                command = ["/usr/bin/nice", "-n", "10", *command]
             completed = subprocess.run(
                 command,
                 cwd=Path(__file__).resolve().parents[2],
@@ -171,6 +179,10 @@ class EssayQuantWorker:
                 "generated_at": result.get("generated_at"),
                 "resolved_symbol_count": quality.get("resolved_symbol_count", 0),
                 "priced_symbol_count": quality.get("priced_symbol_count", 0),
+                "current_price_symbol_count": quality.get("current_price_symbol_count", 0),
+                "stale_price_symbol_count": quality.get("stale_price_symbol_count", 0),
+                "price_freshness_ratio": quality.get("price_freshness_ratio", 0),
+                "price_target_date": quality.get("price_target_date"),
             }
             self._last_completed_at = generated_at
             self._last_price_refresh_at = generated_at

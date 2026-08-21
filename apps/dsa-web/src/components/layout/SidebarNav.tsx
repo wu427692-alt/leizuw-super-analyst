@@ -1,13 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, BarChart3, Bell, BriefcaseBusiness, DatabaseZap, FlaskConical, Gauge, Home, LogOut, MessageSquareQuote, Radar, RadioTower, Search, Settings2, Star } from 'lucide-react';
+import { Activity, BarChart3, Bell, BriefcaseBusiness, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Radar, RadioTower, Search, Star } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
-import { useAuth } from '../../contexts/AuthContext';
 import { useAgentChatStore } from '../../stores/agentChatStore';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import type { UiTextKey } from '../../i18n/uiText';
 import { cn } from '../../utils/cn';
-import { ConfirmDialog } from '../common/ConfirmDialog';
 import { StatusDot } from '../common/StatusDot';
 import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { ThemeToggle } from '../theme/ThemeToggle';
@@ -28,7 +26,7 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { key: 'home', labelKey: 'layout.nav.home', to: '/', icon: Home, exact: true },
+  { key: 'home', labelKey: 'layout.nav.home', to: '/app', icon: Home, exact: true },
   { key: 'chat', labelKey: 'layout.nav.chat', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
   { key: 'essay-radar', labelKey: 'layout.nav.essayRadar', to: '/essay-radar', icon: Radar },
   { key: 'essay-quant', labelKey: 'layout.nav.essayQuant', to: '/essay-quant', icon: FlaskConical },
@@ -40,15 +38,11 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'decision-signals', labelKey: 'layout.nav.decisionSignals', to: '/decision-signals', icon: Activity },
   { key: 'backtest', labelKey: 'layout.nav.backtest', to: '/backtest', icon: BarChart3 },
   { key: 'alerts', labelKey: 'layout.nav.alerts', to: '/alerts', icon: Bell },
-  { key: 'usage', labelKey: 'layout.nav.usage', to: '/usage', icon: Gauge },
-  { key: 'settings', labelKey: 'layout.nav.settings', to: '/settings', icon: Settings2 },
 ];
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate, variant = 'default' }) => {
-  const { authEnabled, logout } = useAuth();
   const { t } = useUiLanguage();
   const completionBadge = useAgentChatStore((state) => state.completionBadge);
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showAlphaSiftNav, setShowAlphaSiftNav] = useState(false);
 
   useEffect(() => {
@@ -176,34 +170,17 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
         />
       </nav>
 
-      {authEnabled ? (
-        <button
-          type="button"
-          onClick={() => setShowLogoutConfirm(true)}
+      <NavLink
+          to="/admin"
+          onClick={onNavigate}
           className={cn(
             itemInteractiveClass,
             isRail ? 'mt-1.5' : 'mt-5'
           )}
         >
-          <LogOut className={itemIconClass} />
-          {!collapsed ? <span className={itemLabelClass}>{t('layout.logout')}</span> : null}
-        </button>
-      ) : null}
-
-      <ConfirmDialog
-        isOpen={showLogoutConfirm}
-        title={t('layout.logoutTitle')}
-        message={t('layout.logoutMessage')}
-        confirmText={t('layout.logoutConfirm')}
-        cancelText={t('common.cancel')}
-        isDanger
-        onConfirm={() => {
-          setShowLogoutConfirm(false);
-          onNavigate?.();
-          void logout();
-        }}
-        onCancel={() => setShowLogoutConfirm(false)}
-      />
+          <LockKeyhole className={itemIconClass} />
+          {!collapsed ? <span className={itemLabelClass}>管理员</span> : null}
+      </NavLink>
     </div>
   );
 };

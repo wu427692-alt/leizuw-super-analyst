@@ -14,6 +14,7 @@ from src.storage import (
     MonitoringEventRecord,
     MonitoringSourceRecord,
     WatchlistBackfillRecord,
+    WatchlistAnnouncementSyncRecord,
     utc_naive_now,
 )
 
@@ -37,6 +38,15 @@ class InvestmentMonitorRepository:
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
 
+    def cache_revision(self) -> Tuple[int, str]:
+        """Cheap token that changes whenever the normalized event store changes."""
+        with self.db.get_session() as session:
+            latest_id, latest_ingested = session.execute(select(
+                func.max(MonitoringEventRecord.id),
+                func.max(MonitoringEventRecord.ingested_at),
+            )).one()
+        return int(latest_id or 0), latest_ingested.isoformat() if latest_ingested else ""
+
     def create_backfill_job(self, symbol: str, *, stock_name: str = "", days: int = 183) -> Dict[str, Any]:
         with self.db.get_session() as session:
             active = session.execute(
@@ -51,6 +61,90 @@ class InvestmentMonitorRepository:
                 session.commit()
                 session.refresh(active)
             return self._backfill_dict(active)
+
+    def ensure_announcement_sync_state(
+        self, symbol: str, *, stock_name: str = "", target_start: Any, target_end: Any,
+    ) -> Dict[str, Any]:
+        """Create or widen the durable one-year CNInfo coverage target."""
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(WatchlistAnnouncementSyncRecord)
+                .where(WatchlistAnnouncementSyncRecord.symbol == symbol)
+                .limit(1)
+            ).scalar_one_or_none()
+            if row is None:
+                row = WatchlistAnnouncementSyncRecord(
+                    symbol=symbol, stock_name=stock_name,
+                    target_start=target_start, target_end=target_end,
+                )
+                session.add(row)
+            else:
+                if target_start < row.target_start:
+                    row.target_start = target_start
+                    row.status = "pending"
+                    row.backfill_completed_at = None
+                if target_end > row.target_end:
+                    row.target_end = target_end
+                    row.status = "pending"
+                    row.backfill_completed_at = None
+                if stock_name:
+                    row.stock_name = stock_name
+                row.updated_at = utc_naive_now()
+            session.commit()
+            session.refresh(row)
+            return self._announcement_sync_dict(row)
+
+    def list_announcement_sync_states(
+        self, symbols: Optional[Iterable[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        with self.db.get_session() as session:
+            query = select(WatchlistAnnouncementSyncRecord)
+            values = list(symbols or [])
+            if values:
+                query = query.where(WatchlistAnnouncementSyncRecord.symbol.in_(values))
+            rows = session.execute(query.order_by(WatchlistAnnouncementSyncRecord.symbol)).scalars().all()
+            return [self._announcement_sync_dict(row) for row in rows]
+
+    def update_announcement_sync_state(self, symbol: str, **fields: Any) -> Dict[str, Any]:
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(WatchlistAnnouncementSyncRecord)
+                .where(WatchlistAnnouncementSyncRecord.symbol == symbol)
+                .limit(1)
+            ).scalar_one_or_none()
+            if row is None:
+                raise ValueError("announcement sync state not found")
+            if "completed_windows" in fields:
+                row.completed_windows_json = _dump(fields.pop("completed_windows"))
+            for key, value in fields.items():
+                if hasattr(row, key):
+                    setattr(row, key, value)
+            row.updated_at = utc_naive_now()
+            session.commit()
+            session.refresh(row)
+            return self._announcement_sync_dict(row)
+
+    @staticmethod
+    def _announcement_sync_dict(row: WatchlistAnnouncementSyncRecord) -> Dict[str, Any]:
+        def iso(value: Any) -> Optional[str]:
+            return value.isoformat() + "Z" if value else None
+
+        return {
+            "id": row.id, "symbol": row.symbol, "stock_name": row.stock_name,
+            "target_start": row.target_start.isoformat(), "target_end": row.target_end.isoformat(),
+            "completed_windows": _load(row.completed_windows_json, []),
+            "status": row.status, "consecutive_failures": int(row.consecutive_failures or 0),
+            "next_retry_at": iso(row.next_retry_at), "last_error": row.last_error,
+            "last_incremental_started_at": iso(row.last_incremental_started_at),
+            "last_incremental_success_at": iso(row.last_incremental_success_at),
+            "last_backfill_started_at": iso(row.last_backfill_started_at),
+            "last_backfill_success_at": iso(row.last_backfill_success_at),
+            "backfill_completed_at": iso(row.backfill_completed_at),
+            "total_fetched": int(row.total_fetched or 0),
+            "total_created": int(row.total_created or 0),
+            "total_updated": int(row.total_updated or 0),
+            "updated_at": iso(row.updated_at),
+        }
 
     def update_backfill_job(self, job_id: int, **fields: Any) -> Dict[str, Any]:
         with self.db.get_session() as session:

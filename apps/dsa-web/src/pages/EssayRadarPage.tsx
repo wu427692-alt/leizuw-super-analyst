@@ -67,6 +67,13 @@ function formatDate(value?: string | null) {
   return parsed.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
+function formatClock(value?: string | null) {
+  if (!value) return '等待首轮数据';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 function errorText(value: unknown, fallback: string) {
   return value instanceof Error ? value.message : fallback;
 }
@@ -200,7 +207,7 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
           <div className="essay-market-stock-tabs">{data.marketImpact.items.map((item) => <button type="button" key={item.tsCode} className={item.tsCode === selectedMarket?.tsCode ? 'is-active' : ''} onClick={() => { setSelectedCode(item.tsCode); setAiError(null); }}><strong>{item.name}</strong><small>{item.mentionCount}篇</small></button>)}</div>
           {selectedMarket ? <>
             <div className="essay-market-chart"><ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 720, height: 300 }}><ComposedChart data={selectedMarket.series}><CartesianGrid vertical={false} stroke="rgba(148,163,184,.14)" /><XAxis dataKey="date" tickFormatter={(value) => String(value).slice(5)} tick={{ fontSize: 9 }} minTickGap={24} /><YAxis yAxisId="price" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} tick={{ fontSize: 9 }} width={42} /><YAxis yAxisId="mention" orientation="right" allowDecimals={false} tick={{ fontSize: 9 }} width={28} /><Tooltip contentStyle={{ background: '#0b0c0a', border: '1px solid rgba(198,255,74,.25)', fontSize: 10 }} formatter={(value, name) => [name === '阶段涨跌' ? `${Number(value).toFixed(2)}%` : `${value} 篇`, name]} labelFormatter={(value) => `交易日 ${value}`} /><Bar yAxisId="mention" dataKey="mentionCount" name="小作文" fill="#22d3ee" opacity={0.55} /><Line yAxisId="price" type="monotone" dataKey="priceReturn" name="阶段涨跌" stroke="#c6ff4a" strokeWidth={2} dot={false} /></ComposedChart></ResponsiveContainer></div>
-            <div className="essay-event-metrics">{selectedMarket.metrics.map((metric) => <div key={metric.period} title={`95%置信区间：${metric.confidenceInterval95[0] == null ? '样本不足' : `${metric.confidenceInterval95[0]}% ~ ${metric.confidenceInterval95[1]}%`}`}><span>事件后 {metric.period} 日</span><strong className={(metric.averageReturn ?? 0) >= 0 ? 'is-up' : 'is-down'}>{metric.averageReturn == null ? '未成熟' : `${metric.averageReturn >= 0 ? '+' : ''}${metric.averageReturn.toFixed(2)}%`}</strong><small>胜率 {metric.winRate == null ? '—' : `${metric.winRate.toFixed(1)}%`} · 样本 {metric.sampleCount}</small><small>超额 {metric.averageExcessReturn == null ? '—' : `${metric.averageExcessReturn >= 0 ? '+' : ''}${metric.averageExcessReturn.toFixed(2)}%`}</small></div>)}</div>
+            <div className="essay-event-metrics">{selectedMarket.metrics.map((metric) => <div key={metric.period} aria-label={`95%置信区间：${metric.confidenceInterval95[0] == null ? '样本不足' : `${metric.confidenceInterval95[0]}% ~ ${metric.confidenceInterval95[1]}%`}`}><span>事件后 {metric.period} 日</span><strong className={(metric.averageReturn ?? 0) >= 0 ? 'is-up' : 'is-down'}>{metric.averageReturn == null ? '未成熟' : `${metric.averageReturn >= 0 ? '+' : ''}${metric.averageReturn.toFixed(2)}%`}</strong><small>胜率 {metric.winRate == null ? '—' : `${metric.winRate.toFixed(1)}%`} · 样本 {metric.sampleCount}</small><small>超额 {metric.averageExcessReturn == null ? '—' : `${metric.averageExcessReturn >= 0 ? '+' : ''}${metric.averageExcessReturn.toFixed(2)}%`}</small></div>)}</div>
             <p className="essay-method-note">{selectedMarket.insight} {data.marketImpact.causalityNote}</p>
           </> : <EmptyState title="当前窗口缺少行情匹配" description="需要小作文明确匹配股票代码，且本地行情库覆盖事件后的交易日。" icon={<BarChart3 className="h-7 w-7" />} />}
         </section>
@@ -213,7 +220,7 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
               const max = Math.max(...nodes.map((node) => node.count), 1);
               return <div className="essay-chain-stage" key={layer.key}>
                 <header><span>0{layerIndex + 1}</span><div><strong>{layer.label}</strong><small>{layer.note}</small></div>{layerIndex < layers.length - 1 ? <ArrowRight /> : null}</header>
-                <div>{nodes.map((node) => <button key={node.key} type="button" onClick={() => layer.key === 'outcomes' ? setSelectedCode(node.tsCode || '') : onFilter(node.label)} title={layer.key === 'outcomes' ? `查看 ${node.stockName} 的行情验证` : `检索原文：${node.label}`}>
+                <div>{nodes.map((node) => <button key={node.key} type="button" onClick={() => layer.key === 'outcomes' ? setSelectedCode(node.tsCode || '') : onFilter(node.label)} aria-label={layer.key === 'outcomes' ? `查看 ${node.stockName} 的行情验证` : `检索原文：${node.label}`}>
                   <span>{node.kind ? <i className={`is-${node.kind}`} /> : null}{layer.key === 'outcomes' ? `${node.stockName} · ${node.label}` : node.label}</span>
                   <b><i style={{ width: `${Math.max(5, node.count / max * 100)}%` }} /></b>
                   <small>{node.count} 篇 · {relationCount(layer.key, node.key)} 次关联</small>
@@ -234,9 +241,9 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
           <div className="essay-heatmap-axis" style={{ gridTemplateColumns: `110px repeat(${data.themeHeatmap.dates.length}, minmax(9px, 1fr))` }}><span />{data.themeHeatmap.dates.map((day, index) => <small key={day} className={index % Math.max(1, Math.ceil(data.themeHeatmap.dates.length / 5)) ? 'is-muted' : ''}>{day.slice(5)}</small>)}</div>
           <div className="essay-heatmap">{data.themeHeatmap.items.map((item) => {
             const aliases = item.aliases?.map((alias) => alias.name) ?? [];
-            return <div key={item.name} style={{ gridTemplateColumns: `110px repeat(${data.themeHeatmap.dates.length}, minmax(9px, 1fr))` }}><button type="button" onClick={() => onFilter(item.name)} title={aliases.length ? `已合并：${aliases.join('、')}` : item.name}><strong>{item.name}</strong><small>{item.total}</small></button>{item.points.map((point) => {
+            return <div key={item.name} style={{ gridTemplateColumns: `110px repeat(${data.themeHeatmap.dates.length}, minmax(9px, 1fr))` }}><button type="button" onClick={() => onFilter(item.name)} aria-label={aliases.length ? `已合并：${aliases.join('、')}` : item.name}><strong>{item.name}</strong><small>{item.total}</small></button>{item.points.map((point) => {
               const level = heatLevel(point.concentrationScore ?? 0, heatScores);
-              return <i key={point.date} title={`${point.date} · ${point.count} 篇 · 当日主题提及 ${point.dailyTotal ?? 0} 次 · 占比 ${(point.sharePercent ?? 0).toFixed(1)}% · 集中度 ${(point.concentrationScore ?? 0).toFixed(1)}`} className={`heat-level-${level}`} />;
+              return <i key={point.date} aria-label={`${point.date} · ${point.count} 篇 · 当日主题提及 ${point.dailyTotal ?? 0} 次 · 占比 ${(point.sharePercent ?? 0).toFixed(1)}% · 集中度 ${(point.concentrationScore ?? 0).toFixed(1)}`} className={`heat-level-${level}`} />;
             })}</div>;
           })}</div>
         </section>
@@ -406,7 +413,6 @@ const EssayRadarPage = () => {
   const [atlasHorizon, setAtlasHorizon] = useState<AtlasHorizon>('short');
   const [atlasStartDate, setAtlasStartDate] = useState('');
   const [atlasEndDate, setAtlasEndDate] = useState('');
-  const [historyYears, setHistoryYears] = useState<1 | 2>(1);
   const [analysisBatchCount, setAnalysisBatchCount] = useState(100);
   const [analysisOrder, setAnalysisOrder] = useState<'newest' | 'oldest'>('newest');
   const [queueMessage, setQueueMessage] = useState<string | null>(null);
@@ -415,9 +421,12 @@ const EssayRadarPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<string | null>(null);
   const feedPageCacheRef = useRef(new Map<string, EssayAnalysisList>());
   const feedInflightRef = useRef(new Map<string, Promise<EssayAnalysisList>>());
   const feedRequestVersionRef = useRef(0);
+  const feedFilterSignatureRef = useRef('');
+  const loadedViewsRef = useRef(new Set<RadarView>());
 
   useEffect(() => {
     const viewLabel = VIEW_META.find((item) => item.view === view)?.label ?? '小作文雷达';
@@ -427,18 +436,23 @@ const EssayRadarPage = () => {
   const loadView = useCallback(async (_requestVersion: number) => {
     void _requestVersion;
     if (view === 'feed') return;
-    setLoading(true);
-    setError(null);
+    const initialLoad = !loadedViewsRef.current.has(view);
+    if (initialLoad) {
+      setLoading(true);
+      setError(null);
+    }
+    let loaded = false;
+    let partialError: string | null = null;
     try {
       if (view === 'overview') {
         const [nextInsights, nextStatus] = await Promise.allSettled([
           essayRadarApi.insights(30, 14), essayRadarApi.status(30),
         ]);
-        if (nextInsights.status === 'fulfilled') setInsights(nextInsights.value);
-        if (nextStatus.status === 'fulfilled') setStatus(nextStatus.value);
+        if (nextInsights.status === 'fulfilled') { setInsights(nextInsights.value); loaded = true; }
+        if (nextStatus.status === 'fulfilled') { setStatus(nextStatus.value); loaded = true; }
         if (nextInsights.status === 'rejected' && nextStatus.status === 'rejected') throw nextInsights.reason;
         if (nextInsights.status === 'rejected' || nextStatus.status === 'rejected') {
-          setError('部分模块暂时不可用，已保留成功加载的真实数据。');
+          partialError = '部分模块暂时不可用，已保留成功加载的真实数据。';
         }
       } else if (view === 'atlas') {
         setDeepInsights(await essayRadarApi.deepInsights({
@@ -446,25 +460,26 @@ const EssayRadarPage = () => {
           startDate: atlasHorizon === 'custom' ? atlasStartDate : undefined,
           endDate: atlasHorizon === 'custom' ? atlasEndDate : undefined,
         }));
+        loaded = true;
       } else if (view === 'trends') {
         const [nextDashboard, nextInsights, nextCloud] = await Promise.allSettled([
           essayRadarApi.dashboard(30), essayRadarApi.insights(30, 14), essayRadarApi.wordCloud(cloudPeriod, cloudKind),
         ]);
-        if (nextDashboard.status === 'fulfilled') setDashboard(nextDashboard.value);
-        if (nextInsights.status === 'fulfilled') setInsights(nextInsights.value);
-        if (nextCloud.status === 'fulfilled') setCloud(nextCloud.value);
+        if (nextDashboard.status === 'fulfilled') { setDashboard(nextDashboard.value); loaded = true; }
+        if (nextInsights.status === 'fulfilled') { setInsights(nextInsights.value); loaded = true; }
+        if (nextCloud.status === 'fulfilled') { setCloud(nextCloud.value); loaded = true; }
         const failures = [nextDashboard, nextInsights, nextCloud].filter(item => item.status === 'rejected');
         if (failures.length === 3) throw (failures[0] as PromiseRejectedResult).reason;
-        if (failures.length) setError(`部分模块暂时不可用（${failures.length}/3），其余数据仍可查看。`);
+        if (failures.length) partialError = `部分模块暂时不可用（${failures.length}/3），其余数据仍可查看。`;
       } else if (view === 'reports') {
         const [nextReports, nextInsights] = await Promise.allSettled([
           essayRadarApi.dailyReports(), essayRadarApi.insights(30, 14),
         ]);
-        if (nextReports.status === 'fulfilled') setReports(nextReports.value);
-        if (nextInsights.status === 'fulfilled') setInsights(nextInsights.value);
+        if (nextReports.status === 'fulfilled') { setReports(nextReports.value); loaded = true; }
+        if (nextInsights.status === 'fulfilled') { setInsights(nextInsights.value); loaded = true; }
         if (nextReports.status === 'rejected' && nextInsights.status === 'rejected') throw nextReports.reason;
         if (nextReports.status === 'rejected' || nextInsights.status === 'rejected') {
-          setError('日报或研判摘要暂时不可用，已保留成功加载的模块。');
+          partialError = '日报或研判摘要暂时不可用，已保留成功加载的模块。';
         }
       } else {
         const [nextStatus, nextBacklog] = await Promise.all([
@@ -472,11 +487,18 @@ const EssayRadarPage = () => {
         ]);
         setStatus(nextStatus);
         setHistoricalBacklog(nextBacklog);
+        loaded = true;
       }
+      if (loaded) {
+        loadedViewsRef.current.add(view);
+        setLastAutoRefreshAt(new Date().toISOString());
+        if (!partialError) setError(null);
+      }
+      if (partialError && initialLoad) setError(partialError);
     } catch (caught) {
-      setError(errorText(caught, '页面数据加载失败'));
+      if (initialLoad) setError(errorText(caught, '页面数据加载失败'));
     } finally {
-      setLoading(false);
+      if (initialLoad) setLoading(false);
     }
   }, [atlasEndDate, atlasHorizon, atlasStartDate, cloudKind, cloudPeriod, view]);
 
@@ -485,6 +507,9 @@ const EssayRadarPage = () => {
     const baseFilters = {
       days, query: deferredQuery, analysisStatus, sentiment, category, minImportance, pageSize: 20,
     };
+    const filterSignature = `${JSON.stringify(baseFilters)}:page:${page}`;
+    const backgroundRefresh = Boolean(list) && feedFilterSignatureRef.current === filterSignature;
+    feedFilterSignatureRef.current = filterSignature;
     const queryKey = `${refreshVersion}:${JSON.stringify(baseFilters)}`;
     const pageKey = (targetPage: number) => `${queryKey}:page:${targetPage}`;
     const fetchPage = (targetPage: number, knownTotal?: number) => {
@@ -516,7 +541,7 @@ const EssayRadarPage = () => {
     };
 
     const requestVersion = ++feedRequestVersionRef.current;
-    setFeedNotice(null);
+    if (!backgroundRefresh) setFeedNotice(null);
     const cached = feedPageCacheRef.current.get(pageKey(page));
     if (cached) {
       setList(cached);
@@ -524,24 +549,63 @@ const EssayRadarPage = () => {
       prefetchNext(cached);
       return;
     }
-    setLoading(true);
+    if (!backgroundRefresh) setLoading(true);
     try {
       const result = await fetchPage(page, feedPageCacheRef.current.get(pageKey(1))?.total);
       if (requestVersion !== feedRequestVersionRef.current) return;
       setList(result);
+      loadedViewsRef.current.add('feed');
+      setLastAutoRefreshAt(new Date().toISOString());
+      setFeedNotice(null);
       prefetchNext(result);
     } catch {
       if (requestVersion !== feedRequestVersionRef.current) return;
-      setFeedNotice(list
-        ? '检索服务刚才没有及时响应，当前仍保留上一次结果，并会在下次筛选时自动重试。'
-        : '本地知识库正在准备索引，请稍等片刻后继续输入。');
+      if (!backgroundRefresh) {
+        setFeedNotice(list
+          ? '检索服务刚才没有及时响应，当前仍保留上一次结果，并会自动重试。'
+          : '本地知识库正在准备索引，请稍等片刻，页面会自动继续加载。');
+      }
     } finally {
-      if (requestVersion === feedRequestVersionRef.current) setLoading(false);
+      if (!backgroundRefresh && requestVersion === feedRequestVersionRef.current) setLoading(false);
     }
   }, [analysisStatus, category, days, deferredQuery, list, minImportance, page, sentiment, view]);
 
   useEffect(() => { void loadView(refreshKey); }, [loadView, refreshKey]);
   useEffect(() => { void loadFeed(refreshKey); }, [loadFeed, refreshKey]);
+  useEffect(() => {
+    const requestAutomaticRefresh = () => {
+      if (document.visibilityState === 'visible') setRefreshKey((value) => value + 1);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') requestAutomaticRefresh();
+    };
+    // The feed is incremental and cheap; atlas/trend/report views aggregate
+    // thousands of records and should reuse their prepared result instead of
+    // forcing a full recomputation every 15 seconds. Source ingestion remains
+    // realtime in the backend worker.
+    const refreshInterval = view === 'feed' ? 15_000 : view === 'overview' ? 30_000 : 60_000;
+    const timer = window.setInterval(requestAutomaticRefresh, refreshInterval);
+    window.addEventListener('focus', requestAutomaticRefresh);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', requestAutomaticRefresh);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [view]);
+  useEffect(() => {
+    let active = true;
+    const loadStatus = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const nextStatus = await essayRadarApi.status(30);
+        if (active) setStatus(nextStatus);
+      } catch { /* Automatic status polling keeps the last factual state. */ }
+    };
+    void loadStatus();
+    const timer = window.setInterval(() => void loadStatus(), 10000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
   useEffect(() => {
     if (view !== 'overview') return undefined;
     const timer = window.setTimeout(() => {
@@ -552,39 +616,16 @@ const EssayRadarPage = () => {
   useEffect(() => {
     if (view !== 'feed') return;
     let active = true;
-    setLibraryStatsLoading(true);
+    const initialLoad = !loadedViewsRef.current.has('feed');
+    if (initialLoad) setLibraryStatsLoading(true);
     essayRadarApi.historicalBacklog()
       .then((result) => { if (active) setHistoricalBacklog(result); })
       .catch(() => { /* Keep search usable while knowledge-base statistics warm up. */ })
-      .finally(() => { if (active) setLibraryStatsLoading(false); });
+      .finally(() => { if (active && initialLoad) setLibraryStatsLoading(false); });
     return () => { active = false; };
   }, [refreshKey, view]);
 
-  const workerActive = Boolean(status?.worker.running || status?.mcpSync.syncing || status?.mcpSync.historyBackfill?.running);
-  useEffect(() => {
-    if ((view !== 'overview' && view !== 'system') || !workerActive) return undefined;
-    const timer = window.setInterval(async () => {
-      try {
-        if (view === 'system') {
-          const [nextStatus, nextBacklog] = await Promise.all([
-            essayRadarApi.status(30), essayRadarApi.historicalBacklog(),
-          ]);
-          setStatus(nextStatus);
-          setHistoricalBacklog(nextBacklog);
-        } else {
-          setStatus(await essayRadarApi.status(30));
-        }
-      } catch { /* retain last factual state */ }
-    }, status?.mcpSync.historyBackfill?.running ? 2000 : 10000);
-    return () => window.clearInterval(timer);
-  }, [status?.mcpSync.historyBackfill?.running, view, workerActive]);
-
-  const act = async (action: () => Promise<unknown>) => {
-    setActionLoading(true); setError(null);
-    try { await action(); setRefreshKey((value) => value + 1); }
-    catch (caught) { setError(errorText(caught, '操作失败')); }
-    finally { setActionLoading(false); }
-  };
+  const workerActive = Boolean(status?.worker.running && status?.mcpSync.running);
 
   const queueHistoricalAnalysis = async () => {
     const available = historicalBacklog?.unqueued ?? 0;
@@ -610,8 +651,6 @@ const EssayRadarPage = () => {
 
   const yesterday = insights?.yesterday;
   const totalPages = Math.max(1, Math.ceil((list?.total ?? 0) / 20));
-  const history = status?.mcpSync.historyBackfill;
-  const historyPercent = Math.max(0, Math.min(history?.progressPercent ?? 0, 100));
   const modelComparison = insights?.modelComparison;
   const libraryTotal = historicalBacklog?.totalNotes ?? 0;
   const libraryCompleted = historicalBacklog?.completed ?? 0;
@@ -651,13 +690,11 @@ const EssayRadarPage = () => {
     <AppPage className="essay-terminal max-w-none">
       <header className="essay-header">
         <div>
-          <div className="essay-live-line"><span className={workerActive ? 'is-live' : ''} />知识星球增量库 · {formatTime(insights?.latestDataAt || status?.mcpSync.lastSyncAt || historicalBacklog?.latestSyncedAt, true)}</div>
+          <div className="essay-live-line"><span className={workerActive ? 'is-live' : ''} />知识星球自动增量库 · 最近入库 {formatTime(insights?.latestDataAt || status?.mcpSync.lastSyncAt || historicalBacklog?.latestSyncedAt, true)}</div>
           <h1>{view === 'atlas' ? '小作文洞察图谱' : '小作文研判台'}</h1>
-          <p>{view === 'atlas' ? '按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。' : '先读原文，再看证据与观点；趋势、日报和数据同步分开处理。'}</p>
+          <p>{view === 'atlas' ? '按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。' : '新增小作文自动入库、自动分析、自动生成日报；页面静默更新，不需要手动刷新。'}</p>
         </div>
-        <button type="button" className="essay-refresh" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />刷新当前页
-        </button>
+        <div className="essay-auto-state" aria-label="自动更新状态"><strong>{workerActive ? '全自动运行中' : '自动恢复中'}</strong><span>MCP {status?.mcpSync.pollSeconds ?? 10} 秒 · 页面 15 秒</span><small>本页更新 {formatClock(lastAutoRefreshAt)}</small></div>
       </header>
 
       <RadarNavigation active={view} />
@@ -788,7 +825,7 @@ const EssayRadarPage = () => {
       {view === 'reports' ? (
         <div className="essay-view">
           <section className="essay-panel essay-report-summary">
-            <div className="essay-panel-head"><div><span>{modelComparison?.reportDate || '最近报告日'}</span><h2>模型共识与分歧</h2></div><button disabled={actionLoading} onClick={() => void act(() => essayRadarApi.runDailyReports())}><Brain className="h-4 w-4" />生成昨日报告</button></div>
+            <div className="essay-panel-head"><div><span>{modelComparison?.reportDate || '最近报告日'}</span><h2>模型共识与分歧</h2></div><Badge variant={status?.dailyReportWorker.running ? 'success' : 'warning'}>{status?.dailyReportWorker.running ? `每日 ${status.dailyReportWorker.runHourShanghai}:00 自动生成` : '自动任务恢复中'}</Badge></div>
             <div className="essay-consensus-grid"><div><h3>共识</h3>{modelComparison?.consensus.length ? modelComparison.consensus.map((item) => <p key={item.text}>{item.text}<span>{item.modelCount} 个模型</span></p>) : <p>目前只有单模型报告，暂无跨模型共识。</p>}</div><div className="is-risk"><h3>分歧</h3>{modelComparison?.divergences.length ? modelComparison.divergences.map((item) => <p key={item.text}>{item.text}<span>{item.modelCount} 个模型</span></p>) : <p>暂无可比较的跨模型分歧。</p>}</div></div>
           </section>
           <section className="essay-panel">
@@ -806,22 +843,21 @@ const EssayRadarPage = () => {
       {view === 'system' ? (
         <div className="essay-view essay-system-grid">
           <section className="essay-panel">
-            <div className="essay-panel-head"><div><span>新增纪要入库后进入 AI 队列</span><h2>实时分析</h2></div><span className={`essay-status ${status?.worker.running ? 'is-running' : ''}`}>{status?.worker.running ? '运行中' : '已停止'}</span></div>
+            <div className="essay-panel-head"><div><span>新增或正文变化后自动进入 AI 队列</span><h2>实时分析</h2></div><span className={`essay-status ${status?.worker.running ? 'is-running' : ''}`}>{status?.worker.running ? '自动分析中' : '自动恢复中'}</span></div>
             <div className="essay-progress"><div><span>近30天分析覆盖</span><strong>{status?.progress.coveragePercent ?? 0}%</strong></div><div><i style={{ width: `${status?.progress.coveragePercent ?? 0}%` }} /></div></div>
             <div className="essay-system-metrics"><Metric label="已完成" value={status?.progress.completed ?? 0} /><Metric label="待处理" value={status?.progress.pending ?? 0} /><Metric label="失败" value={status?.progress.failed ?? 0} tone="danger" /></div>
-            <div className="essay-actions"><button disabled={actionLoading} onClick={() => void act(status?.worker.running ? essayRadarApi.stopWorker : essayRadarApi.startWorker)}>{status?.worker.running ? '停止实时分析' : '启动实时分析'}</button><button disabled={actionLoading || !status?.progress.failed} onClick={() => void act(essayRadarApi.retryFailed)}>重试失败记录</button></div>
+            <p className="essay-system-note">队列每 {status?.worker.pollSeconds ?? '—'} 秒自动检查；临时失败按指数退避重试，旧语料不会因服务重启被重新入队。</p>
           </section>
 
           <section className="essay-panel">
             <div className="essay-panel-head"><div><span>直接 MCP → SQLite · 附件仅保存链接</span><h2>知识星球增量同步</h2></div><span className={`essay-status ${status?.mcpSync.running ? 'is-running' : ''}`}>{status?.mcpSync.running ? '运行中' : '已停止'}</span></div>
-            <p className="essay-system-note">轮询间隔 {status?.mcpSync.pollSeconds ?? '—'} 秒 · 最近成功 {formatTime(status?.mcpSync.lastSyncAt, true)} · 模式 {status?.mcpSync.mode || '—'}</p>
-            <div className="essay-actions"><button disabled={actionLoading} onClick={() => void act(essayRadarApi.syncMcp)}>立即增量同步</button><button disabled={actionLoading} onClick={() => void act(status?.mcpSync.running ? essayRadarApi.stopMcpWorker : essayRadarApi.startMcpWorker)}>{status?.mcpSync.running ? '停止自动同步' : '启动自动同步'}</button></div>
+            <p className="essay-system-note">每 {status?.mcpSync.pollSeconds ?? 10} 秒自动检查增量 · 最近成功 {formatTime(status?.mcpSync.lastSyncAt, true)} · 失败由同步看门狗自动唤醒，不需要人工操作。</p>
             <div className="essay-group-list">{status?.mcpSync.groups.map((group) => <div key={group.groupId}><strong>{group.groupName}</strong><Badge variant={group.lastStatus === 'success' ? 'success' : group.lastStatus === 'failed' ? 'danger' : 'default'}>{group.lastStatus}</Badge><span>累计入库 {group.totalSaved.toLocaleString()}</span><span>最新游标 {formatTime(group.lastTopicAt)}</span></div>)}</div>
           </section>
 
           <section className="essay-panel essay-history-panel">
             <div className="essay-panel-head"><div><span>只使用本地已入库、尚未创建 AI 任务的纪要</span><h2>历史小作文补分析</h2></div><Badge variant={historicalBacklog?.unqueued ? 'warning' : 'success'}>{historicalBacklog?.unqueued ? `${historicalBacklog.unqueued.toLocaleString()} 篇可选` : '已全部入队'}</Badge></div>
-            <p className="essay-system-note">不重新抓取知识星球，不扩大所选数量。失败任务仍通过“重试失败记录”单独处理。</p>
+            <p className="essay-system-note">不重新抓取知识星球，不扩大所选数量；临时失败仍由后台按受控退避自动重试。</p>
             <div className="essay-system-metrics">
               <Metric label="未入队" value={(historicalBacklog?.unqueued ?? 0).toLocaleString()} note={`${formatTime(historicalBacklog?.earliestUnqueuedAt, true)} 至 ${formatTime(historicalBacklog?.latestUnqueuedAt, true)}`} />
               <Metric label="已完成" value={(historicalBacklog?.completed ?? 0).toLocaleString()} tone="signal" />
@@ -834,21 +870,6 @@ const EssayRadarPage = () => {
               <button disabled={actionLoading || !historicalBacklog?.unqueued} onClick={() => void queueHistoricalAnalysis()}>{actionLoading ? '正在加入队列' : `分析 ${Math.min(analysisBatchCount, historicalBacklog?.unqueued ?? analysisBatchCount).toLocaleString()} 篇`}</button>
             </div>
             {queueMessage ? <p className="essay-action-feedback">{queueMessage}</p> : null}
-          </section>
-
-          <section className="essay-panel essay-history-panel">
-            <div className="essay-panel-head"><div><span>旧数据默认只入库供检索和回测</span><h2>历史纪要库</h2></div><Badge variant={history?.running ? 'warning' : 'default'}>{history?.running ? '同步中' : '按需启动'}</Badge></div>
-            <div className="essay-history-controls">
-              <select aria-label="知识星球历史范围" value={historyYears} onChange={(event) => setHistoryYears(Number(event.target.value) as 1 | 2)}><option value={1}>近1年</option><option value={2}>近2年</option></select>
-              <button disabled={actionLoading || history?.running} onClick={() => void act(() => essayRadarApi.backfillMcpHistory(historyYears))}>{history?.running ? '正在同步入库' : '只同步入库'}</button>
-            </div>
-            <div className="essay-progress"><div><span>{history?.message || '尚未启动历史同步'}</span><strong>{historyPercent.toFixed(1)}%</strong></div><div><i style={{ width: `${historyPercent}%` }} /></div></div>
-            <div className="essay-system-metrics">
-              <Metric label="已获取" value={(history?.received ?? 0).toLocaleString()} note="本次任务" />
-              <Metric label="新增" value={(history?.created ?? 0).toLocaleString()} note={`跳过 ${(history?.unchanged ?? 0).toLocaleString()}`} tone="signal" />
-              <Metric label="分页" value={(history?.pagesFetched ?? 0).toLocaleString()} note={history?.currentGroupName || '等待开始'} />
-              <Metric label="覆盖至" value={history?.oldestAt ? formatTime(history.oldestAt, true) : '—'} note="旧数据不自动分析" />
-            </div>
           </section>
         </div>
       ) : null}

@@ -23,11 +23,12 @@ from src.repositories.essay_daily_report_repo import EssayDailyReportRepository
 from src.repositories.essay_analysis_repo import EssayAnalysisRepository
 from src.services.essay_market_insight_service import EssayMarketInsightService
 from src.storage import utc_naive_now
+from src.utils.essay_analysis_quality import is_low_quality_summary
 from src.utils.essay_topic_taxonomy import TOPIC_TAXONOMY_VERSION, canonicalize_topics
 
 logger = logging.getLogger(__name__)
 
-ESSAY_PROMPT_VERSION = "essay-radar-v2-deep"
+ESSAY_PROMPT_VERSION = "essay-radar-v3-quality-retry"
 DEFAULT_ESSAY_MODEL = "deepseek-v4-flash"
 DAILY_REPORT_PROMPT_VERSION = "essay-daily-v3-stratified-watchlist"
 
@@ -53,6 +54,24 @@ _dashboard_rows_cache_lock = threading.Lock()
 _DEEP_INSIGHTS_CACHE_TTL_SECONDS = 60.0
 _deep_insights_cache: Dict[tuple[Any, ...], tuple[float, Dict[str, Any]]] = {}
 _deep_insights_cache_lock = threading.Lock()
+_ESSAY_SUMMARY_CACHE_TTL_SECONDS = 30.0
+_essay_summary_cache: Dict[tuple[Any, ...], tuple[float, Dict[str, Any]]] = {}
+_essay_summary_cache_lock = threading.Lock()
+
+
+def _cached_essay_summary(key: tuple[Any, ...], loader) -> Dict[str, Any]:
+    now = time.monotonic()
+    with _essay_summary_cache_lock:
+        cached = _essay_summary_cache.get(key)
+        if cached and now - cached[0] < _ESSAY_SUMMARY_CACHE_TTL_SECONDS:
+            return cached[1]
+    value = loader()
+    with _essay_summary_cache_lock:
+        _essay_summary_cache[key] = (now, value)
+        if len(_essay_summary_cache) > 32:
+            oldest = min(_essay_summary_cache, key=lambda item: _essay_summary_cache[item][0])
+            _essay_summary_cache.pop(oldest, None)
+    return value
 
 _SYSTEM_PROMPT = """你是中国资本市场研究资料结构化分析员。请只根据输入文本提取事实、观点和风险，
 不要补造公司、代码、数字或来源。每篇文本都必须输出一条结果，并严格输出一个 JSON object。
@@ -97,6 +116,8 @@ JSON 格式：
 }
 
 规则：importance_score 为0-100整数；confidence_score 和股票 confidence 为0-1。
+summary 必须始终根据可见的标题和正文形成具体摘要，不得为空，不得写“信息不足，未形成有效摘要”或同义占位语。
+即使正文很短，也要概括标题、可见事实和资料形态；只有图片或附件时，应明确写“原文主要为图片/附件，标题显示……”，而不是返回空摘要。
 标签优先使用稳定词汇，例如“业绩超预期、涨价、产能扩张、国产替代、政策催化、机构观点、风险提示、订单增长、AI算力、机器人”。
 必须把事实、公司指引、机构观点和市场传闻分开；结论要给原文证据、证伪条件与后续验证指标。
 novelty_score 为0-100，衡量相对常见市场叙事的信息增量，不得把重复观点打高分。
@@ -266,7 +287,11 @@ class DeepSeekEssayAnalyzer:
             topic_id = str(raw_item.get("topic_id") or "").strip()
             if topic_id not in note_by_topic or topic_id in seen:
                 continue
-            normalized.append(self._normalize_item(raw_item, note_by_topic[topic_id]))
+            normalized_item = self._normalize_item(raw_item, note_by_topic[topic_id])
+            if is_low_quality_summary(normalized_item["summary"]):
+                logger.warning("[essay-radar] rejected low-quality summary for topic %s", topic_id)
+                continue
+            normalized.append(normalized_item)
             seen.add(topic_id)
         return normalized
 
@@ -303,7 +328,7 @@ class DeepSeekEssayAnalyzer:
                 })
         return {
             "topic_id": str(note["topic_id"]),
-            "summary": str(item.get("summary") or "信息不足，未形成有效摘要").strip()[:500],
+            "summary": str(item.get("summary") or "").strip()[:500],
             "primary_category": category if category in _CATEGORIES else "other",
             "sentiment": sentiment if sentiment in _SENTIMENTS else "neutral",
             "time_horizon": horizon if horizon in _HORIZONS else "unclear",
@@ -640,7 +665,13 @@ class EssayAnalysisService:
         )
 
     def historical_backlog(self) -> Dict[str, Any]:
-        return self.repo.historical_backlog()
+        if type(self.repo) is not EssayAnalysisRepository:
+            return self.repo.historical_backlog()
+        database_key = str(getattr(self.repo.db, "_db_url", id(self.repo.db)))
+        return _cached_essay_summary(
+            ("historical-backlog", database_key, self.repo.cache_revision()),
+            self.repo.historical_backlog,
+        )
 
     def list_analyses(self, **filters: Any) -> Dict[str, Any]:
         days = max(1, min(int(filters.pop("days", 30) or 30), 3650))
@@ -674,11 +705,16 @@ class EssayAnalysisService:
         safe_days = max(1, min(int(days), 3650))
         cutoff = utc_naive_now() - timedelta(days=safe_days)
         analyzer = DeepSeekEssayAnalyzer(model=self.model)
+        database_key = str(getattr(self.repo.db, "_db_url", id(self.repo.db)))
+        progress = self.repo.progress(cutoff=cutoff) if type(self.repo) is not EssayAnalysisRepository else _cached_essay_summary(
+            ("progress", database_key, safe_days, self.repo.cache_revision()),
+            lambda: self.repo.progress(cutoff=cutoff),
+        )
         return {
             "days": safe_days,
             "model": self.model,
             "deepseek_configured": analyzer.configured,
-            **self.repo.progress(cutoff=cutoff),
+            **progress,
         }
 
     def _completed_dashboard_rows(self, safe_days: int) -> List[Dict[str, Any]]:
@@ -716,6 +752,16 @@ class EssayAnalysisService:
     def dashboard(self, *, days: int = 30, top_n: int = 12) -> Dict[str, Any]:
         safe_days = max(1, min(int(days), 3650))
         safe_top_n = max(3, min(int(top_n), 30))
+        if type(self.repo) is EssayAnalysisRepository:
+            database_key = str(getattr(self.repo.db, "_db_url", id(self.repo.db)))
+            cache_key = (
+                "dashboard", database_key, safe_days, safe_top_n,
+                self.repo.cache_revision(),
+            )
+            with _essay_summary_cache_lock:
+                cached = _essay_summary_cache.get(cache_key)
+                if cached and time.monotonic() - cached[0] < _ESSAY_SUMMARY_CACHE_TTL_SECONDS:
+                    return cached[1]
         rows = self._completed_dashboard_rows(safe_days)
         sentiment = Counter()
         categories = Counter()
@@ -783,7 +829,7 @@ class EssayAnalysisService:
             key=lambda item: (item.get("importance_score") or 0, (item.get("note") or {}).get("created_at") or ""),
             reverse=True,
         )[:8]
-        return {
+        payload = {
             "days": safe_days,
             "generated_at": utc_naive_now().isoformat() + "Z",
             "summary": {
@@ -808,6 +854,13 @@ class EssayAnalysisService:
             ],
             "highlights": highlights,
         }
+        if type(self.repo) is EssayAnalysisRepository:
+            with _essay_summary_cache_lock:
+                _essay_summary_cache[cache_key] = (time.monotonic(), payload)
+                if len(_essay_summary_cache) > 32:
+                    oldest = min(_essay_summary_cache, key=lambda item: _essay_summary_cache[item][0])
+                    _essay_summary_cache.pop(oldest, None)
+            return payload
 
     def insights(self, *, days: int = 30, trend_days: int = 14) -> Dict[str, Any]:
         """Evidence, trend, model and watchlist cockpit built from completed analyses."""

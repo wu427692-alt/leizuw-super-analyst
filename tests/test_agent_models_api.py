@@ -362,7 +362,8 @@ class AgentSkillsEndpointTestCase(unittest.TestCase):
             "api.v1.endpoints.agent.asyncio.get_running_loop",
             side_effect=lambda: _ImmediateLoop(real_get_running_loop()),
         ):
-            payload = asyncio.run(agent.agent_chat(request)).model_dump()
+            http_request = SimpleNamespace(state=SimpleNamespace(user_id=0))
+            payload = asyncio.run(agent.agent_chat(request, http_request)).model_dump()
 
         mock_build_executor.assert_called_once_with(config, None)
         executor.chat.assert_called_once()

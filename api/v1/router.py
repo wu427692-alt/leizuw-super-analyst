@@ -32,6 +32,7 @@ from api.v1.endpoints import (
     stocks,
     system_config,
     usage,
+    user_auth,
 )
 
 # 创建 v1 版本主路由。
@@ -42,6 +43,12 @@ router.include_router(
     auth.router,
     prefix="/auth",
     tags=["Auth"]
+)
+
+router.include_router(
+    user_auth.router,
+    prefix="/user-auth",
+    tags=["UserAuth"],
 )
 
 router.include_router(

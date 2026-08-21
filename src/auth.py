@@ -376,6 +376,11 @@ def get_client_ip(request) -> str:
     rotate rate-limit buckets and bypass brute-force protection.
     """
     if os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() == "true":
+        # Cloudflare Tunnel supplies the authenticated visitor address in this
+        # header. Prefer it over a potentially multi-hop forwarded chain.
+        cloudflare_ip = request.headers.get("CF-Connecting-IP")
+        if cloudflare_ip:
+            return cloudflare_ip.strip()
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
             return forwarded.split(",")[-1].strip()

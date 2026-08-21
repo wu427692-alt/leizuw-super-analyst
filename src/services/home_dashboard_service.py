@@ -204,6 +204,10 @@ class HomeDashboardService:
         global_indices = indices[len(cn_index_list):]
         trade_date = next((item.get("trade_date") for item in cn_indices if item.get("trade_date")), end)
         is_open_today = self._is_trading_day(end)
+        # On weekends and exchange holidays the latest index session is the
+        # authoritative market date. Reuse it for breadth and sector queries
+        # instead of asking upstream providers for a non-existent calendar day.
+        market_summary_date = end if is_open_today else str(trade_date)
 
         def intelligence_data() -> Dict[str, Any]:
             try:
@@ -214,8 +218,8 @@ class HomeDashboardService:
                 return {"watchlist": [], "latest_events": [], "summary": {}}
 
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="home-summary") as executor:
-            breadth_future = executor.submit(self._breadth, end, now, is_open_today, warnings)
-            sectors_future = executor.submit(self._sector_distribution, end, now, is_open_today, warnings)
+            breadth_future = executor.submit(self._breadth, market_summary_date, now, is_open_today, warnings)
+            sectors_future = executor.submit(self._sector_distribution, market_summary_date, now, is_open_today, warnings)
             northbound_future = executor.submit(self._northbound, start, end, warnings)
             intelligence_future = executor.submit(intelligence_data)
             breadth = breadth_future.result()
@@ -237,6 +241,26 @@ class HomeDashboardService:
         try:
             result = self.tushare.query(api_name, params={"ts_code": code, "start_date": start, "end_date": end})
             rows = sorted(result["rows"], key=lambda row: str(row.get("trade_date") or ""))
+            if api_name == "index_daily" and rows:
+                try:
+                    from src.repositories.market_data_repo import MarketDataRepository
+                    persisted = []
+                    for row in rows:
+                        raw_date = str(row.get("trade_date") or "")
+                        if len(raw_date) != 8:
+                            continue
+                        persisted.append({
+                            "timestamp": datetime.strptime(raw_date, "%Y%m%d"),
+                            "open": row.get("open"), "high": row.get("high"),
+                            "low": row.get("low"), "close": row.get("close"),
+                            "volume": row.get("vol"), "amount": row.get("amount"),
+                            "change_percent": row.get("pct_chg"),
+                        })
+                    MarketDataRepository().upsert_index(
+                        code, persisted, frequency="1D", source="tushare.index_daily",
+                    )
+                except Exception as exc:  # noqa: BLE001 - dashboard facts remain usable if cache write fails.
+                    logger.info("Home dashboard index cache write failed code=%s error=%s", code, type(exc).__name__)
             latest = rows[-1] if rows else {}
             amount = latest.get("amount")
             amount_yi = None
@@ -530,6 +554,8 @@ class HomeDashboardService:
                 "update_time": latest_daily.get("trade_date"), "source": "tushare.daily",
             } if latest_daily else None
             live_quote = live_by_code.get(symbol.split(".")[0])
+            if live_quote and live_quote.get("is_stale"):
+                live_quote = None
             result.append({**card, "latest_quote": live_quote or daily_quote or card.get("latest_quote"),
                            "history": history, "latest_catalyst": catalyst,
                            "latest_risk": risk, "latest_institution": institution,

@@ -41,6 +41,12 @@ INVESTMENT_MONITOR_POLL_SEC=10
 INVESTMENT_MONITOR_MAX_WORKERS=16
 INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES=360
 INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES=10
+CNINFO_WATCHLIST_AUTO_START=true
+CNINFO_WATCHLIST_POLL_SEC=60
+CNINFO_WATCHLIST_HISTORY_DAYS=365
+CNINFO_WATCHLIST_RECENT_DAYS=3
+CNINFO_WATCHLIST_WINDOW_DAYS=30
+CNINFO_WATCHLIST_WINDOWS_PER_CYCLE=8
 SYNC_WATCHDOG_AUTO_START=true
 SYNC_WATCHDOG_INTERVAL_SEC=30
 SYNC_WATCHDOG_STALE_MULTIPLIER=4
@@ -54,7 +60,7 @@ SYNC_WATCHDOG_STALE_MULTIPLIER=4
 
 ### 服务端同步自修复
 
-API 进程默认启动同步看门狗。它每 30 秒检查投资情报、知识星球 MCP 和盘中行情 worker 的线程状态与最后心跳，并读取 `monitoring_sources` 的到期计划。线程退出会自动重启；线程仍在但超过其正常轮询周期长期没有完成同步，或事实来源已经到期未运行，则唤醒原有增量 worker 立即补抓最新数据。看门狗不直接写库，也不另建抓取逻辑，因此仍沿用各来源原有游标、幂等键、增量去重和 SQLite 串行写入约束。
+API 进程默认启动同步看门狗。它每 30 秒检查投资情报、知识星球 MCP、盘中行情和自选股巨潮公告 worker 的线程状态与最后心跳，并读取 `monitoring_sources` 的到期计划。线程退出会自动重启；线程仍在但超过其正常轮询周期长期没有完成同步，或事实来源已经到期未运行，则唤醒原有增量 worker 立即补抓最新数据。看门狗不直接写库，也不另建抓取逻辑，因此仍沿用各来源原有游标、幂等键、增量去重和 SQLite 串行写入约束。
 
 来源失败后不会无间隔轰击上游：失败来源至少等待 15 秒并按来源周期退避，最长 5 分钟；未配置来源每小时复查一次。一旦成功，立即回到目标周期。行情仅在 A 股连续竞价时间判定心跳，休市、午休和周末不会被误报为停止同步。知识星球只有在 MCP 已配置且自动同步开启时才纳入修复。
 
@@ -111,9 +117,10 @@ Web 的“自选股超级看板”始终以当前动态自选股为中心，不�
 
 ## 巨潮资讯上市公司公告
 
-Web 投资情报台可按起止日期、股票代码、公告分类和标题关键词抓取公告；抓取结果使用巨潮公告 ID 幂等入库，映射到上市公司视角，并保留 HTTPS PDF 原文链接。后台轮询每 15 分钟查询最近两日全市场公告元数据，单次最多 30 页并幂等入库；只保存标题、公司、公告时间、分类和原文链接，不自动下载 PDF。用户明确打包时才下载所选文件。
+Web 投资情报台可按起止日期、股票代码、公告分类和标题关键词抓取公告；抓取结果使用巨潮公告 ID 幂等入库，映射到上市公司视角，并保留 HTTPS PDF 原文链接。自动链路以动态自选股为强制范围：每 60 秒逐只股票精确查询最近 3 天，避免“全市场前 N 页”在公告高峰漏掉自选股；新增自选股或服务启动时，会把最近 365 天拆成 30 天分片自动回补。每个成功分片、失败次数、下次重试和完成区间都持久化到 SQLite，进程重启后从未完成分片继续，失败按 30～300 秒退避且成功后恢复实时周期。系统只保存标题、公司、公告时间、分类和官方原文链接，不自动下载 PDF；用户明确打包时才下载所选文件。
 
 - `GET /api/v1/investment-monitor/announcements/categories`：列出年报、业绩预告、权益分派、董事会、风险提示等 26 类公告。
+- `GET /api/v1/investment-monitor/announcements/watchlist-sync/status`：查看每只自选股的一年目标区间、历史分片进度、最新增量成功时间和失败重试状态。
 - `POST /api/v1/investment-monitor/announcements/sync`：手工抓取并入库；日期格式为 `YYYY-MM-DD`，可选 `symbols`、`categories`、`keyword`、`max_pages`。
 - `GET /api/v1/investment-monitor/announcements`：按精确起止日期、股票、分类和关键词查询已入库公告。
 - `GET /api/v1/investment-monitor/announcements/export`：从当前已入库结果生成 Excel 索引，最多 500 条。
@@ -132,7 +139,7 @@ Web 投资情报台可按起止日期、股票代码、公告分类和标题关�
 }
 ```
 
-数据源使用巨潮公开披露页面同源接口，设置超时、有限重试、分页上限和轻量请求间隔，不绕过访问控制。全市场长日期范围可能在 `max_pages` 达到后截断，建议按月或按股票分段同步。
+数据源使用巨潮公开披露页面同源接口，设置超时、有限重试、分页上限和轻量请求间隔，不绕过访问控制。自动回补按股票、按 30 天分片，只有上游请求完整成功才记录该分片完成；空结果是有效成功，网络错误或异常响应不会推进游标。手工全市场长日期查询仍可能在 `max_pages` 达到后截断，建议按月或按股票分段同步。
 
 原 GUI 的“Excel、PDF 下载、PDF 转 TXT”已经重写为服务端接口：Excel 直接从统一公告库生成；PDF/TXT 只按用户明确选择的已入库事件下载，不会由后台轮询批量下载。PDF 仅允许 `https://static.cninfo.com.cn/*.pdf`，默认单文件上限 40 MB，缓存目录为 `./data/announcements`，可分别通过 `ANNOUNCEMENT_FILE_DIR` 和 `ANNOUNCEMENT_PDF_MAX_MB` 调整。ZIP 内含公告 PDF、提取文本、Excel 索引和逐文件状态清单；扫描版 PDF 没有文本层时 TXT 可能为空，当前不执行 OCR。
 

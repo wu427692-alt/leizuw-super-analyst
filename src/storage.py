@@ -16,6 +16,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, date, timedelta, timezone
@@ -65,6 +66,7 @@ CURRENT_SCHEMA_VERSION = "2026-06-05-create-all-baseline"
 SQLITE_RUNTIME_INDEX_MIGRATION = "2026-08-20-sqlite-runtime-index-optimization"
 MARKET_TICK_VOLUME_MIGRATION = "2026-08-20-second-level-volume-deltas"
 MONITOR_SOURCE_TELEMETRY_MIGRATION = "2026-08-20-monitor-source-run-telemetry"
+USER_SCOPE_MIGRATION = "2026-08-22-user-scope-columns"
 INTELLIGENCE_ITEM_NULL_SCOPE_VALUE = "__dsa_null_scope__"
 
 # SQLAlchemy ORM 基类
@@ -106,6 +108,69 @@ class DatabaseSchemaMigration(Base):
     version = Column(String(64), primary_key=True)
     description = Column(String(255), nullable=False)
     applied_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+
+
+class UserAccount(Base):
+    """Approved front-office user account.
+
+    ``normalized_name`` is the login identifier while ``display_name`` keeps
+    the spelling entered by the user.  Approval is deliberately separate from
+    registration so a newly created account cannot read product data until an
+    operator accepts it.
+    """
+
+    __tablename__ = "user_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    display_name = Column(String(80), nullable=False)
+    normalized_name = Column(String(80), nullable=False, unique=True, index=True)
+    password_salt = Column(String(128), nullable=False)
+    password_hash = Column(String(128), nullable=False)
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    registration_ip_hash = Column(String(64), index=True)
+    registration_ip_label = Column(String(80))
+    approved_at = Column(DateTime, index=True)
+    approved_by = Column(String(80))
+    last_login_at = Column(DateTime, index=True)
+    last_login_ip_label = Column(String(80))
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+
+class UserTrustedIp(Base):
+    """Hashed trusted network identity used for approved-user convenience login."""
+
+    __tablename__ = "user_trusted_ips"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=False, index=True)
+    ip_hash = Column(String(64), nullable=False, index=True)
+    ip_label = Column(String(80))
+    source = Column(String(24), nullable=False, default="approval")
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    last_seen_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "ip_hash", name="uix_user_trusted_ip"),
+        Index("ix_user_trusted_ip_lookup", "ip_hash", "user_id"),
+    )
+
+
+class UserWatchlistItem(Base):
+    """A user's private watchlist membership; market facts remain shared."""
+
+    __tablename__ = "user_watchlist_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=False, index=True)
+    symbol = Column(String(16), nullable=False)
+    display_symbol = Column(String(32))
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "symbol", name="uix_user_watchlist_symbol"),
+        Index("ix_user_watchlist_user_time", "user_id", "created_at"),
+    )
 
 
 class StockDaily(Base):
@@ -541,6 +606,7 @@ class EssayQuantRuleRecord(Base):
     __tablename__ = 'essay_quant_rules'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(String(64), index=True)
     name = Column(String(120), nullable=False)
     source_query = Column(String(200), nullable=False, default='')
     signal_direction = Column(String(20), nullable=False, default='bullish')
@@ -566,6 +632,7 @@ class EssayQuantRunRecord(Base):
     __tablename__ = 'essay_quant_runs'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(String(64), index=True)
     rule_id = Column(Integer, ForeignKey('essay_quant_rules.id', ondelete='SET NULL'), index=True)
     rule_json = Column(Text, nullable=False)
     result_json = Column(Text, nullable=False)
@@ -663,6 +730,37 @@ class WatchlistBackfillRecord(Base):
 
     __table_args__ = (
         Index('ix_watchlist_backfill_symbol_time', 'symbol', 'requested_at'),
+    )
+
+
+class WatchlistAnnouncementSyncRecord(Base):
+    """Durable CNInfo history cursor and live-poll health for one watchlist stock."""
+
+    __tablename__ = 'watchlist_announcement_sync'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(16), nullable=False, unique=True, index=True)
+    stock_name = Column(String(120))
+    target_start = Column(Date, nullable=False)
+    target_end = Column(Date, nullable=False)
+    completed_windows_json = Column(Text, nullable=False, default='[]')
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    next_retry_at = Column(DateTime, index=True)
+    last_error = Column(Text)
+    last_incremental_started_at = Column(DateTime, index=True)
+    last_incremental_success_at = Column(DateTime, index=True)
+    last_backfill_started_at = Column(DateTime, index=True)
+    last_backfill_success_at = Column(DateTime, index=True)
+    backfill_completed_at = Column(DateTime, index=True)
+    total_fetched = Column(Integer, nullable=False, default=0)
+    total_created = Column(Integer, nullable=False, default=0)
+    total_updated = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+    __table_args__ = (
+        Index('ix_watchlist_announcement_status_retry', 'status', 'next_retry_at'),
     )
 
 
@@ -1282,6 +1380,7 @@ class AlertRuleRecord(Base):
     __tablename__ = 'alert_rules'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(String(64), index=True)
     name = Column(String(64), nullable=False)
     target_scope = Column(String(32), nullable=False, default='single_symbol', index=True)
     target = Column(String(64), nullable=False, index=True)
@@ -1379,6 +1478,7 @@ class DecisionSignalRecord(Base):
     __tablename__ = 'decision_signals'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(String(64), index=True)
     stock_code = Column(String(16), nullable=False, index=True)
     stock_name = Column(String(64))
     market = Column(String(8), nullable=False, index=True)
@@ -1575,6 +1675,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             Base.metadata.create_all(self._engine)
             self._ensure_second_level_volume_columns()
             self._ensure_monitor_source_telemetry_columns()
+            self._ensure_user_scope_columns()
             self._ensure_llm_usage_telemetry_columns()
             self._ensure_essay_quant_research_config_column()
             self._ensure_intelligence_item_scope_values()
@@ -1598,6 +1699,31 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._SessionLocal = None
             self.__class__._instance = None
             raise
+
+    def _ensure_user_scope_columns(self) -> None:
+        """Add additive ownership columns to legacy personalized-data tables."""
+        if not self._is_sqlite_engine:
+            return
+        personalized_tables = (
+            (AlertRuleRecord.__tablename__, "alert rules"),
+            (EssayQuantRuleRecord.__tablename__, "essay quant rules"),
+            (EssayQuantRunRecord.__tablename__, "essay quant runs"),
+            (DecisionSignalRecord.__tablename__, "decision signals"),
+        )
+        with self._engine.begin() as connection:
+            for table_name, _description in personalized_tables:
+                existing = {column["name"] for column in inspect(self._engine).get_columns(table_name)}
+                if "owner_id" not in existing:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "{table_name}" ADD COLUMN "owner_id" VARCHAR(64)'
+                    )
+                    connection.exec_driver_sql(
+                        f'CREATE INDEX IF NOT EXISTS "ix_{table_name}_owner_id" ON "{table_name}" ("owner_id")'
+                    )
+            connection.execute(sqlite_insert(DatabaseSchemaMigration).values(
+                version=USER_SCOPE_MIGRATION,
+                description="Add request-owner scope to personalized rules and runs",
+            ).on_conflict_do_nothing(index_elements=["version"]))
 
     def _ensure_essay_quant_research_config_column(self) -> None:
         """Backfill the versionable quant-research configuration on existing SQLite DBs."""
@@ -2003,9 +2129,22 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             try:
                 cursor.execute(f"PRAGMA busy_timeout={int(self._sqlite_busy_timeout_ms)}")
                 if self._sqlite_file_db and self._sqlite_wal_enabled:
+                    try:
+                        cache_kib = max(
+                            2_048,
+                            min(int(os.getenv("SQLITE_CACHE_SIZE_KIB", "16384")), 65_536),
+                        )
+                    except ValueError:
+                        cache_kib = 16_384
+                    try:
+                        mmap_mb = max(0, min(int(os.getenv("SQLITE_MMAP_SIZE_MB", "0")), 1_024))
+                    except ValueError:
+                        mmap_mb = 0
                     cursor.execute("PRAGMA journal_mode=WAL")
                     cursor.execute("PRAGMA synchronous=NORMAL")
                     cursor.execute("PRAGMA wal_autocheckpoint=1000")
+                    cursor.execute(f"PRAGMA cache_size=-{cache_kib}")
+                    cursor.execute(f"PRAGMA mmap_size={mmap_mb * 1024 * 1024}")
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.execute("PRAGMA temp_store=MEMORY")
             except Exception as exc:
@@ -2654,7 +2793,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         offset: int = 0,
-        limit: int = 20
+        limit: int = 20,
+        query_id_prefix: Optional[str] = None,
     ) -> Tuple[List[AnalysisHistory], int]:
         """
         分页查询分析历史记录（带总数）
@@ -2674,6 +2814,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         
         with self.get_session() as session:
             conditions = []
+            if query_id_prefix:
+                conditions.append(AnalysisHistory.query_id.startswith(query_id_prefix))
             
             if code:
                 if isinstance(code, list):

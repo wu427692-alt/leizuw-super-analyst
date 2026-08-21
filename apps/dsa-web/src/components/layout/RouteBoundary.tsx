@@ -70,17 +70,21 @@ const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> 
       const now = Date.now();
       const elapsed = now - current.startedAt;
       const quietFor = now - current.lastActivityAt;
-      const noRequestPageReady = current.started === 0 && elapsed >= 900;
-      const requestPageReady = current.started > 0 && current.pending === 0 && quietFor >= 420 && elapsed >= 520;
-      if (noRequestPageReady || requestPageReady) {
+      const noRequestPageReady = current.started === 0 && elapsed >= 180;
+      const requestPageReady = current.started > 0 && current.pending === 0 && quietFor >= 100 && elapsed >= 180;
+      // Pages own their detailed skeletons and stale-data fallbacks. A slow
+      // ancillary endpoint may continue in the background, but it must not
+      // freeze navigation or hide already usable controls for many seconds.
+      const pageShellReady = elapsed >= 1_400;
+      if (noRequestPageReady || requestPageReady || pageShellReady) {
         if (finishingRef.current) return;
         finishingRef.current = true;
         setProgress(100);
-        setStatus('本页数据已完成');
+        setStatus(pageShellReady && current.pending > 0 ? '页面已就绪，数据继续加载' : '本页数据已完成');
         revealTimer = window.setTimeout(() => {
           finishRouteLoad(current.sessionId);
           setPreparing(false);
-        }, 160);
+        }, 60);
         return;
       }
 
@@ -96,7 +100,7 @@ const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> 
         ? `正在加载本页数据（${current.completed}/${current.started}）`
         : '正在整理并校验本页数据');
     };
-    const interval = window.setInterval(tick, 90);
+    const interval = window.setInterval(tick, 100);
     const kickoff = window.setTimeout(tick, 0);
     return () => {
       window.clearInterval(interval);
@@ -197,7 +201,7 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
             <button
               type="button"
               className="rounded-lg border border-border/70 bg-card px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-hover"
-              onClick={() => window.location.assign('/')}
+              onClick={() => window.location.assign('/app')}
             >
               {this.props.text.backHome}
             </button>

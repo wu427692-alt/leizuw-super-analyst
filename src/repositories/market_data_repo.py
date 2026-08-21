@@ -39,6 +39,28 @@ class MarketDataRepository:
                 .limit(1)
             ).scalar_one_or_none()
 
+    def latest_daily(self, codes: Iterable[str]) -> Dict[str, StockDaily]:
+        """Return the newest persisted daily bar for each requested symbol."""
+        normalized = list(dict.fromkeys(
+            normalize_daily_storage_code(str(code or "")) for code in codes if str(code or "").strip()
+        ))
+        if not normalized:
+            return {}
+        with self.db.get_session() as session:
+            latest = (
+                select(StockDaily.code.label("code"), func.max(StockDaily.date).label("date"))
+                .where(StockDaily.code.in_(normalized))
+                .group_by(StockDaily.code)
+                .subquery()
+            )
+            rows = session.execute(
+                select(StockDaily).join(
+                    latest,
+                    and_(StockDaily.code == latest.c.code, StockDaily.date == latest.c.date),
+                )
+            ).scalars().all()
+            return {row.code: row for row in rows}
+
     def intraday_range(
         self,
         code: str,

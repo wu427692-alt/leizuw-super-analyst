@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from threading import RLock
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 from src.data.stock_mapping import is_meaningful_stock_name
 from src.services.market_symbol_utils import get_suffix_market, suffix_base_lookup_allowed
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 _STOCK_INDEX_FILENAME = "stocks.index.json"
 _STOCK_INDEX_CACHE: Dict[str, str] | None = None
 _STOCK_CODE_LOOKUP_CACHE: Dict[str, str] | None = None
+_STOCK_MENTION_CACHE: List[tuple[str, str, str, bool, float]] | None = None
 _REMOTE_INDEX_VALIDITY_CACHE: tuple[Path, float, int, bool] | None = None
 _STOCK_INDEX_CACHE_LOCK = RLock()
 
@@ -295,6 +297,87 @@ def resolve_index_stock_code(query: str) -> str | None:
     return get_stock_code_index_map().get(code)
 
 
+def resolve_stock_mentions(text: str, *, limit: int = 5) -> List[Dict[str, str]]:
+    """Resolve exact stock-name/alias mentions embedded in free-form text.
+
+    The generated stock index is already the authoritative autocomplete pool,
+    so chat should reuse it instead of requiring users to know a ticker.  Exact
+    names win over aliases, longer matches win over shorter names, and active
+    mainland listings win ambiguous same-name matches unless the message
+    explicitly contains a market-qualified ticker.
+    """
+    query = str(text or "").strip()
+    if not query:
+        return []
+
+    global _STOCK_MENTION_CACHE
+    if _STOCK_MENTION_CACHE is None:
+        with _STOCK_INDEX_CACHE_LOCK:
+            if _STOCK_MENTION_CACHE is None:
+                rows: List[tuple[str, str, str, bool, float]] = []
+                remote_path = get_remote_stock_index_cache_path()
+                for index_path in _get_fresh_stock_index_candidates(get_stock_index_candidate_paths(), remote_path):
+                    try:
+                        raw_items = _load_stock_index_payload(index_path)
+                        if _same_path(index_path, remote_path):
+                            validate_stock_index_payload(raw_items)
+                        for item in raw_items:
+                            if not isinstance(item, list) or len(item) < 3:
+                                continue
+                            code = str(item[0] or "").strip()
+                            name = str(item[2] or "").strip()
+                            if not code or not name or (len(item) > 8 and item[8] is False):
+                                continue
+                            popularity = float(item[9] or 0) if len(item) > 9 else 0.0
+                            if re.search(r"[\u3400-\u9fff]", name):
+                                rows.append((name, code, name, True, popularity))
+                            aliases = item[5] if len(item) > 5 and isinstance(item[5], list) else []
+                            for alias in aliases:
+                                alias_text = str(alias or "").strip()
+                                if len(alias_text) >= 2 and re.search(r"[\u3400-\u9fff]", alias_text):
+                                    rows.append((alias_text, code, name, False, popularity))
+                        break
+                    except (OSError, TypeError, ValueError) as exc:
+                        logger.debug("[股票名称] 构建问股名称索引失败 %s: %s", index_path, exc)
+                _STOCK_MENTION_CACHE = rows
+
+    candidates: List[tuple[tuple[int, int, int, float], Dict[str, str]]] = []
+    seen: set[str] = set()
+    query_upper = query.upper()
+    for mention, code, name, exact_name, popularity in _STOCK_MENTION_CACHE or []:
+        if mention not in query and mention.upper() not in query_upper:
+            continue
+        canonical = str(code).strip()
+        if not canonical or canonical in seen:
+            continue
+        market = canonical.rsplit(".", 1)[-1].upper() if "." in canonical else ""
+        mainland = 1 if market in {"SH", "SZ", "BJ", "SS"} else 0
+        score = (1 if exact_name else 0, len(mention), mainland, popularity)
+        candidates.append((score, {"stock_code": canonical, "stock_name": name, "mention": mention}))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    results: List[Dict[str, str]] = []
+    seen_mentions: set[tuple[str, str]] = set()
+    selected_mentions: List[str] = []
+    for score, item in candidates:
+        code = item["stock_code"]
+        mention_key = (item["mention"].upper(), item["stock_name"].upper())
+        is_alias = score[0] == 0
+        if (
+            code in seen
+            or mention_key in seen_mentions
+            or (is_alias and any(item["mention"] in selected for selected in selected_mentions))
+        ):
+            continue
+        seen.add(code)
+        seen_mentions.add(mention_key)
+        selected_mentions.append(item["mention"])
+        results.append(item)
+        if len(results) >= max(1, limit):
+            break
+    return results
+
+
 def get_stock_code_index_map() -> Dict[str, str]:
     """Lazily load and cache generated stock-code lookup entries."""
     global _STOCK_CODE_LOOKUP_CACHE
@@ -344,10 +427,11 @@ def _resolve_index_stock_code_uncached(query: str) -> str | None:
 
 def clear_stock_index_cache() -> None:
     """Clear the in-process stock index lookup cache."""
-    global _REMOTE_INDEX_VALIDITY_CACHE, _STOCK_INDEX_CACHE, _STOCK_CODE_LOOKUP_CACHE
+    global _REMOTE_INDEX_VALIDITY_CACHE, _STOCK_INDEX_CACHE, _STOCK_CODE_LOOKUP_CACHE, _STOCK_MENTION_CACHE
     with _STOCK_INDEX_CACHE_LOCK:
         _STOCK_INDEX_CACHE = None
         _STOCK_CODE_LOOKUP_CACHE = None
+        _STOCK_MENTION_CACHE = None
         _REMOTE_INDEX_VALIDITY_CACHE = None
 
 

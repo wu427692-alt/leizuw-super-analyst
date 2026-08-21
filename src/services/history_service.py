@@ -160,7 +160,8 @@ class HistoryService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         page: int = 1,
-        limit: int = 20
+        limit: int = 20,
+        query_id_prefix: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Get history analysis list.
@@ -206,7 +207,8 @@ class HistoryService:
                 start_date=start_dt,
                 end_date=end_dt,
                 offset=offset,
-                limit=limit
+                limit=limit,
+                query_id_prefix=query_id_prefix,
             )
             
             # Convert to response format

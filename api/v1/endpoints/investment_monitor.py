@@ -9,7 +9,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from api.v1.schemas.investment_monitor import AnnouncementPackageRequest, AnnouncementSyncRequest, DragonTigerSyncRequest, ExternalEventBatch, MonitorSyncRequest, MonitoringSourceCreate
@@ -168,8 +168,13 @@ def symbol_detail(symbol: str, days: int = Query(30, ge=1, le=3650)):
 
 
 @router.get("/super-watchlist", summary="动态自选股全渠道证据工作台")
-def super_watchlist(days: int = Query(365, ge=30, le=3650)):
-    return InvestmentMonitorService().super_watchlist(days=days)
+def super_watchlist(request: Request, days: int = Query(365, ge=30, le=3650)):
+    user_id = int(getattr(request.state, "user_id", 0) or 0)
+    symbols = None
+    if user_id > 0:
+        from src.services.user_account_service import UserAccountService
+        symbols = UserAccountService().list_watchlist(user_id)
+    return InvestmentMonitorService().super_watchlist(days=days, symbols=symbols)
 
 
 @router.get("/stock-workspace/{symbol}", summary="供问股、持仓、信号、回测和告警共享的个股数据上下文")
@@ -224,6 +229,13 @@ def backfill_watchlist_symbol(symbol: str):
 @router.get("/announcements/categories", summary="巨潮资讯公告分类")
 def announcement_categories():
     return InvestmentMonitorService().announcement_categories()
+
+
+@router.get("/announcements/watchlist-sync/status", summary="查看自选股巨潮公告实时与一年回补状态")
+def announcement_watchlist_sync_status():
+    from src.services.watchlist_announcement_sync_worker import WatchlistAnnouncementSyncWorker
+
+    return WatchlistAnnouncementSyncWorker.get_instance().status()
 
 
 @router.post("/announcements/sync", summary="按日期、个股、分类或关键词抓取巨潮公告")

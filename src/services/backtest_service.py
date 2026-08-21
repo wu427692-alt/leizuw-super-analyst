@@ -243,7 +243,7 @@ class BacktestService:
         if results_to_save:
             saved = self.repo.save_results_batch(results_to_save, replace_existing=force)
 
-        if saved:
+        if saved and not self.repo.owner_query_prefix:
             self._recompute_summaries(
                 touched_codes=sorted(touched_codes),
                 eval_window_days=int(eval_window_days),
@@ -655,7 +655,12 @@ class BacktestService:
         lookup_code = OVERALL_SENTINEL_CODE if scope == "overall" else code
 
         phase_bucket = self._normalize_phase_filter(analysis_phase)
-        if analysis_date_from is not None or analysis_date_to is not None or phase_bucket is not None:
+        if (
+            self.repo.owner_query_prefix
+            or analysis_date_from is not None
+            or analysis_date_to is not None
+            or phase_bucket is not None
+        ):
             if eval_window_days is None:
                 eval_window_days = self._infer_eval_window_for_query(
                     code=code,
