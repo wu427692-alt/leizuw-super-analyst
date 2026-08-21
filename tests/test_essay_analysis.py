@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,10 +20,12 @@ from src.services.essay_analysis_service import (
     EssayAnalysisService,
     EssayDailyReportService,
     _dashboard_rows_cache,
+    _deep_insights_cache,
 )
 from src.services.essay_analysis_worker import EssayAnalysisWorker
 from src.services.financial_data_service import ResearchNoteService
-from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote
+from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, StockDaily
+from src.utils.essay_topic_taxonomy import canonicalize_topic, canonicalize_topics, topic_search_terms
 
 
 @pytest.fixture()
@@ -31,6 +34,8 @@ def essay_service(tmp_path):
     os.environ["DATABASE_PATH"] = str(tmp_path / "essay-radar.db")
     Config.reset_instance()
     DatabaseManager.reset_instance()
+    _dashboard_rows_cache.clear()
+    _deep_insights_cache.clear()
     notes = ResearchNoteService()
     notes.import_topics([{
         "topic_id": "topic-1",
@@ -43,6 +48,8 @@ def essay_service(tmp_path):
     try:
         yield service
     finally:
+        _dashboard_rows_cache.clear()
+        _deep_insights_cache.clear()
         DatabaseManager.reset_instance()
         Config.reset_instance()
         if old_database_path is None:
@@ -85,6 +92,64 @@ def test_analyzer_normalizes_json_output_and_stock_codes(monkeypatch) -> None:
     payload = session.post.call_args.kwargs["json"]
     assert payload["response_format"] == {"type": "json_object"}
     assert payload["thinking"] == {"type": "disabled"}
+
+
+def test_topic_taxonomy_merges_optical_communication_synonyms_without_duplicate_record_hits() -> None:
+    assert canonicalize_topic("CPO") == "光通信"
+    assert canonicalize_topic("npo 光模块") == "光通信"
+    assert canonicalize_topic("硅光子") == "光通信"
+    assert canonicalize_topic("机器人") == "机器人"
+    assert {canonical for canonical, _raw in canonicalize_topics(["CPO", "NPO", "光模块"])} == {"光通信"}
+    assert {"光通信", "CPO", "NPO", "光模块"}.issubset(set(topic_search_terms("光通信")))
+
+
+def test_deep_insights_merges_raw_topics_and_expands_feed_search(essay_service) -> None:
+    ResearchNoteService().import_topics([{
+        "topic_id": "topic-cpo",
+        "title": "CPO 与光模块更新",
+        "content": "CPO 光模块需求更新",
+        "create_time": "2026-08-20T10:00:00+0800",
+        "group": {"group_id": "g1", "name": "调研纪要"},
+    }, {
+        "topic_id": "topic-npo",
+        "title": "NPO 路线更新",
+        "content": "NPO 进入验证阶段",
+        "create_time": "2026-08-20T11:00:00+0800",
+        "group": {"group_id": "g1", "name": "调研纪要"},
+    }])
+    claimed = essay_service.repo.claim_batch(limit=10, max_attempts=4)
+    themes = {
+        "topic-1": ["CPO", "光模块"],
+        "topic-cpo": ["光模块"],
+        "topic-npo": ["NPO"],
+    }
+    essay_service.repo.save_successes([{
+        "topic_id": item["topic_id"],
+        "summary": "光通信产业链更新",
+        "primary_category": "industry_chain",
+        "sentiment": "neutral",
+        "time_horizon": "medium",
+        "importance_score": 70,
+        "confidence_score": 0.8,
+        "tags": [],
+        "industries": ["通信"],
+        "themes": themes[item["topic_id"]],
+        "stock_mentions": [],
+        "key_points": [],
+        "catalysts": [],
+        "risks": [],
+    } for item in claimed], raw_response="{}", usage={})
+
+    deep = essay_service.deep_insights(days=30, trend_days=7)
+    optical = next(item for item in deep["theme_heatmap"]["items"] if item["name"] == "光通信")
+
+    assert optical["total"] == 3
+    assert {item["name"] for item in optical["aliases"]} == {"CPO", "NPO", "光模块"}
+    assert deep["theme_heatmap"]["taxonomy"]["raw_theme_count"] == 3
+    assert deep["theme_heatmap"]["taxonomy"]["canonical_theme_count"] == 1
+    assert deep["theme_heatmap"]["taxonomy"]["merged_theme_count"] == 2
+    assert max(point["concentration_score"] for point in optical["points"]) == 100.0
+    assert essay_service.list_feed(query="光通信", page=1, page_size=20)["total"] == 3
 
 
 def test_large_topic_id_queries_are_split_below_sqlite_parameter_limit() -> None:
@@ -139,14 +204,53 @@ def test_queue_claim_save_and_dashboard_are_restart_safe(essay_service) -> None:
     assert insights["source_quality"][0]["name"] == "unknown"
     assert [item["name"] for item in insights["watchlist"]] == ["华懋科技", "胜宏科技"]
     deep = essay_service.deep_insights(days=30, trend_days=7)
-    assert len(deep["pulse"]) == 7
     assert deep["summary"]["theme_count"] == 1
     assert deep["layers"]["themes"][0]["label"] == "机器人"
     deep_stocks = {item["label"]: item["ts_code"] for item in deep["layers"]["stocks"]}
     assert deep_stocks["贵州茅台"] == "600519.SH"
     assert deep_stocks["宇树科技"] == ""
     assert deep["theme_heatmap"]["items"][0]["name"] == "机器人"
-    assert deep["evidence_funnel"][2] == {"name": "含催化或风险", "count": 1}
+    assert deep["pulse"] == []
+    assert deep["period"]["start_date"] <= "2026-08-19" <= deep["period"]["end_date"]
+    assert deep["evidence_funnel"][2] == {"name": "匹配有效股票代码", "count": 1}
+
+
+def test_deep_insights_links_deduplicated_essay_days_to_local_prices(essay_service) -> None:
+    claimed = essay_service.repo.claim_batch(limit=10, max_attempts=4)
+    essay_service.repo.save_successes([{
+        "topic_id": claimed[0]["topic_id"],
+        "summary": "行情关联测试", "primary_category": "company_research",
+        "sentiment": "bullish", "time_horizon": "short", "importance_score": 80,
+        "confidence_score": 0.8, "tags": [], "industries": [], "themes": ["白酒"],
+        "stock_mentions": [{"ts_code": "600519.SH", "name": "贵州茅台", "stance": "bullish", "confidence": 0.9, "rationale": "测试"}],
+        "key_points": [], "catalysts": [], "risks": [],
+    }], raw_response="{}", usage={})
+    with essay_service.repo.db.get_session() as session:
+        session.add_all([
+            StockDaily(code="600519", date=date(2026, 8, 18), open=99, close=100, data_source="tushare:daily"),
+            StockDaily(code="600519", date=date(2026, 8, 20), open=100, close=103, data_source="tushare:daily"),
+            StockDaily(code="600519", date=date(2026, 8, 21), open=103, close=104, data_source="tushare:daily"),
+            StockDaily(code="000300", date=date(2026, 8, 18), open=100, close=100, data_source="tushare:index_daily"),
+            StockDaily(code="000300", date=date(2026, 8, 20), open=100, close=101, data_source="tushare:index_daily"),
+            StockDaily(code="000300", date=date(2026, 8, 21), open=101, close=101, data_source="tushare:index_daily"),
+        ])
+        session.commit()
+
+    deep = essay_service.deep_insights(horizon="short", end_date="2026-08-21")
+    market = deep["market_impact"]
+    item = market["items"][0]
+    one_day = next(metric for metric in item["metrics"] if metric["period"] == 1)
+
+    assert deep["period"] == {
+        "horizon": "short", "start_date": "2026-08-08", "end_date": "2026-08-21",
+        "granularity": "day", "comparison_days": 7,
+    }
+    assert market["dedupe_rule"].startswith("同一股票同一天")
+    assert item["name"] == "贵州茅台"
+    assert item["event_day_count"] == 1
+    assert one_day["sample_count"] == 1
+    assert one_day["average_return"] == 3.0
+    assert one_day["average_excess_return"] == 2.0
 
 
 def test_historical_backfill_queues_only_requested_unqueued_notes(essay_service) -> None:

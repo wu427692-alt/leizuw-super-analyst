@@ -49,6 +49,12 @@ export type MonitoringSource = {
   lastStatus?: string | null;
   lastError?: string | null;
   lastSuccessAt?: string | null;
+  lastCheckAt?: string | null;
+  lastCheckAgeSeconds?: number | null;
+  nextCheckAt?: string | null;
+  monitoringSlaSeconds?: number;
+  monitoringStatus?: 'live' | 'delayed' | 'failed' | 'pending' | 'not_configured';
+  upstreamState?: 'current' | 'quiet' | 'stale' | 'no_data';
   lastItemCount: number;
   lastReceivedCount?: number;
   lastCreatedCount?: number;
@@ -100,6 +106,7 @@ export type SourceHealthSummary = {
   items: MonitoringSource[]; total: number; healthy: number; enabled: number;
   operational?: number; notConfigured?: number;
   withData?: number; fresh?: number; stale?: number; empty?: number;
+  monitoringLive?: number; monitoringDelayed?: number;
 };
 
 export type SourceBI = {
@@ -107,6 +114,7 @@ export type SourceBI = {
   summary: {
     total: number; healthy: number; operational: number; enabled: number; withData: number;
     fresh: number; stale: number; empty: number; notConfigured: number;
+    monitoringLive: number; monitoringDelayed: number;
     storedEventCount: number; periodEventCount: number; lastRunReceived: number; lastRunCreated: number;
   };
   dailyTrend: Array<{ date: string; count: number }>;
@@ -144,7 +152,8 @@ export type MonitorSymbolDetail = {
 };
 
 export type EssayExpectationEstimate = {
-  eventId?: number | null; topicId?: string | null; title?: string | null; eventAt?: string | null;
+  eventId?: number | null; topicId?: string | null; title?: string | null; eventAt?: string | null; proposedAt?: string | null;
+  sourceKind?: 'related' | 'dedicated' | null;
   subject?: string | null; subjectRelation?: 'target_stock' | 'consolidated' | 'subsidiary' | 'acquisition_target' | 'business_segment' | null;
   metric: string; period: string; valueText: string; valueLow?: number | null; valueHigh?: number | null;
   unit?: string | null; direction?: string | null; evidence: string; confidence?: number | null;
@@ -152,11 +161,14 @@ export type EssayExpectationEstimate = {
 
 export type EssayConsensusAnalysis = {
   status: 'not_started' | 'pending' | 'processing' | 'completed' | 'failed' | 'stale';
-  sourceCount: number; analyzedCount: number; pendingCount: number; model?: string | null; promptVersion?: string | null;
+  sourceCount: number; relatedSourceCount?: number; dedicatedSourceCount?: number;
+  analyzedCount: number; pendingCount: number; model?: string | null; promptVersion?: string | null;
   summary: string; hasExplicitExpectations: boolean; profitOutlook: string; valuationOutlook: string;
   estimates: EssayExpectationEstimate[]; metricCounts: Record<string, number>;
-  consensusPoints: string[]; conflicts: string[]; caveats: string[];
-  sourceNotes: Array<{ topicId: string; eventId?: number | null; title?: string | null; eventAt?: string | null; authorName?: string | null; estimateCount: number }>;
+  consensusPoints: string[]; conflicts: string[]; timeObservations?: string[]; caveats: string[];
+  verificationConditions?: Array<{ condition: string; window: string; impact: string; expiryAt: string }>;
+  sourceNotes: Array<{ topicId: string; eventId?: number | null; title?: string | null; eventAt?: string | null; authorName?: string | null; sourceKind?: 'related' | 'dedicated' | null; estimateCount: number }>;
+  analysisCutoffAt?: string | null;
   error?: string | null; updatedAt?: string | null; completedAt?: string | null;
 };
 
@@ -199,6 +211,30 @@ export type SuperWatchlistDashboard = {
   dataPolicy?: { market: string; evidence: string; refresh: string; pageFetchesUpstream: boolean };
   backfillJobs: WatchlistBackfillJob[];
   comparison: Array<Record<string, string | number | null | undefined>>;
+  iterations: Array<{ version: string; name: string; result: string }>;
+};
+
+export type StockWorkspace = {
+  version: string;
+  generatedAt: string;
+  days: number;
+  stock: SuperWatchlistStock;
+  agentContext: {
+    analysisContextPackSummary?: string;
+    realtimeQuote?: Record<string, unknown>;
+    chipDistribution?: Record<string, unknown>;
+    newsContext?: string;
+    fundamentalContext?: Record<string, unknown>;
+    evidenceCount?: number;
+    sourceCount?: number;
+  };
+  dataPolicy: {
+    facts: string;
+    upstreamFetchOnRead: boolean;
+    failureMode: string;
+    quotePrecedence: string;
+  };
+  cache: { hit: boolean; ttlSeconds: number };
   iterations: Array<{ version: string; name: string; result: string }>;
 };
 

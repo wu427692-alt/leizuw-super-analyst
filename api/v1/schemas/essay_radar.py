@@ -22,3 +22,10 @@ class EssayRetryRequest(BaseModel):
 class EssayDailyReportRunRequest(BaseModel):
     report_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     force: bool = False
+
+
+class EssayMarketInterpretationRequest(BaseModel):
+    ts_code: str = Field(..., min_length=6, max_length=12)
+    horizon: Literal["short", "medium", "long", "custom"] = "short"
+    start_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")

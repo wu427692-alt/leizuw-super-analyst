@@ -114,7 +114,7 @@ export default function InvestmentMonitorPage() {
     if (!status?.worker.running) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void Promise.allSettled([loadStatus(), loadEvents()]);
-    }, 30_000);
+    }, 10_000);
     return () => window.clearInterval(timer);
   }, [loadEvents, loadStatus, status?.worker.running]);
 
@@ -143,7 +143,7 @@ export default function InvestmentMonitorPage() {
   return <AppPage className="max-w-[1760px]">
     <main className="overflow-hidden border border-[#242A31] bg-[#050605] font-mono text-[#D7DCE2]">
       <header className="flex flex-col gap-4 border-b border-[#242A31] bg-[#090B09] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
-        <div><p className="text-[9px] uppercase tracking-[0.22em] text-[#00E676]">本地统一事件库 · 30 秒刷新</p><h1 className="mt-2 text-2xl font-black tracking-[-0.05em] text-white">实时流水</h1><p className="mt-1 text-[10px] text-[#717A84]">只展示按时间进入本地库的原始消息；渠道全景与同步状态已拆到“全渠道情报”。</p></div>
+        <div><p className="text-[9px] uppercase tracking-[0.22em] text-[#00E676]">本地统一事件库 · 10 秒刷新</p><h1 className="mt-2 text-2xl font-black tracking-[-0.05em] text-white">实时流水</h1><p className="mt-1 text-[10px] text-[#717A84]">只展示按时间进入本地库的原始消息；渠道全景与同步状态已拆到“全渠道情报”。</p></div>
         <div className="flex flex-wrap gap-2">
           <button className="inline-flex h-8 items-center gap-1.5 border border-[#303740] px-3 text-[9px] hover:border-[#00E676]" disabled={actionLoading} onClick={() => void act(() => status?.worker.running ? investmentMonitorApi.stopWorker() : investmentMonitorApi.startWorker())}>{status?.worker.running ? <Square className="h-3.5 w-3.5"/> : <Play className="h-3.5 w-3.5"/>}{status?.worker.running ? '停止监控' : '启动监控'}</button>
           <button className="inline-flex h-8 items-center gap-1.5 border border-[#303740] px-3 text-[9px] hover:border-[#00E676]" disabled={actionLoading} onClick={() => void act(() => investmentMonitorApi.sync())}><DatabaseZap className="h-3.5 w-3.5"/>同步全部渠道</button>
@@ -174,7 +174,7 @@ export default function InvestmentMonitorPage() {
         <p className="line-clamp-2 text-[10px] leading-4 text-[#8B949E]">{event.summary || '该来源为数值型记录，请查看接口原始字段。'}</p>
         <span className={event.url ? 'text-[#00E676]' : 'text-[#717A84]'}>{event.url ? <ExternalLink className="h-3.5 w-3.5"/> : <FileText className="h-3.5 w-3.5"/>}</span>
       </button>; })}</div>
-      <div className="flex items-center justify-between px-4 py-2 text-[9px] text-[#59616A]" aria-live="polite"><span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在读取本地索引，保留当前结果…' : notice || `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><span>每 30 秒刷新本地索引</span></div>
+      <div className="flex items-center justify-between px-4 py-2 text-[9px] text-[#59616A]" aria-live="polite"><span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在读取本地索引，保留当前结果…' : notice || `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><span>每 10 秒刷新本地索引</span></div>
     </main>
 
     <Drawer isOpen={Boolean(selected)} onClose={closeEvent} title={selected?.title || '原文'}>

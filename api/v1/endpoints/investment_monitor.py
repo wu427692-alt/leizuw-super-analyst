@@ -172,6 +172,18 @@ def super_watchlist(days: int = Query(365, ge=30, le=3650)):
     return InvestmentMonitorService().super_watchlist(days=days)
 
 
+@router.get("/stock-workspace/{symbol}", summary="供问股、持仓、信号、回测和告警共享的个股数据上下文")
+def stock_workspace(
+    symbol: str,
+    days: int = Query(365, ge=30, le=3650),
+    refresh: bool = Query(False, description="绕过短时本地缓存重新组装，不直接请求外部数据源"),
+):
+    try:
+        return InvestmentMonitorService().stock_workspace(symbol, days=days, refresh=refresh)
+    except InvestmentMonitorError as exc:
+        raise _error(exc, 400)
+
+
 @router.get("/super-watchlist/{symbol}/essay-consensus", summary="读取最近20篇小作文的独立 AI 一致预期快照")
 def essay_consensus(symbol: str):
     try:

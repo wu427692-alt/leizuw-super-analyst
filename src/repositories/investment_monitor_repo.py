@@ -218,7 +218,7 @@ class InvestmentMonitorRepository:
             last_started = self._parse_iso(source["last_started_at"]) if source["last_started_at"] else None
             status = str(source.get("last_status") or "")
             if status == "failed" and last_started is not None:
-                retry_seconds = max(60, min(cadence * 2, 1800))
+                retry_seconds = max(15, min(cadence * 2, 300))
                 if last_started + timedelta(seconds=retry_seconds) > current:
                     continue
             elif status == "not_configured" and last_started is not None:
@@ -228,7 +228,7 @@ class InvestmentMonitorRepository:
                 # Do not schedule a parallel copy of a source that still has a
                 # plausible in-flight request. The watchdog will wake the owner
                 # again after the stale-running window passes.
-                if last_started + timedelta(seconds=max(300, cadence * 3)) > current:
+                if last_started + timedelta(seconds=max(90, cadence * 3)) > current:
                     continue
             due.append(source)
         return due

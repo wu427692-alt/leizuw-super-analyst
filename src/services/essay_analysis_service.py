@@ -21,7 +21,9 @@ from src.config import get_config
 from src.data.stock_index_loader import get_stock_name_index_map
 from src.repositories.essay_daily_report_repo import EssayDailyReportRepository
 from src.repositories.essay_analysis_repo import EssayAnalysisRepository
+from src.services.essay_market_insight_service import EssayMarketInsightService
 from src.storage import utc_naive_now
+from src.utils.essay_topic_taxonomy import TOPIC_TAXONOMY_VERSION, canonicalize_topics
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +48,10 @@ _HORIZONS = {"intraday", "short", "medium", "long", "unclear"}
 _STANCES = {"bullish", "bearish", "neutral", "watching"}
 _TS_CODE_RE = re.compile(r"^(\d{6})(?:\.(SH|SS|SZ|BJ))?$", re.IGNORECASE)
 _DASHBOARD_ROWS_CACHE_TTL_SECONDS = 30.0
-_dashboard_rows_cache: Dict[int, tuple[float, List[Dict[str, Any]]]] = {}
+_dashboard_rows_cache: Dict[Any, tuple[float, List[Dict[str, Any]]]] = {}
 _dashboard_rows_cache_lock = threading.Lock()
 _DEEP_INSIGHTS_CACHE_TTL_SECONDS = 60.0
-_deep_insights_cache: Dict[tuple[int, int, int], tuple[float, Dict[str, Any]]] = {}
+_deep_insights_cache: Dict[tuple[Any, ...], tuple[float, Dict[str, Any]]] = {}
 _deep_insights_cache_lock = threading.Lock()
 
 _SYSTEM_PROMPT = """你是中国资本市场研究资料结构化分析员。请只根据输入文本提取事实、观点和风险，
@@ -694,6 +696,23 @@ class EssayAnalysisService:
             _dashboard_rows_cache[safe_days] = (now, rows)
             return rows
 
+    def _completed_dashboard_rows_between(self, start_day: date, end_day: date) -> List[Dict[str, Any]]:
+        """Read one exact Shanghai-calendar window and share the decoded snapshot."""
+        shanghai = timezone(timedelta(hours=8))
+        start = datetime.combine(start_day, datetime_time.min, tzinfo=shanghai).astimezone(timezone.utc).replace(tzinfo=None)
+        end = datetime.combine(end_day + timedelta(days=1), datetime_time.min, tzinfo=shanghai).astimezone(timezone.utc).replace(tzinfo=None)
+        if type(self.repo) is not EssayAnalysisRepository:
+            return self.repo.completed_between(start=start, end=end)
+        cache_key = ("range", start_day.isoformat(), end_day.isoformat())
+        now = time.monotonic()
+        with _dashboard_rows_cache_lock:
+            cached = _dashboard_rows_cache.get(cache_key)
+            if cached and now - cached[0] < _DASHBOARD_ROWS_CACHE_TTL_SECONDS:
+                return cached[1]
+            rows = self.repo.completed_between(start=start, end=end)
+            _dashboard_rows_cache[cache_key] = (now, rows)
+            return rows
+
     def dashboard(self, *, days: int = 30, top_n: int = 12) -> Dict[str, Any]:
         safe_days = max(1, min(int(days), 3650))
         safe_top_n = max(3, min(int(top_n), 30))
@@ -895,27 +914,60 @@ class EssayAnalysisService:
             "high_novelty_signals": high_novelty,
         }
 
-    def deep_insights(self, *, days: int = 30, trend_days: int = 14) -> Dict[str, Any]:
-        """Build traceable source → theme → stock → thesis insight layers.
-
-        Every node and edge is a co-occurrence aggregated from completed essay
-        analyses. The method does not infer missing links or fabricate market
-        performance; it only reorganizes the extracted corpus for exploration.
-        """
-        safe_days = max(7, min(int(days), 3650))
+    def deep_insights(
+        self,
+        *,
+        days: int = 30,
+        trend_days: int = 14,
+        horizon: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build a date-bounded source → theme → stock → market-evidence atlas."""
+        shanghai = timezone(timedelta(hours=8))
+        today = datetime.now(shanghai).date()
+        preset_days = {"short": 14, "medium": 90, "long": 365}
+        normalized_horizon = str(horizon or "").strip().lower()
+        try:
+            selected_end = date.fromisoformat(end_date) if end_date else today
+            if normalized_horizon == "custom":
+                if not start_date or not end_date:
+                    raise ValueError("自定义窗口必须同时提供开始和结束日期")
+                selected_start = date.fromisoformat(start_date)
+            elif normalized_horizon in preset_days:
+                selected_start = selected_end - timedelta(days=preset_days[normalized_horizon] - 1)
+            else:
+                safe_days = max(7, min(int(days), 3650))
+                normalized_horizon = "custom"
+                selected_start = selected_end - timedelta(days=safe_days - 1)
+        except ValueError as exc:
+            raise ValueError("日期必须使用 YYYY-MM-DD，且自定义窗口需要完整起止日期") from exc
+        if selected_start > selected_end:
+            raise ValueError("开始日期不能晚于结束日期")
+        if (selected_end - selected_start).days >= 3650:
+            raise ValueError("洞察窗口最长为 3650 天")
+        safe_days = (selected_end - selected_start).days + 1
         safe_trend_days = max(7, min(int(trend_days), 90))
-        cache_key = (id(self.repo.db), safe_days, safe_trend_days)
+        if safe_days <= 31:
+            granularity = "day"
+        elif safe_days <= 180:
+            granularity = "week"
+        else:
+            granularity = "month"
+        cache_key = (
+            id(self.repo.db), normalized_horizon, selected_start.isoformat(),
+            selected_end.isoformat(), granularity,
+        )
         now = time.monotonic()
         with _deep_insights_cache_lock:
             cached = _deep_insights_cache.get(cache_key)
             if cached and now - cached[0] < _DEEP_INSIGHTS_CACHE_TTL_SECONDS:
                 return cached[1]
-        rows = self._completed_dashboard_rows(safe_days)
-        shanghai = timezone(timedelta(hours=8))
-        today = datetime.now(shanghai).date()
-        trend_start = today - timedelta(days=safe_trend_days - 1)
-        current_start = today - timedelta(days=6)
-        previous_start = today - timedelta(days=13)
+        rows = self._completed_dashboard_rows_between(selected_start, selected_end)
+        trend_start = max(selected_start, selected_end - timedelta(days=safe_trend_days - 1))
+        comparison_days = 7 if safe_days <= 31 else 30 if safe_days <= 180 else 90
+        current_start = max(selected_start, selected_end - timedelta(days=comparison_days - 1))
+        previous_start = max(selected_start, current_start - timedelta(days=comparison_days))
 
         def local_day(row: Dict[str, Any]) -> Optional[date]:
             raw = str((row.get("note") or {}).get("created_at") or "")
@@ -937,9 +989,18 @@ class EssayAnalysisService:
         theme_stock: Counter[tuple[str, str]] = Counter()
         stock_signal: Counter[tuple[str, str, str]] = Counter()
         theme_by_day: Dict[str, Counter[str]] = defaultdict(Counter)
+        theme_aliases: Dict[str, Counter[str]] = defaultdict(Counter)
         stock_buckets: Dict[str, Dict[str, Any]] = {}
+        mention_dates: Dict[str, Counter[date]] = defaultdict(Counter)
         daily: Dict[date, Counter[str]] = defaultdict(Counter)
-        evidence_count = catalyst_risk_count = falsification_count = 0
+        evidence_count = verified_stock_row_count = falsification_count = 0
+
+        def period_bucket(value: date) -> str:
+            if granularity == "month":
+                return value.strftime("%Y-%m")
+            if granularity == "week":
+                return (value - timedelta(days=value.weekday())).isoformat()
+            return value.isoformat()
 
         # Old model outputs may contain a syntactically valid but factually wrong
         # code. Only expose a code when the local security master maps that exact
@@ -959,9 +1020,10 @@ class EssayAnalysisService:
             note = row.get("note") or {}
             source = str(note.get("group_name") or "未知来源").strip() or "未知来源"
             row_day = local_day(row)
-            row_themes = list(dict.fromkeys(
-                str(value).strip() for value in (row.get("themes") or []) if str(value).strip()
-            ))
+            row_theme_pairs = canonicalize_topics(row.get("themes") or [])
+            row_themes = list(dict.fromkeys(canonical for canonical, _raw in row_theme_pairs))
+            for canonical, raw in row_theme_pairs:
+                theme_aliases[canonical][raw] += 1
             row_mentions = []
             for mention in row.get("stock_mentions") or []:
                 name = str(mention.get("name") or mention.get("ts_code") or "").strip()
@@ -974,13 +1036,7 @@ class EssayAnalysisService:
                 if not name or not key:
                     continue
                 row_mentions.append((key, name, mention, verified_code or explicit_code))
-            row_signals = [
-                ("catalyst", str(value).strip())
-                for value in (row.get("catalysts") or []) if str(value).strip()
-            ] + [
-                ("risk", str(value).strip())
-                for value in (row.get("risks") or []) if str(value).strip()
-            ]
+            row_signals: List[tuple[str, str]] = []
 
             sources[source] += 1
             themes.update(row_themes)
@@ -989,7 +1045,7 @@ class EssayAnalysisService:
             for theme in row_themes:
                 source_theme[(source, theme)] += 1
                 if row_day:
-                    theme_by_day[theme][row_day.isoformat()] += 1
+                    theme_by_day[theme][period_bucket(row_day)] += 1
                 for key, _, _, _ in row_mentions:
                     theme_stock[(theme, key)] += 1
             for key, name, mention, resolved_code in row_mentions:
@@ -1014,6 +1070,8 @@ class EssayAnalysisService:
                     bucket["current_count"] += 1
                 elif row_day and previous_start <= row_day < current_start:
                     bucket["previous_count"] += 1
+                if row_day and selected_start <= row_day <= selected_end:
+                    mention_dates[key][row_day] += 1
                 for kind, text in row_signals:
                     stock_signal[(key, kind, text)] += 1
 
@@ -1022,13 +1080,19 @@ class EssayAnalysisService:
                 daily[row_day]["total"] += 1
                 daily[row_day][sentiment] += 1
             evidence_count += int(bool(row.get("evidence")))
-            catalyst_risk_count += int(bool(row_signals))
+            verified_stock_row_count += int(any(resolved_code for _, _, _, resolved_code in row_mentions))
             falsification_count += int(bool(row.get("falsification_conditions") or row.get("monitoring_points")))
 
         top_sources = {name for name, _ in sources.most_common(6)}
         top_themes = {name for name, _ in themes.most_common(7)}
         top_stocks = {name for name, _ in stocks.most_common(7)}
-        top_signals = {item for item, _ in signals.most_common(7)}
+        market_impact = EssayMarketInsightService(self.repo.db).build(
+            stock_buckets=stock_buckets,
+            mention_dates=mention_dates,
+            start_date=selected_start,
+            end_date=selected_end,
+            limit=8,
+        )
 
         def nodes(counter: Counter, stage: str, limit: int) -> List[Dict[str, Any]]:
             result = []
@@ -1050,6 +1114,29 @@ class EssayAnalysisService:
                 "count": int(count),
             })
 
+        outcome_nodes = []
+        for item in market_impact["items"]:
+            if item["key"] not in top_stocks:
+                continue
+            metric = next((row for row in item["metrics"] if row["period"] == 5), None) or item["metrics"][0]
+            average = metric.get("average_return")
+            win_rate = metric.get("win_rate")
+            if average is None:
+                label = "5日样本未成熟"
+                kind = "neutral"
+            else:
+                label = f"5日 {float(average):+.2f}% · 胜率 {float(win_rate or 0):.1f}%"
+                kind = "positive" if float(average) > 0 else "negative" if float(average) < 0 else "neutral"
+            outcome_nodes.append({
+                "stage": "outcomes",
+                "key": item["key"],
+                "label": label,
+                "stock_name": item["name"],
+                "ts_code": item["ts_code"],
+                "kind": kind,
+                "count": int(metric.get("sample_count") or 0),
+            })
+
         edges = [
             {"from_stage": "sources", "from": source, "to_stage": "themes", "to": theme, "count": int(count)}
             for (source, theme), count in source_theme.most_common()
@@ -1059,16 +1146,58 @@ class EssayAnalysisService:
             for (theme, stock), count in theme_stock.most_common()
             if theme in top_themes and stock in top_stocks
         ] + [
-            {"from_stage": "stocks", "from": stock, "to_stage": "signals", "to": f"{kind}:{text}", "count": int(count)}
-            for (stock, kind, text), count in stock_signal.most_common()
-            if stock in top_stocks and (kind, text) in top_signals
+            {"from_stage": "stocks", "from": item["key"], "to_stage": "outcomes", "to": item["key"], "count": int(item["covered_event_days"])}
+            for item in market_impact["items"]
+            if item["key"] in top_stocks
         ]
 
-        dates = [(trend_start + timedelta(days=offset)).isoformat() for offset in range(safe_trend_days)]
+        if granularity == "day":
+            dates = [(selected_start + timedelta(days=offset)).isoformat() for offset in range(safe_days)]
+        elif granularity == "week":
+            dates = []
+            cursor = selected_start
+            while cursor <= selected_end:
+                bucket = period_bucket(cursor)
+                if not dates or dates[-1] != bucket:
+                    dates.append(bucket)
+                cursor += timedelta(days=1)
+        else:
+            dates = []
+            cursor = selected_start
+            while cursor <= selected_end:
+                bucket = period_bucket(cursor)
+                if not dates or dates[-1] != bucket:
+                    dates.append(bucket)
+                cursor += timedelta(days=1)
+        daily_theme_totals = {
+            day: sum(theme_by_day[theme].get(day, 0) for theme in themes)
+            for day in dates
+        }
+        daily_theme_peaks = {
+            day: max((theme_by_day[theme].get(day, 0) for theme in themes), default=0)
+            for day in dates
+        }
         heatmap = [{
             "name": theme,
             "total": int(total),
-            "points": [{"date": day, "count": int(theme_by_day[theme].get(day, 0))} for day in dates],
+            "aliases": [
+                {"name": raw, "count": int(count)}
+                for raw, count in theme_aliases[theme].most_common()
+            ],
+            "points": [{
+                "date": day,
+                "count": int(theme_by_day[theme].get(day, 0)),
+                "daily_total": int(daily_theme_totals[day]),
+                "share_percent": round(
+                    theme_by_day[theme].get(day, 0) * 100 / daily_theme_totals[day], 2,
+                ) if daily_theme_totals[day] else 0.0,
+                "concentration_score": round(100 * (
+                    (
+                        theme_by_day[theme].get(day, 0) / daily_theme_totals[day]
+                        * theme_by_day[theme].get(day, 0) / daily_theme_peaks[day]
+                    ) ** 0.5
+                ), 2) if daily_theme_totals[day] and daily_theme_peaks[day] else 0.0,
+            } for day in dates],
         } for theme, total in themes.most_common(8)]
 
         momentum = []
@@ -1106,14 +1235,18 @@ class EssayAnalysisService:
             int(row.get("importance_score") or 0),
         ), reverse=True)
 
-        pulse = []
-        for day in dates:
-            bucket = daily[date.fromisoformat(day)]
-            pulse.append({"date": day, **{key: int(bucket.get(key, 0)) for key in ("total", "bullish", "bearish", "neutral", "mixed")}})
+        pulse: List[Dict[str, Any]] = []
 
         result = {
             "generated_at": utc_naive_now().isoformat() + "Z",
             "window_days": safe_days,
+            "period": {
+                "horizon": normalized_horizon,
+                "start_date": selected_start.isoformat(),
+                "end_date": selected_end.isoformat(),
+                "granularity": granularity,
+                "comparison_days": comparison_days,
+            },
             "latest_data_at": max((str((row.get("note") or {}).get("created_at") or "") for row in rows), default=None),
             "summary": {
                 "analyzed_count": len(rows), "source_count": len(sources),
@@ -1127,23 +1260,109 @@ class EssayAnalysisService:
                 "sources": nodes(sources, "sources", 6),
                 "themes": nodes(themes, "themes", 7),
                 "stocks": stock_nodes,
-                "signals": nodes(signals, "signals", 7),
+                "outcomes": outcome_nodes,
                 "edges": edges,
             },
-            "theme_heatmap": {"dates": dates, "items": heatmap},
+            "theme_heatmap": {
+                "dates": dates,
+                "items": heatmap,
+                "taxonomy": {
+                    "version": TOPIC_TAXONOMY_VERSION,
+                    "raw_theme_count": len({raw for aliases in theme_aliases.values() for raw in aliases}),
+                    "canonical_theme_count": len(themes),
+                    "merged_theme_count": sum(max(0, len(aliases) - 1) for aliases in theme_aliases.values()),
+                    "method": "强同义词与明确子主题归并；单篇同主题只计一次，原始标签完整保留",
+                },
+                "granularity": granularity,
+            },
+            "market_impact": market_impact,
             "stock_momentum": momentum[:12],
             "divergence": divergence[:10],
             "verification_queue": verification[:10],
             "evidence_funnel": [
                 {"name": "已分析", "count": len(rows)},
                 {"name": "含原文证据", "count": evidence_count},
-                {"name": "含催化或风险", "count": catalyst_risk_count},
+                {"name": "匹配有效股票代码", "count": verified_stock_row_count},
                 {"name": "含证伪或跟踪点", "count": falsification_count},
             ],
         }
         with _deep_insights_cache_lock:
             _deep_insights_cache[cache_key] = (time.monotonic(), result)
         return result
+
+    def interpret_market_impact(
+        self,
+        *,
+        ts_code: str,
+        horizon: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Explain an already-computed market study; never ask the model to invent data."""
+        atlas = self.deep_insights(
+            horizon=horizon,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        normalized = str(ts_code or "").strip().upper()
+        item = next((
+            row for row in atlas["market_impact"]["items"]
+            if str(row.get("ts_code") or "").strip().upper() == normalized
+        ), None)
+        if item is None:
+            raise KeyError("当前研究窗口没有该股票的可用行情关联样本")
+        analyzer = DeepSeekEssayAnalyzer(timeout_seconds=90)
+        if not analyzer.configured:
+            raise EssayAnalysisError("DeepSeek 尚未配置，无法生成行情关联解读")
+        context = {
+            "period": atlas["period"],
+            "stock": {
+                key: item[key]
+                for key in (
+                    "ts_code", "name", "mention_count", "event_day_count",
+                    "covered_event_days", "metrics", "lead_lag", "latest_price_date",
+                    "latest_close", "data_source",
+                )
+            },
+            "method": {
+                key: atlas["market_impact"][key]
+                for key in ("benchmark", "entry_rule", "exit_rule", "price_basis", "dedupe_rule", "causality_note")
+            },
+        }
+        payload = {
+            "model": analyzer.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是严谨的事件研究解释员。只能解释输入JSON中的统计结果，不得补造新闻、公司事实、价格或因果关系。"
+                        "必须区分相关性与因果；样本少于10时明确提示小样本。输出JSON对象："
+                        '{"conclusion":"不超过100字","evidence":["最多3条"],"limitations":["最多3条"],'
+                        '"next_checks":["最多3条"]}'
+                    ),
+                },
+                {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+            ],
+            "response_format": {"type": "json_object"},
+            "thinking": {"type": "disabled"},
+            "temperature": 0.1,
+            "max_tokens": 1200,
+            "stream": False,
+        }
+        response = analyzer._post_with_retry(payload)
+        parsed = analyzer._parse_json(analyzer._extract_content(response))
+        return {
+            "generated_at": utc_naive_now().isoformat() + "Z",
+            "model": analyzer.model,
+            "ts_code": item["ts_code"],
+            "period": atlas["period"],
+            "interpretation": {
+                "conclusion": str(parsed.get("conclusion") or "")[:500],
+                "evidence": [str(value)[:500] for value in (parsed.get("evidence") or [])[:3]],
+                "limitations": [str(value)[:500] for value in (parsed.get("limitations") or [])[:3]],
+                "next_checks": [str(value)[:500] for value in (parsed.get("next_checks") or [])[:3]],
+            },
+        }
 
     @staticmethod
     def _configured_watchlist() -> List[tuple[str, str]]:

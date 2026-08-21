@@ -29,9 +29,32 @@ export const essayRadarApi = {
     const response = await apiClient.get('/api/v1/essay-radar/insights', { params: { days, trend_days: trendDays } });
     return toCamelCase<EssayInsights>(response.data);
   },
-  deepInsights: async (days = 30, trendDays = 14): Promise<EssayDeepInsights> => {
-    const response = await apiClient.get('/api/v1/essay-radar/deep-insights', { params: { days, trend_days: trendDays } });
+  deepInsights: async (params: {
+    days?: number; trendDays?: number; horizon?: 'short' | 'medium' | 'long' | 'custom';
+    startDate?: string; endDate?: string;
+  } = {}): Promise<EssayDeepInsights> => {
+    const response = await apiClient.get('/api/v1/essay-radar/deep-insights', { params: {
+      days: params.days ?? 30,
+      trend_days: params.trendDays ?? 14,
+      horizon: params.horizon,
+      start_date: params.startDate,
+      end_date: params.endDate,
+    } });
     return toCamelCase<EssayDeepInsights>(response.data);
+  },
+  interpretMarketImpact: async (payload: {
+    tsCode: string; horizon: 'short' | 'medium' | 'long' | 'custom'; startDate?: string; endDate?: string;
+  }): Promise<{
+    generatedAt: string; model: string; tsCode: string;
+    interpretation: { conclusion: string; evidence: string[]; limitations: string[]; nextChecks: string[] };
+  }> => {
+    const response = await apiClient.post('/api/v1/essay-radar/deep-insights/market-interpretation', {
+      ts_code: payload.tsCode,
+      horizon: payload.horizon,
+      start_date: payload.startDate,
+      end_date: payload.endDate,
+    }, { timeout: 120000 });
+    return toCamelCase(response.data);
   },
   wordCloud: async (period: 'day' | 'week' | 'month', kind: 'stocks' | 'tags' | 'themes' = 'stocks'): Promise<EssayWordCloud> => {
     const response = await apiClient.get('/api/v1/essay-radar/word-cloud', { params: { period, kind } });

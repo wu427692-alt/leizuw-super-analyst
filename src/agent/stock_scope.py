@@ -22,6 +22,7 @@ SWITCH_CLEANUP_KEYS = {
     "fundamental_context",
     "analysis_context_pack_summary",
     "market_phase_context",
+    "unified_context_version",
 }
 
 _STRONG_COMPARE_PATTERN = re.compile(r"比较|对比|vs\b|和[^，。,.!?！？]{0,40}比", re.IGNORECASE)

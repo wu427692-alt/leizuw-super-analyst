@@ -19,6 +19,7 @@ import {
   DecisionSignalDetails,
 } from '../components/decision-signals/DecisionSignalDisplay';
 import { DecisionSignalTimeline } from '../components/decision-signals/DecisionSignalTimeline';
+import { UnifiedStockContextPanel } from '../components/intelligence/UnifiedStockContextPanel';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import type { UiTextKey } from '../i18n/uiText';
 import type { DecisionAction, MarketPhaseValue } from '../types/analysis';
@@ -531,6 +532,10 @@ const DecisionSignalsPage: React.FC = () => {
   }, [feedbackSaving, selected]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const sharedContextSymbol = selected?.item.stockCode
+    || appliedFilters.stockCode
+    || appliedTimelineFilters.stockCode
+    || latestStockCode;
 
   return (
     <AppPage>
@@ -553,6 +558,12 @@ const DecisionSignalsPage: React.FC = () => {
               {t('decisionSignals.refresh')}
             </button>
           )}
+        />
+
+        <UnifiedStockContextPanel
+          symbol={sharedContextSymbol}
+          title="AI 信号的全渠道事实底稿"
+          allowInput={!sharedContextSymbol}
         />
 
         <Card padding="md">

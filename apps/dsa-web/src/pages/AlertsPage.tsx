@@ -12,6 +12,7 @@ import {
   type AlertTypeFilter,
 } from '../components/alerts/AlertRuleList';
 import { AlertTriggerHistory } from '../components/alerts/AlertTriggerHistory';
+import { UnifiedStockContextPanel } from '../components/intelligence/UnifiedStockContextPanel';
 import { ApiErrorAlert, AppPage, Card, EmptyState, InlineAlert, Loading, PageHeader } from '../components/common';
 import type {
   AlertNotificationItem,
@@ -265,6 +266,8 @@ const AlertsPage: React.FC = () => {
         title="告警中心"
         description="管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。"
       />
+
+      <UnifiedStockContextPanel allowInput title="告警规则的全渠道校验底稿" />
 
       {createError ? <ApiErrorAlert error={createError} onDismiss={() => setCreateError(null)} /> : null}
       {createSuccess ? (

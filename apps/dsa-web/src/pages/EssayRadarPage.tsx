@@ -17,6 +17,7 @@ import type {
 import './EssayRadarPage.css';
 
 type RadarView = 'overview' | 'atlas' | 'feed' | 'trends' | 'reports' | 'system';
+type AtlasHorizon = 'short' | 'medium' | 'long' | 'custom';
 
 const VIEW_META: Array<{ view: RadarView; path: string; label: string; icon: typeof Sparkles }> = [
   { view: 'overview', path: '/essay-radar', label: '今日研判', icon: Sparkles },
@@ -100,53 +101,120 @@ function Metric({ label, value, note, tone = 'plain' }: { label: string; value: 
   );
 }
 
-function DeepInsightsView({ data, modelComparison, onOpen, onFilter }: {
+function heatLevel(score: number, sortedScores: number[]): number {
+  if (score <= 0 || sortedScores.length === 0) return 0;
+  let upperRank = 0;
+  for (const candidate of sortedScores) {
+    if (candidate <= score) upperRank += 1;
+  }
+  return Math.max(1, Math.min(5, Math.ceil(upperRank / sortedScores.length * 5)));
+}
+
+function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, onFilter }: {
   data: EssayDeepInsights | null;
-  modelComparison?: EssayInsights['modelComparison'];
-  onOpen: (item: EssayAnalysis) => void;
+  horizon: AtlasHorizon;
+  startDate: string;
+  endDate: string;
+  onPeriodChange: (horizon: AtlasHorizon, startDate?: string, endDate?: string) => void;
   onFilter: (term: string) => void;
 }) {
+  const [selectedCode, setSelectedCode] = useState('');
+  const [draftStart, setDraftStart] = useState(startDate);
+  const [draftEnd, setDraftEnd] = useState(endDate);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiResults, setAiResults] = useState<Record<string, {
+    conclusion: string; evidence: string[]; limitations: string[]; nextChecks: string[];
+  }>>({});
+  useEffect(() => {
+    if (!data?.marketImpact.items.length) return;
+    if (!data.marketImpact.items.some((item) => item.tsCode === selectedCode)) {
+      setSelectedCode(data.marketImpact.items[0].tsCode);
+    }
+  }, [data, selectedCode]);
+  useEffect(() => { setDraftStart(startDate); setDraftEnd(endDate); }, [startDate, endDate]);
   if (!data) return null;
+  const selectedMarket = data.marketImpact.items.find((item) => item.tsCode === selectedCode)
+    ?? data.marketImpact.items[0];
+  const selectedAi = selectedMarket ? aiResults[selectedMarket.tsCode] : undefined;
   const layers = [
     { key: 'sources' as const, label: '来源', note: '知识星球' },
     { key: 'themes' as const, label: '主题', note: 'AI 提取' },
     { key: 'stocks' as const, label: '个股', note: '明确提及' },
-    { key: 'signals' as const, label: '催化 / 风险', note: '可验证线索' },
+    { key: 'outcomes' as const, label: '行情验证', note: '事件后5日' },
   ];
   const relationCount = (stage: string, key: string) => data.layers.edges
     .filter((edge) => (edge.fromStage === stage && edge.from === key) || (edge.toStage === stage && edge.to === key))
     .reduce((sum, edge) => sum + edge.count, 0);
-  const heatMax = Math.max(...data.themeHeatmap.items.flatMap((item) => item.points.map((point) => point.count)), 1);
+  const heatScores = data.themeHeatmap.items
+    .flatMap((item) => item.points.map((point) => point.concentrationScore ?? 0))
+    .filter((score) => score > 0)
+    .sort((left, right) => left - right);
   const funnelMax = Math.max(data.evidenceFunnel[0]?.count ?? 0, 1);
+  const periodLabel = data.period.granularity === 'day' ? '日' : data.period.granularity === 'week' ? '周' : '月';
+  const runAiInterpretation = async () => {
+    if (!selectedMarket) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const result = await essayRadarApi.interpretMarketImpact({
+        tsCode: selectedMarket.tsCode,
+        horizon,
+        startDate: horizon === 'custom' ? data.period.startDate : undefined,
+        endDate: horizon === 'custom' ? data.period.endDate : undefined,
+      });
+      setAiResults((current) => ({ ...current, [selectedMarket.tsCode]: result.interpretation }));
+    } catch (caught) {
+      setAiError(errorText(caught, 'AI 解读暂时不可用，统计结果仍可正常查看。'));
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   return (
     <div className="essay-view essay-atlas-view">
-      <section className="essay-atlas-summary" aria-label="30日语料洞察摘要">
+      <section className="essay-period-rail" aria-label="洞察研究时间窗口">
+        <div><span>研究窗口</span><strong>{data.period.startDate} — {data.period.endDate}</strong><small>{data.windowDays} 个自然日 · 按{periodLabel}聚合</small></div>
+        <nav>{([
+          ['short', '短期', '14日'], ['medium', '中期', '90日'], ['long', '长期', '1年'],
+        ] as const).map(([value, label, note]) => <button key={value} type="button" className={horizon === value ? 'is-active' : ''} onClick={() => onPeriodChange(value)}><strong>{label}</strong><small>{note}</small></button>)}</nav>
+        <div className={`essay-custom-period ${horizon === 'custom' ? 'is-active' : ''}`}>
+          <label>开始<input type="date" value={draftStart} onChange={(event) => setDraftStart(event.target.value)} /></label>
+          <label>结束<input type="date" value={draftEnd} onChange={(event) => setDraftEnd(event.target.value)} /></label>
+          <button type="button" disabled={!draftStart || !draftEnd || draftStart > draftEnd} onClick={() => onPeriodChange('custom', draftStart, draftEnd)}>应用</button>
+        </div>
+      </section>
+
+      <section className="essay-atlas-summary" aria-label="所选窗口语料洞察摘要">
         <Metric label="已分析语料" value={data.summary.analyzedCount.toLocaleString()} note={`${data.windowDays} 日窗口`} tone="signal" />
         <Metric label="真实来源" value={data.summary.sourceCount} note="按知识星球去重" />
         <Metric label="主题 / 个股" value={`${data.summary.themeCount} / ${data.summary.stockCount}`} note="AI结构化实体" />
-        <Metric label="证据覆盖" value={`${data.summary.evidenceCoveragePercent}%`} note="含原文证据链" />
-        <Metric label="高增量" value={data.summary.highNoveltyCount} note="增量分 ≥ 70" />
+        <Metric label="行情覆盖" value={`${data.marketImpact.coverage.eventCoveragePercent}%`} note={`${data.marketImpact.coverage.coveredEventDayCount}/${data.marketImpact.coverage.eventDayCount} 个事件日`} />
+        <Metric label="已验证股票" value={data.marketImpact.coverage.pricedStockCount} note={`候选 ${data.marketImpact.coverage.candidateStockCount} 只`} />
         <Metric label="多空分歧" value={data.summary.divergenceCount} note="同一标的双向观点" tone="danger" />
       </section>
 
       <div className="essay-atlas-primary">
-        <section className="essay-panel essay-atlas-pulse">
-          <div className="essay-panel-head"><div><span>近 {data.pulse.length} 日 · 按纪要创建时间</span><h2>信息脉冲与情绪结构</h2></div><strong>最新 {formatDate(data.latestDataAt)}</strong></div>
-          <div className="essay-pulse-legend"><span className="is-bull">看多</span><span className="is-bear">看空</span><span className="is-neutral">中性</span><span className="is-mixed">分歧</span></div>
-          <div className="essay-atlas-chart"><ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 620, height: 270 }}><ComposedChart data={data.pulse}><CartesianGrid vertical={false} stroke="rgba(148,163,184,.14)" /><XAxis dataKey="date" tickFormatter={(value) => String(value).slice(5)} tick={{ fontSize: 9 }} /><YAxis allowDecimals={false} tick={{ fontSize: 9 }} /><Tooltip contentStyle={{ background: '#0b0c0a', border: '1px solid rgba(198,255,74,.25)', fontSize: 10 }} labelFormatter={(value) => `日期 ${value}`} /><Bar stackId="sentiment" dataKey="bullish" name="看多" fill="#f87171" /><Bar stackId="sentiment" dataKey="bearish" name="看空" fill="#34d399" /><Bar stackId="sentiment" dataKey="neutral" name="中性" fill="#64748b" /><Bar stackId="sentiment" dataKey="mixed" name="分歧" fill="#fbbf24" /><Line type="monotone" dataKey="total" name="总量" stroke="#c6ff4a" strokeWidth={2} dot={false} /></ComposedChart></ResponsiveContainer></div>
+        <section className="essay-panel essay-market-link-panel">
+          <div className="essay-panel-head"><div><span>真实日线 × 小作文事件日</span><h2>个股行情与提及关联</h2></div><strong>{selectedMarket?.dataSource || '本地行情库'}</strong></div>
+          <div className="essay-market-stock-tabs">{data.marketImpact.items.map((item) => <button type="button" key={item.tsCode} className={item.tsCode === selectedMarket?.tsCode ? 'is-active' : ''} onClick={() => { setSelectedCode(item.tsCode); setAiError(null); }}><strong>{item.name}</strong><small>{item.mentionCount}篇</small></button>)}</div>
+          {selectedMarket ? <>
+            <div className="essay-market-chart"><ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 720, height: 300 }}><ComposedChart data={selectedMarket.series}><CartesianGrid vertical={false} stroke="rgba(148,163,184,.14)" /><XAxis dataKey="date" tickFormatter={(value) => String(value).slice(5)} tick={{ fontSize: 9 }} minTickGap={24} /><YAxis yAxisId="price" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} tick={{ fontSize: 9 }} width={42} /><YAxis yAxisId="mention" orientation="right" allowDecimals={false} tick={{ fontSize: 9 }} width={28} /><Tooltip contentStyle={{ background: '#0b0c0a', border: '1px solid rgba(198,255,74,.25)', fontSize: 10 }} formatter={(value, name) => [name === '阶段涨跌' ? `${Number(value).toFixed(2)}%` : `${value} 篇`, name]} labelFormatter={(value) => `交易日 ${value}`} /><Bar yAxisId="mention" dataKey="mentionCount" name="小作文" fill="#22d3ee" opacity={0.55} /><Line yAxisId="price" type="monotone" dataKey="priceReturn" name="阶段涨跌" stroke="#c6ff4a" strokeWidth={2} dot={false} /></ComposedChart></ResponsiveContainer></div>
+            <div className="essay-event-metrics">{selectedMarket.metrics.map((metric) => <div key={metric.period} title={`95%置信区间：${metric.confidenceInterval95[0] == null ? '样本不足' : `${metric.confidenceInterval95[0]}% ~ ${metric.confidenceInterval95[1]}%`}`}><span>事件后 {metric.period} 日</span><strong className={(metric.averageReturn ?? 0) >= 0 ? 'is-up' : 'is-down'}>{metric.averageReturn == null ? '未成熟' : `${metric.averageReturn >= 0 ? '+' : ''}${metric.averageReturn.toFixed(2)}%`}</strong><small>胜率 {metric.winRate == null ? '—' : `${metric.winRate.toFixed(1)}%`} · 样本 {metric.sampleCount}</small><small>超额 {metric.averageExcessReturn == null ? '—' : `${metric.averageExcessReturn >= 0 ? '+' : ''}${metric.averageExcessReturn.toFixed(2)}%`}</small></div>)}</div>
+            <p className="essay-method-note">{selectedMarket.insight} {data.marketImpact.causalityNote}</p>
+          </> : <EmptyState title="当前窗口缺少行情匹配" description="需要小作文明确匹配股票代码，且本地行情库覆盖事件后的交易日。" icon={<BarChart3 className="h-7 w-7" />} />}
         </section>
 
         <section className="essay-panel essay-atlas-chain">
-          <div className="essay-panel-head"><div><span>仅统计同一篇原文中的真实共现</span><h2>来源 → 主题 → 个股 → 线索</h2></div><strong>{data.layers.edges.length} 条关系</strong></div>
+          <div className="essay-panel-head"><div><span>原文共现 + 真实行情结果</span><h2>来源 → 主题 → 个股 → 行情验证</h2></div><strong>{data.layers.edges.length} 条关系</strong></div>
           <div className="essay-chain-grid">
             {layers.map((layer, layerIndex) => {
               const nodes = data.layers[layer.key];
               const max = Math.max(...nodes.map((node) => node.count), 1);
               return <div className="essay-chain-stage" key={layer.key}>
                 <header><span>0{layerIndex + 1}</span><div><strong>{layer.label}</strong><small>{layer.note}</small></div>{layerIndex < layers.length - 1 ? <ArrowRight /> : null}</header>
-                <div>{nodes.map((node) => <button key={node.key} type="button" onClick={() => onFilter(node.label)} title={`检索原文：${node.label}`}>
-                  <span>{node.kind ? <i className={`is-${node.kind}`} /> : null}{node.label}</span>
+                <div>{nodes.map((node) => <button key={node.key} type="button" onClick={() => layer.key === 'outcomes' ? setSelectedCode(node.tsCode || '') : onFilter(node.label)} title={layer.key === 'outcomes' ? `查看 ${node.stockName} 的行情验证` : `检索原文：${node.label}`}>
+                  <span>{node.kind ? <i className={`is-${node.kind}`} /> : null}{layer.key === 'outcomes' ? `${node.stockName} · ${node.label}` : node.label}</span>
                   <b><i style={{ width: `${Math.max(5, node.count / max * 100)}%` }} /></b>
                   <small>{node.count} 篇 · {relationCount(layer.key, node.key)} 次关联</small>
                 </button>)}</div>
@@ -158,31 +226,48 @@ function DeepInsightsView({ data, modelComparison, onOpen, onFilter }: {
 
       <div className="essay-atlas-secondary">
         <section className="essay-panel essay-heatmap-panel">
-          <div className="essay-panel-head"><div><span>颜色越亮，当日提及越集中</span><h2>主题热力迁移</h2></div><strong>{data.themeHeatmap.dates.length} 日</strong></div>
-          <div className="essay-heatmap-axis"><span />{data.themeHeatmap.dates.map((day, index) => <small key={day} className={index % Math.ceil(data.themeHeatmap.dates.length / 5) ? 'is-muted' : ''}>{day.slice(5)}</small>)}</div>
-          <div className="essay-heatmap">{data.themeHeatmap.items.map((item) => <div key={item.name}><button type="button" onClick={() => onFilter(item.name)}><strong>{item.name}</strong><small>{item.total}</small></button>{item.points.map((point) => <i key={point.date} title={`${point.date} · ${point.count} 篇`} className={point.count ? 'has-value' : ''} style={{ opacity: point.count ? .2 + point.count / heatMax * .8 : .08 }} />)}</div>)}</div>
+          <div className="essay-panel-head"><div><span>按每{periodLabel}主题占比与阶段峰值计算 · 颜色越亮越集中</span><h2>主题热力迁移</h2></div><strong>{data.themeHeatmap.dates.length} 个{periodLabel}段</strong></div>
+          <div className="essay-heatmap-meta">
+            <span>{data.themeHeatmap.taxonomy ? `${data.themeHeatmap.taxonomy.rawThemeCount} 个原始标签 → ${data.themeHeatmap.taxonomy.canonicalThemeCount} 个规范主题` : '规范主题聚合'}</span>
+            <div aria-label="主题集中度图例"><small>低</small>{[1, 2, 3, 4, 5].map((level) => <i key={level} className={`heat-level-${level}`} />)}<small>高</small></div>
+          </div>
+          <div className="essay-heatmap-axis" style={{ gridTemplateColumns: `110px repeat(${data.themeHeatmap.dates.length}, minmax(9px, 1fr))` }}><span />{data.themeHeatmap.dates.map((day, index) => <small key={day} className={index % Math.max(1, Math.ceil(data.themeHeatmap.dates.length / 5)) ? 'is-muted' : ''}>{day.slice(5)}</small>)}</div>
+          <div className="essay-heatmap">{data.themeHeatmap.items.map((item) => {
+            const aliases = item.aliases?.map((alias) => alias.name) ?? [];
+            return <div key={item.name} style={{ gridTemplateColumns: `110px repeat(${data.themeHeatmap.dates.length}, minmax(9px, 1fr))` }}><button type="button" onClick={() => onFilter(item.name)} title={aliases.length ? `已合并：${aliases.join('、')}` : item.name}><strong>{item.name}</strong><small>{item.total}</small></button>{item.points.map((point) => {
+              const level = heatLevel(point.concentrationScore ?? 0, heatScores);
+              return <i key={point.date} title={`${point.date} · ${point.count} 篇 · 当日主题提及 ${point.dailyTotal ?? 0} 次 · 占比 ${(point.sharePercent ?? 0).toFixed(1)}% · 集中度 ${(point.concentrationScore ?? 0).toFixed(1)}`} className={`heat-level-${level}`} />;
+            })}</div>;
+          })}</div>
         </section>
 
-        <section className="essay-panel essay-momentum-panel">
-          <div className="essay-panel-head"><div><span>本周 vs 上周 · 不是价格涨跌</span><h2>个股讨论动量</h2></div><strong>按提及增量排序</strong></div>
-          <div className="essay-momentum-table"><header><span>标的</span><span>本周</span><span>上周</span><span>变化</span><span>多 / 空</span></header>{data.stockMomentum.slice(0, 8).map((stock) => <button key={stock.tsCode || stock.name} type="button" onClick={() => onFilter(stock.name)}><span><strong>{stock.name}</strong><small>{stock.tsCode || '未匹配代码'}</small></span><b>{stock.currentCount}</b><span>{stock.previousCount}</span><strong className={stock.change > 0 ? 'is-up' : stock.change < 0 ? 'is-down' : ''}>{stock.change > 0 ? '+' : ''}{stock.change}</strong><small><i className="is-bull">{stock.bullish}</i> / <i className="is-bear">{stock.bearish}</i></small></button>)}</div>
+        <section className="essay-panel essay-market-ranking-panel">
+          <div className="essay-panel-head"><div><span>同股同日去重 · 按5日结果比较</span><h2>小作文后行情验证</h2></div><strong>仅展示成熟样本</strong></div>
+          <div className="essay-market-ranking"><header><span>标的</span><span>提及</span><span>样本</span><span>5日均值</span><span>胜率</span><span>超额</span></header>{data.marketImpact.items.map((item) => {
+            const metric = item.metrics.find((row) => row.period === 5) ?? item.metrics[0];
+            return <button key={item.tsCode} type="button" className={item.tsCode === selectedMarket?.tsCode ? 'is-active' : ''} onClick={() => setSelectedCode(item.tsCode)}><span><strong>{item.name}</strong><small>{item.tsCode}</small></span><b>{item.mentionCount}</b><span>{metric.sampleCount}</span><strong className={(metric.averageReturn ?? 0) >= 0 ? 'is-up' : 'is-down'}>{metric.averageReturn == null ? '—' : `${metric.averageReturn >= 0 ? '+' : ''}${metric.averageReturn.toFixed(2)}%`}</strong><span>{metric.winRate == null ? '—' : `${metric.winRate.toFixed(1)}%`}</span><span>{metric.averageExcessReturn == null ? '—' : `${metric.averageExcessReturn >= 0 ? '+' : ''}${metric.averageExcessReturn.toFixed(2)}%`}</span></button>;
+          })}</div>
         </section>
       </div>
 
       <div className="essay-atlas-tertiary">
-        <section className="essay-panel essay-verification-panel">
-          <div className="essay-panel-head"><div><span>高增量、低置信或内部矛盾</span><h2>优先核验队列</h2></div><strong>{data.verificationQueue.length} 条</strong></div>
-          <div className="essay-verification-list">{data.verificationQueue.slice(0, 6).map((item) => <button key={item.topicId} type="button" onClick={() => onOpen(item)}><strong>{item.noveltyScore ?? 0}</strong><span><b>{item.note.title || item.summary || '无标题纪要'}</b><small>{item.note.groupName} · 置信 {Math.round((item.confidenceScore ?? 0) * 100)}%</small></span><ArrowRight /></button>)}</div>
+        <section className="essay-panel essay-lead-lag-panel">
+          <div className="essay-panel-head"><div><span>提及量领先未来收益 · 皮尔逊相关</span><h2>领先 / 滞后检验</h2></div><strong>{selectedMarket?.name || '—'}</strong></div>
+          <div className="essay-lead-lag">{selectedMarket?.leadLag.map((row) => <div key={row.lagSessions}><span>{row.lagSessions === 0 ? '同日' : `领先 ${row.lagSessions} 日`}</span><i><b className={(row.correlation ?? 0) >= 0 ? 'is-positive' : 'is-negative'} style={{ width: `${Math.min(Math.abs(row.correlation ?? 0) * 100, 100)}%` }} /></i><strong>{row.correlation == null ? '样本不足' : row.correlation.toFixed(3)}</strong><small>n={row.sampleCount}</small></div>)}</div>
+          <div className="essay-attention-compare">{selectedMarket?.attentionComparison.map((row) => <div key={row.level}><span>{row.level}</span><strong className={(row.averageReturn5D ?? 0) >= 0 ? 'is-up' : 'is-down'}>{row.averageReturn5D == null ? '未成熟' : `${row.averageReturn5D >= 0 ? '+' : ''}${row.averageReturn5D.toFixed(2)}%`}</strong><small>5日胜率 {row.winRate5D == null ? '—' : `${row.winRate5D.toFixed(1)}%`} · n={row.sampleCount}</small></div>)}</div>
+          <p className="essay-method-note">相关系数只描述关注强度和后续收益是否同步变化，不能解释因果；绝对值越接近1，同向或反向关系越强。</p>
         </section>
 
-        <section className="essay-panel essay-model-panel">
-          <div className="essay-panel-head"><div><span>{modelComparison?.reportDate || '最近报告日'}</span><h2>模型共识与语料分歧</h2></div><strong>{modelComparison?.reports.length ?? 0} 个模型</strong></div>
-          <div className="essay-model-columns"><div><h3>跨模型共识</h3>{modelComparison?.consensus.slice(0, 3).map((item) => <p key={item.text}>{item.text}<span>{item.modelCount}</span></p>)}{!modelComparison?.consensus.length ? <p>需要至少两个模型完成同一日报后比较。</p> : null}</div><div className="is-risk"><h3>个股观点分歧</h3>{data.divergence.slice(0, 4).map((item) => <button type="button" key={item.key} onClick={() => onFilter(item.name)}><span>{item.name}</span><small>多 {item.bullish} / 空 {item.bearish}</small><strong>{item.divergenceScore}</strong></button>)}{!data.divergence.length ? <p>当前窗口未发现同股多空双向观点。</p> : null}</div></div>
+        <section className="essay-panel essay-ai-market-panel">
+          <div className="essay-panel-head"><div><span>模型只解释上方统计，不补造行情</span><h2>AI 统计解读</h2></div><button type="button" disabled={!selectedMarket || aiLoading} onClick={() => void runAiInterpretation()}><Brain className={`h-3.5 w-3.5 ${aiLoading ? 'animate-pulse' : ''}`} />{aiLoading ? '分析中' : '生成解读'}</button></div>
+          {selectedAi ? <div className="essay-ai-market-result"><strong>{selectedAi.conclusion}</strong><h3>统计依据</h3>{selectedAi.evidence.map((value) => <p key={value}>{value}</p>)}<h3>限制</h3>{selectedAi.limitations.map((value) => <p key={value}>{value}</p>)}<h3>后续验证</h3>{selectedAi.nextChecks.map((value) => <p key={value}>{value}</p>)}</div> : <p className="essay-method-note">选择股票后按需调用 DeepSeek。模型收到的是收益、胜率、样本量、置信区间与相关系数，不接收未来数据，也不把相关关系写成因果。</p>}
+          {aiError ? <p className="essay-inline-error">{aiError}</p> : null}
         </section>
 
         <section className="essay-panel essay-funnel-panel">
-          <div className="essay-panel-head"><div><span>从观点走向可跟踪事实</span><h2>证据链完整度</h2></div></div>
+          <div className="essay-panel-head"><div><span>行情 {data.marketImpact.coverage.priceStart || '—'} — {data.marketImpact.coverage.priceEnd || '—'}</span><h2>数据可用性</h2></div><strong>{data.marketImpact.coverage.benchmarkAvailable ? '沪深300可用' : '无基准'}</strong></div>
           <div className="essay-funnel">{data.evidenceFunnel.map((item, index) => <div key={item.name}><span><b>0{index + 1}</b>{item.name}</span><strong>{item.count.toLocaleString()}</strong><i><b style={{ width: `${item.count / funnelMax * 100}%` }} /></i></div>)}</div>
+          <p className="essay-method-note">{data.marketImpact.entryRule}；{data.marketImpact.exitRule}。{data.marketImpact.priceBasis}；{data.marketImpact.dedupeRule}。来源：{data.marketImpact.coverage.sources.join('、') || '本地行情库'}。</p>
         </section>
       </div>
     </div>
@@ -318,6 +403,9 @@ const EssayRadarPage = () => {
   const [page, setPage] = useState(1);
   const [cloudPeriod, setCloudPeriod] = useState<'day' | 'week' | 'month'>('day');
   const [cloudKind, setCloudKind] = useState<'stocks' | 'tags' | 'themes'>('stocks');
+  const [atlasHorizon, setAtlasHorizon] = useState<AtlasHorizon>('short');
+  const [atlasStartDate, setAtlasStartDate] = useState('');
+  const [atlasEndDate, setAtlasEndDate] = useState('');
   const [historyYears, setHistoryYears] = useState<1 | 2>(1);
   const [analysisBatchCount, setAnalysisBatchCount] = useState(100);
   const [analysisOrder, setAnalysisOrder] = useState<'newest' | 'oldest'>('newest');
@@ -353,13 +441,11 @@ const EssayRadarPage = () => {
           setError('部分模块暂时不可用，已保留成功加载的真实数据。');
         }
       } else if (view === 'atlas') {
-        const [nextDeepInsights, nextInsights] = await Promise.allSettled([
-          essayRadarApi.deepInsights(30, 14), essayRadarApi.insights(30, 14),
-        ]);
-        if (nextDeepInsights.status === 'fulfilled') setDeepInsights(nextDeepInsights.value);
-        if (nextInsights.status === 'fulfilled') setInsights(nextInsights.value);
-        if (nextDeepInsights.status === 'rejected') throw nextDeepInsights.reason;
-        if (nextInsights.status === 'rejected') setError('跨模型比较暂时不可用，语料洞察图谱仍可正常查看。');
+        setDeepInsights(await essayRadarApi.deepInsights({
+          horizon: atlasHorizon,
+          startDate: atlasHorizon === 'custom' ? atlasStartDate : undefined,
+          endDate: atlasHorizon === 'custom' ? atlasEndDate : undefined,
+        }));
       } else if (view === 'trends') {
         const [nextDashboard, nextInsights, nextCloud] = await Promise.allSettled([
           essayRadarApi.dashboard(30), essayRadarApi.insights(30, 14), essayRadarApi.wordCloud(cloudPeriod, cloudKind),
@@ -392,7 +478,7 @@ const EssayRadarPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [cloudKind, cloudPeriod, view]);
+  }, [atlasEndDate, atlasHorizon, atlasStartDate, cloudKind, cloudPeriod, view]);
 
   const loadFeed = useCallback(async (refreshVersion: number) => {
     if (view !== 'feed') return;
@@ -459,7 +545,7 @@ const EssayRadarPage = () => {
   useEffect(() => {
     if (view !== 'overview') return undefined;
     const timer = window.setTimeout(() => {
-      void essayRadarApi.deepInsights(30, 14).then(setDeepInsights).catch(() => undefined);
+      void essayRadarApi.deepInsights({ horizon: 'short' }).then(setDeepInsights).catch(() => undefined);
     }, 1200);
     return () => window.clearTimeout(timer);
   }, [view]);
@@ -552,6 +638,14 @@ const EssayRadarPage = () => {
     setPage(1);
     navigate(`/essay-radar/feed?query=${encodeURIComponent(term)}`);
   };
+  const changeAtlasPeriod = (nextHorizon: AtlasHorizon, nextStart?: string, nextEnd?: string) => {
+    if (nextHorizon === 'custom' && (!nextStart || !nextEnd || nextStart > nextEnd)) return;
+    setAtlasHorizon(nextHorizon);
+    if (nextHorizon === 'custom') {
+      setAtlasStartDate(nextStart || '');
+      setAtlasEndDate(nextEnd || '');
+    }
+  };
 
   return (
     <AppPage className="essay-terminal max-w-none">
@@ -559,7 +653,7 @@ const EssayRadarPage = () => {
         <div>
           <div className="essay-live-line"><span className={workerActive ? 'is-live' : ''} />知识星球增量库 · {formatTime(insights?.latestDataAt || status?.mcpSync.lastSyncAt || historicalBacklog?.latestSyncedAt, true)}</div>
           <h1>{view === 'atlas' ? '小作文洞察图谱' : '小作文研判台'}</h1>
-          <p>{view === 'atlas' ? '把非结构化语料拆成可追溯的来源、主题、个股与可验证线索。' : '先读原文，再看证据与观点；趋势、日报和数据同步分开处理。'}</p>
+          <p>{view === 'atlas' ? '按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。' : '先读原文，再看证据与观点；趋势、日报和数据同步分开处理。'}</p>
         </div>
         <button type="button" className="essay-refresh" disabled={loading} onClick={() => setRefreshKey((value) => value + 1)}>
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />刷新当前页
@@ -606,7 +700,14 @@ const EssayRadarPage = () => {
         </div>
       ) : null}
 
-      {view === 'atlas' ? <DeepInsightsView data={deepInsights} modelComparison={insights?.modelComparison} onOpen={setSelected} onFilter={openFeedFor} /> : null}
+      {view === 'atlas' ? <DeepInsightsView
+        data={deepInsights}
+        horizon={atlasHorizon}
+        startDate={atlasStartDate || deepInsights?.period.startDate || ''}
+        endDate={atlasEndDate || deepInsights?.period.endDate || ''}
+        onPeriodChange={changeAtlasPeriod}
+        onFilter={openFeedFor}
+      /> : null}
 
       {view === 'feed' ? (
         <div className="essay-view">

@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { AnnouncementCategoryList, AnnouncementSyncRequest, CloudKnowledgeStatus, DragonTigerDaily, DragonTigerHistory, DragonTigerSyncResult, EssayConsensusAnalysis, IntelligenceDashboard, InvestmentMonitorDashboard, MonitorEvent, MonitorEventList, MonitorStatus, MonitorSymbolDetail, SourceBI, SuperWatchlistDashboard, WatchlistBackfillJob } from '../types/investmentMonitor';
+import type { AnnouncementCategoryList, AnnouncementSyncRequest, CloudKnowledgeStatus, DragonTigerDaily, DragonTigerHistory, DragonTigerSyncResult, EssayConsensusAnalysis, IntelligenceDashboard, InvestmentMonitorDashboard, MonitorEvent, MonitorEventList, MonitorStatus, MonitorSymbolDetail, SourceBI, StockWorkspace, SuperWatchlistDashboard, WatchlistBackfillJob } from '../types/investmentMonitor';
 
 export const investmentMonitorApi = {
   dashboard: async (days = 7): Promise<InvestmentMonitorDashboard> => {
@@ -45,6 +45,12 @@ export const investmentMonitorApi = {
   superWatchlist: async (days = 365): Promise<SuperWatchlistDashboard> => {
     const response = await apiClient.get('/api/v1/investment-monitor/super-watchlist', { params: { days } });
     return toCamelCase<SuperWatchlistDashboard>(response.data);
+  },
+  stockWorkspace: async (symbol: string, days = 365, refresh = false): Promise<StockWorkspace> => {
+    const response = await apiClient.get(`/api/v1/investment-monitor/stock-workspace/${encodeURIComponent(symbol)}`, {
+      params: { days, refresh },
+    });
+    return toCamelCase<StockWorkspace>(response.data);
   },
   refreshSuperWatchlist: async (): Promise<unknown> => {
     const response = await apiClient.post('/api/v1/investment-monitor/super-watchlist/refresh', undefined, { timeout: 60000 });

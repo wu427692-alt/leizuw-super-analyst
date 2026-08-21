@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Dedicated latest-20 essay expectation extraction tests."""
+"""Dedicated 20-related plus 5-single-stock expectation extraction tests."""
 
 from __future__ import annotations
 
@@ -35,7 +35,13 @@ class FakeAnalyzer:
                     "unit": "亿元", "direction": "up", "evidence": "原文预计2027年净利润约10亿元",
                     "confidence": 0.82,
                 }],
-                "consensus_points": [], "conflicts": [], "caveats": ["未经公司公告确认"],
+                "consensus_points": [], "conflicts": [],
+                "time_observations": ["2026年8月提出，预测期为2027年"],
+                "verification_conditions": [{
+                    "condition": "2027年净利润达到10亿元", "window": "2027年报",
+                    "impact": "达到则支持原预测", "expiry_at": "2028年4月",
+                }],
+                "caveats": ["未经公司公告确认"],
             },
             "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
         }
@@ -84,6 +90,8 @@ def test_latest_matched_essays_are_queued_processed_and_mapped_to_original_event
     queued = consensus_service.enqueue("603306.SH", "华懋科技", limit=20)
     assert queued["status"] == "pending"
     assert queued["source_count"] == 2
+    assert queued["related_source_count"] == 0
+    assert queued["dedicated_source_count"] == 2
     assert consensus_service.process_next() is True
     assert consensus_service.process_next() is False
 
@@ -94,6 +102,36 @@ def test_latest_matched_essays_are_queued_processed_and_mapped_to_original_event
     assert result["estimates"][0]["event_id"] is not None
     assert result["estimates"][0]["subject"] == "华懋科技"
     assert result["estimates"][0]["evidence"] == "原文预计2027年净利润约10亿元"
+    assert result["estimates"][0]["proposed_at"] == "2026-08-20T08:02:00Z"
+    assert result["estimates"][0]["source_kind"] == "dedicated"
+    assert result["time_observations"] == ["2026年8月提出，预测期为2027年"]
+    assert result["verification_conditions"][0]["window"] == "2027年报"
+
+
+def test_sampling_keeps_20_related_and_5_single_stock_notes_without_duplicates(consensus_service, monkeypatch):
+    now = datetime(2026, 8, 20, 12, 0)
+    events = [{
+        "id": index + 1, "external_id": f"sample-{index}", "event_type": "essay",
+        "event_at": (now - timedelta(minutes=index)).isoformat() + "Z",
+    } for index in range(30)]
+    notes = [{
+        "topic_id": f"sample-{index}", "title": f"样本 {index}", "content": "原文",
+        "created_at": (now - timedelta(minutes=index)).isoformat() + "Z",
+        "author_name": "研究员", "group_name": "测试星球",
+        "symbols": ["603306.SH"] if index < 7 else ["603306.SH", "300476.SZ"],
+    } for index in range(30)]
+    monkeypatch.setattr(consensus_service.monitor_repo, "all_symbol_events", lambda **_kwargs: events)
+    monkeypatch.setattr(consensus_service, "_notes_by_ids", lambda _topic_ids: notes)
+
+    selected = consensus_service._select_notes("603306.SH", limit=20)
+
+    assert len(selected) == 25
+    assert len({item["topic_id"] for item in selected}) == 25
+    assert sum(item["source_kind"] == "dedicated" for item in selected) == 5
+    assert sum(item["source_kind"] == "related" for item in selected) == 20
+    assert {item["topic_id"] for item in selected if item["source_kind"] == "dedicated"} == {
+        "sample-0", "sample-1", "sample-2", "sample-3", "sample-4",
+    }
 
 
 def test_analyzer_normalization_rejects_estimates_without_a_selected_source():

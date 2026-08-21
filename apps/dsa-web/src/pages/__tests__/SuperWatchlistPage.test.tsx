@@ -233,7 +233,7 @@ describe('SuperWatchlistPage', () => {
     expect(mockEvent).toHaveBeenCalledWith(901);
   });
 
-  it('renders the latest-20 essay expectation analysis in a full research workspace', async () => {
+  it('renders the time-aware 20-related plus 5-dedicated research workspace', async () => {
     const item = stock('603306.SH', '华懋科技');
     item.alternative = {
       essayCount: 1, catalysts: [], risks: [], essays: [{
@@ -250,16 +250,23 @@ describe('SuperWatchlistPage', () => {
       targetPrice: { sampleCount: 5, min: 88, median: 96, max: 108 },
       essayExpectationCount: 2,
       essayAnalysis: {
-        status: 'completed', sourceCount: 20, analyzedCount: 20, pendingCount: 0,
+        status: 'completed', sourceCount: 25, relatedSourceCount: 20, dedicatedSourceCount: 5, analyzedCount: 25, pendingCount: 0,
+        analysisCutoffAt: '2026-08-20T08:00:00Z',
         summary: '近期材料同时给出利润与估值推测。', hasExplicitExpectations: true,
         profitOutlook: '部分材料推测 2026 年净利润约 8 亿元。',
         valuationOutlook: '有材料给出 100 元目标价和 300 亿元目标市值。',
         estimates: [
-          { topicId: 'topic-profit', subject: '华懋科技', subjectRelation: 'target_stock', metric: 'net_profit', period: '2026E', valueText: '净利润约 8 亿元', evidence: '预计全年净利润约 8 亿元', confidence: 0.91 },
-          { eventId: 999, topicId: 'topic-price', subject: '富创优越', subjectRelation: 'acquisition_target', metric: 'target_price', period: '12个月', valueText: '目标价 100 元', evidence: '目标价看到 100 元', confidence: 0.84 },
+          { topicId: 'topic-profit', proposedAt: '2026-08-18T08:00:00Z', sourceKind: 'related', subject: '华懋科技', subjectRelation: 'target_stock', metric: 'net_profit', period: '2026E', valueText: '净利润约 8 亿元', evidence: '预计全年净利润约 8 亿元', confidence: 0.91 },
+          { eventId: 999, topicId: 'topic-price', title: '华懋目标价跟踪', proposedAt: '2026-08-20T08:00:00Z', sourceKind: 'dedicated', subject: '富创优越', subjectRelation: 'acquisition_target', metric: 'target_price', period: '未来12个月', valueText: '目标价 100 元', evidence: '目标价看到 100 元', confidence: 0.84 },
         ],
         metricCounts: { net_profit: 1, target_price: 1 },
-        consensusPoints: ['盈利方向偏积极'], conflicts: [], caveats: ['均为未经核验的小作文推测'], sourceNotes: [],
+        consensusPoints: ['盈利方向偏积极'], conflicts: [], timeObservations: ['8月18日利润预测早于8月20日目标价观点'],
+        verificationConditions: [{ condition: '等待年度业绩披露', window: '2026年报', impact: '核验利润预测', expiryAt: '2027年4月' }],
+        caveats: ['均为未经核验的小作文推测'],
+        sourceNotes: [
+          { topicId: 'topic-price', eventId: 999, title: '华懋目标价跟踪', eventAt: '2026-08-20T08:00:00Z', authorName: '研究员', sourceKind: 'dedicated', estimateCount: 1 },
+          { topicId: 'topic-profit', title: '华懋利润跟踪', eventAt: '2026-08-18T08:00:00Z', authorName: '分析师', sourceKind: 'related', estimateCount: 1 },
+        ],
       },
     };
     mockLoad.mockResolvedValue(dashboard([item]));
@@ -274,15 +281,19 @@ describe('SuperWatchlistPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: '一致预期' }));
 
     expect(screen.getByText('一致预期研究工作台')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '重新分析最近20篇' })).toBeInTheDocument();
-    expect(screen.getByText('净利润约 8 亿元')).toBeInTheDocument();
-    expect(screen.getByText('目标价 100 元')).toBeInTheDocument();
-    expect(screen.getByText('富创优越 · 收购标的')).toBeInTheDocument();
-    expect(screen.getByText('利润预期').closest('.super-expectation-anchor')).toHaveTextContent('1');
-    expect(screen.getAllByText('目标价')[0].closest('.super-expectation-anchor')).toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: '重新分析 20+5 篇' })).toBeInTheDocument();
+    expect(screen.getByLabelText('研究样本范围')).toHaveTextContent('相关小作文20');
+    expect(screen.getByLabelText('研究样本范围')).toHaveTextContent('单股专属5');
+    expect(screen.getByText('预测时间线')).toBeInTheDocument();
+    expect(screen.getAllByText('未来12个月').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('净利润约 8 亿元').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('目标价 100 元').length).toBeGreaterThan(0);
+    expect(screen.getByText('富创优越').closest('td')).toHaveTextContent('收购标的');
+    expect(screen.getByText('8月18日利润预测早于8月20日目标价观点')).toBeInTheDocument();
+    expect(screen.getByText('等待年度业绩披露')).toBeInTheDocument();
     expect(screen.getByText('均为未经核验的小作文推测')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /目标价.*目标价 100 元/ }));
+    fireEvent.click(screen.getByRole('button', { name: /查看原文.*目标价 100 元/ }));
     expect(await screen.findByText('原文明确写到目标价看到 100 元。')).toBeInTheDocument();
     expect(mockNote).toHaveBeenCalledWith('topic-price');
   });

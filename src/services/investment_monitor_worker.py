@@ -22,7 +22,7 @@ class InvestmentMonitorWorker:
 
     def __init__(self):
         self.poll_seconds = max(5.0, min(float(os.getenv("INVESTMENT_MONITOR_POLL_SEC", "10")), 300.0))
-        self.max_workers = max(1, min(int(os.getenv("INVESTMENT_MONITOR_MAX_WORKERS", "4")), 12))
+        self.max_workers = max(1, min(int(os.getenv("INVESTMENT_MONITOR_MAX_WORKERS", "16")), 24))
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()

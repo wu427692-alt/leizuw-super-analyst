@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Archive, BrainCircuit, ChartNoAxesCombined, CircleDollarSign, ExternalLink, FileText, Image as ImageIcon, Plus, RefreshCw, Sparkles, Target, Trash2 } from 'lucide-react';
+import { Archive, BrainCircuit, CalendarClock, ExternalLink, FileText, Image as ImageIcon, Layers3, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { essayRadarApi } from '../api/essayRadar';
 import { investmentMonitorApi } from '../api/investmentMonitor';
@@ -211,72 +211,80 @@ function ConsensusSection({ stock, onEssayOpen, onAnalyze, analyzing, analysisMe
 }) {
   const consensus = stock.consensus;
   const essay = consensus.essayAnalysis;
-  // Derive the visible anchors from the evidence rows themselves. The API client
-  // camel-cases object keys recursively, so dictionary keys such as
-  // `net_profit` are not a stable wire contract even though estimate.metric is.
-  const metricCount = (key: string) => essay.estimates.filter(item => item.metric === key).length;
-  const anchorCards = [
-    { label: '利润预期', count: metricCount('net_profit') + metricCount('eps'), icon: ChartNoAxesCombined },
-    { label: '目标价', count: metricCount('target_price'), icon: Target },
-    { label: '目标市值', count: metricCount('market_cap'), icon: CircleDollarSign },
-  ];
-  return <section className="super-consensus-workbench min-h-[620px]">
-    <header className="super-consensus-hero flex flex-wrap items-center justify-between gap-5 border-b px-6 py-5">
-      <div className="flex min-w-0 items-center gap-4"><span className="super-consensus-orb inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl"><BrainCircuit className="h-6 w-6" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="text-[19px] font-bold tracking-[-0.03em]">一致预期研究工作台</h3><span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${essay.status === 'completed' ? 'text-emerald-400' : essay.status === 'failed' ? 'text-rose-400' : 'text-cyan'}`}>{CONSENSUS_STATUS_LABELS[essay.status] ?? essay.status}</span></div><p className="mt-1 text-[11px] text-[#7B7F87]">券商预测保持结构化口径；小作文由 DeepSeek 单独重读最近 {essay.sourceCount || 20} 篇并逐条保留证据。</p></div></div>
-      <button type="button" onClick={onAnalyze} disabled={analyzing || essay.status === 'processing'} className="super-consensus-run inline-flex h-10 items-center gap-2 rounded-xl px-4 text-[11px] font-bold disabled:cursor-wait disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${analyzing || essay.status === 'processing' ? 'animate-spin' : ''}`} />{analyzing || essay.status === 'processing' ? '正在分析最近20篇' : '重新分析最近20篇'}</button>
-      {analysisMessage ? <p className="w-full rounded-xl border border-cyan/20 bg-cyan/5 px-3 py-2 text-[10px] text-cyan">{analysisMessage}</p> : null}
+  const dedicatedNotes = essay.sourceNotes.filter(note => note.sourceKind === 'dedicated');
+  const relatedNotes = essay.sourceNotes.filter(note => note.sourceKind !== 'dedicated');
+  const timeline = [...essay.estimates]
+    .sort((a, b) => String(b.proposedAt || b.eventAt || '').localeCompare(String(a.proposedAt || a.eventAt || '')))
+    .slice(0, 8);
+  const toEssayEvent = (topicId?: string | null, eventId?: number | null, title?: string | null, eventAt?: string | null) => (
+    stock.alternative.essays.find(event => String(event.externalId) === String(topicId))
+    ?? stock.alternative.essays.find(event => event.id === eventId)
+    ?? {
+      id: eventId ?? 0, sourceKey: 'zsxq.essays', sourceName: '知识星球小作文（待核验）', sourceType: 'mcp',
+      externalId: String(topicId || ''), eventType: 'essay', perspective: 'investor' as const,
+      title: title || '小作文原文', summary: '', url: null, symbols: [stock.symbol], sentiment: 'neutral' as const,
+      importanceScore: 0, confidenceScore: 0.5, tags: [], actors: [], metrics: {}, eventAt: eventAt || '',
+    }
+  );
+  const renderSourceGroup = (title: string, subtitle: string, notes: typeof essay.sourceNotes, kind: 'dedicated' | 'related') => <section className="super-source-group">
+    <header><div><h5>{title}</h5><p>{subtitle}</p></div><span>{notes.length}</span></header>
+    <div className="super-source-stack">{notes.map(note => <button type="button" key={note.topicId} onClick={() => onEssayOpen(toEssayEvent(note.topicId, note.eventId, note.title, note.eventAt))}>
+      <span className={`super-source-kind is-${kind}`}>{kind === 'dedicated' ? '单股专属' : '相关样本'}</span>
+      <strong>{note.title || '未命名小作文'}</strong>
+      <span className="super-source-meta"><time>{eventTime(note.eventAt)}</time><em>{note.authorName || '作者未标注'}</em><b>{note.estimateCount} 条预期</b></span>
+    </button>)}{!notes.length ? <p className="super-source-empty">当前样本中暂无此类小作文</p> : null}</div>
+  </section>;
+
+  return <section className="super-consensus-workbench min-h-[720px]">
+    <header className="super-consensus-hero">
+      <div className="super-consensus-title"><span className="super-consensus-orb"><BrainCircuit /></span><div><p>{stock.name} · {stock.symbol}</p><div><h3>一致预期研究工作台</h3><span className={`super-consensus-status is-${essay.status}`}>{CONSENSUS_STATUS_LABELS[essay.status] ?? essay.status}</span></div><small>将券商结构化预测与知识星球原文证据分开呈现，所有结论保留提出时间与预测周期。</small></div></div>
+      <div className="super-consensus-actions"><Link to={`/essay-radar/feed?stock=${encodeURIComponent(stock.symbol)}`}>查看全部原文 <ExternalLink /></Link><button type="button" onClick={onAnalyze} disabled={analyzing || essay.status === 'processing'} className="super-consensus-run"><RefreshCw className={analyzing || essay.status === 'processing' ? 'animate-spin' : ''} />{analyzing || essay.status === 'processing' ? '正在分析 20+5 篇' : '重新分析 20+5 篇'}</button></div>
+      {analysisMessage ? <p className="super-consensus-message">{analysisMessage}</p> : null}
     </header>
-    <div className="grid grid-cols-2 border-b lg:grid-cols-4">
-      <div className="super-consensus-stat p-4"><p>券商研报样本</p><strong>{consensus.brokerReportCount}</strong><span>report_rc 去重</span></div>
-      <div className="super-consensus-stat p-4"><p>小作文输入</p><strong>{essay.sourceCount}</strong><span>最近匹配原文</span></div>
-      <div className="super-consensus-stat p-4"><p>AI 已分析</p><strong>{essay.analyzedCount}</strong><span>{essay.pendingCount ? `仍有 ${essay.pendingCount} 篇待处理` : '当前快照完成'}</span></div>
-      <div className="super-consensus-stat p-4"><p>明确预期条目</p><strong>{essay.estimates.length}</strong><span>含数字或方向推测</span></div>
+
+    <section className="super-consensus-scope" aria-label="研究样本范围">
+      <div><span>相关小作文</span><strong>{essay.relatedSourceCount ?? relatedNotes.length}</strong><small>最多 20 篇 · 多标的或关键词相关</small></div>
+      <div><span>单股专属</span><strong>{essay.dedicatedSourceCount ?? dedicatedNotes.length}</strong><small>最多 5 篇 · 标签仅含 {stock.name}</small></div>
+      <div><span>券商研报</span><strong>{consensus.brokerReportCount}</strong><small>Tushare report_rc 去重样本</small></div>
+      <div><span>分析截止</span><strong className="is-date">{eventTime(essay.analysisCutoffAt || essay.completedAt || consensus.asOf)}</strong><small>{essay.analyzedCount ? `已读取 ${essay.analyzedCount} 篇，提取 ${essay.estimates.length} 条预期` : '等待建立当前研究快照'}</small></div>
+    </section>
+
+    <section className="super-forecast-timeline">
+      <header><div><CalendarClock /><h4>预测时间线</h4></div><p>上行是观点提出时间，下行是预测对应期间；旧观点不会冒充最新预期。</p></header>
+      <div className="super-timeline-track">{timeline.map((item, index) => <button type="button" key={`${item.topicId}-${index}`} onClick={() => onEssayOpen(toEssayEvent(item.topicId, item.eventId, item.title, item.proposedAt || item.eventAt))}>
+        <time>{eventTime(item.proposedAt || item.eventAt)}</time><span /><strong>{EXPECTATION_METRIC_LABELS[item.metric] ?? item.metric}</strong><b>{item.valueText}</b><small>预测期 {item.period || '未注明'}</small>
+      </button>)}{!timeline.length ? <p className="super-timeline-empty">运行专项分析后，这里会按“何时提出 → 预测何时”排列真实原文预期。</p> : null}</div>
+    </section>
+
+    <div className="super-consensus-body">
+      <main>
+        <section className="super-consensus-conclusion"><div className="super-section-kicker"><Sparkles /><span>综合结论</span></div><p>{essay.summary || '尚未形成专项结论。运行分析后，系统会按提出时间、预测期间与主体口径整理这批原文。'}</p><div className="super-outlook-grid"><article><span>利润与经营预期</span><p>{essay.profitOutlook || '当前没有可追溯的利润、收入或 EPS 预期。'}</p></article><article><span>估值与市值推测</span><p>{essay.valuationOutlook || '当前没有可追溯的目标价、市值或估值倍数推测。'}</p></article></div></section>
+
+        <section className="super-expectation-matrix"><header><div><Layers3 /><div><h4>关键预期证据矩阵</h4><p>每个数字都回到原文；单股专属与相关样本不重复计数。</p></div></div><span>{essay.estimates.length} 条</span></header><div className="super-matrix-scroll"><table><thead><tr><th>提出时间</th><th>预测期</th><th>指标</th><th>原文预期</th><th>主体口径</th><th>样本</th></tr></thead><tbody>{essay.estimates.map((item, index) => {
+          const openOriginal = () => onEssayOpen(toEssayEvent(item.topicId, item.eventId, item.title, item.proposedAt || item.eventAt));
+          return <tr key={`${item.topicId}-${index}`} role="button" tabIndex={0} aria-label={`查看原文 ${item.title || ''} ${item.valueText}`} onClick={openOriginal} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openOriginal(); }}><td><time>{eventTime(item.proposedAt || item.eventAt)}</time></td><td><b>{item.period || '未注明'}</b></td><td><span>{EXPECTATION_METRIC_LABELS[item.metric] ?? item.metric}</span></td><td><strong>{item.valueText}</strong><small>{item.evidence}</small></td><td>{item.subject || stock.name}<small>{SUBJECT_RELATION_LABELS[item.subjectRelation ?? 'target_stock'] ?? '关联主体'}</small></td><td><em className={item.sourceKind === 'dedicated' ? 'is-dedicated' : ''}>{item.sourceKind === 'dedicated' ? '单股专属' : '相关'}</em></td></tr>;
+        })}</tbody></table>{!essay.estimates.length ? <EmptyState title={essay.status === 'processing' || essay.status === 'pending' ? '正在提取时间化预期' : '尚无明确预期'} description={essay.status === 'failed' ? (essay.error || '专项分析失败，可重新运行。') : '点击“重新分析 20+5 篇”，系统会提取预测提出时间、预测期、数值和原文证据。'} /> : null}</div></section>
+
+        <section className="super-broker-panel"><header><div><h4>券商一致预期</h4><p>结构化研报口径单列，不与小作文推测混算。</p></div><div><span>目标价中位</span><strong>{number(consensus.targetPrice.median)}</strong></div></header><div className="super-broker-targets"><Metric label="目标价下限" value={number(consensus.targetPrice.min)} /><Metric label="目标价中位" value={number(consensus.targetPrice.median)} /><Metric label="目标价上限" value={number(consensus.targetPrice.max)} /></div><div className="super-broker-table"><table><thead><tr><th>预测期</th><th>样本</th><th>EPS中位</th><th>净利润中位</th><th>PE中位</th><th>ROE中位</th></tr></thead><tbody>{consensus.forecasts.map(row => <tr key={row.period}><td>{row.period}</td><td>{row.sampleCount}</td><td>{number(row.epsMedian)}</td><td>{number(row.npMedian)}</td><td>{number(row.peMedian)}</td><td>{number(row.roeMedian)}</td></tr>)}</tbody></table>{!consensus.forecasts.length ? <p>暂无券商结构化预测，等待 report_rc 同步。</p> : null}</div></section>
+      </main>
+
+      <aside className="super-consensus-sources"><header><div><h4>引用原文</h4><p>点击在当前页面打开全文、图片与附件。</p></div><span>{essay.sourceCount} 篇</span></header>{renderSourceGroup('单股专属小作文', `标签中仅有 ${stock.name}`, dedicatedNotes, 'dedicated')}{renderSourceGroup('相关小作文', '多标的、产业链或关键词匹配', relatedNotes, 'related')}</aside>
     </div>
-    <div className="super-consensus-grid grid grid-cols-[minmax(420px_.9fr)_minmax(520px_1.1fr)]">
-      <section className="border-r p-5">
-        <div className="flex items-end justify-between gap-4"><div><h4 className="text-[14px] font-bold">券商一致预期</h4><p className="mt-1 text-[10px] text-[#7B7F87]">数字来自 Tushare report_rc，不与小作文推测混算。</p></div><div className="text-right"><p className="text-[10px] text-[#7B7F87]">目标价中位数</p><p className="mt-1 font-mono text-[28px] font-bold text-cyan">{number(consensus.targetPrice.median)}</p></div></div>
-        <div className="mt-4 grid grid-cols-3 overflow-hidden rounded-2xl border bg-card/40 py-4"><Metric label="目标价下限" value={number(consensus.targetPrice.min)} /><Metric label="目标价中位" value={number(consensus.targetPrice.median)} /><Metric label="目标价上限" value={number(consensus.targetPrice.max)} /></div>
-        <div className="mt-4 overflow-x-auto rounded-2xl border"><table className="w-full min-w-[600px] text-left"><thead className="bg-cyan/5 text-[10px] text-[#7B7F87]"><tr><th className="px-3 py-3">预测期</th><th className="px-3 py-3">样本</th><th className="px-3 py-3">EPS中位</th><th className="px-3 py-3">净利润中位</th><th className="px-3 py-3">PE中位</th><th className="px-3 py-3">ROE中位</th></tr></thead><tbody>{consensus.forecasts.map(row => <tr key={row.period} className="border-t font-mono text-[11px]"><td className="px-3 py-3 font-bold">{row.period}</td><td className="px-3 py-3">{row.sampleCount}</td><td className="px-3 py-3">{number(row.epsMedian)}</td><td className="px-3 py-3">{number(row.npMedian)}</td><td className="px-3 py-3">{number(row.peMedian)}</td><td className="px-3 py-3">{number(row.roeMedian)}</td></tr>)}</tbody></table>{!consensus.forecasts.length ? <EmptyState title="暂无券商预测" description="等待 report_rc 完成该股票的数据同步。" /> : null}</div>
-        <div className="mt-4 flex flex-wrap gap-2">{consensus.ratings.map(row => <span key={row.name} className="rounded-full border bg-card/40 px-3 py-1.5 text-[10px]">{row.name} <b className="ml-1 font-mono text-cyan">{row.count}</b></span>)}</div>
-      </section>
-      <section className="min-w-0 p-5">
-        <div className="grid grid-cols-3 gap-3">{anchorCards.map(({ label, count, icon: Icon }) => <div key={label} className="super-expectation-anchor rounded-2xl border p-3"><div className="flex items-center justify-between"><span className="text-[10px] text-[#7B7F87]">{label}</span><Icon className="h-4 w-4 text-cyan" /></div><p className="mt-2 font-mono text-[24px] font-bold">{count}</p><p className="text-[9px] text-[#7B7F87]">条可追溯推测</p></div>)}</div>
-        <div className="mt-4 grid grid-cols-2 gap-3"><article className="rounded-2xl border bg-card/35 p-4"><p className="text-[10px] font-bold text-cyan">利润与经营预期</p><p className="mt-2 text-[11px] leading-5 text-[#62666D]">{essay.profitOutlook || '尚未运行最近20篇专项分析。'}</p></article><article className="rounded-2xl border bg-card/35 p-4"><p className="text-[10px] font-bold text-fuchsia-400">估值与市值推测</p><p className="mt-2 text-[11px] leading-5 text-[#62666D]">{essay.valuationOutlook || '尚未运行最近20篇专项分析。'}</p></article></div>
-        <div className="mt-4"><div className="flex items-center justify-between"><div><h4 className="text-[14px] font-bold">原文预期证据</h4><p className="mt-1 text-[10px] text-[#7B7F87]">只列 AI 在原文中定位到的推测；点击查看该篇小作文原文。</p></div><span className="font-mono text-[11px] text-cyan">{essay.estimates.length} 条</span></div>
-          <div className="super-expectation-list mt-3 max-h-[350px] space-y-2 overflow-auto pr-1">
-            {essay.estimates.map((item, index) => {
-              const essayEvent = stock.alternative.essays.find(event => String(event.externalId) === String(item.topicId))
-                ?? stock.alternative.essays.find(event => event.id === item.eventId);
-              const subject = item.subject || stock.name;
-              const relation = SUBJECT_RELATION_LABELS[item.subjectRelation ?? 'target_stock'] ?? '关联主体';
-              const body = <>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-md bg-cyan/10 px-2 py-1 text-[9px] font-bold text-cyan">{EXPECTATION_METRIC_LABELS[item.metric] ?? item.metric}</span>
-                  <span className="rounded-md border px-2 py-1 text-[9px] text-[#7B7F87]">{subject} · {relation}</span>
-                  <span className="text-[10px] text-[#7B7F87]">{item.period}</span>
-                  <span className="ml-auto font-mono text-[9px] text-[#7B7F87]">置信度 {Math.round((item.confidence ?? 0) * 100)}%</span>
-                </div>
-                <p className="mt-2 text-[13px] font-bold">{item.valueText}</p>
-                <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#62666D]">证据：{item.evidence}</p>
-                <p className="mt-2 truncate text-[9px] text-[#7B7F87]">{item.title || '小作文原文'} · {eventTime(item.eventAt)}</p>
-              </>;
-              return essayEvent
-                ? <button type="button" key={`${item.topicId}-${index}`} onClick={() => onEssayOpen(essayEvent)} className="super-expectation-row block w-full rounded-xl border p-3 text-left">{body}</button>
-                : <div key={`${item.topicId}-${index}`} className="super-expectation-row rounded-xl border p-3">{body}</div>;
-            })}
-            {!essay.estimates.length ? <EmptyState title={essay.status === 'processing' || essay.status === 'pending' ? '正在提取预期' : '尚无明确预期'} description={essay.status === 'not_started' ? '点击“重新分析最近20篇”，AI 将专门提取利润、目标价和市值推测。' : essay.status === 'failed' ? (essay.error || '专项分析失败，可重新运行。') : '当前材料没有找到可追溯的利润、目标价或市值推测。'} /> : null}
-          </div>
-        </div>
-        {(essay.consensusPoints.length || essay.conflicts.length || essay.caveats.length) ? <div className="mt-4 grid grid-cols-3 gap-3 text-[10px]"><ExpectationList title="共同指向" items={essay.consensusPoints} tone="cyan" /><ExpectationList title="口径冲突" items={essay.conflicts} tone="rose" /><ExpectationList title="使用限制" items={essay.caveats} tone="amber" /></div> : null}
-      </section>
-    </div>
-    <footer className="border-t px-5 py-3 text-[10px] leading-5 text-[#7B7F87]">{consensus.method}</footer>
+
+    <section className="super-consensus-review">
+      <ExpectationList title="时间变化" items={essay.timeObservations ?? []} tone="cyan" />
+      <ExpectationList title="共同指向" items={essay.consensusPoints} tone="cyan" />
+      <ExpectationList title="口径冲突" items={essay.conflicts} tone="rose" />
+      <ExpectationList title="使用限制" items={essay.caveats} tone="amber" />
+    </section>
+    {(essay.verificationConditions?.length ?? 0) > 0 ? <section className="super-verification-panel"><header><ShieldCheck /><div><h4>验证、证伪与失效条件</h4><p>只展示原文能够支持的验证窗口，不自动编造期限。</p></div></header><div>{essay.verificationConditions?.map((item, index) => <article key={`${item.condition}-${index}`}><strong>{item.condition}</strong><p>{item.impact}</p><span>验证窗口 {item.window} · 失效时间 {item.expiryAt}</span></article>)}</div></section> : null}
+    <footer>{consensus.method} · 单股专属材料仅代表聚焦度更高，不代表事实等级更高。</footer>
   </section>;
 }
 
 function ExpectationList({ title, items, tone }: { title: string; items: string[]; tone: 'cyan' | 'rose' | 'amber' }) {
   const toneClass = tone === 'cyan' ? 'text-cyan' : tone === 'rose' ? 'text-rose-400' : 'text-amber-400';
-  return <article className="rounded-2xl border bg-card/30 p-3"><h5 className={`font-bold ${toneClass}`}>{title}</h5><ul className="mt-2 space-y-1.5 text-[#62666D]">{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></article>;
+  return <article className="super-expectation-list-card"><h5 className={toneClass}>{title}</h5>{items.length ? <ul>{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul> : <p>当前样本未形成明确条目</p>}</article>;
 }
 
 function EventSection({ events, emptyTitle, emptyDescription, note, onEssayOpen, onForumOpen }: { events: MonitorEvent[]; emptyTitle: string; emptyDescription: string; note?: string; onEssayOpen: (event: MonitorEvent) => void; onForumOpen: (event: MonitorEvent) => void }) {
@@ -371,7 +379,7 @@ export default function SuperWatchlistPage() {
   const analyzeConsensus = async () => {
     if (!active || analyzingConsensus) return;
     const symbol = active.symbol;
-    setAnalyzingConsensus(true); setConsensusMessage('已提交最近20篇小作文，正在等待 DeepSeek 返回结构化预期。');
+    setAnalyzingConsensus(true); setConsensusMessage('已提交最多 20 篇相关小作文与 5 篇单股专属小作文，正在按提出时间和预测期提取预期。');
     try {
       const queued = await investmentMonitorApi.analyzeEssayConsensus(symbol);
       setConsensusOverrides(previous => ({ ...previous, [symbol]: queued.consensus }));
@@ -380,7 +388,7 @@ export default function SuperWatchlistPage() {
         const current = await investmentMonitorApi.essayConsensus(symbol);
         setConsensusOverrides(previous => ({ ...previous, [symbol]: current.consensus }));
         if (current.consensus.status === 'completed') {
-          setConsensusMessage(`分析完成：读取 ${current.consensus.analyzedCount} 篇，提取 ${current.consensus.estimates.length} 条可追溯预期。`);
+          setConsensusMessage(`分析完成：读取 ${current.consensus.relatedSourceCount ?? 0} 篇相关、${current.consensus.dedicatedSourceCount ?? 0} 篇单股专属小作文，提取 ${current.consensus.estimates.length} 条可追溯预期。`);
           return;
         }
         if (current.consensus.status === 'failed') throw new Error(current.consensus.error || '小作文一致预期分析失败');

@@ -11,6 +11,7 @@ from api.v1.schemas.essay_radar import (
     EssayBackfillRequest,
     EssayCountBackfillRequest,
     EssayDailyReportRunRequest,
+    EssayMarketInterpretationRequest,
     EssayRetryRequest,
 )
 from src.services.essay_analysis_service import EssayAnalysisError, EssayAnalysisService, EssayDailyReportService
@@ -106,12 +107,41 @@ def insights(
     return EssayAnalysisService().insights(days=days, trend_days=trend_days)
 
 
-@router.get("/deep-insights", summary="获取小作文来源、主题、标的、催化风险多层洞察")
+@router.get("/deep-insights", summary="按研究窗口获取小作文主题、标的与行情验证洞察")
 def deep_insights(
     days: int = Query(30, ge=7, le=3650),
     trend_days: int = Query(14, ge=7, le=90),
+    horizon: Optional[str] = Query(None, pattern="^(short|medium|long|custom)$"),
+    start_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
 ):
-    return EssayAnalysisService().deep_insights(days=days, trend_days=trend_days)
+    try:
+        return EssayAnalysisService().deep_insights(
+            days=days,
+            trend_days=trend_days,
+            horizon=horizon,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except ValueError as exc:
+        raise _service_error(exc, 400)
+
+
+@router.post("/deep-insights/market-interpretation", summary="用大模型解释可复核的小作文与行情统计")
+def market_interpretation(request: EssayMarketInterpretationRequest):
+    try:
+        return EssayAnalysisService().interpret_market_impact(
+            ts_code=request.ts_code,
+            horizon=request.horizon,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+    except KeyError as exc:
+        raise _service_error(exc, 404)
+    except ValueError as exc:
+        raise _service_error(exc, 400)
+    except EssayAnalysisError as exc:
+        raise _service_error(exc, 503)
 
 
 @router.get("/word-cloud", summary="获取日、周、月股票/标签/主题词云")

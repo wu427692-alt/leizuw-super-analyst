@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy import and_, asc, case, desc, func, or_, select
 
 from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, utc_naive_now
+from src.utils.essay_topic_taxonomy import topic_search_terms
 
 
 # Keep every ``IN`` clause safely below SQLite's host-parameter ceiling.  The
@@ -477,20 +478,24 @@ class EssayAnalysisRepository:
         if cutoff is not None:
             conditions.append(ResearchNote.created_at >= cutoff)
         for keyword in str(query or "").split():
-            escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            pattern = f"%{escaped}%"
-            conditions.append(or_(
-                ResearchNote.title.like(pattern, escape="\\"),
-                ResearchNote.content.like(pattern, escape="\\"),
-                ResearchNote.group_name.like(pattern, escape="\\"),
-                ResearchNote.author_name.like(pattern, escape="\\"),
-                ResearchNote.symbol_codes.like(pattern, escape="\\"),
-                EssayAnalysisRecord.summary.like(pattern, escape="\\"),
-                EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
-                EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
-                EssayAnalysisRecord.themes_json.like(pattern, escape="\\"),
-                EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
-            ))
+            equivalent_conditions = []
+            for term in topic_search_terms(keyword):
+                escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                pattern = f"%{escaped}%"
+                equivalent_conditions.extend((
+                    ResearchNote.title.like(pattern, escape="\\"),
+                    ResearchNote.content.like(pattern, escape="\\"),
+                    ResearchNote.group_name.like(pattern, escape="\\"),
+                    ResearchNote.author_name.like(pattern, escape="\\"),
+                    ResearchNote.symbol_codes.like(pattern, escape="\\"),
+                    EssayAnalysisRecord.summary.like(pattern, escape="\\"),
+                    EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
+                    EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
+                    EssayAnalysisRecord.themes_json.like(pattern, escape="\\"),
+                    EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
+                ))
+            if equivalent_conditions:
+                conditions.append(or_(*equivalent_conditions))
         if analysis_status == "completed":
             conditions.append(EssayAnalysisRecord.status == "completed")
         elif analysis_status == "uncompleted":

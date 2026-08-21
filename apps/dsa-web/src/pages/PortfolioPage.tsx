@@ -7,6 +7,7 @@ import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { PortfolioSignalSummary } from '../components/decision-signals/DecisionSignalDisplay';
+import { UnifiedStockContextPanel } from '../components/intelligence/UnifiedStockContextPanel';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { formatUiText } from '../i18n/uiText';
 import { PORTFOLIO_TEXT } from '../locales/featureText';
@@ -494,6 +495,18 @@ const PortfolioPage: React.FC = () => {
     rows.sort((a, b) => Number(b.marketValueBase || 0) - Number(a.marketValueBase || 0));
     return rows;
   }, [livePositionQuotes, quoteKey, snapshot]);
+  const [intelligenceSymbol, setIntelligenceSymbol] = useState('');
+
+  useEffect(() => {
+    const candidates = positionRows.filter((row) => row.market === 'cn').map((row) => row.symbol);
+    if (!candidates.length) {
+      setIntelligenceSymbol('');
+      return;
+    }
+    if (!candidates.some((symbol) => areStockCodesEquivalent(symbol, intelligenceSymbol))) {
+      setIntelligenceSymbol(candidates[0]);
+    }
+  }, [intelligenceSymbol, positionRows]);
 
   const snapshotMatchesAccountScope = useMemo(() => {
     if (!snapshot) return false;
@@ -1045,6 +1058,28 @@ const PortfolioPage: React.FC = () => {
           />
         )}
       </section>
+
+      <div className="space-y-2">
+        {portfolioSymbols.length > 1 ? (
+          <div className="flex items-center justify-end gap-2 text-xs text-secondary-text">
+            <span>查看持仓底稿</span>
+            <select
+              className="input-surface h-9 rounded-lg border bg-transparent px-3"
+              value={intelligenceSymbol}
+              onChange={(event) => setIntelligenceSymbol(event.target.value)}
+            >
+              {positionRows.filter((row) => row.market === 'cn').map((row) => (
+                <option key={`${row.accountId}-${row.symbol}`} value={row.symbol}>{row.symbol}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+        <UnifiedStockContextPanel
+          symbol={intelligenceSymbol}
+          title="持仓个股的全渠道事实底稿"
+          allowInput={!intelligenceSymbol}
+        />
+      </div>
 
       {error ? <ApiErrorAlert error={error} onDismiss={() => setError(null)} /> : null}
       {riskWarning ? (

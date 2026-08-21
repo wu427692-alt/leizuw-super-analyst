@@ -5,6 +5,7 @@ import { backtestApi } from '../api/backtest';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge, EmptyState, Pagination, StatusDot, Tooltip } from '../components/common';
+import { UnifiedStockContextPanel } from '../components/intelligence/UnifiedStockContextPanel';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { formatUiText, type UiLanguage } from '../i18n/uiText';
 import {
@@ -559,6 +560,14 @@ const BacktestPage: React.FC = () => {
             : text.windowModeDescription}
         </p>
       </header>
+
+      <div className="px-3 pt-3 sm:px-4">
+        <UnifiedStockContextPanel
+          symbol={normalizeBacktestCode(codeFilter) || ''}
+          title="回测样本的全渠道事实底稿"
+          allowInput={!normalizeBacktestCode(codeFilter)}
+        />
+      </div>
 
       {/* Main content */}
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 lg:flex-row">

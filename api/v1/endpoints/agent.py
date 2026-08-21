@@ -173,7 +173,7 @@ async def agent_chat(request: ChatRequest):
         result = await loop.run_in_executor(
             None,
             lambda: executor.chat(message=request.message, session_id=session_id,
-                                  context=ctx),
+                                  context=_enrich_with_unified_stock_context(ctx)),
         )
 
         return ChatResponse(
@@ -274,6 +274,28 @@ def _build_executor(config, skills: Optional[List[str]] = None):
     """Build and return a configured AgentExecutor (sync helper)."""
     from src.agent.factory import build_agent_executor
     return build_agent_executor(config, skills=skills)
+
+
+def _enrich_with_unified_stock_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach shared factual data while keeping chat available on degradation."""
+    enriched = dict(context)
+    stock_code = str(enriched.get("stock_code") or "").strip()
+    if not stock_code:
+        return enriched
+    try:
+        from src.services.investment_monitor_service import InvestmentMonitorService
+
+        shared = InvestmentMonitorService().stock_workspace(stock_code, days=365)
+        agent_context = dict(shared.get("agent_context") or {})
+        previous_summary = str(enriched.get("analysis_context_pack_summary") or "").strip()
+        shared_summary = str(agent_context.get("analysis_context_pack_summary") or "").strip()
+        enriched.update(agent_context)
+        if previous_summary and shared_summary:
+            enriched["analysis_context_pack_summary"] = f"{previous_summary}\n{shared_summary}"
+        enriched["unified_context_version"] = shared.get("version")
+    except Exception as exc:  # noqa: BLE001 - a data source issue must not break chat.
+        logger.info("Unified stock context unavailable for %s: %s", stock_code, type(exc).__name__)
+    return enriched
 
 
 async def _run_research_in_background(
@@ -411,7 +433,7 @@ async def agent_chat_stream(request: ChatRequest):
                 message=request.message,
                 session_id=session_id,
                 progress_callback=progress_callback,
-                context=stream_ctx,
+                context=_enrich_with_unified_stock_context(stream_ctx),
             )
             asyncio.run_coroutine_threadsafe(
                 queue.put({

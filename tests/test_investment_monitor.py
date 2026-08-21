@@ -12,7 +12,7 @@ import pytest
 from src.config import Config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.repositories.market_data_repo import MarketDataRepository
-from src.services.investment_monitor_service import InvestmentMonitorService
+from src.services.investment_monitor_service import BUILTIN_MONITORING_SOURCES, InvestmentMonitorService
 from src.storage import DatabaseManager
 
 
@@ -190,6 +190,8 @@ def test_source_status_separates_sync_success_from_actual_data_freshness(monitor
     by_key = {item["source_key"]: item for item in sources["items"]}
     assert by_key["tushare.news.cls"]["freshness_status"] == "fresh"
     assert by_key["tushare.news.cls"]["stored_event_count"] == 1
+    assert by_key["tushare.news.cls"]["monitoring_status"] == "live"
+    assert by_key["tushare.news.cls"]["last_check_age_seconds"] == 0
     assert by_key["api.empty"]["freshness_status"] == "empty"
     assert sources["with_data"] >= 1
     assert sources["empty"] >= 1
@@ -421,6 +423,32 @@ def test_super_watchlist_reads_latest_price_from_shared_market_cache(monitor):
     assert stock["market"]["amount"] == 2_000_000
 
 
+def test_stock_workspace_exposes_one_shared_context_for_legacy_modules(monitor):
+    monitor.sync_source("tushare.news.cls")
+    monitor.sync_source("eastmoney.guba_posts")
+
+    result = monitor.stock_workspace("600519", days=3650, refresh=True)
+
+    assert result["version"] == "5.2-unified-decision-context"
+    assert result["stock"]["symbol"] == "600519.SH"
+    assert result["data_policy"]["upstream_fetch_on_read"] is False
+    assert [item["version"] for item in result["iterations"]] == ["V1", "V2", "V3", "V4", "V5"]
+    agent_context = result["agent_context"]
+    assert "全渠道统一个股事实底稿" in agent_context["analysis_context_pack_summary"]
+    assert agent_context["source_count"] >= 1
+    assert "贵州茅台发布公告" in agent_context["news_context"]
+
+
+def test_stock_workspace_short_cache_reuses_assembled_payload(monitor, monkeypatch):
+    first = monitor.stock_workspace("600519", days=3650, refresh=True)
+    monkeypatch.setattr(monitor, "_super_stock", lambda *args, **kwargs: pytest.fail("must use workspace cache"))
+
+    second = monitor.stock_workspace("600519.SH", days=3650)
+
+    assert first["generated_at"] == second["generated_at"]
+    assert second["cache"]["hit"] is True
+
+
 def test_watchlist_backfill_job_is_durable_and_idempotent_while_active(monitor):
     first = monitor.request_backfill("600519", days=183)
     second = monitor.request_backfill("600519.SH", days=183)
@@ -517,3 +545,57 @@ def test_due_source_fetches_are_parallel_but_results_persist_normally(monitor, m
     assert result["totals"]["sources"] == 4
     assert result["totals"]["success"] == 4
     assert result["totals"]["max_workers"] == 4
+
+
+def test_fast_source_is_persisted_before_slow_peer_finishes(monitor, monkeypatch):
+    fast = monitor.create_external_source({
+        "source_key": "api.fastlive", "name": "快源", "poll_interval_seconds": 10,
+    })
+    slow = monitor.create_external_source({
+        "source_key": "api.slowlive", "name": "慢源", "poll_interval_seconds": 10,
+    })
+    slow_finished = {"value": False}
+    fast_persisted_while_slow_running = {"value": False}
+    original_upsert = monitor.repo.upsert_events
+
+    def fetch(source):
+        if source["source_key"] == "api.slowlive":
+            time.sleep(0.15)
+            slow_finished["value"] = True
+            return []
+        time.sleep(0.01)
+        return []
+
+    def observe_upsert(events):
+        if not slow_finished["value"]:
+            fast_persisted_while_slow_running["value"] = True
+        return original_upsert(events)
+
+    monkeypatch.setenv("INVESTMENT_MONITOR_MAX_WORKERS", "2")
+    monkeypatch.setattr(monitor, "_events_for_source", fetch)
+    monkeypatch.setattr(monitor.repo, "upsert_events", observe_upsert)
+
+    result = monitor._sync_sources([slow, fast])
+
+    assert result["totals"]["success"] == 2
+    assert fast_persisted_while_slow_running["value"] is True
+
+
+def test_builtin_sources_use_continuous_monitoring_cadences():
+    by_key = {item["source_key"]: item for item in BUILTIN_MONITORING_SOURCES}
+    assert by_key["tushare.news.cls"]["poll_interval_seconds"] == 15
+    assert by_key["cninfo.announcements"]["poll_interval_seconds"] == 60
+    assert by_key["eastmoney.guba_posts"]["poll_interval_seconds"] == 30
+    assert max(item["poll_interval_seconds"] for item in BUILTIN_MONITORING_SOURCES) <= 600
+
+
+def test_news_scheduler_cursor_converts_utc_to_shanghai_clock():
+    converted = InvestmentMonitorService._utc_iso_to_market_naive("2026-08-21T12:21:44Z")
+
+    assert converted == datetime(2026, 8, 21, 20, 21, 44)
+
+
+def test_zsxq_mirror_cursor_keeps_utc_database_clock():
+    converted = InvestmentMonitorService._utc_iso_to_utc_naive("2026-08-21T12:21:44Z")
+
+    assert converted == datetime(2026, 8, 21, 12, 21, 44)

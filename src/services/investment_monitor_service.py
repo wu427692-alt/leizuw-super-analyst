@@ -13,11 +13,12 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import pandas as pd
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 
 from src.config import get_config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
@@ -40,6 +41,10 @@ from src.storage import (
 )
 
 logger = logging.getLogger(__name__)
+
+_STOCK_WORKSPACE_CACHE_TTL_SECONDS = 20
+_stock_workspace_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_stock_workspace_cache_lock = threading.Lock()
 
 PERSPECTIVES = ("investor", "company", "institution")
 SENTIMENTS = ("bullish", "bearish", "neutral", "mixed")
@@ -93,51 +98,51 @@ def _source(source_key: str, name: str, adapter_type: str, provider: str, catego
 
 
 BUILTIN_MONITORING_SOURCES = [
-    _source("realtime.quotes", "自选股开盘快照", "realtime", "multi-provider", "market", 300,
+    _source("realtime.quotes", "自选股开盘快照", "realtime", "multi-provider", "market", 60,
             apis=("realtime_quote",)),
-    _source("tushare.market", "Tushare 行情与估值", "tushare", "tushare", "market", 300,
+    _source("tushare.market", "Tushare 收盘行情与估值", "tushare", "tushare", "market", 60,
             apis=("daily", "daily_basic")),
     *[
-        _source(f"tushare.news.{key}", f"Tushare {label}快讯", "tushare", key, "news", 60,
+        _source(f"tushare.news.{key}", f"Tushare {label}快讯", "tushare", key, "news", 15,
                 level="reported", apis=("news",), config={"src": key})
         for key, label in (
             ("cls", "财联社"), ("sina", "新浪财经"), ("wallstreetcn", "华尔街见闻"),
             ("10jqka", "同花顺"), ("eastmoney", "东方财富"), ("yicai", "第一财经"),
         )
     ],
-    _source("tushare.institution", "机构预测与调研", "tushare", "tushare", "institution", 1800,
+    _source("tushare.institution", "机构预测与调研", "tushare", "tushare", "institution", 120,
             apis=("report_rc", "stk_surv")),
-    _source("tushare.market_activity", "席位、异动与券商金股", "tushare", "tushare", "capital", 1800,
+    _source("tushare.market_activity", "席位、异动与券商金股", "tushare", "tushare", "capital", 120,
             apis=("top_list", "top_inst", "block_trade", "broker_recommend", "limit_list_d", "suspend_d")),
-    _source("tushare.market_themes", "市场题材资金与涨跌停结构", "tushare", "tushare", "market", 1800,
+    _source("tushare.market_themes", "市场题材资金与涨跌停结构", "tushare", "tushare", "market", 60,
             apis=("moneyflow_cnt_ths", "moneyflow_ind_ths", "limit_list_ths")),
-    _source("tushare.company", "上市公司事项", "tushare", "tushare", "company", 3600,
+    _source("tushare.company", "上市公司事项", "tushare", "tushare", "company", 120,
             apis=("forecast", "express", "repurchase", "stk_holdertrade", "share_float")),
-    _source("tushare.company_profile", "公司治理与股东事实", "tushare", "tushare", "governance", 21600,
+    _source("tushare.company_profile", "公司治理与股东事实", "tushare", "tushare", "governance", 600,
             apis=("stock_company", "stk_managers", "stk_holdernumber", "top10_holders", "top10_floatholders", "dividend", "stk_rewards", "fina_audit")),
-    _source("tushare.fundamentals", "财务质量与业绩", "tushare", "tushare", "fundamental", 21600,
+    _source("tushare.fundamentals", "财务质量与业绩", "tushare", "tushare", "fundamental", 300,
             apis=("fina_indicator", "income", "balancesheet", "cashflow", "forecast")),
-    _source("tushare.capital", "筹码、资金与北向持股", "tushare", "tushare", "capital", 3600,
+    _source("tushare.capital", "筹码、资金与北向持股", "tushare", "tushare", "capital", 120,
             apis=("cyq_perf", "cyq_chips", "moneyflow", "margin_detail", "margin", "hk_hold")),
-    _source("tushare.technical", "技术因子与神奇九转", "tushare", "tushare", "technical", 900,
+    _source("tushare.technical", "技术因子与神奇九转", "tushare", "tushare", "technical", 60,
             apis=("stk_factor", "stk_nineturn")),
-    _source("tushare.ownership", "股权与资本动作", "tushare", "tushare", "ownership", 21600,
+    _source("tushare.ownership", "股权与资本动作", "tushare", "tushare", "ownership", 300,
             apis=("pledge_stat", "share_float", "stk_holdertrade", "repurchase")),
-    _source("tushare.research_pdf", "完整券商研报 PDF", "tushare", "tushare", "research", 21600,
+    _source("tushare.research_pdf", "完整券商研报 PDF", "tushare", "tushare", "research", 300,
             level="reported", apis=("research_report",)),
-    _source("tushare.long_news", "长篇新闻与新闻联播", "tushare", "tushare", "news", 1800,
+    _source("tushare.long_news", "长篇新闻与新闻联播", "tushare", "tushare", "news", 120,
             level="reported", apis=("major_news", "cctv_news")),
-    _source("cninfo.announcements", "巨潮资讯上市公司公告", "cninfo", "cninfo", "company", 900,
+    _source("cninfo.announcements", "巨潮资讯上市公司公告", "cninfo", "cninfo", "company", 60,
             level="official", apis=("cninfo_announcement",)),
-    _source("tianyancha.enterprise", "天眼查企业事实与风险", "cli", "tianyancha", "enterprise", 43200,
+    _source("tianyancha.enterprise", "天眼查企业事实与风险", "cli", "tianyancha", "enterprise", 600,
             apis=("registration-info", "risk-overview", "credit-evaluation", "ipr-score", "historical-overview")),
-    _source("zsxq.essays", "知识星球小作文（待核验）", "mcp", "zsxq", "essay", 30,
+    _source("zsxq.essays", "知识星球小作文（待核验）", "mcp", "zsxq", "essay", 10,
             level="unverified", apis=("zsxq_mcp",)),
-    _source("akshare.stock_comments", "东方财富千股千评指标", "akshare", "eastmoney", "comment", 900,
+    _source("akshare.stock_comments", "东方财富千股千评指标", "akshare", "eastmoney", "comment", 300,
             level="reported", apis=("stock_comment_em",)),
-    _source("eastmoney.guba_posts", "东方财富股吧公开股评", "html", "eastmoney_guba", "comment", 120,
+    _source("eastmoney.guba_posts", "东方财富股吧公开股评", "html", "eastmoney_guba", "comment", 30,
             level="unverified", apis=("mguba_public_list",)),
-    _source("feeds.intelligence", "RSS / NewsNow 媒体流", "feed", "configurable", "news", 60,
+    _source("feeds.intelligence", "RSS / NewsNow 媒体流", "feed", "configurable", "news", 15,
             level="reported", apis=("rss", "atom", "newsnow")),
 ]
 
@@ -181,6 +186,29 @@ class InvestmentMonitorService:
         for item in items:
             observed = freshness.get(item["source_key"], {})
             item.update(observed)
+            cadence = max(10, int(item.get("poll_interval_seconds") or 300))
+            last_check_raw = item.get("last_success_at")
+            last_check_at = (
+                datetime.fromisoformat(str(last_check_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+                if last_check_raw else None
+            )
+            check_age = max(0, int((now - last_check_at).total_seconds())) if last_check_at else None
+            monitoring_sla = max(30, cadence * 2 + 10)
+            item["last_check_at"] = last_check_raw
+            item["last_check_age_seconds"] = check_age
+            item["monitoring_sla_seconds"] = monitoring_sla
+            item["next_check_at"] = (
+                (last_check_at + timedelta(seconds=cadence)).isoformat() + "Z"
+                if last_check_at else None
+            )
+            if item["last_status"] == "not_configured":
+                item["monitoring_status"] = "not_configured"
+            elif item["last_status"] == "failed":
+                item["monitoring_status"] = "failed"
+            elif check_age is None:
+                item["monitoring_status"] = "pending"
+            else:
+                item["monitoring_status"] = "live" if check_age <= monitoring_sla else "delayed"
             item["last_run_state"] = (
                 "failed" if item["last_status"] == "failed"
                 else "not_configured" if item["last_status"] == "not_configured"
@@ -193,6 +221,7 @@ class InvestmentMonitorService:
                 item["data_age_seconds"] = None
                 item["freshness_sla_seconds"] = self._freshness_sla_seconds(item)
                 item["data_state"] = "not_configured" if item["last_status"] == "not_configured" else "empty"
+                item["upstream_state"] = "no_data"
                 continue
             latest_at = datetime.fromisoformat(str(latest_raw).replace("Z", "+00:00")).replace(tzinfo=None)
             age_seconds = max(0, int((now - latest_at).total_seconds()))
@@ -204,6 +233,11 @@ class InvestmentMonitorService:
             item["freshness_status"] = "fresh" if age_seconds <= threshold else "stale"
             item["data_state"] = item["freshness_status"]
             item["freshness_sla_seconds"] = threshold
+            item["upstream_state"] = (
+                "current" if item["freshness_status"] == "fresh"
+                else "quiet" if item["monitoring_status"] == "live"
+                else "stale"
+            )
         return {
             "items": items,
             "total": len(items),
@@ -215,6 +249,8 @@ class InvestmentMonitorService:
             "fresh": sum(1 for item in items if item["freshness_status"] == "fresh"),
             "stale": sum(1 for item in items if item["freshness_status"] == "stale"),
             "empty": sum(1 for item in items if item["freshness_status"] == "empty"),
+            "monitoring_live": sum(1 for item in items if item["monitoring_status"] == "live"),
+            "monitoring_delayed": sum(1 for item in items if item["monitoring_status"] in {"delayed", "failed"}),
         }
 
     @staticmethod
@@ -824,6 +860,104 @@ class InvestmentMonitorService:
             ],
         }
 
+    def stock_workspace(
+        self, symbol: str, *, days: int = 365, refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """Return one shared, local-first stock context for every legacy module."""
+        safe_days = max(30, min(int(days), 3650))
+        code = self._canonical_ts_code(symbol)
+        cache_key = f"{code}:{safe_days}"
+        if not refresh:
+            with _stock_workspace_cache_lock:
+                cached = _stock_workspace_cache.get(cache_key)
+            if cached and time.monotonic() - cached[0] <= _STOCK_WORKSPACE_CACHE_TTL_SECONDS:
+                return {**cached[1], "cache": {"hit": True, "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS}}
+
+        try:
+            quote_rows = MarketDataService().latest_quotes([code], refresh_missing=False)
+        except Exception as exc:  # noqa: BLE001 - factual context remains useful without a quote.
+            logger.info("Shared quote cache unavailable for %s workspace: %s", code, type(exc).__name__)
+            quote_rows = []
+        quote = next((row for row in quote_rows if row.get("stock_code")), None)
+        source_states = {item["source_key"]: item for item in self.repo.list_sources()}
+        stock = self._super_stock(code, days=safe_days, live_quote=quote, source_states=source_states)
+        payload = {
+            "version": "5.2-unified-decision-context",
+            "generated_at": utc_naive_now().isoformat() + "Z",
+            "days": safe_days,
+            "stock": stock,
+            "agent_context": self._agent_context_from_stock(stock),
+            "data_policy": {
+                "facts": "monitoring_events + shared market database",
+                "upstream_fetch_on_read": False,
+                "failure_mode": "stale-while-revalidate",
+                "quote_precedence": "shared realtime cache, then latest Tushare snapshot",
+            },
+            "iterations": [
+                {"version": "V1", "name": "统一事实底座", "result": "原有模块共用同一份个股事实与行情口径"},
+                {"version": "V2", "name": "Tushare 深度接入", "result": "估值、财务、资金、筹码、机构和股东数据进入决策上下文"},
+                {"version": "V3", "name": "非结构化证据", "result": "公告、研报、小作文、天眼查和股评保留时间与来源"},
+                {"version": "V4", "name": "稳定性与预加载", "result": "本地优先、短时共享缓存、单源失败不阻断页面"},
+                {"version": "V5", "name": "分析闭环", "result": "问股、持仓、信号、回测和告警共享可追溯输入"},
+            ],
+        }
+        with _stock_workspace_cache_lock:
+            _stock_workspace_cache[cache_key] = (time.monotonic(), payload)
+            if len(_stock_workspace_cache) > 128:
+                oldest = min(_stock_workspace_cache, key=lambda key: _stock_workspace_cache[key][0])
+                _stock_workspace_cache.pop(oldest, None)
+        return {**payload, "cache": {"hit": False, "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS}}
+
+    @staticmethod
+    def _agent_context_from_stock(stock: Dict[str, Any]) -> Dict[str, Any]:
+        """Compact factual stock workspace into a bounded LLM input."""
+        coverage = list(stock.get("coverage") or [])
+        timeline = list(stock.get("timeline") or [])[:12]
+        facts = [
+            {
+                "event_id": item.get("id"), "time": item.get("event_at"),
+                "channel": item.get("channel"), "source": item.get("source_name"),
+                "type": item.get("event_type"), "title": item.get("title"),
+                "evidence_level": item.get("evidence_level"),
+            }
+            for item in timeline
+        ]
+        compact = {
+            "symbol": stock.get("symbol"), "name": stock.get("name"),
+            "market": stock.get("market") or {}, "valuation": stock.get("valuation") or {},
+            "technical": stock.get("technical") or {}, "fundamentals": stock.get("fundamentals") or {},
+            "capital": {
+                key: (stock.get("capital") or {}).get(key)
+                for key in ("winner_rate", "weighted_cost", "moneyflow", "margin", "northbound")
+            },
+            "consensus": stock.get("consensus") or {},
+            "signals": list(stock.get("signals") or [])[:10],
+            "evidence": stock.get("evidence") or {},
+            "coverage": [
+                {key: item.get(key) for key in ("name", "count", "latest_at", "freshness_status", "source_keys")}
+                for item in coverage
+            ],
+            "latest_facts": facts,
+        }
+        summary = (
+            "\n[全渠道统一个股事实底稿]\n"
+            "以下数据来自本地共享数据库；引用结论时必须注明对应时间与来源，"
+            "未核验小作文/股评不得表述为公司事实。\n"
+            + json.dumps(compact, ensure_ascii=False, default=str)
+        )
+        return {
+            "analysis_context_pack_summary": summary,
+            "realtime_quote": stock.get("market") or {},
+            "chip_distribution": stock.get("capital") or {},
+            "news_context": json.dumps(facts, ensure_ascii=False, default=str),
+            "fundamental_context": {
+                "fundamentals": stock.get("fundamentals") or {},
+                "valuation": stock.get("valuation") or {}, "coverage": coverage,
+            },
+            "evidence_count": (stock.get("evidence") or {}).get("event_count", 0),
+            "source_count": (stock.get("evidence") or {}).get("source_count", 0),
+        }
+
     def _super_stock(
         self, symbol: str, *, days: int,
         live_quote: Optional[Dict[str, Any]] = None,
@@ -970,8 +1104,10 @@ class InvestmentMonitorService:
             logger.info("Essay consensus snapshot unavailable for %s: %s", symbol, type(exc).__name__)
             essay_consensus = {
                 "status": "failed", "source_count": min(len(essays), 20), "analyzed_count": 0,
+                "related_source_count": min(len(essays), 20), "dedicated_source_count": 0,
                 "pending_count": 0, "summary": "", "estimates": [], "metric_counts": {},
-                "consensus_points": [], "conflicts": [], "caveats": [], "source_notes": [],
+                "consensus_points": [], "conflicts": [], "time_observations": [],
+                "verification_conditions": [], "caveats": [], "source_notes": [],
                 "error": "一致预期缓存暂时不可用",
             }
         cutoff = (utc_naive_now() - timedelta(days=days)).date()
@@ -1169,7 +1305,7 @@ class InvestmentMonitorService:
 
     def _sync_sources(self, sources: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         ordered = sorted(sources, key=lambda item: (int(item.get("poll_interval_seconds") or 300), item["source_key"]))
-        max_workers = max(1, min(int(os.getenv("INVESTMENT_MONITOR_MAX_WORKERS", "4")), 12, len(ordered) or 1))
+        max_workers = max(1, min(int(os.getenv("INVESTMENT_MONITOR_MAX_WORKERS", "16")), 24, len(ordered) or 1))
         if max_workers == 1 or len(ordered) <= 1:
             results = [self._sync_one(source) for source in ordered]
             return self._sync_summary(results, max_workers=1)
@@ -1181,58 +1317,67 @@ class InvestmentMonitorService:
             started = utc_naive_now()
             self.repo.update_source_status(source["source_key"], status="running", started_at=started)
 
-        fetched: Dict[str, Any] = {}
+        results = []
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="monitor-source") as executor:
             futures = {executor.submit(self._timed_source_fetch, source): source for source in ordered}
             for future in as_completed(futures):
                 source = futures[future]
                 try:
-                    fetched[source["source_key"]] = future.result()
+                    value, duration_ms, fetch_error = future.result()
                 except Exception as exc:  # noqa: BLE001 - one source must not stop other refreshes.
-                    fetched[source["source_key"]] = (None, 0, exc)
-
-        results = []
-        for source in ordered:
-            key = source["source_key"]
-            value, duration_ms, fetch_error = fetched[key]
-            if fetch_error is not None:
-                if isinstance(fetch_error, MonitoringSourceNotConfigured):
-                    message = str(fetch_error)[:500]
-                    self.repo.update_source_status(
-                        key, status="not_configured", error=message, received_count=0,
-                        created_count=0, updated_count=0, duration_ms=duration_ms,
-                    )
-                    results.append({"source_key": key, "status": "not_configured", "created": 0,
-                                    "updated": 0, "received": 0, "duration_ms": duration_ms, "error": message})
-                    continue
-                safe_error = f"{type(fetch_error).__name__}: {str(fetch_error)[:500]}"
-                logger.warning("[investment-monitor] source %s failed: %s", key, safe_error)
-                self.repo.update_source_status(
-                    key, status="failed", error=safe_error, received_count=0,
-                    created_count=0, updated_count=0, duration_ms=duration_ms,
+                    value, duration_ms, fetch_error = None, 0, exc
+                # Persist each completed adapter immediately. A slow announcement
+                # or enterprise API must never hold already-fetched news in memory
+                # until the whole polling cycle finishes.
+                key = source["source_key"]
+                result = self._persist_fetched_source(
+                    source, value=value, duration_ms=duration_ms, fetch_error=fetch_error,
                 )
-                results.append({"source_key": key, "status": "failed", "created": 0, "updated": 0,
-                                "received": 0, "duration_ms": duration_ms, "error": safe_error})
-                continue
-            try:
-                saved = self.repo.upsert_events(value)
-                self.repo.update_source_status(
-                    key, status="success", item_count=saved["created"],
-                    received_count=saved["received"], created_count=saved["created"],
-                    updated_count=saved["updated"], duration_ms=duration_ms,
-                    success_at=utc_naive_now(),
-                )
-                results.append({"source_key": key, "status": "success", "duration_ms": duration_ms, **saved})
-            except Exception as exc:  # noqa: BLE001 - persistence failure remains source-scoped.
-                safe_error = f"{type(exc).__name__}: {str(exc)[:500]}"
-                logger.warning("[investment-monitor] source %s persistence failed: %s", key, safe_error)
-                self.repo.update_source_status(
-                    key, status="failed", error=safe_error, received_count=0,
-                    created_count=0, updated_count=0, duration_ms=duration_ms,
-                )
-                results.append({"source_key": key, "status": "failed", "created": 0, "updated": 0,
-                                "received": 0, "duration_ms": duration_ms, "error": safe_error})
+                results.append(result)
+        results.sort(key=lambda item: item["source_key"])
         return self._sync_summary(results, max_workers=max_workers)
+
+    def _persist_fetched_source(
+        self, source: Dict[str, Any], *, value: Optional[List[Dict[str, Any]]],
+        duration_ms: int, fetch_error: Optional[Exception],
+    ) -> Dict[str, Any]:
+        """Serialize one finished adapter into SQLite without waiting for its peers."""
+        key = source["source_key"]
+        if fetch_error is not None:
+            if isinstance(fetch_error, MonitoringSourceNotConfigured):
+                message = str(fetch_error)[:500]
+                self.repo.update_source_status(
+                    key, status="not_configured", error=message, received_count=0,
+                    created_count=0, updated_count=0, duration_ms=duration_ms,
+                )
+                return {"source_key": key, "status": "not_configured", "created": 0,
+                        "updated": 0, "received": 0, "duration_ms": duration_ms, "error": message}
+            safe_error = f"{type(fetch_error).__name__}: {str(fetch_error)[:500]}"
+            logger.warning("[investment-monitor] source %s failed: %s", key, safe_error)
+            self.repo.update_source_status(
+                key, status="failed", error=safe_error, received_count=0,
+                created_count=0, updated_count=0, duration_ms=duration_ms,
+            )
+            return {"source_key": key, "status": "failed", "created": 0, "updated": 0,
+                    "received": 0, "duration_ms": duration_ms, "error": safe_error}
+        try:
+            saved = self.repo.upsert_events(value or [])
+            self.repo.update_source_status(
+                key, status="success", item_count=saved["created"],
+                received_count=saved["received"], created_count=saved["created"],
+                updated_count=saved["updated"], duration_ms=duration_ms,
+                success_at=utc_naive_now(),
+            )
+            return {"source_key": key, "status": "success", "duration_ms": duration_ms, **saved}
+        except Exception as exc:  # noqa: BLE001 - persistence failure remains source-scoped.
+            safe_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            logger.warning("[investment-monitor] source %s persistence failed: %s", key, safe_error)
+            self.repo.update_source_status(
+                key, status="failed", error=safe_error, received_count=0,
+                created_count=0, updated_count=0, duration_ms=duration_ms,
+            )
+            return {"source_key": key, "status": "failed", "created": 0, "updated": 0,
+                    "received": 0, "duration_ms": duration_ms, "error": safe_error}
 
     def _timed_source_fetch(self, source: Dict[str, Any]) -> tuple[Optional[List[Dict[str, Any]]], int, Optional[Exception]]:
         """Measure one adapter's upstream work without including other workers' queue time."""
@@ -1431,7 +1576,22 @@ class InvestmentMonitorService:
 
     def _tushare_news_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         now = datetime.now()
-        start = now - timedelta(days=self._backfill_days) if self._backfill_days else now - timedelta(hours=3)
+        if self._backfill_days:
+            start = now - timedelta(days=self._backfill_days)
+        else:
+            live_overlap = max(5, min(int(os.getenv("INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES", "10")), 60))
+            recovery_overlap = max(
+                live_overlap,
+                min(int(os.getenv("INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES", "360")), 1440),
+            )
+            last_success_raw = source.get("last_success_at")
+            last_success = self._utc_iso_to_market_naive(last_success_raw)
+            # Normal cycles only reread a small overlap for late/unsorted items.
+            # After downtime the cursor automatically expands to cover the gap,
+            # capped by the recovery window so requests stay bounded.
+            recovery_start = now - timedelta(minutes=recovery_overlap)
+            cursor_start = last_success - timedelta(minutes=live_overlap) if last_success else recovery_start
+            start = max(recovery_start, cursor_start)
         src = str(source.get("config", {}).get("src") or source["provider"])
         rows: List[Dict[str, Any]] = []
         window_start = start
@@ -2169,18 +2329,33 @@ class InvestmentMonitorService:
         return f"天眼查返回 {label} 数据。"
 
     def _zsxq_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
-        # MCP sync is frequent; only project the hot window on each pass. Older
-        # analyses remain queryable in the essay radar and existing event table.
-        cutoff = utc_naive_now() - timedelta(days=self._history_window(3))
+        # The MCP worker already owns the upstream cursor. This adapter only
+        # mirrors notes/analyses changed since its previous successful pass into
+        # the unified event table; it must not re-project the whole three-day
+        # corpus every ten seconds.
+        last_success_raw = source.get("last_success_at")
+        last_success = self._utc_iso_to_utc_naive(last_success_raw)
+        cutoff = (
+            utc_naive_now() - timedelta(days=self._history_window(3))
+            if self._backfill_days or last_success is None
+            else last_success - timedelta(seconds=60)
+        )
         db = DatabaseManager.get_instance()
         with db.get_session() as session:
-            rows = session.execute(
+            query = (
                 select(EssayAnalysisRecord, ResearchNote)
                 .select_from(ResearchNote)
                 .outerjoin(EssayAnalysisRecord, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
-                .where(ResearchNote.created_at >= cutoff)
                 .order_by(desc(ResearchNote.created_at))
-            ).all()
+            )
+            if self._backfill_days:
+                query = query.where(ResearchNote.created_at >= cutoff)
+            else:
+                query = query.where(or_(
+                    ResearchNote.synced_at >= cutoff,
+                    EssayAnalysisRecord.updated_at >= cutoff,
+                ))
+            rows = session.execute(query).all()
         names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
         events = []
         for analysis, note in rows:
@@ -2691,6 +2866,34 @@ class InvestmentMonitorService:
         # China-market timestamps. Persist all monitoring timestamps as UTC.
         return parsed.replace(tzinfo=timezone(timedelta(hours=8))).astimezone(timezone.utc).replace(tzinfo=None)
 
+    @staticmethod
+    def _utc_iso_to_market_naive(value: Any) -> Optional[datetime]:
+        """Convert persisted UTC scheduler timestamps to Tushare's Shanghai query clock."""
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
+
+    @staticmethod
+    def _utc_iso_to_utc_naive(value: Any) -> Optional[datetime]:
+        """Parse an API UTC timestamp into the database's UTC-naive clock."""
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return parsed
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
     def essay_consensus(self, symbol: str) -> Dict[str, Any]:
         code = self._canonical_ts_code(symbol)
         name = self._stock_name(code)
@@ -2747,7 +2950,8 @@ class InvestmentMonitorService:
         essay_expectations = [{
             "event_id": item.get("event_id"), "topic_id": item.get("topic_id"),
             "title": item.get("title"), "text": item.get("value_text") or "",
-            "event_at": item.get("event_at"), "metric": item.get("metric") or "other",
+            "event_at": item.get("event_at"), "proposed_at": item.get("proposed_at"),
+            "source_kind": item.get("source_kind"), "metric": item.get("metric") or "other",
             "period": item.get("period") or "未注明", "unit": item.get("unit") or "",
             "value_low": item.get("value_low"), "value_high": item.get("value_high"),
             "direction": item.get("direction") or "unclear", "evidence": item.get("evidence") or "",
@@ -2772,7 +2976,7 @@ class InvestmentMonitorService:
             "essay_expectations": essay_expectations[:20],
             "essay_analysis": essay_analysis,
             "as_of": as_of,
-            "method": "券商数字采用 report_rc 同预测期中位数；小作文侧把该股票最近匹配的 20 篇原文作为独立 DeepSeek 任务，抽取利润、EPS、目标价、市值目标、估值倍数等推测及原文证据。两类口径分栏展示、不混算。",
+            "method": "券商数字采用 report_rc 同预测期中位数；小作文侧使用最多 20 篇相关原文与 5 篇股票标签仅含当前标的的单股专属原文，去重后由 DeepSeek 按观点提出时间和预测期提取预期。券商与小作文口径分栏展示、不混算。",
         }
 
     @staticmethod

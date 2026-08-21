@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Dedicated AI extraction of expectation claims from a stock's latest essays."""
+"""Dedicated AI extraction of time-bound expectation claims from stock essays."""
 
 from __future__ import annotations
 
@@ -19,16 +19,20 @@ from src.storage import DatabaseManager, EssayConsensusRecord, ResearchNote, utc
 
 logger = logging.getLogger(__name__)
 
-ESSAY_CONSENSUS_PROMPT_VERSION = "essay-consensus-v2-entity-bound-extraction"
+ESSAY_CONSENSUS_PROMPT_VERSION = "essay-consensus-v3-time-aware-20-plus-5"
 _METRICS = {
     "revenue", "net_profit", "eps", "target_price", "market_cap",
     "valuation_multiple", "cash_flow", "margin", "growth_rate", "other",
 }
 
-_SYSTEM_PROMPT = """你是中国资本市场预期数据抽取员。输入是某只股票最近最多20篇知识星球小作文。
+_SYSTEM_PROMPT = """你是中国资本市场预期数据抽取员。输入由两组互不重复的知识星球小作文组成：
+最多20篇与目标股票相关的小作文，以及最多5篇股票标签中只有目标股票的“单股专属”小作文。
 你的任务不是写泛泛的投资观点，而是寻找原文是否明确或隐含提出收入、净利润、EPS、目标价、目标市值、
 估值倍数、现金流、利润率或增速推测。严禁补造数字、单位、预测期或来源；没有数字时可以保留明确的方向性推测，
 但 value_text 必须忠实复述原文。每一项必须给 topic_id 和短原文证据。不同作者口径冲突必须分开，不得强行平均。
+
+必须同时考虑时间：created_at 是观点提出时间，period 是预测对应期间。总结时按提出时间梳理预期变化，禁止把旧预测
+当成最新预测，也禁止把不同预测期直接横向平均。单股专属材料只代表样本聚焦度更高，不代表事实等级更高。
 
 每项还必须识别“预期主体”。只保留与输入目标股票有明确关系的主体：目标上市公司本身、其合并口径、已明确说明的子公司、
 收购标的或业务分部。行业汇总里仅仅同时出现的同行、客户或供应商数字必须丢弃。子公司、收购标的或业务分部的指标不能写成
@@ -58,6 +62,10 @@ _SYSTEM_PROMPT = """你是中国资本市场预期数据抽取员。输入是某
   ],
   "consensus_points": ["多篇材料一致指向的预期，最多5条"],
   "conflicts": ["作者或口径之间的冲突，最多5条"],
+  "time_observations": ["按观点提出时间与预测期描述预期变化，最多6条"],
+  "verification_conditions": [
+    {"condition": "原文明确给出的验证或证伪条件；没有则不要生成", "window": "验证窗口或未说明", "impact": "条件发生时的预期影响", "expiry_at": "原文明确的失效时间或未说明"}
+  ],
   "caveats": ["来源、口径、时间和可验证性限制，最多6条"]
 }
 不得输出 Markdown 或 JSON 之外的文本。"""
@@ -88,6 +96,7 @@ class EssayConsensusAnalyzer:
             "created_at": note.get("created_at"),
             "author_name": str(note.get("author_name") or ""),
             "group_name": str(note.get("group_name") or ""),
+            "source_kind": str(note.get("source_kind") or "related"),
         } for note in notes]
         request_payload = {
             "model": self.model,
@@ -153,8 +162,29 @@ class EssayConsensusAnalyzer:
             "estimates": estimates[:80],
             "consensus_points": cls._strings(payload.get("consensus_points"), 5),
             "conflicts": cls._strings(payload.get("conflicts"), 5),
+            "time_observations": cls._strings(payload.get("time_observations"), 6),
+            "verification_conditions": cls._verification_conditions(payload.get("verification_conditions"), 6),
             "caveats": cls._strings(payload.get("caveats"), 6),
         }
+
+    @staticmethod
+    def _verification_conditions(value: Any, limit: int) -> List[Dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+        rows = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            condition = str(item.get("condition") or "").strip()[:300]
+            if not condition:
+                continue
+            rows.append({
+                "condition": condition,
+                "window": str(item.get("window") or "未说明").strip()[:100],
+                "impact": str(item.get("impact") or "未说明").strip()[:300],
+                "expiry_at": str(item.get("expiry_at") or "未说明").strip()[:100],
+            })
+        return rows[:limit]
 
     @staticmethod
     def _optional_number(value: Any) -> Optional[float]:
@@ -243,7 +273,7 @@ class EssayConsensusService:
             record_id = row.id
             symbol, stock_name = row.symbol, row.stock_name
             topic_ids = self._loads(row.source_topic_ids_json, [])
-        notes = self._notes_by_ids(topic_ids)
+        notes = self._analysis_notes(symbol, topic_ids)
         try:
             response = self.analyzer.analyze(symbol=symbol, stock_name=stock_name, notes=notes)
             with self.db.get_session() as session:
@@ -274,35 +304,70 @@ class EssayConsensusService:
         events = [
             event for event in self.monitor_repo.all_symbol_events(symbol=symbol, days=3650)
             if event.get("event_type") == "essay" and event.get("external_id")
-        ][:max(1, min(int(limit), 20))]
+        ]
         topic_ids = [str(event["external_id"]) for event in events]
         event_by_topic = {str(event["external_id"]): event for event in events}
         notes = self._notes_by_ids(topic_ids)
         note_by_id = {str(note["topic_id"]): note for note in notes}
-        selected = []
+        dedicated: List[Dict[str, Any]] = []
+        related: List[Dict[str, Any]] = []
+        related_limit = max(1, min(int(limit), 20))
         for topic_id in topic_ids:
             note = note_by_id.get(topic_id)
             if not note:
                 continue
             event = event_by_topic[topic_id]
-            selected.append({**note, "event_id": event.get("id"), "event_at": event.get("event_at")})
-        return selected
+            item = {**note, "event_id": event.get("id"), "event_at": event.get("event_at")}
+            if self._is_dedicated(note, symbol):
+                if len(dedicated) < 5:
+                    dedicated.append({**item, "source_kind": "dedicated"})
+            elif len(related) < related_limit:
+                related.append({**item, "source_kind": "related"})
+            if len(dedicated) >= 5 and len(related) >= related_limit:
+                break
+        return sorted(
+            [*dedicated, *related],
+            key=lambda item: str(item.get("event_at") or item.get("created_at") or ""),
+            reverse=True,
+        )
+
+    def _analysis_notes(self, symbol: str, topic_ids: Sequence[str]) -> List[Dict[str, Any]]:
+        note_by_id = {str(note["topic_id"]): note for note in self._notes_by_ids(topic_ids)}
+        return [{
+            **note_by_id[topic_id],
+            "source_kind": "dedicated" if self._is_dedicated(note_by_id[topic_id], symbol) else "related",
+        } for topic_id in map(str, topic_ids) if topic_id in note_by_id]
+
+    @staticmethod
+    def _is_dedicated(note: Dict[str, Any], symbol: str) -> bool:
+        symbols = {
+            str(value).strip().upper().split(".")[0]
+            for value in note.get("symbols") or [] if str(value).strip()
+        }
+        return symbols == {str(symbol).strip().upper().split(".")[0]}
 
     def _notes_by_ids(self, topic_ids: Sequence[str]) -> List[Dict[str, Any]]:
         normalized = [str(value) for value in topic_ids if str(value)]
         if not normalized:
             return []
+        rows = []
         with self.db.get_session() as session:
-            rows = session.execute(select(ResearchNote).where(ResearchNote.topic_id.in_(normalized))).scalars().all()
+            for offset in range(0, len(normalized), 500):
+                rows.extend(session.execute(
+                    select(ResearchNote).where(ResearchNote.topic_id.in_(normalized[offset:offset + 500]))
+                ).scalars().all())
         return [{
             "topic_id": row.topic_id, "title": row.title, "content": row.content or "",
             "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
             "author_name": row.author_name or "", "group_name": row.group_name,
+            "symbols": [value for value in (row.symbol_codes or "").split(",") if value],
         } for row in rows]
 
     @staticmethod
     def _source_hash(selected: Sequence[Dict[str, Any]]) -> str:
-        payload = "|".join(f"{item.get('topic_id')}:{item.get('created_at')}" for item in selected)
+        payload = "|".join(
+            f"{item.get('topic_id')}:{item.get('created_at')}:{item.get('source_kind')}" for item in selected
+        )
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def _snapshot_dict(self, row: Optional[EssayConsensusRecord], *, selected: Sequence[Dict[str, Any]], source_hash: str) -> Dict[str, Any]:
@@ -317,17 +382,30 @@ class EssayConsensusService:
             source = selected_by_topic.get(topic_id, {})
             metric = str(raw.get("metric") or "other")
             counts[metric] = counts.get(metric, 0) + 1
-            estimates.append({**raw, "event_id": source.get("event_id"), "title": source.get("title"), "event_at": source.get("event_at")})
+            proposed_at = source.get("event_at") or source.get("created_at")
+            estimates.append({
+                **raw,
+                "event_id": source.get("event_id"),
+                "title": source.get("title"),
+                "event_at": proposed_at,
+                "proposed_at": proposed_at,
+                "source_kind": source.get("source_kind") or "related",
+            })
         stale = bool(row and row.source_hash != source_hash)
         status = "not_started" if row is None else "stale" if stale and row.status == "completed" else row.status
         source_notes = [{
             "topic_id": item["topic_id"], "event_id": item.get("event_id"), "title": item.get("title"),
             "event_at": item.get("event_at") or item.get("created_at"), "author_name": item.get("author_name"),
+            "source_kind": item.get("source_kind") or "related",
             "estimate_count": sum(1 for value in estimates if value.get("topic_id") == item["topic_id"]),
         } for item in selected]
+        dedicated_count = sum(1 for item in selected if item.get("source_kind") == "dedicated")
+        related_count = len(selected) - dedicated_count
         return {
             "status": status,
             "source_count": len(selected),
+            "related_source_count": related_count,
+            "dedicated_source_count": dedicated_count,
             "analyzed_count": int(row.source_count or 0) if row and row.status == "completed" and not stale else 0,
             "pending_count": len(selected) if status in {"pending", "processing", "stale", "not_started"} else 0,
             "model": row.model if row else self.analyzer.model,
@@ -340,8 +418,14 @@ class EssayConsensusService:
             "metric_counts": counts,
             "consensus_points": result.get("consensus_points") or [],
             "conflicts": result.get("conflicts") or [],
+            "time_observations": result.get("time_observations") or [],
+            "verification_conditions": result.get("verification_conditions") or [],
             "caveats": result.get("caveats") or [],
             "source_notes": source_notes,
+            "analysis_cutoff_at": max(
+                (str(item.get("event_at") or item.get("created_at") or "") for item in selected),
+                default="",
+            ) or None,
             "error": row.error_message if row else None,
             "updated_at": row.updated_at.isoformat() + "Z" if row and row.updated_at else None,
             "completed_at": row.completed_at.isoformat() + "Z" if row and row.completed_at else None,

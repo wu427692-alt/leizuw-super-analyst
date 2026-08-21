@@ -213,24 +213,67 @@ export type EssayInsights = {
 };
 
 export type EssayInsightNode = {
-  stage: 'sources' | 'themes' | 'stocks' | 'signals';
-  key: string; label: string; count: number; kind?: 'catalyst' | 'risk'; tsCode?: string;
+  stage: 'sources' | 'themes' | 'stocks' | 'outcomes';
+  key: string; label: string; count: number; kind?: 'positive' | 'negative' | 'neutral';
+  tsCode?: string; stockName?: string;
+};
+
+export type EssayMarketMetric = {
+  period: number; sampleCount: number; averageReturn?: number | null; medianReturn?: number | null;
+  winRate?: number | null; averageExcessReturn?: number | null; excessWinRate?: number | null;
+  confidenceInterval95: [number | null, number | null];
+};
+
+export type EssayMarketImpactItem = {
+  key: string; tsCode: string; name: string; mentionCount: number; eventDayCount: number;
+  coveredEventDays: number; metrics: EssayMarketMetric[];
+  leadLag: Array<{ lagSessions: number; correlation?: number | null; sampleCount: number }>;
+  attentionComparison: Array<{
+    level: string; threshold: number; sampleCount: number;
+    averageReturn5D?: number | null; winRate5D?: number | null;
+  }>;
+  series: Array<{ date: string; close: number; priceReturn: number; dailyReturn: number; mentionCount: number }>;
+  insight: string; latestPriceDate?: string | null; latestClose?: number | null; dataSource: string;
 };
 
 export type EssayDeepInsights = {
   generatedAt: string; windowDays: number; latestDataAt?: string | null;
+  period: {
+    horizon: 'short' | 'medium' | 'long' | 'custom'; startDate: string; endDate: string;
+    granularity: 'day' | 'week' | 'month'; comparisonDays: number;
+  };
   summary: {
     analyzedCount: number; sourceCount: number; themeCount: number; stockCount: number;
     evidenceCoveragePercent: number; highNoveltyCount: number; divergenceCount: number;
   };
   pulse: Array<{ date: string; total: number; bullish: number; bearish: number; neutral: number; mixed: number }>;
   layers: {
-    sources: EssayInsightNode[]; themes: EssayInsightNode[]; stocks: EssayInsightNode[]; signals: EssayInsightNode[];
+    sources: EssayInsightNode[]; themes: EssayInsightNode[]; stocks: EssayInsightNode[]; outcomes: EssayInsightNode[];
     edges: Array<{ fromStage: string; from: string; toStage: string; to: string; count: number }>;
   };
   themeHeatmap: {
     dates: string[];
-    items: Array<{ name: string; total: number; points: Array<{ date: string; count: number }> }>;
+    items: Array<{
+      name: string; total: number; aliases?: Array<{ name: string; count: number }>;
+      points: Array<{
+        date: string; count: number; dailyTotal?: number;
+        sharePercent?: number; concentrationScore?: number;
+      }>;
+    }>;
+    taxonomy?: {
+      version: string; rawThemeCount: number; canonicalThemeCount: number;
+      mergedThemeCount: number; method: string;
+    };
+    granularity?: 'day' | 'week' | 'month';
+  };
+  marketImpact: {
+    benchmark: string; entryRule: string; exitRule: string; priceBasis: string; dedupeRule: string; causalityNote: string;
+    coverage: {
+      candidateStockCount: number; pricedStockCount: number; eventDayCount: number;
+      coveredEventDayCount: number; eventCoveragePercent: number; benchmarkAvailable: boolean;
+      priceStart?: string | null; priceEnd?: string | null; sources: string[];
+    };
+    items: EssayMarketImpactItem[];
   };
   stockMomentum: Array<{
     tsCode: string; name: string; currentCount: number; previousCount: number;

@@ -35,6 +35,9 @@ function time(value?: string | null, withDate = true) {
 function freshness(source: MonitoringSource) {
   if (source.lastStatus === 'failed') return { label: '同步失败', color: '#FF5D5D' };
   if (source.lastStatus === 'not_configured') return { label: '未配置上游', color: '#717A84' };
+  if (source.monitoringStatus === 'delayed') return { label: '监控延迟', color: '#FFB800' };
+  if (source.monitoringStatus === 'live' && source.freshnessStatus === 'stale') return { label: '实时巡检 · 上游暂无新事实', color: GREEN };
+  if (source.monitoringStatus === 'live' && source.freshnessStatus === 'empty') return { label: '实时巡检 · 尚无匹配数据', color: GREEN };
   if (source.freshnessStatus === 'fresh') return { label: '新鲜', color: GREEN };
   if (source.freshnessStatus === 'stale') return { label: '陈旧', color: '#FFB800' };
   return { label: '暂无数据', color: '#717A84' };
@@ -111,7 +114,7 @@ export default function InvestmentMonitorOverviewPage() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void Promise.allSettled([loadStatus(), loadEvents()]);
-    }, 30_000);
+    }, 10_000);
     return () => window.clearInterval(timer);
   }, [loadEvents, loadStatus]);
 
@@ -155,7 +158,7 @@ export default function InvestmentMonitorOverviewPage() {
       <section className="grid grid-cols-2 border-b border-[#242A31] lg:grid-cols-5">
         {[
           ['渠道总数', status?.sources.enabled ?? '—'], ['真正有数据', status?.sources.withData ?? '—'],
-          ['当前可用', status?.sources.healthy ?? '—'], ['陈旧 / 空库', (status?.sources.stale ?? 0) + (status?.sources.empty ?? 0)],
+          ['实时巡检', status?.sources.monitoringLive ?? '—'], ['延迟 / 失败', status?.sources.monitoringDelayed ?? '—'],
           ['最后调度', time(status?.worker.lastSyncAt, false)],
         ].map(([label, value]) => <div key={String(label)} className="border-r border-t border-[#242A31] px-4 py-3 first:border-t-0 lg:border-t-0"><p className="text-[9px] text-[#717A84]">{label}</p><p className="mt-1 text-lg font-bold text-white">{value}</p></div>)}
       </section>
@@ -166,7 +169,7 @@ export default function InvestmentMonitorOverviewPage() {
           {groups.map((group, groupIndex) => <section key={group.key} className={groupIndex ? 'border-t border-[#242A31] xl:border-l xl:border-t-0' : ''}>
             <header className="border-b border-[#242A31] bg-[#090B09] px-3 py-2.5"><div className="flex items-center justify-between"><h3 className="text-[10px] font-bold text-white">{group.title}</h3><span className="text-[9px] text-[#717A84]">{group.items.length}</span></div><p className="mt-0.5 text-[9px] text-[#59616A]">{group.description}</p></header>
             <div>{group.items.map(source => { const state = freshness(source); const active = source.sourceKey === selectedSourceKey; return <button key={source.sourceKey} onClick={() => setSelectedSourceKey(source.sourceKey)} className={`grid w-full grid-cols-[minmax(0,1fr)_70px] gap-2 border-b border-[#1C211E] px-3 py-2.5 text-left transition-colors ${active ? 'bg-[#0C1710] shadow-[inset_2px_0_0_#00E676]' : 'hover:bg-[#0D100E]'}`}>
-              <span className="min-w-0"><span className={`block truncate text-[10px] font-semibold ${active ? 'text-[#00E676]' : 'text-[#D7DCE2]'}`}>{source.name}</span><span className="mt-1 block truncate text-[8px] text-[#59616A]">{source.config?.originApis?.join(' · ') || source.adapterType}</span><span className="mt-1 block truncate text-[8px]" style={{ color: state.color }}>{state.label} · 最新 {time(source.latestEventAt)}</span></span>
+              <span className="min-w-0"><span className={`block truncate text-[10px] font-semibold ${active ? 'text-[#00E676]' : 'text-[#D7DCE2]'}`}>{source.name}</span><span className="mt-1 block truncate text-[8px] text-[#59616A]">{source.config?.originApis?.join(' · ') || source.adapterType}</span><span className="mt-1 block truncate text-[8px]" style={{ color: state.color }}>{state.label} · 检查 {time(source.lastCheckAt)}</span><span className="mt-0.5 block truncate text-[8px] text-[#59616A]">最新事实 {time(source.latestEventAt)}</span></span>
               <span className="text-right"><span className="block text-sm font-bold text-white">{source.storedEventCount ?? 0}</span><span className="text-[8px] text-[#59616A]">存量</span><span className="mt-1 block text-[8px] text-[#717A84]">收到 {source.lastReceivedCount ?? 0} · 新 {source.lastCreatedCount ?? 0}</span></span>
             </button>; })}{!group.items.length ? <p className="px-3 py-5 text-[9px] text-[#59616A]">暂无渠道</p> : null}</div>
           </section>)}
