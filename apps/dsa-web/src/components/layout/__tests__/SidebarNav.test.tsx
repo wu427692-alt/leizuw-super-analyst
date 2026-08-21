@@ -71,12 +71,13 @@ describe('SidebarNav', () => {
 
     await screen.findByRole('link', { name: '选股' });
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs.slice(0, 9)).toEqual([
+    expect(hrefs.slice(0, 10)).toEqual([
       '/',
       '/chat',
       '/essay-radar',
       '/essay-quant',
       '/investment-monitor',
+      '/super-watchlist',
       '/data-acquisition',
       '/screening',
       '/portfolio',

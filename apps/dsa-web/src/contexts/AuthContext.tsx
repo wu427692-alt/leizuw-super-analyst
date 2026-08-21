@@ -1,5 +1,5 @@
 import type React from 'react';
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createParsedApiError, getParsedApiError, type ParsedApiError } from '../api/error';
 import { authApi } from '../api/auth';
 import { useStockPoolStore } from '../stores';
@@ -46,9 +46,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [setupState, setSetupState] = useState<'enabled' | 'password_retained' | 'no_password'>('no_password');
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<ParsedApiError | null>(null);
+  const initialStatusResolved = useRef(false);
 
   const fetchStatus = useCallback(async () => {
-    setIsLoading(true);
+    if (!initialStatusResolved.current) setIsLoading(true);
     setLoadError(null);
     try {
       const status = await authApi.getStatus();
@@ -62,13 +63,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (err) {
       setLoadError(getParsedApiError(err));
-      setAuthEnabled(false);
-      setLoggedIn(false);
-      setPasswordSet(false);
-      setPasswordChangeable(false);
-      setSetupState('no_password');
-      useStockPoolStore.getState().resetDashboardState();
+      // A temporary status-endpoint failure is not proof that the session or
+      // local data disappeared. Preserve the last known state and retry in the
+      // background instead of replacing the whole application with an error.
     } finally {
+      initialStatusResolved.current = true;
       setIsLoading(false);
     }
   }, []);
@@ -76,6 +75,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void fetchStatus();
   }, [fetchStatus]);
+
+  useEffect(() => {
+    if (!loadError) return undefined;
+    const timer = window.setTimeout(() => void fetchStatus(), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [fetchStatus, loadError]);
 
   const login = useCallback(
     async (

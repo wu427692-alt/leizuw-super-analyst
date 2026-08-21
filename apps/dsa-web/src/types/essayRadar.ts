@@ -17,6 +17,43 @@ export type EssayWorkerStatus = {
   lastBatchAt?: string | null;
   lastError?: string | null;
 };
+export type ResearchNoteDetail = {
+  topicId: string; groupId: string; groupName: string; title: string;
+  content?: string | null; authorId?: string | null; authorName?: string | null;
+  topicType: string; textType?: string | null; digested: boolean; sticky: boolean;
+  symbols: string[];
+  files: Array<{ fileId?: string; name?: string; size?: number; viewUrl?: string; downloadStatus?: string }>;
+  images: Array<{ imageId?: string; type?: string; viewUrl?: string; downloadStatus?: string; thumbnail?: { url?: string }; large?: { url?: string } }>;
+  counts: Record<string, unknown>; createdAt?: string | null; modifiedAt?: string | null; syncedAt?: string | null;
+};
+export type EssayHistoricalBacklog = {
+  totalNotes: number;
+  queuedNotes: number;
+  completed: number;
+  pending: number;
+  processing: number;
+  failed: number;
+  coveragePercent: number;
+  unqueued: number;
+  earliestUnqueuedAt?: string | null;
+  latestUnqueuedAt?: string | null;
+  earliestNoteAt?: string | null;
+  latestNoteAt?: string | null;
+  latestSyncedAt?: string | null;
+  groupCount: number;
+  notes24h: number;
+  notes7d: number;
+  notes30d: number;
+};
+export type EssayCountBackfillResponse = {
+  queue: {
+    requested: number; selected: number; order: 'newest' | 'oldest';
+    earliestSelectedAt?: string | null; latestSelectedAt?: string | null;
+    created: number; reset: number; unchanged: number;
+  };
+  backlog: EssayHistoricalBacklog;
+  worker: EssayWorkerStatus;
+};
 export type EssayDailyReportWorkerStatus = {
   running: boolean; pollSeconds: number; runHourShanghai: number; models: string[];
   lastRunAt?: string | null; lastResult?: Record<string, unknown> | null; lastError?: string | null;
@@ -35,6 +72,12 @@ export type ZsxqSyncStatus = {
     running: boolean; lookbackDays?: number | null; analysisEnqueued: boolean;
     startedAt?: string | null; finishedAt?: string | null;
     result?: Record<string, number> | null; error?: string | null;
+    phase?: 'idle' | 'waiting_for_incremental_sync' | 'connecting' | 'discovering_groups' | 'fetching' | 'saving' | 'retry_wait' | 'finalizing' | 'completed' | 'incomplete' | 'failed';
+    progressPercent?: number; groupsTotal?: number; groupsCompleted?: number;
+    currentGroupId?: string | null; currentGroupName?: string | null;
+    pagesFetched?: number; received?: number; created?: number; updated?: number; unchanged?: number;
+    message?: string | null; oldestAt?: string | null; groupSaved?: number; lastProgressAt?: string | null;
+    retryAttempt?: number; retryInSeconds?: number;
   };
 };
 export type EssayStatus = { progress: EssayProgress; worker: EssayWorkerStatus; mcpSync: ZsxqSyncStatus; dailyReportWorker: EssayDailyReportWorkerStatus };
@@ -120,6 +163,7 @@ export type EssayAnalysisList = {
   total: number;
   page: number;
   pageSize: number;
+  scope?: string;
 };
 
 export type EssayWordCloud = {
@@ -166,4 +210,38 @@ export type EssayInsights = {
     divergences: Array<{ text: string; modelCount: number }>;
   };
   watchlist: EssayWatchlistInsight[]; highNoveltySignals: EssayAnalysis[];
+};
+
+export type EssayInsightNode = {
+  stage: 'sources' | 'themes' | 'stocks' | 'signals';
+  key: string; label: string; count: number; kind?: 'catalyst' | 'risk'; tsCode?: string;
+};
+
+export type EssayDeepInsights = {
+  generatedAt: string; windowDays: number; latestDataAt?: string | null;
+  summary: {
+    analyzedCount: number; sourceCount: number; themeCount: number; stockCount: number;
+    evidenceCoveragePercent: number; highNoveltyCount: number; divergenceCount: number;
+  };
+  pulse: Array<{ date: string; total: number; bullish: number; bearish: number; neutral: number; mixed: number }>;
+  layers: {
+    sources: EssayInsightNode[]; themes: EssayInsightNode[]; stocks: EssayInsightNode[]; signals: EssayInsightNode[];
+    edges: Array<{ fromStage: string; from: string; toStage: string; to: string; count: number }>;
+  };
+  themeHeatmap: {
+    dates: string[];
+    items: Array<{ name: string; total: number; points: Array<{ date: string; count: number }> }>;
+  };
+  stockMomentum: Array<{
+    tsCode: string; name: string; currentCount: number; previousCount: number;
+    bullish: number; bearish: number; neutral: number; watching: number;
+    latestAt?: string | null; latestThesis?: string | null; change: number;
+    changePercent: number; averageImportance: number;
+  }>;
+  divergence: Array<{
+    key: string; tsCode: string; name: string; bullish: number; bearish: number;
+    neutral: number; total: number; divergenceScore: number;
+  }>;
+  verificationQueue: EssayAnalysis[];
+  evidenceFunnel: Array<{ name: string; count: number }>;
 };

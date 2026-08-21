@@ -9,18 +9,20 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from api.v1.endpoints import essay_radar
 from src.config import Config
-from src.repositories.essay_analysis_repo import EssayAnalysisRepository
+from src.repositories.essay_analysis_repo import EssayAnalysisRepository, _select_in_batches
 from src.services.essay_analysis_service import (
     DeepSeekEssayAnalyzer,
     EssayAnalysisService,
     EssayDailyReportService,
     _dashboard_rows_cache,
 )
+from src.services.essay_analysis_worker import EssayAnalysisWorker
 from src.services.financial_data_service import ResearchNoteService
-from src.storage import DatabaseManager
+from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote
 
 
 @pytest.fixture()
@@ -85,6 +87,21 @@ def test_analyzer_normalizes_json_output_and_stock_codes(monkeypatch) -> None:
     assert payload["thinking"] == {"type": "disabled"}
 
 
+def test_large_topic_id_queries_are_split_below_sqlite_parameter_limit() -> None:
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    rows = _select_in_batches(
+        session,
+        ResearchNote,
+        ResearchNote.topic_id,
+        [f"topic-{index}" for index in range(1201)],
+    )
+
+    assert rows == []
+    assert session.execute.call_count == 3
+
+
 def test_queue_claim_save_and_dashboard_are_restart_safe(essay_service) -> None:
     progress = essay_service.progress(days=30)
     assert progress["pending"] == 1
@@ -102,7 +119,10 @@ def test_queue_claim_save_and_dashboard_are_restart_safe(essay_service) -> None:
         "tags": ["订单增长", "风险提示"],
         "industries": ["机械设备"],
         "themes": ["机器人"],
-        "stock_mentions": [{"ts_code": "688836.SH", "name": "宇树科技", "stance": "watching", "confidence": 0.8, "rationale": "关注量产"}],
+        "stock_mentions": [
+            {"ts_code": "600519.SH", "name": "贵州茅台", "stance": "watching", "confidence": 0.8, "rationale": "关注量产"},
+            {"ts_code": "688836.SH", "name": "宇树科技", "stance": "watching", "confidence": 0.6, "rationale": "未上市公司"},
+        ],
         "key_points": ["订单增长"],
         "catalysts": ["量产"],
         "risks": ["交付延期"],
@@ -112,18 +132,80 @@ def test_queue_claim_save_and_dashboard_are_restart_safe(essay_service) -> None:
     dashboard = essay_service.dashboard(days=30)
     assert dashboard["summary"]["analyzed_count"] == 1
     assert dashboard["top_tags"][0] == {"name": "订单增长", "count": 1}
-    assert dashboard["top_stocks"][0]["ts_code"] == "688836.SH"
+    assert dashboard["top_stocks"][0]["ts_code"] == "600519.SH"
     insights = essay_service.insights(days=30, trend_days=7)
     assert len(insights["trend"]) == 7
     assert insights["coverage"]["analyzed_count"] == 1
     assert insights["source_quality"][0]["name"] == "unknown"
     assert [item["name"] for item in insights["watchlist"]] == ["华懋科技", "胜宏科技"]
+    deep = essay_service.deep_insights(days=30, trend_days=7)
+    assert len(deep["pulse"]) == 7
+    assert deep["summary"]["theme_count"] == 1
+    assert deep["layers"]["themes"][0]["label"] == "机器人"
+    deep_stocks = {item["label"]: item["ts_code"] for item in deep["layers"]["stocks"]}
+    assert deep_stocks["贵州茅台"] == "600519.SH"
+    assert deep_stocks["宇树科技"] == ""
+    assert deep["theme_heatmap"]["items"][0]["name"] == "机器人"
+    assert deep["evidence_funnel"][2] == {"name": "含催化或风险", "count": 1}
+
+
+def test_historical_backfill_queues_only_requested_unqueued_notes(essay_service) -> None:
+    ResearchNoteService().import_topics([{
+        "topic_id": "topic-old",
+        "title": "较早的历史纪要",
+        "content": "历史正文",
+        "create_time": "2025-08-01T09:00:00+0800",
+        "group": {"group_id": "g1", "name": "调研纪要"},
+    }, {
+        "topic_id": "topic-new",
+        "title": "较新的历史纪要",
+        "content": "历史正文",
+        "create_time": "2025-08-02T09:00:00+0800",
+        "group": {"group_id": "g1", "name": "调研纪要"},
+    }], enqueue_analysis=False)
+
+    before = essay_service.historical_backlog()
+    assert before["total_notes"] == 3
+    assert before["unqueued"] == 2
+
+    queued = essay_service.enqueue_unqueued(count=1, order="newest")
+    assert queued["requested"] == 1
+    assert queued["selected"] == 1
+    assert queued["created"] == 1
+    with essay_service.repo.db.get_session() as session:
+        topic_ids = set(session.execute(select(EssayAnalysisRecord.topic_id)).scalars().all())
+    assert topic_ids == {"topic-1", "topic-new"}
+    assert essay_service.historical_backlog()["unqueued"] == 1
+
+    remaining = essay_service.enqueue_unqueued(count=5000, order="oldest")
+    assert remaining["selected"] == 1
+    assert remaining["created"] == 1
+    assert essay_service.historical_backlog()["unqueued"] == 0
+
+
+def test_worker_start_returns_immediately_when_already_running(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.services.essay_analysis_worker.DeepSeekEssayAnalyzer",
+        lambda: MagicMock(configured=True),
+    )
+    worker = EssayAnalysisWorker()
+    worker._thread = MagicMock()
+    worker._thread.is_alive.return_value = True
+
+    result = worker.start(bootstrap_recent=False)
+
+    assert result["running"] is True
 
 
 def test_essay_radar_read_api(essay_service, monkeypatch) -> None:
     monkeypatch.setattr(
         "src.services.essay_analysis_worker.EssayAnalysisWorker.status",
         lambda self: {"running": False},
+    )
+    start_calls = []
+    monkeypatch.setattr(
+        "src.services.essay_analysis_worker.EssayAnalysisWorker.start",
+        lambda self, **kwargs: start_calls.append(kwargs) or {"running": True},
     )
     app = FastAPI()
     app.include_router(essay_radar.router, prefix="/api/v1/essay-radar")
@@ -139,9 +221,58 @@ def test_essay_radar_read_api(essay_service, monkeypatch) -> None:
 
     assert client.get("/api/v1/essay-radar/word-cloud?period=day&kind=stocks").status_code == 200
     assert client.get("/api/v1/essay-radar/insights?days=30&trend_days=14").status_code == 200
+    assert client.get("/api/v1/essay-radar/deep-insights?days=30&trend_days=14").status_code == 200
+    backlog = client.get("/api/v1/essay-radar/historical-backlog")
+    assert backlog.status_code == 200
+    assert backlog.json()["unqueued"] == 0
+    assert backlog.json()["total_notes"] == 1
+    assert backlog.json()["group_count"] == 1
+    assert backlog.json()["earliest_note_at"].startswith("2026-08-19")
+    assert backlog.json()["latest_note_at"].startswith("2026-08-19")
+    queued = client.post("/api/v1/essay-radar/backfill-count", json={"count": 100, "order": "newest"})
+    assert queued.status_code == 200
+    assert queued.json()["queue"]["selected"] == 0
+    assert start_calls == [{"bootstrap_recent": False}]
+    assert client.post("/api/v1/essay-radar/backfill-count", json={"count": 5001, "order": "newest"}).status_code == 422
     reports = client.get("/api/v1/essay-radar/daily-reports")
     assert reports.status_code == 200
     assert "models" in reports.json()
+
+
+def test_feed_searches_raw_library_without_ai_analysis(essay_service) -> None:
+    ResearchNoteService().import_topics([{
+        "topic_id": "topic-raw-only",
+        "title": "尚未分析的历史原文",
+        "content": "这段原文包含全库独家关键词和未入队信息。",
+        "create_time": "2025-08-01T09:00:00+0800",
+        "group": {"group_id": "g1", "name": "调研纪要"},
+        "owner": {"name": "原文作者"},
+    }], enqueue_analysis=False)
+    app = FastAPI()
+    app.include_router(essay_radar.router, prefix="/api/v1/essay-radar")
+    client = TestClient(app)
+
+    feed = client.get("/api/v1/essay-radar/feed?days=0&query=全库独家关键词")
+    assert feed.status_code == 200
+    assert feed.json()["scope"] == "all_stored_notes"
+    assert feed.json()["total"] == 1
+    assert feed.json()["items"][0]["topic_id"] == "topic-raw-only"
+    assert feed.json()["items"][0]["status"] == "not_queued"
+    assert "全库独家关键词" in feed.json()["items"][0]["note"]["content"]
+
+    completed_only = client.get("/api/v1/essay-radar/feed?days=0&analysis_status=completed")
+    assert completed_only.status_code == 200
+    assert completed_only.json()["total"] == 0
+
+    uncompleted = client.get("/api/v1/essay-radar/feed?days=0&analysis_status=uncompleted")
+    assert uncompleted.status_code == 200
+    assert uncompleted.json()["total"] == 2
+
+    reused_total = client.get(
+        "/api/v1/essay-radar/feed?days=0&query=全库独家关键词&page=2&known_total=123"
+    )
+    assert reused_total.status_code == 200
+    assert reused_total.json()["total"] == 123
 
 
 def test_word_cloud_and_daily_report_are_periodic_and_idempotent(essay_service, monkeypatch) -> None:

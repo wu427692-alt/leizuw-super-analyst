@@ -25,6 +25,7 @@ from src.storage import (
     PortfolioPositionLot,
     PortfolioTrade,
     StockDaily,
+    normalize_daily_storage_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -712,12 +713,13 @@ class PortfolioRepository:
         return close[0] if close is not None else None
 
     def get_latest_close_with_date(self, symbol: str, as_of: date) -> Optional[Tuple[float, date]]:
+        storage_symbol = normalize_daily_storage_code(symbol)
         with self.db.get_session() as session:
             row = session.execute(
                 select(StockDaily)
                 .where(
                     and_(
-                        StockDaily.code == symbol,
+                        StockDaily.code == storage_symbol,
                         StockDaily.date <= as_of,
                     )
                 )

@@ -7,7 +7,12 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from api.v1.schemas.essay_radar import EssayBackfillRequest, EssayDailyReportRunRequest, EssayRetryRequest
+from api.v1.schemas.essay_radar import (
+    EssayBackfillRequest,
+    EssayCountBackfillRequest,
+    EssayDailyReportRunRequest,
+    EssayRetryRequest,
+)
 from src.services.essay_analysis_service import EssayAnalysisError, EssayAnalysisService, EssayDailyReportService
 from src.services.essay_daily_report_worker import EssayDailyReportWorker
 from src.services.essay_analysis_worker import EssayAnalysisWorker
@@ -42,6 +47,24 @@ def backfill(request: EssayBackfillRequest):
     except EssayAnalysisError as exc:
         raise _service_error(exc, 503)
     return {"queue": result, "worker": worker}
+
+
+@router.get("/historical-backlog", summary="读取全部已入库小作文的 AI 分析与未入队数量")
+def historical_backlog():
+    return EssayAnalysisService().historical_backlog()
+
+
+@router.post("/backfill-count", summary="按篇数选择尚未入队的历史小作文进行 AI 分析")
+def backfill_count(request: EssayCountBackfillRequest):
+    service = EssayAnalysisService()
+    result = service.enqueue_unqueued(count=request.count, order=request.order)
+    try:
+        # This entry point must honor the requested count exactly. New MCP
+        # records are already queued at ingest, so no 30-day bootstrap is needed.
+        worker = EssayAnalysisWorker.get_instance().start(bootstrap_recent=False)
+    except EssayAnalysisError as exc:
+        raise _service_error(exc, 503)
+    return {"queue": result, "backlog": service.historical_backlog(), "worker": worker}
 
 
 @router.post("/worker/start", summary="启动实时 DeepSeek 分析任务")
@@ -81,6 +104,14 @@ def insights(
     trend_days: int = Query(14, ge=7, le=90),
 ):
     return EssayAnalysisService().insights(days=days, trend_days=trend_days)
+
+
+@router.get("/deep-insights", summary="获取小作文来源、主题、标的、催化风险多层洞察")
+def deep_insights(
+    days: int = Query(30, ge=7, le=3650),
+    trend_days: int = Query(14, ge=7, le=90),
+):
+    return EssayAnalysisService().deep_insights(days=days, trend_days=trend_days)
 
 
 @router.get("/word-cloud", summary="获取日、周、月股票/标签/主题词云")
@@ -139,6 +170,38 @@ def list_analyses(
         tag=tag,
         stock=stock,
         min_importance=min_importance,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/feed", summary="检索全部已入库小作文，可选关联 AI 分析结果")
+def list_feed(
+    days: int = Query(0, ge=0, le=3650),
+    query: Optional[str] = Query(None, max_length=200),
+    analysis_status: Optional[str] = Query(
+        None,
+        pattern="^(completed|uncompleted|not_queued|pending|processing|failed)$",
+    ),
+    sentiment: Optional[str] = None,
+    category: Optional[str] = None,
+    tag: Optional[str] = None,
+    stock: Optional[str] = None,
+    min_importance: Optional[int] = Query(None, ge=0, le=100),
+    known_total: Optional[int] = Query(None, ge=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    return EssayAnalysisService().list_feed(
+        days=days,
+        query=query,
+        analysis_status=analysis_status,
+        sentiment=sentiment,
+        category=category,
+        tag=tag,
+        stock=stock,
+        min_importance=min_importance,
+        known_total=known_total,
         page=page,
         page_size=page_size,
     )

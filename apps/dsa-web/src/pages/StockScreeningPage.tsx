@@ -38,6 +38,7 @@ import {
   type AlphaSiftStrategy,
 } from '../api/alphasift';
 import { formatParsedApiError, getParsedApiError, toApiErrorMessage, type ParsedApiError } from '../api/error';
+import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { AppPage, Button, InlineAlert } from '../components/common';
 
 const MARKETS = [{ id: 'cn', label: 'A 股' }];
@@ -465,6 +466,9 @@ const StockScreeningPage: React.FC = () => {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(restoredTask?.taskId ?? null);
   const [taskProgress, setTaskProgress] = useState(restoredTask?.taskId ? 10 : 0);
   const [taskMessage, setTaskMessage] = useState(restoredTask?.taskId ? '正在恢复选股任务状态...' : '');
+  const { quotes: liveCandidateQuotes, keyFor: quoteKey } = useRealtimeQuotes(
+    market === 'cn' ? candidates.map(item => item.code) : [],
+  );
 
   const selectedStrategy = useMemo(() => strategies.find((item) => item.id === strategy), [strategies, strategy]);
   const selectedStrategyTitle = selectedStrategy?.name || selectedStrategy?.title || '自定义策略';
@@ -1308,6 +1312,7 @@ const StockScreeningPage: React.FC = () => {
               </thead>
               <tbody>
                 {candidates.map((item) => {
+                  const live = liveCandidateQuotes.get(quoteKey(item.code));
                   const expanded = expandedCode === item.code;
                   const factors = getFactorEntries(item);
                   const llmInsightAvailable = hasLlmInsight(item);
@@ -1324,8 +1329,8 @@ const StockScreeningPage: React.FC = () => {
                         <td className="px-4 py-3 font-mono font-semibold text-foreground">{item.code}</td>
                         <td className="px-4 py-3 font-semibold text-foreground">{item.name || '-'}</td>
                         <td className="px-4 py-3 text-secondary-text">{item.industry || '-'}</td>
-                        <td className="px-4 py-3 text-secondary-text">{formatNumber(item.price)}</td>
-                        <td className="px-4 py-3 text-secondary-text">{formatNumber(item.changePct)}%</td>
+                        <td className="px-4 py-3 text-secondary-text">{formatNumber(live?.currentPrice ?? item.price)}</td>
+                        <td className="px-4 py-3 text-secondary-text">{formatNumber(live?.changePercent ?? item.changePct)}%</td>
                         <td className="px-4 py-3 font-bold text-cyan">{formatScore(item.score)}</td>
                         <td className="px-4 py-3 text-secondary-text">{llmDegraded ? '未重排' : formatScore(item.llmScore)}</td>
                         <td className="px-4 py-3">

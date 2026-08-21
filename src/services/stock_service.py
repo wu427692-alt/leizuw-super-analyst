@@ -40,6 +40,11 @@ class StockService:
             实时行情数据字典
         """
         try:
+            from src.services.market_data_service import MarketDataService
+
+            local = MarketDataService().latest_quotes([stock_code], refresh_missing=True)
+            if local:
+                return local[0]
             # 调用数据获取器获取实时行情
             from data_provider.base import DataFetcherManager
             
@@ -89,76 +94,22 @@ class StockService:
         self,
         stock_code: str,
         period: str = "daily",
-        days: int = 30
+        days: Optional[int] = None,
+        range_key: Optional[str] = None,
+        refresh: bool = False,
+        max_points: int = 2000,
     ) -> Dict[str, Any]:
-        """
-        获取股票历史行情
-        
-        Args:
-            stock_code: 股票代码
-            period: K 线周期 (daily/weekly/monthly)
-            days: 获取天数
-            
-        Returns:
-            历史行情数据字典
-            
-        Raises:
-            ValueError: 当 period 不是 daily 时抛出（weekly/monthly 暂未实现）
-        """
-        # 验证 period 参数，只支持 daily
-        if period != "daily":
-            raise ValueError(
-                f"暂不支持 '{period}' 周期，目前仅支持 'daily'。"
-                "weekly/monthly 聚合功能将在后续版本实现。"
-            )
-        
-        try:
-            # 调用数据获取器获取历史数据
-            from data_provider.base import DataFetcherManager
-            
-            manager = DataFetcherManager()
-            df, source = manager.get_daily_data(stock_code, days=days)
-            
-            if df is None or df.empty:
-                logger.warning(f"获取 {stock_code} 历史数据失败")
-                return {"stock_code": stock_code, "period": period, "data": []}
-            
-            # 获取股票名称
-            stock_name = manager.get_stock_name(stock_code)
-            
-            # 转换为响应格式
-            data = []
-            for _, row in df.iterrows():
-                date_val = row.get("date")
-                if hasattr(date_val, "strftime"):
-                    date_str = date_val.strftime("%Y-%m-%d")
-                else:
-                    date_str = str(date_val)
-                
-                data.append({
-                    "date": date_str,
-                    "open": float(row.get("open", 0)),
-                    "high": float(row.get("high", 0)),
-                    "low": float(row.get("low", 0)),
-                    "close": float(row.get("close", 0)),
-                    "volume": float(row.get("volume", 0)) if row.get("volume") else None,
-                    "amount": float(row.get("amount", 0)) if row.get("amount") else None,
-                    "change_percent": float(row.get("pct_chg", 0)) if row.get("pct_chg") else None,
-                })
-            
-            return {
-                "stock_code": stock_code,
-                "stock_name": stock_name,
-                "period": period,
-                "data": data,
-            }
-            
-        except ImportError:
-            logger.warning("DataFetcherManager 未找到，返回空数据")
-            return {"stock_code": stock_code, "period": period, "data": []}
-        except Exception as e:
-            logger.error(f"获取历史数据失败: {e}", exc_info=True)
-            return {"stock_code": stock_code, "period": period, "data": []}
+        """Return a local-first multi-timeframe series and persist fetched bars."""
+        from src.services.market_data_service import MarketDataService
+
+        return MarketDataService().get_series(
+            stock_code,
+            period=period,
+            days=days,
+            range_key=range_key,
+            refresh=refresh,
+            max_points=max_points,
+        )
     
     def _get_placeholder_quote(self, stock_code: str) -> Dict[str, Any]:
         """

@@ -18,6 +18,7 @@ import requests
 from json_repair import repair_json
 
 from src.config import get_config
+from src.data.stock_index_loader import get_stock_name_index_map
 from src.repositories.essay_daily_report_repo import EssayDailyReportRepository
 from src.repositories.essay_analysis_repo import EssayAnalysisRepository
 from src.storage import utc_naive_now
@@ -47,6 +48,9 @@ _TS_CODE_RE = re.compile(r"^(\d{6})(?:\.(SH|SS|SZ|BJ))?$", re.IGNORECASE)
 _DASHBOARD_ROWS_CACHE_TTL_SECONDS = 30.0
 _dashboard_rows_cache: Dict[int, tuple[float, List[Dict[str, Any]]]] = {}
 _dashboard_rows_cache_lock = threading.Lock()
+_DEEP_INSIGHTS_CACHE_TTL_SECONDS = 60.0
+_deep_insights_cache: Dict[tuple[int, int, int], tuple[float, Dict[str, Any]]] = {}
+_deep_insights_cache_lock = threading.Lock()
 
 _SYSTEM_PROMPT = """你是中国资本市场研究资料结构化分析员。请只根据输入文本提取事实、观点和风险，
 不要补造公司、代码、数字或来源。每篇文本都必须输出一条结果，并严格输出一个 JSON object。
@@ -625,6 +629,17 @@ class EssayAnalysisService:
             prompt_version=ESSAY_PROMPT_VERSION,
         )
 
+    def enqueue_unqueued(self, *, count: int, order: str = "newest") -> Dict[str, Any]:
+        return self.repo.enqueue_unqueued(
+            limit=max(1, min(int(count), 5000)),
+            order=order,
+            model=self.model,
+            prompt_version=ESSAY_PROMPT_VERSION,
+        )
+
+    def historical_backlog(self) -> Dict[str, Any]:
+        return self.repo.historical_backlog()
+
     def list_analyses(self, **filters: Any) -> Dict[str, Any]:
         days = max(1, min(int(filters.pop("days", 30) or 30), 3650))
         page = max(1, int(filters.get("page") or 1))
@@ -632,6 +647,20 @@ class EssayAnalysisService:
         cutoff = utc_naive_now() - timedelta(days=days)
         rows, total = self.repo.list_analyses(cutoff=cutoff, **filters)
         return {"items": rows, "total": total, "page": page, "page_size": page_size}
+
+    def list_feed(self, **filters: Any) -> Dict[str, Any]:
+        days = max(0, min(int(filters.pop("days", 0) or 0), 3650))
+        page = max(1, int(filters.get("page") or 1))
+        page_size = max(1, min(int(filters.get("page_size") or 20), 100))
+        cutoff = utc_naive_now() - timedelta(days=days) if days else None
+        rows, total = self.repo.list_feed(cutoff=cutoff, **filters)
+        return {
+            "items": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "scope": "all_stored_notes" if cutoff is None else f"last_{days}_days",
+        }
 
     def get_analysis(self, topic_id: str) -> Dict[str, Any]:
         row = self.repo.get_analysis(str(topic_id or "").strip())
@@ -865,6 +894,256 @@ class EssayAnalysisService:
             "watchlist": watchlist,
             "high_novelty_signals": high_novelty,
         }
+
+    def deep_insights(self, *, days: int = 30, trend_days: int = 14) -> Dict[str, Any]:
+        """Build traceable source → theme → stock → thesis insight layers.
+
+        Every node and edge is a co-occurrence aggregated from completed essay
+        analyses. The method does not infer missing links or fabricate market
+        performance; it only reorganizes the extracted corpus for exploration.
+        """
+        safe_days = max(7, min(int(days), 3650))
+        safe_trend_days = max(7, min(int(trend_days), 90))
+        cache_key = (id(self.repo.db), safe_days, safe_trend_days)
+        now = time.monotonic()
+        with _deep_insights_cache_lock:
+            cached = _deep_insights_cache.get(cache_key)
+            if cached and now - cached[0] < _DEEP_INSIGHTS_CACHE_TTL_SECONDS:
+                return cached[1]
+        rows = self._completed_dashboard_rows(safe_days)
+        shanghai = timezone(timedelta(hours=8))
+        today = datetime.now(shanghai).date()
+        trend_start = today - timedelta(days=safe_trend_days - 1)
+        current_start = today - timedelta(days=6)
+        previous_start = today - timedelta(days=13)
+
+        def local_day(row: Dict[str, Any]) -> Optional[date]:
+            raw = str((row.get("note") or {}).get("created_at") or "")
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(shanghai).date()
+            except ValueError:
+                return None
+
+        sources: Counter[str] = Counter()
+        themes: Counter[str] = Counter()
+        stocks: Counter[str] = Counter()
+        signals: Counter[tuple[str, str]] = Counter()
+        source_theme: Counter[tuple[str, str]] = Counter()
+        theme_stock: Counter[tuple[str, str]] = Counter()
+        stock_signal: Counter[tuple[str, str, str]] = Counter()
+        theme_by_day: Dict[str, Counter[str]] = defaultdict(Counter)
+        stock_buckets: Dict[str, Dict[str, Any]] = {}
+        daily: Dict[date, Counter[str]] = defaultdict(Counter)
+        evidence_count = catalyst_risk_count = falsification_count = 0
+
+        # Old model outputs may contain a syntactically valid but factually wrong
+        # code. Only expose a code when the local security master maps that exact
+        # company name back to it; otherwise aggregate safely by company name.
+        verified_name_to_code: Dict[str, str] = {}
+        verified_code_to_name = get_stock_name_index_map()
+        for code, indexed_name in verified_code_to_name.items():
+            normalized_name = str(indexed_name or "").strip().casefold()
+            normalized_code = str(code or "").strip().upper()
+            if not normalized_name or not normalized_code:
+                continue
+            current = verified_name_to_code.get(normalized_name, "")
+            if not current or ("." in normalized_code and "." not in current):
+                verified_name_to_code[normalized_name] = normalized_code
+
+        for row in rows:
+            note = row.get("note") or {}
+            source = str(note.get("group_name") or "未知来源").strip() or "未知来源"
+            row_day = local_day(row)
+            row_themes = list(dict.fromkeys(
+                str(value).strip() for value in (row.get("themes") or []) if str(value).strip()
+            ))
+            row_mentions = []
+            for mention in row.get("stock_mentions") or []:
+                name = str(mention.get("name") or mention.get("ts_code") or "").strip()
+                explicit_code = str(mention.get("ts_code") or "").strip().upper()
+                verified_code = verified_name_to_code.get(name.casefold(), "")
+                if explicit_code and str(verified_code_to_name.get(explicit_code) or "").strip().casefold() != name.casefold():
+                    explicit_code = ""
+                key = verified_code or explicit_code or name
+                key = key.strip().upper()
+                if not name or not key:
+                    continue
+                row_mentions.append((key, name, mention, verified_code or explicit_code))
+            row_signals = [
+                ("catalyst", str(value).strip())
+                for value in (row.get("catalysts") or []) if str(value).strip()
+            ] + [
+                ("risk", str(value).strip())
+                for value in (row.get("risks") or []) if str(value).strip()
+            ]
+
+            sources[source] += 1
+            themes.update(row_themes)
+            stocks.update(key for key, _, _, _ in row_mentions)
+            signals.update(row_signals)
+            for theme in row_themes:
+                source_theme[(source, theme)] += 1
+                if row_day:
+                    theme_by_day[theme][row_day.isoformat()] += 1
+                for key, _, _, _ in row_mentions:
+                    theme_stock[(theme, key)] += 1
+            for key, name, mention, resolved_code in row_mentions:
+                bucket = stock_buckets.setdefault(key, {
+                    "ts_code": resolved_code, "name": name,
+                    "current_count": 0, "previous_count": 0, "bullish": 0,
+                    "bearish": 0, "neutral": 0, "watching": 0,
+                    "importance_total": 0, "latest_at": None, "latest_thesis": None,
+                })
+                if resolved_code and not bucket["ts_code"]:
+                    bucket["ts_code"] = resolved_code
+                stance = str(mention.get("stance") or "neutral")
+                if stance not in _STANCES:
+                    stance = "neutral"
+                bucket[stance] += 1
+                bucket["importance_total"] += int(row.get("importance_score") or 0)
+                created_at = note.get("created_at")
+                if created_at and (not bucket["latest_at"] or created_at > bucket["latest_at"]):
+                    bucket["latest_at"] = created_at
+                    bucket["latest_thesis"] = row.get("summary")
+                if row_day and row_day >= current_start:
+                    bucket["current_count"] += 1
+                elif row_day and previous_start <= row_day < current_start:
+                    bucket["previous_count"] += 1
+                for kind, text in row_signals:
+                    stock_signal[(key, kind, text)] += 1
+
+            if row_day and row_day >= trend_start:
+                sentiment = row.get("sentiment") if row.get("sentiment") in _SENTIMENTS else "neutral"
+                daily[row_day]["total"] += 1
+                daily[row_day][sentiment] += 1
+            evidence_count += int(bool(row.get("evidence")))
+            catalyst_risk_count += int(bool(row_signals))
+            falsification_count += int(bool(row.get("falsification_conditions") or row.get("monitoring_points")))
+
+        top_sources = {name for name, _ in sources.most_common(6)}
+        top_themes = {name for name, _ in themes.most_common(7)}
+        top_stocks = {name for name, _ in stocks.most_common(7)}
+        top_signals = {item for item, _ in signals.most_common(7)}
+
+        def nodes(counter: Counter, stage: str, limit: int) -> List[Dict[str, Any]]:
+            result = []
+            for raw, count in counter.most_common(limit):
+                if isinstance(raw, tuple):
+                    kind, label = raw
+                    result.append({"stage": stage, "key": f"{kind}:{label}", "label": label, "kind": kind, "count": int(count)})
+                else:
+                    result.append({"stage": stage, "key": str(raw), "label": str(raw), "count": int(count)})
+            return result
+
+        stock_nodes = []
+        for key, count in stocks.most_common(7):
+            bucket = stock_buckets.get(key) or {}
+            stock_nodes.append({
+                "stage": "stocks", "key": key,
+                "label": str(bucket.get("name") or key),
+                "ts_code": str(bucket.get("ts_code") or ""),
+                "count": int(count),
+            })
+
+        edges = [
+            {"from_stage": "sources", "from": source, "to_stage": "themes", "to": theme, "count": int(count)}
+            for (source, theme), count in source_theme.most_common()
+            if source in top_sources and theme in top_themes
+        ] + [
+            {"from_stage": "themes", "from": theme, "to_stage": "stocks", "to": stock, "count": int(count)}
+            for (theme, stock), count in theme_stock.most_common()
+            if theme in top_themes and stock in top_stocks
+        ] + [
+            {"from_stage": "stocks", "from": stock, "to_stage": "signals", "to": f"{kind}:{text}", "count": int(count)}
+            for (stock, kind, text), count in stock_signal.most_common()
+            if stock in top_stocks and (kind, text) in top_signals
+        ]
+
+        dates = [(trend_start + timedelta(days=offset)).isoformat() for offset in range(safe_trend_days)]
+        heatmap = [{
+            "name": theme,
+            "total": int(total),
+            "points": [{"date": day, "count": int(theme_by_day[theme].get(day, 0))} for day in dates],
+        } for theme, total in themes.most_common(8)]
+
+        momentum = []
+        divergence = []
+        for key, bucket in stock_buckets.items():
+            total = bucket["bullish"] + bucket["bearish"] + bucket["neutral"] + bucket["watching"]
+            current = bucket["current_count"]
+            previous = bucket["previous_count"]
+            change = current - previous
+            row = {
+                **{name: bucket[name] for name in ("ts_code", "name", "current_count", "previous_count", "bullish", "bearish", "neutral", "watching", "latest_at", "latest_thesis")},
+                "change": change,
+                "change_percent": round(change / previous * 100, 1) if previous else (100.0 if current else 0.0),
+                "average_importance": round(bucket["importance_total"] / total, 1) if total else 0.0,
+            }
+            momentum.append(row)
+            if bucket["bullish"] and bucket["bearish"]:
+                divergence.append({
+                    "key": key, "ts_code": bucket["ts_code"], "name": bucket["name"],
+                    "bullish": bucket["bullish"], "bearish": bucket["bearish"],
+                    "neutral": bucket["neutral"] + bucket["watching"], "total": total,
+                    "divergence_score": round(200 * min(bucket["bullish"], bucket["bearish"]) / total, 1),
+                })
+        momentum.sort(key=lambda item: (item["current_count"], item["change"], item["average_importance"]), reverse=True)
+        divergence.sort(key=lambda item: (item["divergence_score"], item["total"]), reverse=True)
+
+        verification = [row for row in rows if (
+            int(row.get("novelty_score") or 0) >= 70
+            or float(row.get("confidence_score") or 0) < 0.55
+            or bool(row.get("contradictions"))
+        )]
+        verification.sort(key=lambda row: (
+            int(row.get("novelty_score") or 0),
+            -float(row.get("confidence_score") or 0),
+            int(row.get("importance_score") or 0),
+        ), reverse=True)
+
+        pulse = []
+        for day in dates:
+            bucket = daily[date.fromisoformat(day)]
+            pulse.append({"date": day, **{key: int(bucket.get(key, 0)) for key in ("total", "bullish", "bearish", "neutral", "mixed")}})
+
+        result = {
+            "generated_at": utc_naive_now().isoformat() + "Z",
+            "window_days": safe_days,
+            "latest_data_at": max((str((row.get("note") or {}).get("created_at") or "") for row in rows), default=None),
+            "summary": {
+                "analyzed_count": len(rows), "source_count": len(sources),
+                "theme_count": len(themes), "stock_count": len(stocks),
+                "evidence_coverage_percent": round(evidence_count / len(rows) * 100, 1) if rows else 0.0,
+                "high_novelty_count": sum(int(row.get("novelty_score") or 0) >= 70 for row in rows),
+                "divergence_count": len(divergence),
+            },
+            "pulse": pulse,
+            "layers": {
+                "sources": nodes(sources, "sources", 6),
+                "themes": nodes(themes, "themes", 7),
+                "stocks": stock_nodes,
+                "signals": nodes(signals, "signals", 7),
+                "edges": edges,
+            },
+            "theme_heatmap": {"dates": dates, "items": heatmap},
+            "stock_momentum": momentum[:12],
+            "divergence": divergence[:10],
+            "verification_queue": verification[:10],
+            "evidence_funnel": [
+                {"name": "已分析", "count": len(rows)},
+                {"name": "含原文证据", "count": evidence_count},
+                {"name": "含催化或风险", "count": catalyst_risk_count},
+                {"name": "含证伪或跟踪点", "count": falsification_count},
+            ],
+        }
+        with _deep_insights_cache_lock:
+            _deep_insights_cache[cache_key] = (time.monotonic(), result)
+        return result
 
     @staticmethod
     def _configured_watchlist() -> List[tuple[str, str]]:

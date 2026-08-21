@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { cn } from '../../utils/cn';
 
@@ -64,7 +65,7 @@ export const Drawer: React.FC<DrawerProps> = ({
   const sidePositionClass = side === 'left' ? 'left-0 justify-start' : 'right-0 justify-end';
   const borderClass = side === 'left' ? 'border-r' : 'border-l';
 
-  return (
+  const drawer = (
     <div className="fixed inset-0 overflow-hidden" style={{ zIndex }} role="presentation">
       {/* Backdrop */}
       <div
@@ -75,13 +76,13 @@ export const Drawer: React.FC<DrawerProps> = ({
         onClick={onClose}
       />
 
-      <div className={cn('absolute inset-y-0 flex w-full', sidePositionClass, width)}>
+      <div className={cn('absolute inset-y-0 flex h-full min-h-0 w-full', sidePositionClass, width)}>
         <div
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
           className={cn(
-            'relative flex w-full flex-col bg-card',
+            'relative flex h-full min-h-0 w-full flex-col bg-card',
             borderClass,
             side === 'right' ? 'border-border/80' : 'border-border/70 shadow-2xl',
             side === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'
@@ -105,11 +106,16 @@ export const Drawer: React.FC<DrawerProps> = ({
               </svg>
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">
             {children}
           </div>
         </div>
       </div>
     </div>
   );
+
+  // A drawer must escape transformed/overflow-hidden page containers. Without
+  // a body portal, `position: fixed` can become relative to a long dashboard
+  // panel and render above the current scroll position behind its own backdrop.
+  return createPortal(drawer, document.body);
 };

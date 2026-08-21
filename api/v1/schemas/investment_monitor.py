@@ -10,6 +10,11 @@ class MonitorSyncRequest(BaseModel):
     categories: Optional[List[str]] = None
 
 
+class DragonTigerSyncRequest(BaseModel):
+    start_date: str
+    end_date: str
+
+
 class AnnouncementSyncRequest(BaseModel):
     start_date: str
     end_date: str

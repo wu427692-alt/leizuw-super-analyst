@@ -111,7 +111,7 @@ flowchart LR
 
 ### 投资情报台
 
-信息按公司公告、财经快讯、券商研报、机构调研、资金席位、股权事项、财务业绩、企业风险和知识星球分流。行情不混入消息流，只在开盘和收盘固化有意义的状态快照。
+信息按公司公告、财经快讯、券商研报、机构调研、资金席位、股权事项、财务业绩、企业风险、知识星球和公开股评分流。东方财富股吧公开帖子按自选股增量保存真实作者、时间、正文摘录、互动数和原文链接，统一标为待核验，并与千股千评/雪球热度指标分开。行情不混入消息流，只在开盘和收盘固化有意义的状态快照。“数据源 BI”单独列出全部渠道的存量、最新时间、上轮抓取量、增量、耗时、频率、底层接口和直接调用入口。
 
 点击事件可查看原文、原始链接、来源接口、证据等级和结构化指标。无法追溯原文的内容会明确标记。
 
@@ -270,6 +270,7 @@ ICLOUD_KNOWLEDGE_RETENTION=12
 | --- | --- |
 | `GET /home-dashboard` | 首页市场与自选股大看板 |
 | `GET /investment-monitor/intelligence-dashboard` | 投资情报决策看板 |
+| `GET /investment-monitor/source-bi` | 全渠道数据源资产、时效和调用能力 BI |
 | `GET /investment-monitor/super-watchlist` | 超级关注股全景 |
 | `GET /investment-monitor/events` | 分渠道筛选事实和观点 |
 | `POST /investment-monitor/sync` | 立即同步指定数据源 |
@@ -279,6 +280,10 @@ ICLOUD_KNOWLEDGE_RETENTION=12
 | `GET /essay-radar/dashboard` | 小作文分析看板 |
 | `GET /essay-radar/word-cloud` | 日、周、月词云 |
 | `POST /essay-quant/run` | 运行小作文事件研究与组合回测 |
+| `GET /essay-quant/research-catalog` | 读取量化研究方法与真实本地数据资产 |
+| `GET /essay-quant/runs` | 读取可复现量化运行历史 |
+| `POST /essay-quant/natural-language/plan` | 生成受约束自然语言研究方案与模板代码 |
+| `POST /essay-quant/natural-language/execute` | 确认并执行已校验的量化任务 |
 | `POST /data-acquisition/plan` | 生成自然语言取数计划 |
 | `POST /data-acquisition/run` | 执行计划并生成数据包 |
 

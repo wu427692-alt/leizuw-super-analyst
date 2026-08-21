@@ -1,13 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN" translate="no" class="notranslate">
   <head>
     <meta charset="UTF-8" />
+    <meta name="google" content="notranslate" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
       (() => {
+        const languageStorageKey = 'dsa.uiLanguage';
         const storageKey = 'theme';
         const root = document.documentElement;
+        let storedLanguage = null;
+        try {
+          storedLanguage = localStorage.getItem(languageStorageKey);
+        } catch {
+          // The application will fall back to its in-memory language setting.
+        }
+        if (storedLanguage !== 'zh' && storedLanguage !== 'en') {
+          const browserLanguages = [...(navigator.languages || []), navigator.language]
+            .filter(Boolean)
+            .map((value) => String(value).toLowerCase());
+          storedLanguage = browserLanguages.find((value) => value.startsWith('zh'))
+            ? 'zh'
+            : browserLanguages.find((value) => value.startsWith('en'))
+              ? 'en'
+              : 'zh';
+        }
+        root.lang = storedLanguage === 'en' ? 'en' : 'zh-CN';
+        root.setAttribute('translate', 'no');
         const storedTheme = localStorage.getItem(storageKey);
         const theme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : 'dark';
         root.classList.remove('light', 'dark');
@@ -17,7 +37,7 @@
     </script>
     <title>dsa-web</title>
   </head>
-  <body>
+  <body class="notranslate" translate="no">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -39,8 +39,17 @@ const DataAcquisitionPage = () => {
 
   const load = useCallback(async () => {
     try {
-      const [sourceData, jobData] = await Promise.all([dataAcquisitionApi.capabilities(), dataAcquisitionApi.jobs()]);
-      setCapabilities(sourceData); setJobs(jobData.items);
+      const [sourceData, jobData] = await Promise.allSettled([
+        dataAcquisitionApi.capabilities(), dataAcquisitionApi.jobs(),
+      ]);
+      if (sourceData.status === 'fulfilled') setCapabilities(sourceData.value);
+      if (jobData.status === 'fulfilled') setJobs(jobData.value.items);
+      if (sourceData.status === 'rejected' && jobData.status === 'rejected') throw sourceData.reason;
+      if (sourceData.status === 'rejected' || jobData.status === 'rejected') {
+        setError('部分数据暂时不可用，已保留成功加载的渠道或任务记录。');
+      } else {
+        setError(null);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '加载取数工作台失败');
     }

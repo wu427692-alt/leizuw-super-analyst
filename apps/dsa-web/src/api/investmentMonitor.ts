@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { AnnouncementCategoryList, AnnouncementSyncRequest, CloudKnowledgeStatus, IntelligenceDashboard, InvestmentMonitorDashboard, MonitorEvent, MonitorEventList, MonitorStatus, MonitorSymbolDetail, SuperWatchlistDashboard, WatchlistBackfillJob } from '../types/investmentMonitor';
+import type { AnnouncementCategoryList, AnnouncementSyncRequest, CloudKnowledgeStatus, DragonTigerDaily, DragonTigerHistory, DragonTigerSyncResult, EssayConsensusAnalysis, IntelligenceDashboard, InvestmentMonitorDashboard, MonitorEvent, MonitorEventList, MonitorStatus, MonitorSymbolDetail, SourceBI, SuperWatchlistDashboard, WatchlistBackfillJob } from '../types/investmentMonitor';
 
 export const investmentMonitorApi = {
   dashboard: async (days = 7): Promise<InvestmentMonitorDashboard> => {
@@ -11,6 +11,33 @@ export const investmentMonitorApi = {
     const response = await apiClient.get('/api/v1/investment-monitor/intelligence-dashboard', { params: { days } });
     return toCamelCase<IntelligenceDashboard>(response.data);
   },
+  sourceBI: async (days = 30): Promise<SourceBI> => {
+    const response = await apiClient.get('/api/v1/investment-monitor/source-bi', { params: { days } });
+    return toCamelCase<SourceBI>(response.data);
+  },
+  dragonTigerDaily: async (tradeDate?: string, refresh = false): Promise<DragonTigerDaily> => {
+    const response = await apiClient.get('/api/v1/investment-monitor/dragon-tiger/daily', {
+      params: { trade_date: tradeDate || undefined, refresh },
+      timeout: 60000,
+    });
+    return toCamelCase<DragonTigerDaily>(response.data);
+  },
+  dragonTigerHistory: async (params: {
+    startDate: string; endDate: string; symbol?: string; query?: string; page?: number; pageSize?: number;
+  }): Promise<DragonTigerHistory> => {
+    const response = await apiClient.get('/api/v1/investment-monitor/dragon-tiger/history', { params: {
+      start_date: params.startDate, end_date: params.endDate,
+      symbol: params.symbol || undefined, query: params.query || undefined,
+      page: params.page ?? 1, page_size: params.pageSize ?? 50,
+    } });
+    return toCamelCase<DragonTigerHistory>(response.data);
+  },
+  syncDragonTiger: async (startDate: string, endDate: string): Promise<DragonTigerSyncResult> => {
+    const response = await apiClient.post('/api/v1/investment-monitor/dragon-tiger/sync', {
+      start_date: startDate, end_date: endDate,
+    }, { timeout: 120000 });
+    return toCamelCase<DragonTigerSyncResult>(response.data);
+  },
   symbol: async (symbol: string, days = 30): Promise<MonitorSymbolDetail> => {
     const response = await apiClient.get(`/api/v1/investment-monitor/symbols/${encodeURIComponent(symbol)}`, { params: { days } });
     return toCamelCase<MonitorSymbolDetail>(response.data);
@@ -19,9 +46,21 @@ export const investmentMonitorApi = {
     const response = await apiClient.get('/api/v1/investment-monitor/super-watchlist', { params: { days } });
     return toCamelCase<SuperWatchlistDashboard>(response.data);
   },
+  refreshSuperWatchlist: async (): Promise<unknown> => {
+    const response = await apiClient.post('/api/v1/investment-monitor/super-watchlist/refresh', undefined, { timeout: 60000 });
+    return toCamelCase(response.data);
+  },
   backfillWatchlist: async (symbol: string): Promise<WatchlistBackfillJob> => {
     const response = await apiClient.post(`/api/v1/investment-monitor/super-watchlist/${encodeURIComponent(symbol)}/backfill`);
     return toCamelCase<WatchlistBackfillJob>(response.data);
+  },
+  essayConsensus: async (symbol: string): Promise<{ symbol: string; name: string; consensus: EssayConsensusAnalysis }> => {
+    const response = await apiClient.get(`/api/v1/investment-monitor/super-watchlist/${encodeURIComponent(symbol)}/essay-consensus`);
+    return toCamelCase(response.data);
+  },
+  analyzeEssayConsensus: async (symbol: string): Promise<{ symbol: string; name: string; consensus: EssayConsensusAnalysis }> => {
+    const response = await apiClient.post(`/api/v1/investment-monitor/super-watchlist/${encodeURIComponent(symbol)}/essay-consensus/analyze`);
+    return toCamelCase(response.data);
   },
   status: async (): Promise<MonitorStatus> => {
     const response = await apiClient.get('/api/v1/investment-monitor/status');

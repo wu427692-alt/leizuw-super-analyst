@@ -119,6 +119,11 @@ class FakeCninfo:
         del symbols, days
         return []
 
+    @staticmethod
+    def fetch_recent_market(days=2, max_pages=30):
+        del days, max_pages
+        return FakeCninfo.fetch()
+
 
 def test_manual_announcement_sync_is_idempotent_and_queryable(tmp_path):
     previous = os.environ.get("DATABASE_PATH")
@@ -139,6 +144,27 @@ def test_manual_announcement_sync_is_idempotent_and_queryable(tmp_path):
         )
         assert exact["total"] == 1
         assert service.export_announcements(start_date="2026-08-19", end_date="2026-08-19")[:2] == b"PK"
+    finally:
+        DatabaseManager.reset_instance(); Config.reset_instance()
+        if previous is None:
+            os.environ.pop("DATABASE_PATH", None)
+        else:
+            os.environ["DATABASE_PATH"] = previous
+
+
+def test_automatic_announcement_source_uses_full_market_recent_fetch(tmp_path):
+    previous = os.environ.get("DATABASE_PATH")
+    os.environ["DATABASE_PATH"] = str(tmp_path / "automatic-announcements.db")
+    Config.reset_instance(); DatabaseManager.reset_instance()
+    try:
+        repo = InvestmentMonitorRepository(DatabaseManager.get_instance())
+        service = InvestmentMonitorService(repository=repo, cninfo=FakeCninfo())
+        service.equity_watchlist = lambda: []
+
+        result = service.sync_source("cninfo.announcements")
+
+        assert result["received"] == 1
+        assert service.list_announcements(days=3650)["total"] == 1
     finally:
         DatabaseManager.reset_instance(); Config.reset_instance()
         if previous is None:

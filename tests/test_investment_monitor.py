@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import os
+import time
+from datetime import datetime
 
 import pytest
 
 from src.config import Config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
+from src.repositories.market_data_repo import MarketDataRepository
 from src.services.investment_monitor_service import InvestmentMonitorService
 from src.storage import DatabaseManager
 
@@ -24,6 +27,8 @@ class FakeTushare:
                 "title": "贵州茅台发布公告",
                 "content": "公司拟回购股份，机构上调盈利预测。",
             }]}
+        if api_name == "trade_cal":
+            return {"rows": [{"cal_date": "20260819", "is_open": 1}]}
         fixtures = {
             "fina_indicator": [{"end_date": "20260630", "ann_date": "20260720", "q_netprofit_yoy": 25, "roe": 12, "grossprofit_margin": 60}],
             "income": [{"end_date": "20260630", "ann_date": "20260720", "revenue": 100, "n_income": 20}],
@@ -80,13 +85,29 @@ class FakeStockService:
                 "amount": 100, "high": 1310, "low": 1270, "update_time": "2026-08-19T10:02:00"}
 
 
+class FakeGuba:
+    def fetch_latest(self, symbols, *, limit_per_symbol=20):
+        assert list(symbols) == ["600519.SH"]
+        assert limit_per_symbol == 20
+        return [{
+            "post_id": "1762000001", "code": "600519", "author": "公开用户",
+            "content": "$贵州茅台(SH600519)$ 渠道反馈不错，但仍需核验。",
+            "published_at": datetime(2026, 8, 19, 2, 30), "time_text": "今天 10:30",
+            "views": 321, "reply_count": 7, "like_count": 2,
+            "image_urls": ["https://example.com/guba.jpg"],
+            "url": "https://mguba.eastmoney.com/mguba/article/0/1762000001",
+        }]
+
+
 @pytest.fixture()
 def monitor(tmp_path):
     previous = os.environ.get("DATABASE_PATH")
     os.environ["DATABASE_PATH"] = str(tmp_path / "monitor.db")
     Config.reset_instance(); DatabaseManager.reset_instance()
     repository = InvestmentMonitorRepository(DatabaseManager.get_instance())
-    service = InvestmentMonitorService(repository=repository, tushare=FakeTushare(), stock_service=FakeStockService())
+    service = InvestmentMonitorService(
+        repository=repository, tushare=FakeTushare(), stock_service=FakeStockService(), guba=FakeGuba(),
+    )
     service.watchlist = lambda: ["600519.SH"]
     try:
         yield service
@@ -108,6 +129,42 @@ def test_tushare_news_associates_watchlist_and_company_perspective(monitor):
     assert event["sentiment"] == "bullish"
 
 
+def test_public_guba_posts_are_real_attributed_unverified_events(monitor):
+    first = monitor.sync_source("eastmoney.guba_posts")
+    second = monitor.sync_source("eastmoney.guba_posts")
+    assert first["received"] == 1
+    assert first["created"] == 1
+    assert second["created"] == 0
+
+    event = monitor.list_events(days=3650, event_type="stock_forum_post")["items"][0]
+    assert event["symbols"] == ["600519.SH"]
+    assert event["actors"] == ["公开用户", "东方财富股吧"]
+    assert event["metrics"]["reply_count"] == 7
+    assert event["metrics"]["_evidence"]["evidence_level"] == "unverified"
+    assert event["url"].endswith("/1762000001")
+    compact = monitor.compact_event(event)
+    assert compact["metrics"]["author"] == "公开用户"
+    assert compact["metrics"]["views"] == 321
+    assert compact["metrics"]["reply_count"] == 7
+
+
+def test_super_watchlist_stock_comments_only_exposes_genuine_forum_posts(monitor):
+    monitor.sync_source("eastmoney.guba_posts")
+    indicator_source = monitor.repo.get_source("akshare.stock_comments")
+    monitor.repo.upsert_events([monitor._base_event(
+        indicator_source, external_id="legacy-xq", event_type="stock_discussion_heat",
+        perspective="investor", title="历史讨论热度", summary="历史遗留指标",
+        symbols=["600519.SH"], sentiment="neutral", importance=30,
+        event_at=datetime(2026, 8, 19, 2, 0), tags=["历史指标"],
+    )])
+
+    comments = monitor.super_watchlist(days=3650)["stocks"][0]["stock_comments"]
+
+    assert comments["count"] == 1
+    assert [item["event_type"] for item in comments["items"]] == ["stock_forum_post"]
+    assert "雪球" not in comments["source_note"]
+
+
 def test_external_api_ingestion_is_idempotent_and_updates_scorecard(monitor):
     monitor.create_external_source({"source_key": "api.partner", "name": "合作资讯 API"})
     payload = [{"external_id": "evt-1", "title": "贵州茅台获机构增持", "symbols": ["600519"],
@@ -122,7 +179,11 @@ def test_external_api_ingestion_is_idempotent_and_updates_scorecard(monitor):
     assert card["opportunity_score"] > 50
 
 
-def test_source_status_separates_sync_success_from_actual_data_freshness(monitor):
+def test_source_status_separates_sync_success_from_actual_data_freshness(monitor, monkeypatch):
+    monkeypatch.setattr(
+        "src.services.investment_monitor_service.utc_naive_now",
+        lambda: __import__("datetime").datetime(2026, 8, 19, 2, 2),
+    )
     monitor.create_external_source({"source_key": "api.empty", "name": "空返回来源"})
     monitor.sync_source("tushare.news.cls")
     sources = monitor.list_sources()
@@ -132,6 +193,30 @@ def test_source_status_separates_sync_success_from_actual_data_freshness(monitor
     assert by_key["api.empty"]["freshness_status"] == "empty"
     assert sources["with_data"] >= 1
     assert sources["empty"] >= 1
+
+
+def test_source_status_records_upstream_received_and_deduplicated_counts(monitor):
+    first = monitor.sync_source("tushare.news.cls")
+    second = monitor.sync_source("tushare.news.cls")
+    source = {item["source_key"]: item for item in monitor.list_sources()["items"]}["tushare.news.cls"]
+
+    assert first["received"] == 1
+    assert second["received"] == 1
+    assert source["last_received_count"] == 1
+    assert source["last_created_count"] == 0
+    assert source["last_duration_ms"] >= 0
+
+
+def test_source_bi_exposes_inventory_activity_and_direct_use_contract(monitor):
+    monitor.sync_source("tushare.news.cls")
+    result = monitor.source_bi(days=30)
+    source = next(item for item in result["sources"] if item["source_key"] == "tushare.news.cls")
+
+    assert result["summary"]["stored_event_count"] >= 1
+    assert len(result["daily_trend"]) == 30
+    assert source["period_event_count"] == 1
+    assert source["direct_use"]["local_store"] == "SQLite.monitoring_events"
+    assert "source_key=tushare.news.cls" in source["direct_use"]["events_api"]
 
 
 def test_realtime_quote_is_reduced_to_one_daily_open_snapshot(monitor, monkeypatch):
@@ -191,6 +276,35 @@ def test_research_pdf_and_long_news_channels_match_watchlist(monitor):
     assert report_event["symbols"] == ["600519.SH"]
 
 
+def test_historical_news_paginates_and_keeps_only_requested_watchlist_symbol(monitor):
+    original_query = monitor.tushare.query
+    offsets = []
+
+    def query(api_name, params=None, fields=None):
+        if api_name != "news":
+            return original_query(api_name, params=params, fields=fields)
+        offset = int((params or {}).get("offset") or 0)
+        offsets.append(offset)
+        if offset == 0:
+            return {"rows": [{
+                "datetime": "2026-08-18 09:00:00", "title": "000001 银行消息", "content": "平安银行事项",
+            }] * 1500}
+        return {"rows": [{
+            "datetime": "2026-08-17 09:00:00", "title": "贵州茅台渠道更新", "content": "公司经营稳定",
+        }]}
+
+    monitor.tushare.query = query
+    monitor._backfill_days = 30
+    try:
+        events = monitor._tushare_news_events(monitor.repo.get_source("tushare.news.cls"))
+    finally:
+        monitor._backfill_days = None
+
+    assert offsets == [0, 1500]
+    assert len(events) == 1
+    assert events[0]["symbols"] == ["600519.SH"]
+
+
 def test_exchange_activity_and_company_facts_are_traceable(monitor):
     activity = monitor.sync_source("tushare.market_activity")
     profile = monitor.sync_source("tushare.company_profile")
@@ -202,6 +316,32 @@ def test_exchange_activity_and_company_facts_are_traceable(monitor):
         "company_profile", "executive_roster", "holder_number", "top_shareholders", "audit_opinion",
     }
     assert all(item["metrics"]["_evidence"]["origin_apis"] for item in events)
+
+
+def test_dragon_tiger_daily_preserves_reasons_and_seat_details(monitor):
+    original_query = monitor.tushare.query
+
+    def query(api_name, params=None, fields=None):
+        if api_name == "top_list":
+            return {"rows": [
+                {"trade_date": "20260819", "ts_code": "600519.SH", "name": "贵州茅台", "reason": "日涨幅偏离值达7%", "net_amount": 30, "l_buy": 80, "l_sell": 50},
+                {"trade_date": "20260819", "ts_code": "600519.SH", "name": "贵州茅台", "reason": "连续三日涨幅偏离值累计20%", "net_amount": 20, "l_buy": 60, "l_sell": 40},
+                {"trade_date": "20260819", "ts_code": "000001.SZ", "name": "平安银行", "reason": "日换手率达20%", "net_amount": -10, "l_buy": 20, "l_sell": 30},
+            ]}
+        return original_query(api_name, params=params, fields=fields)
+
+    monitor.tushare.query = query
+    payload = monitor.dragon_tiger_daily(trade_date="2026-08-19", refresh=True)
+    assert payload["summary"]["row_count"] == 3
+    assert payload["summary"]["symbol_count"] == 2
+    assert payload["summary"]["seat_count"] == 1
+    assert len([item for item in payload["items"] if item["ts_code"] == "600519.SH"]) == 2
+    assert payload["items"][0]["seats"][0]["exalter"] == "机构专用"
+
+    history = monitor.dragon_tiger_history(start_date="20260819", end_date="20260819")
+    assert history["total"] == 3
+    assert history["cached_trade_days"] == 1
+    assert history["trend"][0]["symbols"] == 2
 
 
 def test_market_theme_flow_and_limit_pool_are_factual_market_snapshots(monitor):
@@ -240,7 +380,7 @@ def test_super_watchlist_uses_structured_data_and_compact_evidence(monitor):
         monitor.sync_source(source_key)
     result = monitor.super_watchlist(days=3650)
     stock = result["stocks"][0]
-    assert result["version"] == "5.0"
+    assert result["version"] == "5.1-shared-store"
     assert stock["symbol"] == "600519.SH"
     assert stock["market"]["price"] == 1300
     assert stock["fundamentals"]["net_profit_yoy"] == 25
@@ -248,6 +388,37 @@ def test_super_watchlist_uses_structured_data_and_compact_evidence(monitor):
     assert stock["technical"]["rsi_6"] == 55
     assert {row["name"] for row in stock["coverage"]} >= {"market", "fundamental", "capital"}
     assert all(set(event["metrics"]) <= {"_evidence"} for event in stock["timeline"])
+
+
+def test_super_watchlist_aggregates_beyond_feed_page_limit(monitor):
+    monitor.sync_source("tushare.fundamentals")
+    monitor.create_external_source({"source_key": "api.bulk", "name": "批量事实"})
+    monitor.ingest_external_events("api.bulk", [{
+        "external_id": f"bulk-{index}", "title": f"贵州茅台事实 {index}",
+        "symbols": ["600519.SH"], "event_at": "2026-08-19T10:00:00",
+    } for index in range(230)])
+
+    stock = monitor.super_watchlist(days=3650)["stocks"][0]
+
+    assert stock["evidence"]["raw_event_count"] == 231
+    assert stock["coverage"][1]["name"] == "fundamental"
+    assert stock["coverage"][1]["available"] is True
+    assert stock["fundamentals"]["net_profit_yoy"] == 25
+
+
+def test_super_watchlist_reads_latest_price_from_shared_market_cache(monitor):
+    monitor.sync_source("tushare.market")
+    MarketDataRepository(DatabaseManager.get_instance()).upsert_ticks([{
+        "code": "600519", "timestamp": datetime.now(), "price": 1318.5,
+        "open": 1290, "high": 1320, "low": 1288, "pre_close": 1300,
+        "change": 18.5, "change_percent": 1.4231, "volume": 10, "amount": 2_000_000,
+    }], source="test.shared.quote")
+
+    stock = monitor.super_watchlist(days=3650)["stocks"][0]
+
+    assert stock["market"]["price"] == 1318.5
+    assert stock["market"]["source"] == "test.shared.quote"
+    assert stock["market"]["amount"] == 2_000_000
 
 
 def test_watchlist_backfill_job_is_durable_and_idempotent_while_active(monitor):
@@ -258,3 +429,91 @@ def test_watchlist_backfill_job_is_durable_and_idempotent_while_active(monitor):
     assert first["status"] == "pending"
     dashboard = monitor.super_watchlist(days=183)
     assert dashboard["backfill_jobs"][0]["progress"] == 0
+
+
+def test_watchlist_keyword_aliases_match_short_company_names(monitor):
+    names = {"603306.SH": "华懋科技", "300476.SZ": "胜宏科技"}
+
+    assert monitor._symbols_for_text("华懋产能释放超预期", names) == ["603306.SH"]
+    assert monitor._symbols_for_text("胜宏订单与300476景气度更新", names) == ["300476.SZ"]
+    assert monitor._symbols_for_text("无关行业观点", names) == []
+
+
+def test_watchlist_keyword_reindex_updates_existing_local_essay(monitor, monkeypatch):
+    source = monitor.repo.get_source("zsxq.essays")
+    monitor.repo.upsert_events([monitor._base_event(
+        source, external_id="topic-hm", event_type="essay", perspective="investor",
+        title="华懋订单跟踪", summary="简称口径的小作文", symbols=[], sentiment="neutral",
+        importance=50, event_at=datetime.now(), tags=[], url="https://wx.zsxq.com/topic/hm",
+    )])
+    monitor.watchlist = lambda: ["603306.SH"]
+    monkeypatch.setattr(monitor, "_stock_name", lambda _symbol: "华懋科技")
+
+    result = monitor.reindex_watchlist_keywords(days=30)
+    events = monitor.repo.all_symbol_events(symbol="603306.SH", days=30)
+
+    assert result["updated"] == 1
+    assert len(events) == 1
+    assert events[0]["url"] == "https://wx.zsxq.com/topic/hm"
+
+
+def test_consensus_keeps_broker_numbers_separate_from_ai_essay_expectations(monitor):
+    research = [{
+        "id": 1, "event_type": "institution_forecast", "event_at": "2026-08-20T01:00:00Z",
+        "metrics": {"rating": "买入", "target_price_min": 80, "target_price_max": 100,
+                    "forecasts": [{"quarter": "2026", "eps": 2, "np": 300}]},
+    }, {
+        "id": 2, "event_type": "institution_forecast", "event_at": "2026-08-20T02:00:00Z",
+        "metrics": {"rating": "增持", "target_price_min": 90, "target_price_max": 110,
+                    "forecasts": [{"quarter": "2026", "eps": 4, "np": 500}]},
+    }]
+    essays = [{"id": 3, "title": "渠道调研", "event_at": "2026-08-20T03:00:00Z", "metrics": {}}]
+    essay_snapshot = {
+        "status": "completed", "source_count": 20, "analyzed_count": 20,
+        "estimates": [{
+            "event_id": 3, "topic_id": "3", "title": "渠道调研", "event_at": "2026-08-20T03:00:00Z",
+            "metric": "net_profit", "period": "2026H2", "value_text": "下半年利润约5亿元",
+            "evidence": "原文预计下半年利润约5亿元", "confidence": 0.7,
+        }],
+    }
+
+    result = monitor._consensus_payload(research, essays, essay_snapshot)
+
+    assert result["target_price"]["median"] == 95
+    assert result["forecasts"][0]["eps_median"] == 3
+    assert result["forecasts"][0]["np_median"] == 400
+    assert result["essay_expectation_count"] == 1
+    assert result["essay_analysis"]["analyzed_count"] == 20
+    assert result["essay_expectations"][0]["metric"] == "net_profit"
+    assert "不混算" in result["method"]
+
+
+def test_equity_watchlist_excludes_bonds_and_funds_from_company_apis(monitor):
+    monitor.watchlist = lambda: ["603306.SH", "113677.SH", "510300.SH"]
+
+    assert monitor.equity_watchlist() == ["603306.SH"]
+
+
+def test_due_source_fetches_are_parallel_but_results_persist_normally(monitor, monkeypatch):
+    sources = []
+    for index in range(4):
+        sources.append(monitor.create_external_source({
+            "source_key": f"api.parallel{index}",
+            "name": f"并发来源 {index}",
+            "poll_interval_seconds": 10,
+        }))
+
+    def slow_empty(_source):
+        time.sleep(0.1)
+        return []
+
+    monkeypatch.setenv("INVESTMENT_MONITOR_MAX_WORKERS", "4")
+    monkeypatch.setattr(monitor, "_events_for_source", slow_empty)
+    started = time.perf_counter()
+    result = monitor._sync_sources(sources)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.3
+    assert result["totals"]["sources"] == 4
+    assert result["totals"]["success"] == 4
+    assert result["totals"]["max_workers"] == 4

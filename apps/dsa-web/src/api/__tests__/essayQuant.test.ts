@@ -19,8 +19,16 @@ describe('essayQuantApi', () => {
 
     const result = await essayQuantApi.dashboard();
 
+    expect(apiClient.get).toHaveBeenCalledWith('/api/v1/essay-quant/institution-dashboard');
     expect(result.summary.firstMention30dCount).toBe(2);
     expect(result.firstMentions30d[0].topicId).toBe('one');
     expect(result.trendSignals[0].momentum20d).toBe(3.5);
+  });
+
+  it('reads background institution-ranking precompute status', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { running: true, computing: false, last_result: { ranked_group_count: 8 } } });
+    const result = await essayQuantApi.precomputeStatus();
+    expect(result.running).toBe(true);
+    expect(result.lastResult?.rankedGroupCount).toBe(8);
   });
 });

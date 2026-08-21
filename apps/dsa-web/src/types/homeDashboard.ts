@@ -2,6 +2,15 @@ import type { MonitorEvent } from './investmentMonitor';
 
 export type MarketPoint = { date?: string | null; value?: number | null };
 
+export type DistributionBucket = { label: string; count: number };
+
+export type SectorMover = {
+  name: string;
+  changePct: number;
+  companyCount?: number | null;
+  leader?: string | null;
+};
+
 export type MarketIndexCard = {
   code: string;
   name: string;
@@ -15,6 +24,9 @@ export type MarketIndexCard = {
   low?: number | null;
   amount?: number | null;
   amountYi?: number | null;
+  source?: string | null;
+  updateTime?: string | null;
+  isStale?: boolean | null;
   history: MarketPoint[];
 };
 
@@ -37,7 +49,12 @@ export type HomeWatchlistCard = {
     prevClose?: number;
     volume?: number;
     amount?: number;
+    secondVolume?: number;
+    secondAmount?: number;
     updateTime?: string;
+    source?: string;
+    staleSeconds?: number;
+    isStale?: boolean;
   } | null;
   institutionRatingCount: number;
   latestRating?: string | null;
@@ -56,10 +73,19 @@ export type HomeDashboard = {
   cnIndices: MarketIndexCard[];
   globalIndices: MarketIndexCard[];
   breadth: {
+    available: boolean;
     up: number; down: number; flat: number; limitUp: number; limitDown: number; total: number;
-    distribution: Array<{ label: string; count: number }>;
+    distribution: DistributionBucket[];
+    tradeDate?: string; updatedAt?: string | null; source?: string | null; reason?: string | null;
   };
-  northbound: { tradeDate?: string; northMoney?: number; northMoneyYi?: number; southMoney?: number };
+  sectorDistribution: {
+    available: boolean;
+    up: number; down: number; flat: number; total: number;
+    distribution: DistributionBucket[];
+    leaders: SectorMover[]; laggards: SectorMover[];
+    tradeDate?: string; updatedAt?: string | null; source?: string | null; reason?: string | null;
+  };
+  northbound: { tradeDate?: string; northMoney?: number; northMoneyYi?: number; southMoney?: number; source?: string };
   watchlist: HomeWatchlistCard[];
   latestEvents: MonitorEvent[];
   intelligenceSummary: {

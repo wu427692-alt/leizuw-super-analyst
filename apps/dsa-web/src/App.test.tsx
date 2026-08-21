@@ -101,9 +101,9 @@ describe('App routing behavior', () => {
   it('shows loading fallback while auth status is initializing', () => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({ isLoading: true }));
 
-    const { container } = render(<App />);
+    render(<App />);
 
-    expect(container.querySelector('.border-t-cyan')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: '页面加载进度' })).toBeInTheDocument();
   });
 
   it('redirects protected routes to login when auth is enabled but user is not logged in', async () => {
@@ -174,16 +174,16 @@ describe('App routing behavior', () => {
     try {
       render(<App />);
 
-      expect(await screen.findByRole('heading', { name: '页面加载失败' })).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: '模块暂未完成加载' })).toBeInTheDocument();
       expect(screen.getByRole('navigation', { name: '主导航' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '重新加载页面' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '重试当前模块' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument();
 
       chatPageShouldThrow.value = false;
       fireEvent.click(screen.getByRole('link', { name: '持仓' }));
 
       expect(await screen.findByTestId('portfolio-page')).toBeInTheDocument();
-      expect(screen.queryByRole('heading', { name: '页面加载失败' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: '模块暂未完成加载' })).not.toBeInTheDocument();
     } finally {
       consoleError.mockRestore();
     }

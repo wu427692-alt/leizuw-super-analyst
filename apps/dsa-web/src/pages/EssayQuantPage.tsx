@@ -1,105 +1,182 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Play, Save, ShieldCheck } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useLocation, useNavigate } from 'react-router-dom';
+import {
+  Activity, Archive, BarChart3, Blocks, Bot, Braces, CheckCircle2, ChevronRight,
+  CircleDollarSign, ClipboardCheck, Database, FileSearch, FlaskConical, History,
+  Layers3, LineChart as LineChartIcon, LoaderCircle, Play, RadioTower, Save,
+  ShieldCheck, SlidersHorizontal, Sparkles, Target, TriangleAlert,
+} from 'lucide-react';
+import {
+  Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
+  ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
 import { essayQuantApi } from '../api/essayQuant';
 import { AppPage, EmptyState } from '../components/common';
-import type { EssayQuantDashboard, EssayQuantRule, QuantMetric } from '../types/essayQuant';
+import type {
+  EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan, EssayQuantPrecomputeStatus,
+  EssayQuantRule, EssayQuantRunHistory, QuantMetric,
+} from '../types/essayQuant';
+import './EssayQuantPage.css';
 
 const DEFAULT_RULE: EssayQuantRule = {
-  name: '小作文多头事件策略', sourceQuery: '', signalDirection: 'bullish', lookbackDays: 365,
+  name: 'AI 已分析小作文事件策略', sourceQuery: '', signalDirection: 'bullish', lookbackDays: 365,
   holdingPeriods: [5, 10, 20], firstMentionOnly: false, firstMentionWindowDays: 180,
-  minImportance: 60, minConfidence: 0.5, benchmarkCode: '000300.SH', portfolioSize: 10, enabled: true,
+  minImportance: 60, minConfidence: 0.5, benchmarkCode: '000300.SH', portfolioSize: 10,
+  enabled: true, strategyType: 'essay_event', rawNotePolicy: 'exclude', dedupeWindowDays: 3,
+  transactionCostBps: 12, validationMethod: 'walk_forward',
 };
+
+const NAV = [
+  ['overview', '研究总览', Activity], ['builder', '策略工坊', SlidersHorizontal],
+  ['natural-language', '自然语言回测', Bot], ['results', '结果实验室', BarChart3],
+  ['data', '数据资产', Database], ['history', '运行历史', History],
+] as const;
+const PIPELINE = [
+  ['语料与事实源', '连接小作文、研报、公告、行情和财务', Database],
+  ['因子构建', '把方向、热度、财务和行情转为可验证信号', Blocks],
+  ['样本与交易约束', '去重、时间切分、流动性与成本', ClipboardCheck],
+  ['回测执行', '事件窗、组合净值、交易明细', Play],
+  ['稳健性与归因', '置信区间、敏感性与分组稳定性', LineChartIcon],
+] as const;
+const EXAMPLES = [
+  '研究近30日首次被两家以上机构提及的股票，持有20日，相对沪深300计算超额收益。',
+  '只看中信电子组近一年重要度70以上的看多观点，去重后测试5日、10日和20日表现。',
+  '检验高热度小作文是否反而跑输，排除未做AI分析的历史原文，加入20bp交易成本。',
+];
 
 const n = (value?: number | null, digits = 1) => value == null ? '—' : value.toFixed(digits);
 const pct = (value?: number | null, digits = 1) => value == null ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(digits)}%`;
-const tone = (value?: number | null) => value == null ? 'text-[#62666D]' : value >= 0 ? 'text-[#027A48]' : 'text-[#B42318]';
+const compact = (value?: number | null) => value == null ? '—' : new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+const tone = (value?: number | null) => value == null ? 'quant-muted' : value >= 0 ? 'quant-positive' : 'quant-negative';
 
-function MetricCell({ label, value, note, valueClass = '' }: { label: string; value: string | number; note: string; valueClass?: string }) {
-  return <div className="border-r border-[#D8DADF] bg-white px-5 py-4 last:border-r-0"><p className="text-xs font-semibold text-[#62666D]">{label}</p><p className={`mt-2 font-mono text-3xl font-bold tracking-[-0.04em] ${valueClass}`}>{value}</p><p className="mt-1 text-[10px] text-[#7B7F87]">{note}</p></div>;
+function SectionTitle({ icon: Icon, title, note, aside }: { icon: typeof Activity; title: string; note?: string; aside?: React.ReactNode }) {
+  return <div className="quant-section-head"><div className="quant-section-title"><Icon aria-hidden="true" /><div><h2>{title}</h2>{note ? <p>{note}</p> : null}</div></div>{aside}</div>;
 }
-
-function SourceLink({ url }: { url: string }) {
-  return <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-[#155EEF] hover:underline">原文<ExternalLink className="h-3 w-3" /></a>;
+function Status({ ok, children }: { ok: boolean; children: React.ReactNode }) {
+  return <span className={ok ? 'quant-status is-ok' : 'quant-status'}>{ok ? <CheckCircle2 /> : <LoaderCircle />}{children}</span>;
+}
+function LoadingScreen({ progress }: { progress: number }) {
+  return <div className="quant-loading" role="status"><RadioTower /><h1>正在装载量化研究工作台</h1><p>读取研究方法、真实数据资产、最近运行和后台状态</p><div><span style={{ width: `${progress}%` }} /></div><strong>{progress}%</strong></div>;
 }
 
 export default function EssayQuantPage() {
+  const location = useLocation(); const navigate = useNavigate();
+  const active = (new URLSearchParams(location.search).get('section') || location.pathname.split('/')[2] || 'overview') as typeof NAV[number][0];
   const [data, setData] = useState<EssayQuantDashboard | null>(null);
+  const [catalog, setCatalog] = useState<EssayQuantCatalog | null>(null);
+  const [history, setHistory] = useState<EssayQuantRunHistory>({ items: [], total: 0 });
   const [rules, setRules] = useState<EssayQuantRule[]>([]);
   const [rule, setRule] = useState<EssayQuantRule>(DEFAULT_RULE);
-  const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [message, setMessage] = useState('');
+  const [precompute, setPrecompute] = useState<EssayQuantPrecomputeStatus | null>(null);
+  const [loading, setLoading] = useState(true); const [progress, setProgress] = useState(12);
+  const [running, setRunning] = useState(false); const [message, setMessage] = useState('');
+  const [prompt, setPrompt] = useState(EXAMPLES[0]); const [plan, setPlan] = useState<EssayQuantPlan | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true); setMessage('');
-    try {
-      const [dashboard, saved] = await Promise.all([essayQuantApi.dashboard(), essayQuantApi.rules()]);
-      setData(dashboard); setRules(saved.items);
-      if (saved.items.length) setRule(saved.items[0]); else if (dashboard.rule) setRule({ ...DEFAULT_RULE, ...dashboard.rule });
-    } catch (error) { setMessage(error instanceof Error ? error.message : '量化数据加载失败'); }
-    finally { setLoading(false); }
+    setLoading(true); setProgress(18); setMessage('');
+    const jobs = [essayQuantApi.dashboard(), essayQuantApi.catalog(), essayQuantApi.runs(), essayQuantApi.rules(), essayQuantApi.precomputeStatus()] as const;
+    const timer = window.setInterval(() => setProgress(current => Math.min(88, current + 7)), 140);
+    const settled = await Promise.allSettled(jobs); window.clearInterval(timer); setProgress(100);
+    const [dashboardJob, catalogJob, historyJob, rulesJob, precomputeJob] = settled;
+    if (dashboardJob.status === 'fulfilled') { setData(dashboardJob.value); setRule({ ...DEFAULT_RULE, ...dashboardJob.value.rule }); }
+    if (catalogJob.status === 'fulfilled') setCatalog(catalogJob.value);
+    if (historyJob.status === 'fulfilled') setHistory(historyJob.value);
+    if (rulesJob.status === 'fulfilled') setRules(rulesJob.value.items);
+    if (precomputeJob.status === 'fulfilled') setPrecompute(precomputeJob.value);
+    const failed = settled.filter(item => item.status === 'rejected').length;
+    if (failed) setMessage(`${failed} 个后台模块尚未就绪，页面已保留其余真实数据；可稍后重试。`);
+    window.setTimeout(() => setLoading(false), 160);
   }, []);
   useEffect(() => { void load(); document.title = '量化回测与数据利用 - DSA'; }, [load]);
 
+  const run = async (target = rule) => {
+    setRunning(true); setMessage('正在补齐行情、聚类事件并执行稳健性检验…');
+    try { const result = await essayQuantApi.run(target); setData(result); setRule({ ...DEFAULT_RULE, ...result.rule }); setHistory(await essayQuantApi.runs()); navigate('/essay-quant?section=results'); setMessage(`研究完成：${result.summary.matureEventCount} 个到期有效样本，结果已保存。`); }
+    catch (error) { setMessage(error instanceof Error ? error.message : '回测执行失败'); }
+    finally { setRunning(false); }
+  };
   const save = async () => {
-    setRunning(true); setMessage('');
-    try { const draft = !rule.id && rule.sourceQuery ? { ...rule, name: `${rule.sourceQuery}跟踪策略` } : rule; const saved = await essayQuantApi.saveRule(draft); setRule(saved); setRules(current => [saved, ...current.filter(item => item.id !== saved.id)]); setMessage('规则已保存'); }
-    catch (error) { setMessage(error instanceof Error ? error.message : '规则保存失败'); }
+    setRunning(true);
+    try { const saved = await essayQuantApi.saveRule(rule); setRule(saved); setRules(current => [saved, ...current.filter(item => item.id !== saved.id)]); setMessage('研究规则已保存'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
     finally { setRunning(false); }
   };
-  const run = async () => {
-    setRunning(true); setMessage('正在补取命中股票的 Tushare 日线与复权因子…');
-    try { const result = await essayQuantApi.run(rule); setData(result); setMessage(`回测完成：${result.summary.matureEventCount} 个到期样本`); }
-    catch (error) { setMessage(error instanceof Error ? error.message : '回测失败'); }
+  const generatePlan = async () => {
+    setRunning(true); setPlan(null); setMessage('DeepSeek 正在把需求拆成信号、样本、成本和验证任务…');
+    try { const result = await essayQuantApi.plan(prompt); setPlan(result); setRule({ ...DEFAULT_RULE, ...result.rule }); setMessage('研究方案已生成，请检查假设和安全边界后再执行。'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : '研究方案生成失败'); }
     finally { setRunning(false); }
   };
+  const executePlan = async () => {
+    if (!plan) return; setRunning(true); setMessage('已确认方案，正在安全研究引擎中执行…');
+    try { const result = await essayQuantApi.executePlan(plan.rule); setData(result); setHistory(await essayQuantApi.runs()); navigate('/essay-quant?section=results'); setMessage('自然语言研究任务执行完成。'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : '方案执行失败'); }
+    finally { setRunning(false); }
+  };
+  const primary = Math.max(...(rule.holdingPeriods.length ? rule.holdingPeriods : [20]));
+  const metric = (period: number, excess = false): QuantMetric | undefined => (excess ? data?.summary.excessMetrics : data?.summary.metrics)?.find(item => item.period === period);
+  const portfolioChart = useMemo(() => { let peak = 0; return (data?.portfolio.curve ?? []).map(item => { const value = (item.value - 1) * 100; peak = Math.max(peak, item.value); return { ...item, value, drawdown: peak ? (item.value / peak - 1) * 100 : 0 }; }); }, [data]);
 
-  const metric = (period: number): QuantMetric | undefined => data?.summary.metrics.find(item => item.period === period);
-  const excessMetric = (period: number): QuantMetric | undefined => data?.summary.excessMetrics.find(item => item.period === period);
-  const primaryPeriod = Math.max(...(rule.holdingPeriods.length ? rule.holdingPeriods : [20]));
-  const portfolioChart = useMemo(() => data?.portfolio.curve.map(item => ({ ...item, value: (item.value - 1) * 100 })) ?? [], [data]);
+  if (loading) return <AppPage className="aurora-workbench max-w-[1720px] px-3 py-3"><LoadingScreen progress={progress} /></AppPage>;
+  return <AppPage className="aurora-workbench max-w-[1760px] px-2 pb-8 pt-2 md:px-3"><div className="essay-quant-terminal">
+    <header className="quant-header"><div><span className="quant-eyebrow"><FlaskConical /> QUANT RESEARCH OS</span><h1>量化回测与数据利用</h1><p>把非结构化情报、行情、基本面和资金数据变成可复现、可解释、可质疑的研究结果。</p></div><div className="quant-header-actions"><Status ok={!precompute?.dirty && !precompute?.computing}>{precompute?.computing ? '机构基线计算中' : precompute?.dirty ? '等待增量重算' : '机构基线已就绪'}</Status><button onClick={() => void load()}><RadioTower />刷新数据</button></div></header>
+    <nav className="quant-tabs" aria-label="量化研究栏目">{NAV.map(([key, label, Icon]) => <button key={key} className={active === key ? 'is-active' : ''} onClick={() => navigate(key === 'overview' ? '/essay-quant' : `/essay-quant?section=${key}`)}><Icon />{label}</button>)}</nav>
+    {message ? <div className="quant-message" aria-live="polite">{running ? <LoaderCircle className="is-spinning" /> : <Activity />}{message}</div> : null}
+    {active === 'overview' && <Overview catalog={catalog} data={data} onMethod={(key) => { setRule(current => ({ ...current, strategyType: key === 'event_study' ? 'essay_event' : key })); navigate('/essay-quant?section=builder'); }} onNatural={() => navigate('/essay-quant?section=natural-language')} />}
+    {active === 'builder' && <Builder rule={rule} rules={rules} running={running} setRule={setRule} onRun={() => void run()} onSave={() => void save()} />}
+    {active === 'natural-language' && <NaturalLanguage prompt={prompt} setPrompt={setPrompt} plan={plan} running={running} onGenerate={() => void generatePlan()} onExecute={() => void executePlan()} />}
+    {active === 'results' && <Results data={data} primary={primary} metric={metric} portfolioChart={portfolioChart} onBuilder={() => navigate('/essay-quant?section=builder')} />}
+    {active === 'data' && <DataAssets catalog={catalog} data={data} />}
+    {active === 'history' && <RunHistory history={history} />}
+    <footer className="quant-footer"><ShieldCheck /> 历史结果不构成投资建议；研究结论必须结合样本外检验、成交约束和数据截止时间解释。</footer>
+  </div></AppPage>;
+}
 
-  return <AppPage className="max-w-[1720px] px-3 pb-8 pt-3 md:px-4 lg:px-5">
-    <div className="overflow-hidden border border-[#C9CCD2] bg-[#F7F7F8] text-[#17181A] shadow-[0_18px_50px_rgba(17,24,39,0.08)]">
-      <header className="flex flex-col justify-between gap-4 border-b border-[#17181A] bg-white px-5 py-5 lg:flex-row lg:items-center">
-        <div><h1 className="text-3xl font-bold tracking-[-0.04em]">量化回测与数据利用</h1><p className="mt-2 text-sm text-[#62666D]">把小作文观点变成可复算的事件策略；未走满持有期的样本不计入胜率。</p></div>
-        <div className="flex flex-wrap gap-2"><select aria-label="已保存规则" value={rule.id ?? ''} onChange={e => { const selected = rules.find(item => item.id === Number(e.target.value)); setRule(selected ?? { ...DEFAULT_RULE }); }} className="h-10 border border-[#C9CCD2] bg-white px-3 text-xs"><option value="">新建规则</option>{rules.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button className="inline-flex h-10 items-center gap-2 border border-[#C9CCD2] bg-white px-4 text-xs font-semibold" disabled={running} onClick={() => void save()}><Save className="h-4 w-4" />保存规则</button><button className="inline-flex h-10 items-center gap-2 bg-[#155EEF] px-5 text-xs font-semibold text-white disabled:opacity-50" disabled={running || !rule.holdingPeriods.length} onClick={() => void run()}><Play className="h-4 w-4" />{running ? '运行中…' : '运行回测'}</button></div>
-      </header>
+function Overview({ catalog, data, onMethod, onNatural }: { catalog: EssayQuantCatalog | null; data: EssayQuantDashboard | null; onMethod: (key: string) => void; onNatural: () => void }) {
+  return <main className="quant-page"><section className="quant-pipeline">{PIPELINE.map(([title, note, Icon], index) => <div key={title} className="quant-pipeline-step"><span>{index + 1}</span><Icon /><div><strong>{title}</strong><p>{note}</p><Status ok={index < 2}>{index < 2 ? '数据已连接' : index === 2 ? '等待配置' : '等待运行'}</Status></div>{index < PIPELINE.length - 1 ? <ChevronRight className="quant-pipe-arrow" /> : null}</div>)}</section>
+    <div className="quant-overview-grid"><section className="quant-panel quant-methods"><SectionTitle icon={Layers3} title="研究方法" note="每个入口都写清楚目的、使用的数据和输出，不再让你猜按钮用途。" /><div className="quant-method-grid">{(catalog?.methods ?? []).map((method, index) => { const Icon = [Target, Blocks, Sparkles, RadioTower, CircleDollarSign][index] ?? FlaskConical; return <article key={method.key}><Icon /><h3>{method.name}</h3><small>目的</small><p>{method.purpose}</p><small>输出</small><p>{method.output}</p><button onClick={() => onMethod(method.key)}>新建研究<ChevronRight /></button></article>; })}</div></section>
+      <section className="quant-panel quant-natural-card"><SectionTitle icon={Bot} title="自然语言回测" note="描述研究想法，模型负责拆任务；执行仍走安全白名单引擎。" /><blockquote>“筛选近30日首次被机构提及、盈利预期上调的股票，持有20日并计算超额收益。”</blockquote><ol><li>生成结构化假设与规则</li><li>显示受约束可复现代码</li><li>确认后执行并保存快照</li></ol><button className="quant-primary" onClick={onNatural}><Sparkles />打开自然语言工作台</button></section>
+      <section className="quant-panel quant-assets-preview"><SectionTitle icon={Database} title="数据资产实况" note="以下数量和时间直接读取本地数据库。" aside={<Status ok>{catalog?.assets.filter(item => item.status === 'ready').length ?? 0} 个可用</Status>} /><table><thead><tr><th>数据集</th><th>本地数据</th><th>最近更新</th><th>可用于</th><th>状态</th></tr></thead><tbody>{(catalog?.assets ?? []).map(item => <tr key={item.key}><td>{item.name}</td><td className="mono">{compact(item.count)}</td><td className="mono">{item.latestAt?.slice(0, 16) || '—'}</td><td>{item.usage}</td><td><Status ok={item.status === 'ready'}>{item.status === 'ready' ? '可用' : item.status === 'empty' ? '暂无数据' : '待接入'}</Status></td></tr>)}</tbody></table></section>
+      <section className="quant-panel quant-last-run"><SectionTitle icon={BarChart3} title="最近一次研究" note={data?.generatedAt ? `运行于 ${new Date(data.generatedAt).toLocaleString('zh-CN')}` : '等待运行'} />{data ? <div className="quant-mini-results"><div><small>有效事件</small><strong>{data.summary.eventCount}</strong><span>到期 {data.summary.matureEventCount}</span></div><div><small>平均超额</small><strong className={tone(data.robustness?.averageExcessReturn)}>{pct(data.robustness?.averageExcessReturn, 2)}</strong><span>95% CI {n(data.robustness?.confidenceInterval95?.[0], 2)} ~ {n(data.robustness?.confidenceInterval95?.[1], 2)}</span></div><div><small>重复信号过滤</small><strong>{data.dataQuality.duplicateEventCount ?? 0}</strong><span>{data.rule.dedupeWindowDays} 日聚类窗口</span></div><div><small>交易成本</small><strong>{data.rule.transactionCostBps}bp</strong><span>已从个股收益扣除</span></div></div> : <EmptyState title="等待首次运行" description="从研究方法或自然语言回测开始。" />}</section>
+    </div></main>;
+}
 
-      <section className="grid gap-px border-b border-[#C9CCD2] bg-[#D8DADF] xl:grid-cols-[1.35fr_.75fr_.65fr_1.25fr_.65fr_.75fr]">
-        <label className="bg-white p-3"><span className="text-[10px] font-semibold text-[#62666D]">研究组 / 券商关键词</span><input value={rule.sourceQuery} onChange={e => setRule({ ...rule, sourceQuery: e.target.value })} placeholder="如：中信电子组" className="mt-1 h-9 w-full border border-[#C9CCD2] px-3 text-xs outline-none focus:border-[#155EEF]" /></label>
-        <label className="bg-white p-3"><span className="text-[10px] font-semibold text-[#62666D]">信号方向</span><select value={rule.signalDirection} onChange={e => setRule({ ...rule, signalDirection: e.target.value as EssayQuantRule['signalDirection'] })} className="mt-1 h-9 w-full border border-[#C9CCD2] bg-white px-2 text-xs"><option value="bullish">看多</option><option value="bearish">看空</option><option value="all">全部</option></select></label>
-        <label className="bg-white p-3"><span className="text-[10px] font-semibold text-[#62666D]">回看周期</span><select value={rule.lookbackDays} onChange={e => setRule({ ...rule, lookbackDays: Number(e.target.value) })} className="mt-1 h-9 w-full border border-[#C9CCD2] bg-white px-2 text-xs"><option value={90}>近90日</option><option value={180}>近180日</option><option value={365}>近1年</option><option value={730}>近2年</option></select></label>
-        <fieldset className="bg-white p-3"><legend className="text-[10px] font-semibold text-[#62666D]">持有期</legend><div className="mt-3 flex gap-4">{[5, 10, 20].map(period => <label key={period} className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={rule.holdingPeriods.includes(period)} onChange={e => setRule({ ...rule, holdingPeriods: e.target.checked ? [...rule.holdingPeriods, period].sort((a,b)=>a-b) : rule.holdingPeriods.filter(item => item !== period) })} />{period}日</label>)}</div></fieldset>
-        <label className="bg-white p-3"><span className="text-[10px] font-semibold text-[#62666D]">首次提及</span><span className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={rule.firstMentionOnly} onChange={e => setRule({ ...rule, firstMentionOnly: e.target.checked })} />只看首次</span></label>
-        <label className="bg-white p-3"><span className="text-[10px] font-semibold text-[#62666D]">组合数量</span><select value={rule.portfolioSize} onChange={e => setRule({ ...rule, portfolioSize: Number(e.target.value) })} className="mt-1 h-9 w-full border border-[#C9CCD2] bg-white px-2 text-xs">{[5,10,15,20].map(size => <option key={size} value={size}>前{size}只</option>)}</select></label>
-      </section>
+function Builder({ rule, rules, running, setRule, onRun, onSave }: { rule: EssayQuantRule; rules: EssayQuantRule[]; running: boolean; setRule: (rule: EssayQuantRule) => void; onRun: () => void; onSave: () => void }) {
+  const update = <K extends keyof EssayQuantRule>(key: K, value: EssayQuantRule[K]) => setRule({ ...rule, [key]: value });
+  return <main className="quant-page quant-builder-page"><section className="quant-panel"><SectionTitle icon={SlidersHorizontal} title="策略工坊" note="按信号、样本、交易和验证四步配置；右侧随时显示完整研究定义。" aside={<div className="quant-action-row"><select aria-label="载入保存规则" value={rule.id ?? ''} onChange={event => setRule(rules.find(item => item.id === Number(event.target.value)) ?? DEFAULT_RULE)}><option value="">新建规则</option>{rules.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={onSave} disabled={running}><Save />保存</button><button className="quant-primary" onClick={onRun} disabled={running}><Play />{running ? '执行中' : '运行研究'}</button></div>} />
+    <div className="quant-builder-grid"><div className="quant-form-stack"><fieldset><legend><span>1</span>定义信号</legend><label>研究名称<input value={rule.name} onChange={event => update('name', event.target.value)} /></label><div className="quant-form-row"><label>机构 / 来源关键词<input value={rule.sourceQuery} onChange={event => update('sourceQuery', event.target.value)} placeholder="空白 = 全部来源" /></label><label>观点方向<select value={rule.signalDirection} onChange={event => update('signalDirection', event.target.value as EssayQuantRule['signalDirection'])}><option value="bullish">看多</option><option value="bearish">看空</option><option value="all">全部</option></select></label></div><label className="quant-toggle"><input type="checkbox" checked={rule.rawNotePolicy === 'include'} onChange={event => update('rawNotePolicy', event.target.checked ? 'include' : 'exclude')} /><span><strong>纳入未做 AI 分析的原始语料</strong><small>仅适合探索。默认关闭，避免关键词展开把事件样本放大。</small></span></label></fieldset>
+      <fieldset><legend><span>2</span>样本筛选</legend><div className="quant-form-row three"><label>回看周期<select value={rule.lookbackDays} onChange={event => update('lookbackDays', Number(event.target.value))}><option value={90}>90日</option><option value={180}>180日</option><option value={365}>1年</option><option value={730}>2年</option></select></label><label>最低重要度<input type="number" min="0" max="100" value={rule.minImportance} onChange={event => update('minImportance', Number(event.target.value))} /></label><label>最低置信度<input type="number" min="0" max="1" step="0.1" value={rule.minConfidence} onChange={event => update('minConfidence', Number(event.target.value))} /></label></div><div className="quant-form-row"><label>重复信号聚类窗口<input type="number" min="0" max="30" value={rule.dedupeWindowDays} onChange={event => update('dedupeWindowDays', Number(event.target.value))} /><small>同股、同机构、同方向在窗口内只计一次</small></label><label className="quant-toggle compact"><input type="checkbox" checked={rule.firstMentionOnly} onChange={event => update('firstMentionOnly', event.target.checked)} /><span><strong>只看首次提及</strong><small>{rule.firstMentionWindowDays} 日内无同股观点</small></span></label></div></fieldset>
+      <fieldset><legend><span>3</span>交易约束</legend><div className="quant-form-row three"><label>持有期<div className="quant-checks">{[5, 10, 20, 30, 60].map(period => <button type="button" key={period} className={rule.holdingPeriods.includes(period) ? 'is-active' : ''} onClick={() => update('holdingPeriods', rule.holdingPeriods.includes(period) ? rule.holdingPeriods.filter(item => item !== period) : [...rule.holdingPeriods, period].sort((a, b) => a - b).slice(0, 3))}>{period}日</button>)}</div></label><label>交易成本（bp）<input type="number" min="0" max="200" value={rule.transactionCostBps} onChange={event => update('transactionCostBps', Number(event.target.value))} /></label><label>组合股票数<input type="number" min="2" max="30" value={rule.portfolioSize} onChange={event => update('portfolioSize', Number(event.target.value))} /></label></div></fieldset>
+      <fieldset><legend><span>4</span>验证方式</legend><div className="quant-form-row"><label>市场基准<select value={rule.benchmarkCode} onChange={event => update('benchmarkCode', event.target.value)}><option value="000300.SH">沪深300</option><option value="000905.SH">中证500</option><option value="000852.SH">中证1000</option><option value="000001.SH">上证指数</option></select></label><label>验证方法<select value={rule.validationMethod} onChange={event => update('validationMethod', event.target.value as EssayQuantRule['validationMethod'])}><option value="walk_forward">滚动样本外验证</option><option value="time_split">固定时间切分</option><option value="none">仅全样本探索</option></select></label></div></fieldset></div>
+      <aside className="quant-definition"><h3><Braces />研究定义</h3><dl><dt>语料</dt><dd>{rule.rawNotePolicy === 'exclude' ? '仅 AI 已分析有效观点' : 'AI观点 + 原始语料探索层'}</dd><dt>信号</dt><dd>{rule.sourceQuery || '全部机构'} · {rule.signalDirection}</dd><dt>入场 / 出场</dt><dd>事件后首个交易日开盘 / 第 N 日收盘</dd><dt>去重</dt><dd>同股同机构 {rule.dedupeWindowDays} 日聚类</dd><dt>成本</dt><dd>{rule.transactionCostBps}bp</dd><dt>持有期</dt><dd>{rule.holdingPeriods.join('、')} 个交易日</dd><dt>评价</dt><dd>收益、超额、置信区间、月度队列、成本敏感性</dd></dl>{rule.rawNotePolicy === 'include' ? <div className="quant-warning"><TriangleAlert />原始语料未经过观点方向和置信度完整校验，会单独标记为探索证据。</div> : null}</aside></div></section></main>;
+}
 
-      {message ? <div className="border-b border-[#C9CCD2] bg-[#EEF4FF] px-5 py-2 text-xs text-[#155EEF]">{message}</div> : null}
-      <section className="grid border-b border-[#C9CCD2] sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCell label="样本数（事件）" value={data?.summary.eventCount ?? '—'} note={`到期样本 ${data?.summary.matureEventCount ?? 0}`} />
-        <MetricCell label="5日胜率" value={pct(metric(5)?.winRate)} note={`样本量 ${metric(5)?.sampleCount ?? 0}`} valueClass={tone(metric(5)?.averageReturn)} />
-        <MetricCell label={`${primaryPeriod}日平均超额收益`} value={pct(excessMetric(primaryPeriod)?.averageReturn, 2)} note={`相对 ${data?.dataQuality.benchmark ?? rule.benchmarkCode}`} valueClass={tone(excessMetric(primaryPeriod)?.averageReturn)} />
-        <MetricCell label="覆盖股票（去重）" value={data?.summary.coveredStockCount ?? '—'} note={`近30日首次提及 ${data?.summary.firstMention30dCount ?? 0}`} />
-      </section>
+function NaturalLanguage({ prompt, setPrompt, plan, running, onGenerate, onExecute }: { prompt: string; setPrompt: (value: string) => void; plan: EssayQuantPlan | null; running: boolean; onGenerate: () => void; onExecute: () => void }) {
+  return <main className="quant-page quant-nl-page"><section className="quant-panel"><SectionTitle icon={Bot} title="自然语言回测" note="DeepSeek 负责理解需求和生成方案；服务器只执行经过字段校验的白名单任务。" /><div className="quant-nl-grid"><div className="quant-prompt"><label>输入你的研究需求<textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="请说明信号、股票范围、持有期、基准和想验证的问题…" /></label><div className="quant-examples"><span>示例</span>{EXAMPLES.map(item => <button key={item} onClick={() => setPrompt(item)}>{item}</button>)}</div><button className="quant-primary quant-generate" disabled={running || prompt.trim().length < 8} onClick={onGenerate}>{running ? <LoaderCircle className="is-spinning" /> : <Sparkles />}{running ? '正在生成研究方案' : '生成研究方案'}</button></div><aside className="quant-safety"><ShieldCheck /><h3>安全执行边界</h3><p>模型不会直接获得执行器。它只能填写受控研究字段，代码由服务器模板生成。</p><strong>允许</strong><ul><li>读取聚合后的研究数据</li><li>调用量化事件研究引擎</li><li>保存不可变结果快照</li></ul><strong>阻止</strong><ul><li>exec / eval 与任意 Shell</li><li>任意 SQL、文件、密钥和下单</li><li>未授权网络访问</li></ul></aside></div></section>
+  {plan ? <section className="quant-panel quant-plan"><SectionTitle icon={ClipboardCheck} title={plan.plan.title} note={plan.plan.hypothesis} aside={<button className="quant-primary" onClick={onExecute} disabled={running}><Play />确认并执行</button>} /><div className="quant-plan-grid"><div><h3>结构化研究任务</h3><dl><dt>股票范围</dt><dd>{plan.plan.universe}</dd><dt>数据源</dt><dd>{plan.plan.signalSources.join(' / ')}</dd><dt>持有期</dt><dd>{plan.rule.holdingPeriods.join('、')} 日</dd><dt>成本 / 去重</dt><dd>{plan.rule.transactionCostBps}bp / {plan.rule.dedupeWindowDays} 日</dd><dt>验证</dt><dd>{plan.rule.validationMethod}</dd></dl><h4>研究假设</h4><ul>{plan.plan.assumptions.length ? plan.plan.assumptions.map(item => <li key={item}>{item}</li>) : <li>模型未补充额外假设</li>}</ul>{plan.plan.unsupportedRequests.length ? <div className="quant-warning"><TriangleAlert /><div><strong>暂不支持</strong>{plan.plan.unsupportedRequests.map(item => <p key={item}>{item}</p>)}</div></div> : null}</div><div className="quant-code"><div><Braces />可复现模板代码 <span>待你确认后执行</span></div><pre>{plan.code}</pre></div></div></section> : null}</main>;
+}
 
-      <section className="grid border-b border-[#C9CCD2] xl:grid-cols-[1.55fr_1fr]">
-        <div className="min-w-0 bg-white p-5 xl:border-r xl:border-[#C9CCD2]"><h2 className="text-lg font-bold">事件发生后平均累计收益</h2><p className="mt-1 text-xs text-[#62666D]">横轴为事件后交易日；每个点只使用已具备该日行情的样本。</p><div className="mt-4 h-72 min-w-0"><ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={288} initialDimension={{ width: 700, height: 288 }}><LineChart data={data?.eventCurve ?? []}><CartesianGrid stroke="#E5E7EB" vertical={false}/><XAxis dataKey="day" tick={{fontSize:10}}/><YAxis tick={{fontSize:10}} tickFormatter={v=>`${v}%`}/><Tooltip formatter={(v)=>`${n(Number(v),2)}%`}/><Legend/><Line type="monotone" dataKey="strategy" name="事件策略" stroke="#155EEF" strokeWidth={2} dot={false}/><Line type="monotone" dataKey="benchmark" name="沪深300" stroke="#7B7F87" strokeWidth={1.5} dot={false}/></LineChart></ResponsiveContainer></div></div>
-        <div className="bg-[#EEF2F7] p-5"><div className="flex items-center justify-between"><h2 className="text-lg font-bold">策略定义与数据质量</h2><ShieldCheck className="h-5 w-5 text-[#155EEF]" /></div><dl className="mt-5 grid grid-cols-[88px_1fr] gap-x-3 gap-y-3 text-xs"><dt className="text-[#62666D]">事件定义</dt><dd>{rule.sourceQuery || '全部研究组'} · {rule.signalDirection === 'bullish' ? '看多观点' : rule.signalDirection === 'bearish' ? '看空观点' : '全部观点'}</dd><dt className="text-[#62666D]">买入价格</dt><dd>{data?.dataQuality.entryRule ?? '事件后首个交易日开盘'}</dd><dt className="text-[#62666D]">卖出价格</dt><dd>{data?.dataQuality.exitRule ?? '第N个交易日收盘'}</dd><dt className="text-[#62666D]">价格口径</dt><dd>{data?.dataQuality.priceBasis ?? '—'}</dd><dt className="text-[#62666D]">数据截止</dt><dd>{data?.dataQuality.priceCutoff ?? '—'}</dd><dt className="text-[#62666D]">样本约束</dt><dd>{data?.dataQuality.survivorshipNote ?? '—'}</dd><dt className="text-[#62666D]">排名校正</dt><dd>{data?.dataQuality.rankingNote ?? '—'}</dd></dl>{data?.dataQuality.warnings.length ? <ul className="mt-5 border-l-2 border-[#B54708] pl-3 text-xs text-[#B54708]">{data.dataQuality.warnings.map(item=><li key={item}>{item}</li>)}</ul> : null}</div>
-      </section>
+function Results({ data, primary, metric, portfolioChart, onBuilder }: { data: EssayQuantDashboard | null; primary: number; metric: (period: number, excess?: boolean) => QuantMetric | undefined; portfolioChart: Array<Record<string, string | number>>; onBuilder: () => void }) {
+  if (!data) return <main className="quant-page"><section className="quant-panel"><EmptyState title="还没有回测结果" description="先在策略工坊或自然语言工作台运行一个研究任务。" /><button className="quant-primary centered" onClick={onBuilder}>进入策略工坊</button></section></main>;
+  const ci = data.robustness?.confidenceInterval95 ?? [null, null];
+  return <main className="quant-page quant-results-page"><section className="quant-kpis"><div><small>有效事件 / 到期</small><strong>{data.summary.eventCount} <span>/ {data.summary.matureEventCount}</span></strong><p>AI语料口径：{data.rule.rawNotePolicy === 'exclude' ? '严格' : '探索'}</p></div><div><small>{primary}日平均超额</small><strong className={tone(data.robustness?.averageExcessReturn)}>{pct(data.robustness?.averageExcessReturn, 2)}</strong><p>95% CI {n(ci[0], 2)}% ~ {n(ci[1], 2)}%</p></div><div><small>t 值 / 盈亏比</small><strong>{n(data.robustness?.tStat, 2)} <span>/ {n(data.robustness?.payoffRatio, 2)}</span></strong><p>正收益率 {pct(data.robustness?.positiveRate)}</p></div><div><small>最大回撤</small><strong className="quant-negative">{pct(data.portfolio.maxDrawdown, 2)}</strong><p>组合年化 {pct(data.portfolio.annualizedReturn, 2)}</p></div><div><small>样本质量</small><strong>{data.dataQuality.duplicateEventCount ?? 0}</strong><p>重复信号已过滤 · 成本 {data.rule.transactionCostBps}bp</p></div></section>
+    <div className="quant-result-grid"><section className="quant-panel span-2"><SectionTitle icon={LineChartIcon} title="组合收益与回撤" note="收益曲线与水下回撤共享时间轴；只展示真实运行结果。" /><div className="quant-chart tall"><ResponsiveContainer><ComposedChart data={portfolioChart}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="date" tickFormatter={value => String(value).slice(5)} /><YAxis yAxisId="left" tickFormatter={value => `${value}%`} /><YAxis yAxisId="right" orientation="right" tickFormatter={value => `${value}%`} /><Tooltip formatter={(value) => `${n(Number(value), 2)}%`} /><Legend/><ReferenceLine yAxisId="left" y={0} stroke="var(--quant-muted)"/><Line yAxisId="left" type="monotone" dataKey="value" name="组合收益" stroke="var(--quant-lime)" strokeWidth={2} dot={false}/><Bar yAxisId="right" dataKey="drawdown" name="回撤" fill="var(--quant-risk)" opacity={.45}/></ComposedChart></ResponsiveContainer></div></section>
+      <section className="quant-panel"><SectionTitle icon={Archive} title="收益分布与置信区间" note={`主观察窗 ${primary} 日，样本 ${data.robustness?.sampleCount ?? 0}`} /><div className="quant-chart"><ResponsiveContainer><BarChart data={data.robustness?.distribution ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="midpoint" tickFormatter={value => `${n(Number(value), 0)}%`} /><YAxis /><Tooltip labelFormatter={value => `${n(Number(value), 2)}%`} /><Bar dataKey="count" name="样本数" fill="var(--quant-cyan)" /></BarChart></ResponsiveContainer></div><div className="quant-ci">95% 自助法区间 <strong>{n(ci[0], 2)}% ~ {n(ci[1], 2)}%</strong></div></section>
+      <section className="quant-panel"><SectionTitle icon={Activity} title="事件后路径" note="每个点只使用已经走满该交易日的事件。" /><div className="quant-chart"><ResponsiveContainer><LineChart data={data.eventCurve}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="day"/><YAxis tickFormatter={value => `${value}%`}/><Tooltip formatter={value => `${n(Number(value), 2)}%`}/><Legend/><ReferenceLine y={0} stroke="var(--quant-muted)"/><Line dataKey="strategy" name="事件策略" stroke="var(--quant-lime)" dot={false}/><Line dataKey="benchmark" name="市场基准" stroke="var(--quant-cyan)" dot={false}/></LineChart></ResponsiveContainer></div></section>
+      <section className="quant-panel"><SectionTitle icon={SlidersHorizontal} title="成本敏感性" note="观察结论是否依赖过低交易成本假设。" /><div className="quant-chart"><ResponsiveContainer><BarChart data={data.robustness?.sensitivity ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="label"/><YAxis tickFormatter={value => `${value}%`}/><Tooltip formatter={value => `${n(Number(value), 2)}%`}/><ReferenceLine y={0} stroke="var(--quant-muted)"/><Bar dataKey="averageExcessReturn" name="平均超额收益">{(data.robustness?.sensitivity ?? []).map(row => <Cell key={row.label} fill={row.averageExcessReturn >= 0 ? 'var(--quant-lime)' : 'var(--quant-risk)'} />)}</Bar></BarChart></ResponsiveContainer></div></section>
+      <section className="quant-panel span-2"><SectionTitle icon={History} title="时间队列稳定性" note="按事件月份展示样本量、平均超额和胜率；用于识别只在单一行情阶段有效的策略。" /><div className="quant-chart"><ResponsiveContainer><ComposedChart data={data.robustness?.cohorts ?? []}><CartesianGrid stroke="var(--quant-grid)" vertical={false}/><XAxis dataKey="period"/><YAxis yAxisId="left" tickFormatter={value => `${value}%`}/><YAxis yAxisId="right" orientation="right"/><Tooltip/><Legend/><ReferenceLine yAxisId="left" y={0} stroke="var(--quant-muted)"/><Bar yAxisId="right" dataKey="sampleCount" name="样本数" fill="var(--quant-panel-3)"/><Line yAxisId="left" dataKey="averageExcessReturn" name="平均超额" stroke="var(--quant-lime)"/><Line yAxisId="left" dataKey="winRate" name="胜率" stroke="var(--quant-cyan)"/></ComposedChart></ResponsiveContainer></div></section>
+      {data.robustness.validation ? <section className="quant-panel span-2"><SectionTitle icon={ShieldCheck} title="时间顺序样本外验证" note={`前70%训练观察 / 后30%样本外验证 · 切分日 ${data.robustness.validation.splitDate || '—'}`} /><div className="quant-validation"><div><small>训练观察</small><strong className={tone(data.robustness.validation.trainAverageExcessReturn)}>{pct(data.robustness.validation.trainAverageExcessReturn, 2)}</strong><span>{data.robustness.validation.trainSampleCount} 样本</span></div><ChevronRight/><div><small>样本外</small><strong className={tone(data.robustness.validation.testAverageExcessReturn)}>{pct(data.robustness.validation.testAverageExcessReturn, 2)}</strong><span>{data.robustness.validation.testSampleCount} 样本</span></div><div className="quant-folds">{data.robustness.validation.walkForwardFolds.map(fold => <p key={fold.fold}><b>F{fold.fold}</b><span>{fold.startAt.slice(5)}~{fold.endAt.slice(5)}</span><strong className={tone(fold.averageExcessReturn)}>{pct(fold.averageExcessReturn, 2)}</strong></p>)}</div></div></section> : null}
+      <section className="quant-panel span-2"><SectionTitle icon={Blocks} title="非结构化因子分层" note="把重要度、置信度、信息增量和观点强度按样本三等分，观察高分组是否稳定优于低分组。" /><div className="quant-factor-grid">{data.factorAnalysis.map(factor => <article key={factor.factor}><header><strong>{factor.label}</strong><span className={tone(factor.highLowSpread)}>高-低 {pct(factor.highLowSpread, 2)}</span></header><div>{factor.buckets.map(bucket => <p key={bucket.bucket}><b>{bucket.bucket}</b><span className={tone(bucket.averageExcessReturn)}>{pct(bucket.averageExcessReturn, 2)}</span><small>{bucket.sampleCount} 样本 · 胜率 {pct(bucket.winRate)}</small></p>)}</div></article>)}</div></section>
+      <section className="quant-panel"><SectionTitle icon={Target} title="多持有期对照" note="同时比较绝对收益与相对基准超额。" /><table><thead><tr><th>持有期</th><th>样本</th><th>胜率</th><th>平均</th><th>平均超额</th></tr></thead><tbody>{data.rule.holdingPeriods.map(period => <tr key={period}><td>{period}日</td><td>{metric(period)?.sampleCount ?? 0}</td><td>{pct(metric(period)?.winRate)}</td><td className={tone(metric(period)?.averageReturn)}>{pct(metric(period)?.averageReturn, 2)}</td><td className={tone(metric(period, true)?.averageReturn)}>{pct(metric(period, true)?.averageReturn, 2)}</td></tr>)}</tbody></table></section>
+      <section className="quant-panel"><SectionTitle icon={RadioTower} title="机构胜率（收缩后）" note="至少 3 个到期样本进入主榜，小样本仅观察。" /><table><thead><tr><th>研究组</th><th>样本</th><th>校正胜率</th><th>超额</th></tr></thead><tbody>{data.researchGroupRankings.slice(0, 8).map(row => <tr key={row.researchGroup}><td>{row.researchGroup}</td><td>{row.matureCount}</td><td>{pct(row.adjustedWinRate)}</td><td className={tone(row.averageExcessReturn)}>{pct(row.averageExcessReturn, 2)}</td></tr>)}</tbody></table></section></div></main>;
+}
 
-      <section className="grid border-b border-[#C9CCD2] xl:grid-cols-[1fr_1.15fr_.9fr]">
-        <div className="overflow-hidden bg-white p-5 xl:border-r xl:border-[#C9CCD2]"><h2 className="text-lg font-bold">券商 / 研究组胜率排行</h2><p className="mt-1 text-xs text-[#62666D]">按{primaryPeriod}日到期样本；至少3个样本进入主排名，原始胜率仍展示。</p><div className="mt-4 overflow-auto"><table className="w-full text-left text-xs"><thead className="border-y border-[#D8DADF] text-[#62666D]"><tr><th className="py-2">研究组</th><th>样本</th><th>原胜率</th><th>收缩胜率</th><th>超额</th></tr></thead><tbody>{data?.researchGroupRankings.slice(0,10).map(row=><tr key={row.researchGroup} className="border-b border-[#E5E7EB]"><td className="max-w-[150px] truncate py-2 font-semibold">{row.researchGroup}{row.rankEligible === false ? <span className="ml-1 font-normal text-[#B54708]">样本不足</span> : null}</td><td>{row.matureCount}</td><td>{pct(row.winRate)}</td><td>{pct(row.adjustedWinRate)}</td><td className={tone(row.averageExcessReturn)}>{pct(row.averageExcessReturn,2)}</td></tr>)}</tbody></table></div></div>
-        <div className="overflow-hidden bg-white p-5 xl:border-r xl:border-[#C9CCD2]"><h2 className="text-lg font-bold">近30日首次提及</h2><p className="mt-1 text-xs text-[#62666D]">此前 {rule.firstMentionWindowDays} 日无同股观点才计为首次。</p><div className="mt-4 overflow-auto"><table className="w-full text-left text-xs"><thead className="border-y border-[#D8DADF] text-[#62666D]"><tr><th className="py-2">日期 / 股票</th><th>研究组</th><th>观点</th><th>原文</th></tr></thead><tbody>{data?.firstMentions30d.slice(0,10).map(row=><tr key={`${row.topicId}-${row.symbol}`} className="border-b border-[#E5E7EB]"><td className="py-2"><p className="font-semibold">{row.stockName}</p><p className="font-mono text-[10px] text-[#62666D]">{row.eventAt.slice(5,10)} · {row.symbol}</p></td><td className="max-w-[120px] truncate">{row.researchGroup}</td><td className="max-w-[160px] truncate">{row.summary}</td><td><SourceLink url={row.url}/></td></tr>)}</tbody></table>{!loading&&!data?.firstMentions30d.length?<EmptyState title="近30日无首次提及" description="可扩大回看周期或降低重要度门槛。"/>:null}</div></div>
-        <div className="min-w-0 bg-white p-5"><h2 className="text-lg font-bold">吹票强度 × 后续走势</h2><p className="mt-1 text-xs text-[#62666D]">强度由观点词、重要度和信息增量构成，不代表事实。</p><div className="mt-4 h-64 min-w-0"><ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={256} initialDimension={{width:380,height:256}}><BarChart data={data?.hypeAnalysis ?? []}><CartesianGrid stroke="#E5E7EB" vertical={false}/><XAxis dataKey="level" tick={{fontSize:10}}/><YAxis tick={{fontSize:10}} tickFormatter={v=>`${v}%`}/><Tooltip/><Legend/><Bar dataKey="averageReturn" name={`${primaryPeriod}日平均收益`} fill="#155EEF"/><Bar dataKey="winRate" name="胜率" fill="#98A2B3"/></BarChart></ResponsiveContainer></div></div>
-      </section>
+function DataAssets({ catalog, data }: { catalog: EssayQuantCatalog | null; data: EssayQuantDashboard | null }) {
+  const funnel = [['扫描语料', data?.dataQuality.notesScanned ?? 0], ['AI 已分析', data?.dataQuality.analyzedNoteCount ?? 0], ['解析到股票', data?.dataQuality.resolvedNoteCount ?? 0], ['重复事件过滤', data?.dataQuality.duplicateEventCount ?? 0], ['具备行情股票', data?.dataQuality.pricedSymbolCount ?? 0], ['到期有效事件', data?.summary.matureEventCount ?? 0]] as const;
+  return <main className="quant-page quant-data-page"><section className="quant-panel"><SectionTitle icon={Database} title="数据资产地图" note="不是接口宣传清单：数量、最近时间和状态来自本地库实时查询。" /><table className="quant-data-table"><thead><tr><th>数据资产</th><th>本地记录</th><th>最近数据</th><th>研究用途</th><th>可用状态</th></tr></thead><tbody>{(catalog?.assets ?? []).map(item => <tr key={item.key}><td><Database />{item.name}</td><td className="mono">{item.count.toLocaleString()}</td><td className="mono">{item.latestAt || '—'}</td><td>{item.usage}</td><td><Status ok={item.status === 'ready'}>{item.status === 'ready' ? '可直接使用' : item.status === 'empty' ? '库为空' : '尚未建库'}</Status></td></tr>)}</tbody></table></section>
+    <section className="quant-panel"><SectionTitle icon={FileSearch} title="本次样本漏斗" note="把“为什么最后只有这些样本”完整展示出来。" /><div className="quant-funnel">{funnel.map(([label, value], index) => <div key={label}><span>{index + 1}</span><p>{label}</p><strong>{Number(value).toLocaleString()}</strong>{index < funnel.length - 1 ? <ChevronRight /> : null}</div>)}</div><div className="quant-quality-notes"><div><strong>语料策略</strong><p>{data?.rule.rawNotePolicy === 'include' ? '纳入未分析语料（探索模式）' : '仅 AI 已分析且通过阈值的语料'}</p></div><div><strong>行情口径</strong><p>{data?.dataQuality.priceBasis ?? '等待回测'}</p></div><div><strong>基准与成本</strong><p>{data?.rule.benchmarkCode ?? '—'} · {data?.rule.transactionCostBps ?? 0}bp</p></div><div><strong>数据截止</strong><p>{data?.dataQuality.priceCutoff ?? '—'}</p></div></div></section></main>;
+}
 
-      <section className="grid xl:grid-cols-[1fr_1.35fr]">
-        <div className="overflow-hidden bg-white p-5 xl:border-r xl:border-[#C9CCD2]"><h2 className="text-lg font-bold">趋势买点信号</h2><p className="mt-1 text-xs text-[#62666D]">首次提及、观点热度、MA5/MA20 与20日动量联合打分。</p><div className="mt-4 overflow-auto"><table className="w-full text-left text-xs"><thead className="border-y border-[#D8DADF] text-[#62666D]"><tr><th className="py-2">股票</th><th>研究组</th><th>强度</th><th>20日动量</th><th>原文</th></tr></thead><tbody>{data?.trendSignals.slice(0,12).map(row=><tr key={row.symbol} className="border-b border-[#E5E7EB]"><td className="py-2"><p className="font-semibold">{row.stockName}</p><p className="font-mono text-[10px] text-[#62666D]">{row.symbol}</p></td><td className="max-w-[120px] truncate">{row.researchGroup}</td><td className="font-mono">{row.signalStrength}/5</td><td className={tone(row.momentum20d)}>{pct(row.momentum20d,2)}</td><td><SourceLink url={row.url}/></td></tr>)}</tbody></table></div></div>
-        <div className="grid min-w-0 bg-[#F7F7F8] lg:grid-cols-[.8fr_1.2fr]"><div className="p-5 lg:border-r lg:border-[#C9CCD2]"><h2 className="text-lg font-bold">排名靠前规则的等权组合</h2><p className="mt-1 text-xs text-[#62666D]">仅为研究样本，不自动下单。</p><div className="mt-5 grid grid-cols-3 gap-3"><div><p className="text-[10px] text-[#62666D]">年化收益</p><p className={`mt-1 font-mono text-xl font-bold ${tone(data?.portfolio.annualizedReturn)}`}>{pct(data?.portfolio.annualizedReturn,2)}</p></div><div><p className="text-[10px] text-[#62666D]">最大回撤</p><p className="mt-1 font-mono text-xl font-bold text-[#B42318]">{pct(data?.portfolio.maxDrawdown,2)}</p></div><div><p className="text-[10px] text-[#62666D]">日胜率</p><p className="mt-1 font-mono text-xl font-bold">{pct(data?.portfolio.winRate)}</p></div></div><div className="mt-5 divide-y divide-[#D8DADF] border-y border-[#D8DADF]">{data?.portfolio.components.map(item=><div key={item.symbol} className="flex items-center justify-between py-2 text-xs"><div><p className="font-semibold">{item.stockName}</p><p className="font-mono text-[10px] text-[#62666D]">{item.symbol} · {item.researchGroup}</p></div><span className="font-mono">{n(item.weight,1)}%</span></div>)}</div></div><div className="min-w-0 p-5"><h3 className="text-sm font-bold">组合净值走势</h3><div className="mt-4 h-64 min-w-0"><ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={256} initialDimension={{width:560,height:256}}><LineChart data={portfolioChart}><CartesianGrid stroke="#E5E7EB" vertical={false}/><XAxis dataKey="date" tick={{fontSize:9}} tickFormatter={v=>String(v).slice(5)}/><YAxis tick={{fontSize:10}} tickFormatter={v=>`${n(v,0)}%`}/><Tooltip formatter={v=>`${n(Number(v),2)}%`}/><Line type="monotone" dataKey="value" name="等权组合" stroke="#155EEF" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div></div></div>
-      </section>
-      <footer className="border-t border-[#C9CCD2] bg-white px-5 py-3 text-[10px] text-[#62666D]">免责声明：本页是对历史公开观点和行情的事件研究，不构成投资建议。停牌、涨跌停无法成交、交易成本和复权覆盖会影响真实结果。</footer>
-    </div>
-  </AppPage>;
+function RunHistory({ history }: { history: EssayQuantRunHistory }) {
+  return <main className="quant-page"><section className="quant-panel"><SectionTitle icon={History} title="运行历史" note="每次研究保存规则、数据哈希、截止时间和结果快照，便于复现与比较。" aside={<span className="mono">{history.total} RUNS</span>} />{history.items.length ? <table className="quant-history-table"><thead><tr><th>运行</th><th>研究名称</th><th>事件 / 到期</th><th>主期平均超额</th><th>95% CI</th><th>行情截止</th><th>运行时间</th></tr></thead><tbody>{history.items.map(row => <tr key={row.id}><td className="mono">#{row.id}</td><td><strong>{row.name}</strong><small>{row.strategyType}</small></td><td>{row.eventCount} / {row.matureEventCount}</td><td className={tone(row.primaryAverageExcess)}>{pct(row.primaryAverageExcess, 2)}</td><td>{row.confidenceInterval ? `${n(row.confidenceInterval[0], 2)} ~ ${n(row.confidenceInterval[1], 2)}` : '—'}</td><td className="mono">{row.priceCutoff || '—'}</td><td>{row.createdAt ? new Date(row.createdAt).toLocaleString('zh-CN') : '—'}</td></tr>)}</tbody></table> : <EmptyState title="暂无运行历史" description="完成一次策略研究后，结果会保存到这里。" />}</section></main>;
 }

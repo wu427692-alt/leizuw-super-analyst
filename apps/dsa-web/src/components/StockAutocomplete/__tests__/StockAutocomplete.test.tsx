@@ -570,8 +570,7 @@ describe('StockAutocomplete', () => {
       expect(input).toHaveAttribute('data-autocomplete-mode', 'fallback');
     });
 
-    it('falls back to the plain input when a suggestion contains an unsupported market', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    it('keeps autocomplete usable when a suggestion contains an unsupported market', () => {
       autocompleteHookImpl = () => ({
         query: '',
         setQuery: vi.fn(),
@@ -611,10 +610,10 @@ describe('StockAutocomplete', () => {
       const input = screen.getByDisplayValue('TEST');
       fireEvent.focus(input);
 
-      const fallbackInput = screen.getByDisplayValue('TEST');
-      expect(fallbackInput).toHaveAttribute('data-autocomplete-mode', 'fallback');
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      consoleErrorSpy.mockRestore();
+      const activeInput = screen.getByDisplayValue('TEST');
+      expect(activeInput).not.toHaveAttribute('data-autocomplete-mode', 'fallback');
+      expect(screen.getByText('OTC')).toBeInTheDocument();
+      expect(screen.getByText('测试市场')).toBeInTheDocument();
     });
   });
 });

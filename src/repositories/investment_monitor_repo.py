@@ -207,14 +207,31 @@ class InvestmentMonitorRepository:
 
     def due_sources(self, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         current = now or utc_naive_now()
-        return [
-            source for source in self.list_sources()
-            if source["enabled"] and (
-                not source["last_success_at"]
-                or self._parse_iso(source["last_success_at"])
-                + timedelta(seconds=source["poll_interval_seconds"]) <= current
-            )
-        ]
+        due = []
+        for source in self.list_sources():
+            if not source["enabled"]:
+                continue
+            cadence = max(10, int(source["poll_interval_seconds"]))
+            last_success = self._parse_iso(source["last_success_at"]) if source["last_success_at"] else None
+            if last_success is not None and last_success + timedelta(seconds=cadence) > current:
+                continue
+            last_started = self._parse_iso(source["last_started_at"]) if source["last_started_at"] else None
+            status = str(source.get("last_status") or "")
+            if status == "failed" and last_started is not None:
+                retry_seconds = max(60, min(cadence * 2, 1800))
+                if last_started + timedelta(seconds=retry_seconds) > current:
+                    continue
+            elif status == "not_configured" and last_started is not None:
+                if last_started + timedelta(seconds=max(cadence, 3600)) > current:
+                    continue
+            elif status == "running" and last_started is not None:
+                # Do not schedule a parallel copy of a source that still has a
+                # plausible in-flight request. The watchdog will wake the owner
+                # again after the stale-running window passes.
+                if last_started + timedelta(seconds=max(300, cadence * 3)) > current:
+                    continue
+            due.append(source)
+        return due
 
     def update_source_status(
         self,
@@ -223,6 +240,10 @@ class InvestmentMonitorRepository:
         status: str,
         error: Optional[str] = None,
         item_count: Optional[int] = None,
+        received_count: Optional[int] = None,
+        created_count: Optional[int] = None,
+        updated_count: Optional[int] = None,
+        duration_ms: Optional[int] = None,
         started_at: Optional[datetime] = None,
         success_at: Optional[datetime] = None,
     ) -> None:
@@ -244,7 +265,35 @@ class InvestmentMonitorRepository:
             if item_count is not None:
                 row.last_item_count = int(item_count)
                 row.total_item_count = int(row.total_item_count or 0) + int(item_count)
+            if received_count is not None:
+                row.last_received_count = int(received_count)
+            if created_count is not None:
+                row.last_created_count = int(created_count)
+            if updated_count is not None:
+                row.last_updated_count = int(updated_count)
+            if duration_ms is not None:
+                row.last_duration_ms = max(0, int(duration_ms))
             session.commit()
+
+    def source_activity(self, *, days: int = 30) -> List[Dict[str, Any]]:
+        """Daily event and ingestion volume per source for the source BI page."""
+        cutoff = utc_naive_now() - timedelta(days=max(1, int(days)) - 1)
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(
+                    MonitoringEventRecord.source_key,
+                    func.date(MonitoringEventRecord.event_at).label("event_date"),
+                    func.count(MonitoringEventRecord.id).label("event_count"),
+                    func.count(func.distinct(func.date(MonitoringEventRecord.ingested_at))).label("ingest_days"),
+                )
+                .where(MonitoringEventRecord.event_at >= cutoff)
+                .group_by(MonitoringEventRecord.source_key, func.date(MonitoringEventRecord.event_at))
+                .order_by(func.date(MonitoringEventRecord.event_at))
+            ).all()
+        return [{
+            "source_key": str(source_key), "date": str(event_date),
+            "count": int(event_count or 0), "ingest_days": int(ingest_days or 0),
+        } for source_key, event_date, event_count, ingest_days in rows]
 
     def upsert_events(self, events: Iterable[Dict[str, Any]]) -> Dict[str, int]:
         normalized = list(events)
@@ -363,6 +412,122 @@ class InvestmentMonitorRepository:
             ).scalars().all()
         return [self._event_dict(row) for row in rows]
 
+    def all_symbol_events(self, *, symbol: str, days: int) -> List[Dict[str, Any]]:
+        """Return the complete local evidence set used by stock workspaces.
+
+        Feed endpoints stay paginated, but an aggregate must not silently derive
+        coverage and financial snapshots from only the newest page of events.
+        Realtime quotes remain in the dedicated market database and are therefore
+        deliberately excluded from this factual evidence query.
+        """
+        cutoff = utc_naive_now() - timedelta(days=max(1, int(days)))
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(MonitoringEventRecord).where(
+                    MonitoringEventRecord.event_at >= cutoff,
+                    MonitoringEventRecord.symbol_codes.like(f"%{symbol}%"),
+                    MonitoringEventRecord.event_type != "realtime_quote",
+                ).order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+            ).scalars().all()
+        return [self._event_dict(row) for row in rows]
+
+    def reindex_keyword_symbols(
+        self, *, aliases_by_symbol: Dict[str, Iterable[str]], days: int = 3650,
+        event_types: Iterable[str] = ("essay",),
+    ) -> Dict[str, int]:
+        """Attach watchlist symbols to persisted text events using explicit aliases.
+
+        This is intentionally additive: source adapters remain authoritative for
+        event content, while the local symbol index can be expanded when a new
+        watchlist stock or shorthand alias becomes known.
+        """
+        normalized = {
+            str(symbol): tuple(dict.fromkeys(
+                str(alias).strip() for alias in aliases if str(alias).strip()
+            ))
+            for symbol, aliases in aliases_by_symbol.items()
+            if str(symbol).strip()
+        }
+        types = tuple(str(value) for value in event_types if str(value))
+        if not normalized or not types:
+            return {"scanned": 0, "updated": 0}
+        cutoff = utc_naive_now() - timedelta(days=max(1, int(days)))
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(MonitoringEventRecord).where(
+                    MonitoringEventRecord.event_at >= cutoff,
+                    MonitoringEventRecord.event_type.in_(types),
+                )
+            ).scalars().all()
+            updated = 0
+            for row in rows:
+                text = f"{row.title or ''}\n{row.summary or ''}"
+                symbols = {value for value in (row.symbol_codes or "").split(",") if value}
+                before = set(symbols)
+                for symbol, aliases in normalized.items():
+                    if any(alias in text for alias in aliases):
+                        symbols.add(symbol)
+                if symbols != before:
+                    row.symbol_codes = ",".join(sorted(symbols))
+                    row.updated_at = utc_naive_now()
+                    updated += 1
+            if updated:
+                session.commit()
+        return {"scanned": len(rows), "updated": updated}
+
+    def list_events_between(
+        self, *, event_types: Iterable[str], start_at: datetime, end_at: datetime,
+        symbol: Optional[str] = None, query: Optional[str] = None,
+        page: int = 1, page_size: int = 100,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Query a bounded factual dataset by exchange-date boundaries."""
+        types = [str(value) for value in event_types if str(value)]
+        conditions = [
+            MonitoringEventRecord.event_type.in_(types),
+            MonitoringEventRecord.event_at >= start_at,
+            MonitoringEventRecord.event_at < end_at,
+        ]
+        if symbol:
+            conditions.append(MonitoringEventRecord.symbol_codes.like(f"%{symbol}%"))
+        if query:
+            pattern = f"%{query.strip()}%"
+            conditions.append(or_(
+                MonitoringEventRecord.title.like(pattern),
+                MonitoringEventRecord.summary.like(pattern),
+                MonitoringEventRecord.symbol_codes.like(pattern),
+                MonitoringEventRecord.actors_json.like(pattern),
+                MonitoringEventRecord.metrics_json.like(pattern),
+            ))
+        where_clause = and_(*conditions)
+        safe_page = max(1, int(page))
+        safe_size = max(1, min(int(page_size), 500))
+        with self.db.get_session() as session:
+            total = session.execute(
+                select(func.count(MonitoringEventRecord.id)).where(where_clause)
+            ).scalar() or 0
+            rows = session.execute(
+                select(MonitoringEventRecord)
+                .where(where_clause)
+                .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+                .offset((safe_page - 1) * safe_size)
+                .limit(safe_size)
+            ).scalars().all()
+        return [self._event_dict(row) for row in rows], int(total)
+
+    def all_events_between(
+        self, *, event_types: Iterable[str], start_at: datetime, end_at: datetime,
+    ) -> List[Dict[str, Any]]:
+        types = [str(value) for value in event_types if str(value)]
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(MonitoringEventRecord).where(
+                    MonitoringEventRecord.event_type.in_(types),
+                    MonitoringEventRecord.event_at >= start_at,
+                    MonitoringEventRecord.event_at < end_at,
+                ).order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+            ).scalars().all()
+        return [self._event_dict(row) for row in rows]
+
     def get_event(self, event_id: int) -> Optional[Dict[str, Any]]:
         with self.db.get_session() as session:
             row = session.get(MonitoringEventRecord, int(event_id))
@@ -456,6 +621,10 @@ class InvestmentMonitorRepository:
             "last_started_at": InvestmentMonitorRepository._iso(row.last_started_at),
             "last_success_at": InvestmentMonitorRepository._iso(row.last_success_at),
             "last_item_count": int(row.last_item_count or 0),
+            "last_received_count": int(row.last_received_count or 0),
+            "last_created_count": int(row.last_created_count or 0),
+            "last_updated_count": int(row.last_updated_count or 0),
+            "last_duration_ms": int(row.last_duration_ms or 0),
             "total_item_count": int(row.total_item_count or 0),
         }
 

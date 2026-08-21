@@ -5,11 +5,35 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import json
+import threading
+import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, asc, case, desc, func, or_, select
 
 from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, utc_naive_now
+
+
+# Keep every ``IN`` clause safely below SQLite's host-parameter ceiling.  The
+# production knowledge base can contain tens of thousands of topics, while the
+# ceiling varies with the SQLite build shipped on the host.
+_SQL_IN_BATCH_SIZE = 500
+_FEED_COUNT_CACHE_TTL_SECONDS = 30.0
+_FEED_COUNT_CACHE_MAX_ENTRIES = 256
+_feed_count_cache: Dict[Tuple[Any, ...], Tuple[float, int]] = {}
+_feed_count_cache_lock = threading.Lock()
+
+
+def _batched(values: Sequence[str], size: int = _SQL_IN_BATCH_SIZE):
+    for offset in range(0, len(values), size):
+        yield values[offset:offset + size]
+
+
+def _select_in_batches(session, entity, column, values: Sequence[str]) -> List[Any]:
+    rows: List[Any] = []
+    for batch in _batched(values):
+        rows.extend(session.execute(select(entity).where(column.in_(batch))).scalars().all())
+    return rows
 
 
 def _loads(value: Optional[str], fallback: Any) -> Any:
@@ -19,6 +43,30 @@ def _loads(value: Optional[str], fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _cached_feed_count(key: Tuple[Any, ...], loader) -> int:
+    """Reuse the expensive full-library count while a user pages one query."""
+    now = time.monotonic()
+    with _feed_count_cache_lock:
+        cached = _feed_count_cache.get(key)
+        if cached and now - cached[0] < _FEED_COUNT_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    total = int(loader() or 0)
+    with _feed_count_cache_lock:
+        if len(_feed_count_cache) >= _FEED_COUNT_CACHE_MAX_ENTRIES:
+            expired = [
+                cache_key for cache_key, (stored_at, _) in _feed_count_cache.items()
+                if now - stored_at >= _FEED_COUNT_CACHE_TTL_SECONDS
+            ]
+            for cache_key in expired:
+                _feed_count_cache.pop(cache_key, None)
+            if len(_feed_count_cache) >= _FEED_COUNT_CACHE_MAX_ENTRIES:
+                oldest = min(_feed_count_cache, key=lambda item: _feed_count_cache[item][0])
+                _feed_count_cache.pop(oldest, None)
+        _feed_count_cache[key] = (now, total)
+    return total
 
 
 class EssayAnalysisRepository:
@@ -51,10 +99,84 @@ class EssayAnalysisRepository:
         if not normalized:
             return {"created": 0, "reset": 0, "unchanged": 0}
         with self.db.get_session() as session:
-            notes = session.execute(
-                select(ResearchNote).where(ResearchNote.topic_id.in_(normalized))
-            ).scalars().all()
+            notes = _select_in_batches(session, ResearchNote, ResearchNote.topic_id, normalized)
             return self._enqueue_rows(session, notes, model=model, prompt_version=prompt_version)
+
+    def enqueue_unqueued(
+        self,
+        *,
+        limit: int,
+        order: str,
+        model: str,
+        prompt_version: str,
+    ) -> Dict[str, Any]:
+        """Queue an exact bounded slice of locally stored notes with no AI task."""
+        safe_limit = max(1, min(int(limit), 5000))
+        oldest_first = str(order).strip().lower() == "oldest"
+        ordering = asc(ResearchNote.created_at) if oldest_first else desc(ResearchNote.created_at)
+        with self.db.get_session() as session:
+            notes = session.execute(
+                select(ResearchNote)
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(EssayAnalysisRecord.id.is_(None))
+                .order_by(ordering, asc(ResearchNote.id) if oldest_first else desc(ResearchNote.id))
+                .limit(safe_limit)
+            ).scalars().all()
+            created_times = [note.created_at for note in notes if note.created_at is not None]
+            result = self._enqueue_rows(session, notes, model=model, prompt_version=prompt_version)
+        return {
+            "requested": safe_limit,
+            "selected": len(notes),
+            "order": "oldest" if oldest_first else "newest",
+            "earliest_selected_at": min(created_times).isoformat() + "Z" if created_times else None,
+            "latest_selected_at": max(created_times).isoformat() + "Z" if created_times else None,
+            **result,
+        }
+
+    def historical_backlog(self) -> Dict[str, Any]:
+        """Return all-time factual AI queue coverage without changing queue state."""
+        progress = self.progress()
+        now = utc_naive_now()
+        with self.db.get_session() as session:
+            unqueued, earliest, latest = session.execute(
+                select(
+                    func.count(ResearchNote.id),
+                    func.min(ResearchNote.created_at),
+                    func.max(ResearchNote.created_at),
+                )
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(EssayAnalysisRecord.id.is_(None))
+            ).one()
+            (
+                earliest_note,
+                latest_note,
+                latest_sync,
+                group_count,
+                notes_24h,
+                notes_7d,
+                notes_30d,
+            ) = session.execute(select(
+                func.min(ResearchNote.created_at),
+                func.max(ResearchNote.created_at),
+                func.max(ResearchNote.synced_at),
+                func.count(func.distinct(ResearchNote.group_id)),
+                func.sum(case((ResearchNote.created_at >= now - timedelta(days=1), 1), else_=0)),
+                func.sum(case((ResearchNote.created_at >= now - timedelta(days=7), 1), else_=0)),
+                func.sum(case((ResearchNote.created_at >= now - timedelta(days=30), 1), else_=0)),
+            )).one()
+        return {
+            **progress,
+            "unqueued": int(unqueued or 0),
+            "earliest_unqueued_at": earliest.isoformat() + "Z" if earliest else None,
+            "latest_unqueued_at": latest.isoformat() + "Z" if latest else None,
+            "earliest_note_at": earliest_note.isoformat() + "Z" if earliest_note else None,
+            "latest_note_at": latest_note.isoformat() + "Z" if latest_note else None,
+            "latest_synced_at": latest_sync.isoformat() + "Z" if latest_sync else None,
+            "group_count": int(group_count or 0),
+            "notes_24h": int(notes_24h or 0),
+            "notes_7d": int(notes_7d or 0),
+            "notes_30d": int(notes_30d or 0),
+        }
 
     @staticmethod
     def _enqueue_rows(
@@ -67,9 +189,9 @@ class EssayAnalysisRepository:
         if not notes:
             return {"created": 0, "reset": 0, "unchanged": 0}
         topic_ids = [row.topic_id for row in notes]
-        existing_rows = session.execute(
-            select(EssayAnalysisRecord).where(EssayAnalysisRecord.topic_id.in_(topic_ids))
-        ).scalars().all()
+        existing_rows = _select_in_batches(
+            session, EssayAnalysisRecord, EssayAnalysisRecord.topic_id, topic_ids
+        )
         existing_by_topic = {row.topic_id: row for row in existing_rows}
         created = 0
         reset = 0
@@ -175,11 +297,12 @@ class EssayAnalysisRepository:
         }
         result_by_topic = {str(item["topic_id"]): item for item in results}
         with self.db.get_session() as session:
-            rows = session.execute(
-                select(EssayAnalysisRecord).where(
-                    EssayAnalysisRecord.topic_id.in_(list(result_by_topic))
-                )
-            ).scalars().all()
+            rows = _select_in_batches(
+                session,
+                EssayAnalysisRecord,
+                EssayAnalysisRecord.topic_id,
+                list(result_by_topic),
+            )
             saved = 0
             for row in rows:
                 result = result_by_topic[row.topic_id]
@@ -224,9 +347,9 @@ class EssayAnalysisRepository:
             return 0
         now = utc_naive_now()
         with self.db.get_session() as session:
-            rows = session.execute(
-                select(EssayAnalysisRecord).where(EssayAnalysisRecord.topic_id.in_(normalized))
-            ).scalars().all()
+            rows = _select_in_batches(
+                session, EssayAnalysisRecord, EssayAnalysisRecord.topic_id, normalized
+            )
             for row in rows:
                 row.status = "failed"
                 row.error_message = str(error_message or "analysis failed")[:1000]
@@ -308,7 +431,7 @@ class EssayAnalysisRepository:
             conditions.append(EssayAnalysisRecord.tags_json.like(f"%{tag.strip()}%"))
         if stock:
             conditions.append(EssayAnalysisRecord.stock_mentions_json.like(f"%{stock.strip()}%"))
-        if min_importance is not None:
+        if min_importance is not None and int(min_importance) > 0:
             conditions.append(EssayAnalysisRecord.importance_score >= int(min_importance))
         where_clause = and_(*conditions) if conditions else True
         safe_page = max(1, int(page))
@@ -328,6 +451,104 @@ class EssayAnalysisRepository:
                 .limit(safe_size)
             ).all()
         return [self._to_dict(analysis, note) for analysis, note in rows], int(total)
+
+    def list_feed(
+        self,
+        *,
+        cutoff: Optional[datetime] = None,
+        query: Optional[str] = None,
+        analysis_status: Optional[str] = None,
+        sentiment: Optional[str] = None,
+        category: Optional[str] = None,
+        tag: Optional[str] = None,
+        stock: Optional[str] = None,
+        min_importance: Optional[int] = None,
+        known_total: Optional[int] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Read the raw research-note library with optional AI enrichment.
+
+        The feed is note-first: a note does not need an analysis queue record to
+        be searchable or visible. AI-only filters naturally narrow the result to
+        rows that have matching analysis data.
+        """
+        conditions = []
+        if cutoff is not None:
+            conditions.append(ResearchNote.created_at >= cutoff)
+        for keyword in str(query or "").split():
+            escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            conditions.append(or_(
+                ResearchNote.title.like(pattern, escape="\\"),
+                ResearchNote.content.like(pattern, escape="\\"),
+                ResearchNote.group_name.like(pattern, escape="\\"),
+                ResearchNote.author_name.like(pattern, escape="\\"),
+                ResearchNote.symbol_codes.like(pattern, escape="\\"),
+                EssayAnalysisRecord.summary.like(pattern, escape="\\"),
+                EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
+                EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
+                EssayAnalysisRecord.themes_json.like(pattern, escape="\\"),
+                EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
+            ))
+        if analysis_status == "completed":
+            conditions.append(EssayAnalysisRecord.status == "completed")
+        elif analysis_status == "uncompleted":
+            conditions.append(or_(
+                EssayAnalysisRecord.id.is_(None),
+                EssayAnalysisRecord.status != "completed",
+            ))
+        elif analysis_status == "not_queued":
+            conditions.append(EssayAnalysisRecord.id.is_(None))
+        elif analysis_status in {"pending", "processing", "failed"}:
+            conditions.append(EssayAnalysisRecord.status == analysis_status)
+        if sentiment:
+            conditions.append(EssayAnalysisRecord.sentiment == sentiment)
+        if category:
+            conditions.append(EssayAnalysisRecord.primary_category == category)
+        if tag:
+            conditions.append(EssayAnalysisRecord.tags_json.like(f"%{tag.strip()}%"))
+        if stock:
+            conditions.append(or_(
+                ResearchNote.symbol_codes.like(f"%{stock.strip().upper()}%"),
+                EssayAnalysisRecord.stock_mentions_json.like(f"%{stock.strip()}%"),
+            ))
+        if min_importance is not None and int(min_importance) > 0:
+            conditions.append(EssayAnalysisRecord.importance_score >= int(min_importance))
+        where_clause = and_(*conditions) if conditions else True
+        safe_page = max(1, int(page))
+        safe_size = max(1, min(int(page_size), 100))
+        count_cache_key = (
+            id(self.db),
+            cutoff.replace(second=0, microsecond=0).isoformat() if cutoff else None,
+            " ".join(str(query or "").split()),
+            analysis_status or "",
+            sentiment or "",
+            category or "",
+            tag or "",
+            stock or "",
+            int(min_importance or 0),
+        )
+        with self.db.get_session() as session:
+            total = max(0, int(known_total)) if known_total is not None else _cached_feed_count(
+                count_cache_key,
+                lambda: session.execute(
+                    select(func.count(ResearchNote.id))
+                    .select_from(ResearchNote)
+                    .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                    .where(where_clause)
+                ).scalar(),
+            )
+            rows = session.execute(
+                select(EssayAnalysisRecord, ResearchNote)
+                .select_from(ResearchNote)
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(where_clause)
+                .order_by(desc(ResearchNote.created_at), desc(ResearchNote.id))
+                .offset((safe_page - 1) * safe_size)
+                .limit(safe_size)
+            ).all()
+        return [self._to_feed_dict(analysis, note) for analysis, note in rows], int(total)
 
     def get_analysis(self, topic_id: str) -> Optional[Dict[str, Any]]:
         with self.db.get_session() as session:
@@ -433,6 +654,72 @@ class EssayAnalysisRepository:
             "started_at": analysis.started_at.isoformat() + "Z" if analysis.started_at else None,
             "completed_at": analysis.completed_at.isoformat() + "Z" if analysis.completed_at else None,
             "updated_at": analysis.updated_at.isoformat() + "Z" if analysis.updated_at else None,
+            "note": {
+                "title": note.title,
+                "content": note.content,
+                "group_id": note.group_id,
+                "group_name": note.group_name,
+                "author_name": note.author_name,
+                "digested": bool(note.digested),
+                "created_at": note.created_at.isoformat() + "Z" if note.created_at else None,
+                "files": files,
+                "images": images,
+            },
+        }
+
+    @classmethod
+    def _to_feed_dict(
+        cls,
+        analysis: Optional[EssayAnalysisRecord],
+        note: ResearchNote,
+    ) -> Dict[str, Any]:
+        if analysis is not None:
+            return cls._to_dict(analysis, note)
+
+        files = _loads(note.files_json, [])
+        images = _loads(note.images_json, [])
+        for asset in files:
+            asset.pop("local_path", None)
+            asset.pop("local_url", None)
+            if asset.get("file_id"):
+                asset["view_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/files/{asset['file_id']}"
+                asset["download_status"] = "remote_on_demand"
+        for asset in images:
+            asset.pop("local_path", None)
+            asset.pop("local_url", None)
+            if asset.get("image_id"):
+                asset["view_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/images/{asset['image_id']}"
+                asset["download_status"] = "remote_on_demand"
+        return {
+            "id": None,
+            "topic_id": note.topic_id,
+            "status": "not_queued",
+            "model": None,
+            "prompt_version": None,
+            "summary": None,
+            "primary_category": None,
+            "sentiment": None,
+            "time_horizon": None,
+            "importance_score": None,
+            "confidence_score": None,
+            "tags": [],
+            "industries": [],
+            "themes": [],
+            "stock_mentions": [],
+            "key_points": [],
+            "catalysts": [],
+            "risks": [],
+            "evidence": [],
+            "contradictions": [],
+            "falsification_conditions": [],
+            "monitoring_points": [],
+            "earnings_impact": "",
+            "valuation_impact": "",
+            "source_quality": "unknown",
+            "novelty_score": 0,
+            "information_type": "unanalyzed",
+            "error_message": None,
+            "completed_at": None,
             "note": {
                 "title": note.title,
                 "content": note.content,

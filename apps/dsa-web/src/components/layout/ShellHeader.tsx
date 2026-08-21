@@ -34,7 +34,9 @@ export const ShellHeader: React.FC<ShellHeaderProps> = ({
 }) => {
   const location = useLocation();
   const { t } = useUiLanguage();
-  const current = TITLES[location.pathname] ?? (location.pathname.startsWith('/investment-monitor/') ? TITLES['/investment-monitor'] : undefined);
+  const current = TITLES[location.pathname]
+    ?? (location.pathname.startsWith('/investment-monitor/') ? TITLES['/investment-monitor'] : undefined)
+    ?? (location.pathname.startsWith('/essay-radar/') ? TITLES['/essay-radar'] : undefined);
 
   return (
     <header className="sticky top-0 z-30 border-b border-border/60 bg-background/84 backdrop-blur-xl">

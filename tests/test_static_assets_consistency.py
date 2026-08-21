@@ -170,14 +170,17 @@ def test_missing_asset_returns_safe_404_content_types(tmp_path: Path) -> None:
     assert js_response.status_code == 404
     assert js_response.text == "asset not found"
     assert js_response.headers["content-type"].startswith("text/javascript")
+    assert js_response.headers["cache-control"] == "no-store"
 
     assert css_response.status_code == 404
     assert css_response.text == "asset not found"
     assert css_response.headers["content-type"].startswith("text/css")
+    assert css_response.headers["cache-control"] == "no-store"
 
     assert html_response.status_code == 404
     assert html_response.text == "asset not found"
     assert html_response.headers["content-type"].startswith("text/plain")
+    assert html_response.headers["cache-control"] == "no-store"
 
 
 def test_existing_asset_is_served_from_explicit_assets_route(tmp_path: Path) -> None:
@@ -200,10 +203,12 @@ def test_existing_asset_is_served_from_explicit_assets_route(tmp_path: Path) -> 
     assert js_response.status_code == 200
     assert js_response.text == "console.log('ok')"
     assert js_response.headers["content-type"].startswith("text/javascript")
+    assert js_response.headers["cache-control"] == "public, max-age=31536000, immutable"
 
     assert css_response.status_code == 200
     assert css_response.text == "body{color:#fff}"
     assert css_response.headers["content-type"].startswith("text/css")
+    assert css_response.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
 def test_existing_js_asset_overrides_bad_system_mime_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

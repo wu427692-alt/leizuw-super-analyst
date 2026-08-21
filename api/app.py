@@ -208,6 +208,33 @@ def _schedule_stock_index_background_refresh(app: FastAPI, reason: str) -> None:
     )
 
 
+async def _warm_application_views_in_background(app: FastAPI) -> None:
+    """Warm local SQLite/cache-backed screens after the server can start listening."""
+    try:
+        delay = max(0.0, min(float(os.getenv("APP_STARTUP_WARMUP_DELAY_SECONDS", "1.5")), 30.0))
+    except ValueError:
+        delay = 1.5
+    try:
+        await asyncio.sleep(delay)
+        from src.services.startup_warmup_service import StartupWarmupService
+
+        result = await run_in_threadpool(StartupWarmupService().warm)
+        app.state.startup_warmup_result = result
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - warmup must never affect server availability.
+        logger.warning("Startup view warmup failed: %s", type(exc).__name__)
+
+
+def _schedule_application_view_warmup(app: FastAPI) -> None:
+    enabled = os.getenv("APP_STARTUP_WARMUP", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return
+    task = getattr(app.state, "startup_warmup_task", None)
+    if task is None or task.done():
+        app.state.startup_warmup_task = asyncio.create_task(_warm_application_views_in_background(app))
+
+
 def _load_runtime_scheduler_args() -> dict:
     raw_value = os.getenv(RUNTIME_SCHEDULER_ARGS_ENV)
     if not raw_value:
@@ -281,7 +308,29 @@ async def app_lifespan(app: FastAPI):
     essay_daily_report_worker = None
     zsxq_sync_worker = None
     investment_monitor_worker = None
+    sync_watchdog_worker = None
     icloud_knowledge_worker = None
+    market_data_worker = None
+    data_storage_worker = None
+    essay_quant_worker = None
+    if os.getenv("DATA_STORAGE_MAINTENANCE_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.data_storage_service import DataStorageMaintenanceWorker
+
+            data_storage_worker = DataStorageMaintenanceWorker.get_instance()
+            data_storage_worker.start()
+            app.state.data_storage_worker = data_storage_worker
+        except Exception as exc:  # noqa: BLE001 - maintenance must not prevent API startup.
+            logger.warning("Data storage maintenance worker did not start: %s", exc)
+    if os.getenv("MARKET_DATA_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.market_data_worker import MarketDataWorker
+
+            market_data_worker = MarketDataWorker.get_instance()
+            market_data_worker.start()
+            app.state.market_data_worker = market_data_worker
+        except Exception as exc:  # noqa: BLE001 - market cache must not prevent API startup.
+            logger.warning("Market data worker did not start: %s", exc)
     if os.getenv("ESSAY_ANALYSIS_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.essay_analysis_worker import EssayAnalysisWorker
@@ -310,7 +359,16 @@ async def app_lifespan(app: FastAPI):
             app.state.zsxq_sync_worker = zsxq_sync_worker
         except Exception as exc:  # noqa: BLE001 - optional MCP worker must not prevent API startup.
             logger.warning("ZSXQ MCP sync worker did not start: %s", exc)
-    if os.getenv("INVESTMENT_MONITOR_AUTO_START", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("ESSAY_QUANT_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.essay_quant_worker import EssayQuantWorker
+
+            essay_quant_worker = EssayQuantWorker.get_instance()
+            essay_quant_worker.start()
+            app.state.essay_quant_worker = essay_quant_worker
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Essay quant precompute worker did not start: %s", exc)
+    if os.getenv("INVESTMENT_MONITOR_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.investment_monitor_worker import InvestmentMonitorWorker
 
@@ -334,10 +392,34 @@ async def app_lifespan(app: FastAPI):
             app.state.icloud_knowledge_worker = icloud_knowledge_worker
         except Exception as exc:  # noqa: BLE001 - optional cloud sync must not prevent API startup.
             logger.warning("iCloud knowledge worker did not start: %s", exc)
+    if os.getenv("SYNC_WATCHDOG_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.sync_watchdog_worker import SyncWatchdogWorker
+
+            sync_watchdog_worker = SyncWatchdogWorker.get_instance()
+            sync_watchdog_worker.start()
+            app.state.sync_watchdog_worker = sync_watchdog_worker
+        except Exception as exc:  # noqa: BLE001 - supervision must not prevent API startup.
+            logger.warning("Sync watchdog worker did not start: %s", exc)
     _schedule_stock_index_background_refresh(app, "startup")
+    _schedule_application_view_warmup(app)
     try:
         yield
     finally:
+        # Stop supervision first so it cannot restart a worker while the API is
+        # intentionally shutting down.
+        if sync_watchdog_worker is not None:
+            sync_watchdog_worker.stop()
+            if hasattr(app.state, "sync_watchdog_worker"):
+                delattr(app.state, "sync_watchdog_worker")
+        if data_storage_worker is not None:
+            data_storage_worker.stop()
+            if hasattr(app.state, "data_storage_worker"):
+                delattr(app.state, "data_storage_worker")
+        if market_data_worker is not None:
+            market_data_worker.stop()
+            if hasattr(app.state, "market_data_worker"):
+                delattr(app.state, "market_data_worker")
         if essay_daily_report_worker is not None:
             essay_daily_report_worker.stop()
             if hasattr(app.state, "essay_daily_report_worker"):
@@ -346,6 +428,10 @@ async def app_lifespan(app: FastAPI):
             zsxq_sync_worker.stop()
             if hasattr(app.state, "zsxq_sync_worker"):
                 delattr(app.state, "zsxq_sync_worker")
+        if essay_quant_worker is not None:
+            essay_quant_worker.stop()
+            if hasattr(app.state, "essay_quant_worker"):
+                delattr(app.state, "essay_quant_worker")
         if icloud_knowledge_worker is not None:
             icloud_knowledge_worker.stop()
             if hasattr(app.state, "icloud_knowledge_worker"):
@@ -363,6 +449,11 @@ async def app_lifespan(app: FastAPI):
             refresh_task.cancel()
             with suppress(asyncio.CancelledError):
                 await refresh_task
+        warmup_task = getattr(app.state, "startup_warmup_task", None)
+        if warmup_task is not None and not warmup_task.done():
+            warmup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await warmup_task
         if hasattr(app.state, "system_config_service"):
             delattr(app.state, "system_config_service")
         runtime_scheduler = getattr(app.state, "runtime_scheduler_service", None)
@@ -586,11 +677,16 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
                 )
             if file_path.is_file():
                 relative_path = file_path.relative_to(assets_root).as_posix()
-                return await assets_static_files.get_response(relative_path, request.scope)
+                response = await assets_static_files.get_response(relative_path, request.scope)
+                # Vite filenames are content hashed. They can be cached forever,
+                # while index.html remains no-store and selects the current build.
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                return response
             return Response(
                 content="asset not found",
                 status_code=404,
                 media_type=_missing_asset_media_type(asset_path),
+                headers={"Cache-Control": "no-store"},
             )
 
         # SPA 路由回退

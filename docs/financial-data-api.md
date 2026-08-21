@@ -26,6 +26,18 @@ TUSHARE_API_RATE_LIMIT_PER_MINUTE=480
 
 默认 480 次/分钟，为 500 次/分钟权限留出余量；服务端会把配置值限制在 1～500。
 
+## 统一事实库状态与安全优化
+
+行情、知识星球、情报、分析和持仓继续使用同一个 SQLite 事实库，避免多个业务数据库之间复制、对账和读到不同版本的数据；API 将这些表按逻辑数据域展示：
+
+- `GET /api/v1/financial-data/storage/status`：返回数据库/WAL 文件体积、关键 PRAGMA、各表记录数、最新数据时间、目标刷新周期和 `fresh/stale/market_closed/empty` 状态。
+- `GET /api/v1/financial-data/storage/status?include_integrity=true`：额外执行只读 `quick_check`，适合人工巡检，不建议高频调用。
+- `POST /api/v1/financial-data/storage/optimize`：执行有界的查询规划统计维护与被动 WAL 检查点；不会 `VACUUM`、删除业务记录或打断实时采集。
+
+文件型 SQLite 默认使用 WAL、`synchronous=NORMAL`、外键校验、5 秒 busy timeout 和 1000 页自动检查点。后台默认每 60 分钟做一次安全维护，可用 `DATA_STORAGE_MAINTENANCE_AUTO_START` 和 `DATA_STORAGE_MAINTENANCE_MINUTES` 调整。
+
+“实时”按上游能力分级：盘中自选股和指数可按秒采集，知识星球 MCP 与财经快讯近实时增量，公告和技术/资金数据按分钟到小时轮询，财报、股东与企业工商数据按披露或上游更新频率同步。低频披露数据会显示来源最新时间，不会用重复请求或模拟值伪装秒级实时。
+
 ## 统一查询入口
 
 ### Tushare 任意接口
@@ -176,7 +188,9 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 - `POST /api/v1/essay-radar/worker/start` / `worker/stop`：启停实时分析。
 - `GET /api/v1/essay-radar/dashboard`：标签、情绪、股票热度和高重要度纪要。
 - `GET /api/v1/essay-radar/insights`：14 日趋势、证据质量、模型共识/分歧、关注股日周月信号和高信息增量纪要。
-- `GET /api/v1/essay-radar/analyses`：按关键词、情绪、类型、标签、股票与重要度筛选。
+- `GET /api/v1/essay-radar/deep-insights`：返回来源→主题→个股→催化/风险的真实同文共现关系、14 日情绪脉冲、主题热力、个股讨论动量、多空分歧、待核验队列与证据漏斗；`days` 控制语料窗口，`trend_days` 控制趋势窗口。
+- `GET /api/v1/essay-radar/feed`：以全部已入库原始纪要为主表检索，`days=0` 查询整个 SQLite 小作文库；关键词覆盖标题、原文、作者、知识星球、股票代码以及已有 AI 摘要/标签，未入队、排队中、失败或尚未完成 AI 分析的纪要也会返回。可用 `analysis_status` 区分 `completed`、`uncompleted`、`not_queued`、`pending`、`processing` 和 `failed`。
+- `GET /api/v1/essay-radar/analyses`：仅查询已创建 AI 任务的分析记录，保留用于情绪、类型、标签、股票与重要度等结构化筛选。
 - `GET /api/v1/essay-radar/word-cloud`：股票、标签、主题的日/周/月词云及前周期变化。
 - `GET /api/v1/essay-radar/daily-reports`：读取各模型独立生成的前一日小作文报告。
 - `POST /api/v1/essay-radar/daily-reports/run`：立即生成或补跑指定日期日报。
@@ -203,17 +217,48 @@ AI 结果完成后更新同一事件。小作文雷达会分别显示 MCP 拉取
 ### 一年 / 两年历史纪要
 
 小作文雷达可选择回填近 1 年或近 2 年知识星球主题。历史任务从最新主题向前分页，达到目标日期
-后停止，并以 `topic_id` 幂等写入 `research_notes`。历史纪要默认不创建 DeepSeek 任务，只供原文
-检索、首次提及统计和量化事件研究使用；点赞等互动数变化仍不会触发数据库更新。
+后停止，并以 `topic_id` 和内容哈希幂等写入 `research_notes`；已经入库且内容未变化的主题只计为
+`unchanged`，不会重复写库。历史纪要默认不创建 DeepSeek 任务，只供原文检索、首次提及统计和
+量化事件研究使用；点赞等互动数变化仍不会触发数据库更新。
 
-- `POST /api/v1/financial-data/zsxq/history/backfill`：请求体为 `{"years":1}` 或 `{"years":2}`，后台执行历史同步。
-- `GET /api/v1/financial-data/zsxq/sync/status`：通过 `history_backfill` 查看运行范围、开始时间、完成结果和错误。
-- 需要分析历史内容时，在小作文雷达明确点击“按需 AI 分析”；系统会先提示可能产生的模型消耗，再把所选时间范围加入持久化队列。
+- `POST /api/v1/financial-data/zsxq/history/backfill`：请求体为 `{"years":1}` 或 `{"years":2}`，后台按所选范围同步。
+- `GET /api/v1/financial-data/zsxq/sync/status`：返回同步进度、分页数、已获取、新增和跳过数量。
+- 需要分析历史内容时，在小作文雷达明确选择近 1 年或近 2 年并点击“按需 AI 分析”；系统先提示可能产生的模型消耗。
 
-`ZSXQ_MCP_HISTORY_MAX_PAGES` 控制单次历史任务的分页上限，默认 500，最大 2000。达到上限但仍未
-覆盖目标日期时，状态中的实际入库数量可用于判断是否需要提高上限后重跑；已经入库的主题不会重复写入。
+`ZSXQ_MCP_HISTORY_MAX_PAGES` 控制单次历史任务的分页安全上限，未配置时默认至少 500 页；达到上限但
+尚未覆盖目标日期时任务标记为 `incomplete`，再次执行仍会跳过已经入库且内容未变化的主题。
+
+### 按篇数补分析历史小作文
+
+数据管理页将“新增小作文实时分析”和“历史小作文补分析”分开。历史补分析只查询 SQLite 中已经
+入库且尚未创建 `essay_analysis_records` 任务的纪要，不重新请求知识星球，也不会把失败、排队中或
+已经完成的任务重复加入队列。用户可选择 50、100、500、1000、2000 或 5000 篇，并选择最近优先
+或最早优先；实际剩余量少于所选篇数时只处理剩余量。
+
+- `GET /api/v1/essay-radar/historical-backlog`：返回全部历史的总数、未入队、已完成、待处理、处理中、失败及未入队日期范围。
+- 同一接口同时返回知识库最早/最新原文时间、最近入库时间、知识星球数量，以及近 24 小时、7 日、30 日新增篇数，供信息流全库看板使用。
+- `POST /api/v1/essay-radar/backfill-count`：请求体为 `{"count":500,"order":"newest"}`；`count` 范围为 1～5000，`order` 支持 `newest` / `oldest`。
+
+该入口启动分析 worker 时不会附带原有的近 30 天启动补队列，确保所选篇数不被隐式扩大。新 MCP
+纪要仍按实时增量链路自动入队；失败任务继续通过独立的“重试失败记录”入口处理。
 
 ## 数据源状态
 
 `GET /api/v1/financial-data/sources` 返回 Tushare 是否配置、已同步的知识星球、纪要数量、
 最新纪要时间和最近同步时间。交互式 OpenAPI 文档位于 `/docs`。
+
+## 量化研究 API
+
+量化模块默认把知识星球 AI 观点与本地 Tushare 日线、复权因子和基准行情连接，并在结果中
+返回数据质量漏斗。原始未分析语料只有在 `raw_note_policy=include` 时进入探索回测；默认
+`exclude`。`dedupe_window_days` 控制同股同机构同方向观点聚类，`transaction_cost_bps`
+控制事件收益扣减成本，`validation_method` 支持 `walk_forward`、`time_split` 和 `none`。
+
+- `GET /api/v1/essay-quant/research-catalog`：各本地事实表记录数、最近数据时间、用途与研究方法。
+- `GET /api/v1/essay-quant/runs?limit=30`：不可变运行快照摘要。
+- `POST /api/v1/essay-quant/run`：执行受控事件研究，返回收益/超额、组合、95% 置信区间、月度队列与成本敏感性。
+- `POST /api/v1/essay-quant/natural-language/plan`：请求体 `{"prompt":"..."}`，返回结构化任务、规则、假设、暂不支持项、安全边界和服务器模板代码。
+- `POST /api/v1/essay-quant/natural-language/execute`：请求体包含 `rule` 与 `refresh_prices`，确认后执行经过 schema 与服务层双重归一化的规则。
+
+自然语言接口不会执行模型自由文本。模型无权调用 Shell、任意 SQL、文件系统、密钥、下单或
+未授权网络；可执行代码由固定模板渲染并只调用 `EssayQuantService.run()`。

@@ -16,9 +16,23 @@ class EssayQuantRuleRequest(BaseModel):
     benchmark_code: str = Field(default="000300.SH", max_length=16)
     portfolio_size: int = Field(default=10, ge=2, le=30)
     enabled: bool = True
+    strategy_type: str = Field(default="essay_event", max_length=40)
+    raw_note_policy: str = Field(default="exclude", pattern="^(exclude|include)$")
+    dedupe_window_days: int = Field(default=3, ge=0, le=30)
+    transaction_cost_bps: float = Field(default=12, ge=0, le=200)
+    validation_method: str = Field(default="walk_forward", pattern="^(walk_forward|time_split|none)$")
 
 
 class EssayQuantRunRequest(EssayQuantRuleRequest):
     rule_id: Optional[int] = None
     refresh_prices: bool = True
     max_symbols: int = Field(default=30, ge=2, le=60)
+
+
+class EssayQuantNaturalLanguageRequest(BaseModel):
+    prompt: str = Field(min_length=8, max_length=4000)
+
+
+class EssayQuantExecutePlanRequest(BaseModel):
+    rule: EssayQuantRuleRequest
+    refresh_prices: bool = True

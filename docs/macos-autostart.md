@@ -19,6 +19,7 @@ bash scripts/install-macos-autostart.sh
 - Web 端口读取 `.env` 中的 `WEBUI_PORT`，未配置时使用项目默认值。
 - 后台运行代码位于 `~/Library/Application Support/财经情报台/runtime`，避开 macOS 对登录进程读取 Documents 的限制。
 - 修改后端源代码后重新运行安装脚本，即可把最新代码部署到后台运行目录；实时 `.env` 和数据库不会被覆盖。
+- 更新前端时会覆盖入口页但保留旧版内容哈希资源，已经打开的页面可在服务升级后继续切换功能；若浏览器遇到确实缺失的分包，会自动获取最新入口恢复一次。
 
 后台日志：
 

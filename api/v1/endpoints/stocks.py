@@ -12,7 +12,7 @@
 """
 
 import logging
-from typing import Optional
+from typing import List, Optional
 import re
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, Depends
@@ -49,6 +49,61 @@ router = APIRouter()
 
 # 须在 /{stock_code} 路由之前定义
 ALLOWED_MIME_STR = ", ".join(ALLOWED_MIME)
+
+
+@router.get("/market-data/status", summary="查看本地行情数据库与分钟采集状态")
+def market_data_status():
+    from src.services.market_data_service import MarketDataService
+    from src.services.market_data_worker import MarketDataWorker
+
+    return {"worker": MarketDataWorker.get_instance().status(), "storage": MarketDataService().status()}
+
+
+@router.post("/market-data/refresh", summary="立即采集自选股分钟行情到 SQLite")
+def refresh_market_data():
+    from src.services.market_data_worker import MarketDataWorker
+
+    return MarketDataWorker.get_instance().run_now()
+
+
+@router.get("/market-data/realtime", response_model=List[StockQuote], summary="批量读取本地秒级最新行情")
+def get_realtime_market_data(
+    symbols: str = Query(..., min_length=1, description="逗号分隔股票代码，最多100只"),
+    refresh_missing: bool = Query(True, description="首次缺失时立即向上游补采一次"),
+) -> List[StockQuote]:
+    from src.services.market_data_service import MarketDataService
+
+    codes = [item.strip() for item in symbols.split(",") if item.strip()]
+    if len(codes) > 100:
+        raise HTTPException(status_code=422, detail={"error": "too_many_symbols", "message": "一次最多查询100只"})
+    return [StockQuote(**item) for item in MarketDataService().latest_quotes(codes, refresh_missing=refresh_missing)]
+
+
+@router.get("/market-data/realtime-indices", summary="批量读取本地秒级指数行情")
+def get_realtime_indices(symbols: Optional[str] = Query(None, description="留空时返回完整配置指数池")):
+    from src.services.market_data_service import MarketDataService
+    codes = [item.strip() for item in symbols.split(",") if item.strip()] if symbols else None
+    return MarketDataService().latest_index_quotes(codes, refresh_missing=True)
+
+
+@router.get("/market-data/index/{symbol}", response_model=StockHistoryResponse, summary="获取本地优先的指数多周期行情")
+def get_index_market_data(
+    symbol: str,
+    period: str = Query("daily", pattern="^(intraday|daily|weekly|monthly|yearly)$"),
+    range_key: Optional[str] = Query(None, alias="range"),
+    days: Optional[int] = Query(None, ge=1, le=7300),
+    refresh: bool = Query(False),
+    max_points: int = Query(2000, ge=100, le=5000),
+) -> StockHistoryResponse:
+    from src.services.market_data_service import MarketDataService
+
+    try:
+        result = MarketDataService().get_index_series(
+            symbol, period=period, range_key=range_key, days=days, refresh=refresh, max_points=max_points,
+        )
+        return StockHistoryResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "unsupported_period", "message": str(exc)})
 
 
 def _read_watchlist_codes(service: SystemConfigService) -> list:
@@ -360,6 +415,8 @@ def add_to_watchlist(
             codes.append(request.stock_code.strip())
             _write_watchlist_codes(service, codes)
             WatchlistBackfillWorker.get_instance().enqueue(validated, days=183)
+            from src.services.market_data_worker import MarketDataWorker
+            MarketDataWorker.get_instance().register_symbol(validated)
         return WatchlistResponse(stock_codes=codes, message=f"已加入 {request.stock_code.strip()}")
     except HTTPException:
         raise
@@ -395,6 +452,8 @@ def remove_from_watchlist(
             idx = existing_keys.index(requested_key)
             codes.pop(idx)
             _write_watchlist_codes(service, codes)
+            from src.services.market_data_worker import MarketDataWorker
+            MarketDataWorker.get_instance().unregister_symbol(validated)
         return WatchlistResponse(stock_codes=codes, message=f"已移除 {request.stock_code.strip()}")
     except HTTPException:
         raise
@@ -459,7 +518,12 @@ def get_stock_quote(stock_code: str) -> StockQuote:
             prev_close=result.get("prev_close"),
             volume=result.get("volume"),
             amount=result.get("amount"),
+            second_volume=result.get("second_volume"),
+            second_amount=result.get("second_amount"),
             update_time=result.get("update_time")
+            ,source=result.get("source")
+            ,stale_seconds=result.get("stale_seconds")
+            ,is_stale=result.get("is_stale")
         )
         
     except HTTPException:
@@ -488,8 +552,11 @@ def get_stock_quote(stock_code: str) -> StockQuote:
 )
 def get_stock_history(
     stock_code: str,
-    period: str = Query("daily", description="K 线周期", pattern="^(daily|weekly|monthly)$"),
-    days: int = Query(30, ge=1, le=365, description="获取天数")
+    period: str = Query("daily", description="K 线周期", pattern="^(intraday|daily|weekly|monthly|yearly)$"),
+    range_key: Optional[str] = Query(None, alias="range", description="时间范围：1d/5d/1m/3m/6m/1y/2y/3y/5y/10y/max"),
+    days: Optional[int] = Query(None, ge=1, le=7300, description="兼容旧客户端的获取天数"),
+    refresh: bool = Query(False, description="是否主动刷新上游并写入 SQLite"),
+    max_points: int = Query(2000, ge=100, le=5000, description="日内图最大返回点数，SQLite仍保存完整秒级数据"),
 ) -> StockHistoryResponse:
     """
     获取股票历史行情
@@ -511,7 +578,10 @@ def get_stock_history(
         result = service.get_history_data(
             stock_code=stock_code,
             period=period,
-            days=days
+            days=days,
+            range_key=range_key,
+            refresh=refresh,
+            max_points=max_points,
         )
         
         # 转换为响应模型
@@ -524,6 +594,8 @@ def get_stock_history(
                 close=item.get("close"),
                 volume=item.get("volume"),
                 amount=item.get("amount"),
+                cumulative_volume=item.get("cumulative_volume"),
+                cumulative_amount=item.get("cumulative_amount"),
                 change_percent=item.get("change_percent")
             )
             for item in result.get("data", [])
@@ -533,6 +605,13 @@ def get_stock_history(
             stock_code=stock_code,
             stock_name=result.get("stock_name"),
             period=period,
+            range=result.get("range"),
+            source=result.get("source"),
+            stored_count=int(result.get("stored_count") or 0),
+            latest_at=result.get("latest_at"),
+            pre_close=result.get("pre_close"),
+            refreshed=bool(result.get("refreshed")),
+            storage=str(result.get("storage") or "sqlite"),
             data=data
         )
     

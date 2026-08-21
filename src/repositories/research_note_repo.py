@@ -13,6 +13,14 @@ from src.storage import DatabaseManager, ResearchNote, ZsxqSyncState, utc_naive_
 from src.research_note_fingerprint import research_note_information_hash
 
 
+_SQL_IN_BATCH_SIZE = 500
+
+
+def _batched(values: List[str]):
+    for offset in range(0, len(values), _SQL_IN_BATCH_SIZE):
+        yield values[offset:offset + _SQL_IN_BATCH_SIZE]
+
+
 class ResearchNoteRepository:
     """Database access for normalized knowledge-planet research notes."""
 
@@ -27,9 +35,11 @@ class ResearchNoteRepository:
         changed_topic_ids: List[str] = []
         with self.db.get_session() as session:
             topic_ids = [str(fields["topic_id"]) for fields in note_rows]
-            existing_rows = session.execute(
-                select(ResearchNote).where(ResearchNote.topic_id.in_(topic_ids))
-            ).scalars().all() if topic_ids else []
+            existing_rows: List[ResearchNote] = []
+            for batch in _batched(topic_ids):
+                existing_rows.extend(session.execute(
+                    select(ResearchNote).where(ResearchNote.topic_id.in_(batch))
+                ).scalars().all())
             existing_by_topic = {row.topic_id: row for row in existing_rows}
             for fields in note_rows:
                 existing = existing_by_topic.get(str(fields["topic_id"]))
@@ -147,6 +157,13 @@ class ResearchNoteRepository:
         with self.db.get_session() as session:
             rows = session.execute(
                 select(ResearchNote.group_id, func.max(ResearchNote.created_at)).group_by(ResearchNote.group_id)
+            ).all()
+        return {str(group_id): created_at for group_id, created_at in rows if created_at is not None}
+
+    def oldest_created_by_group(self) -> Dict[str, datetime]:
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(ResearchNote.group_id, func.min(ResearchNote.created_at)).group_by(ResearchNote.group_id)
             ).all()
         return {str(group_id): created_at for group_id, created_at in rows if created_at is not None}
 

@@ -74,6 +74,7 @@ def test_history_page_is_ingested_without_creating_ai_tasks(tmp_path):
         db = DatabaseManager.get_instance()
         repo = ResearchNoteRepository(db)
         service = ZsxqMcpSyncService(repo)
+        progress_updates = []
         result = asyncio.run(service._sync_group(
             FakeMcpClient(),
             {"group_id": "group-1", "name": "调研纪要"},
@@ -81,9 +82,15 @@ def test_history_page_is_ingested_without_creating_ai_tasks(tmp_path):
             history_cutoff=datetime(2026, 1, 1),
             enqueue_analysis=False,
             max_pages=20,
+            progress_callback=progress_updates.append,
         ))
         assert result["created"] == 1
         assert result["analysis_enqueued"] is False
+        assert [update["phase"] for update in progress_updates] == ["fetching", "saving"]
+        assert progress_updates[0]["group_pages_fetched"] == 1
+        assert progress_updates[0]["group_received"] == 1
+        assert progress_updates[-1]["group_progress_percent"] > 0
+        assert progress_updates[-1]["group_saved"] == 1
         with db.get_session() as session:
             assert session.execute(select(EssayAnalysisRecord)).scalars().all() == []
     finally:
@@ -118,3 +125,36 @@ def test_media_links_are_resolved_remotely_on_demand():
     file_url = asyncio.run(service._resolve_media_with_client(client, "topic-1", "files", "file-1"))
     assert image_url == "https://images.zsxq.com/fresh-image?token=fresh"
     assert file_url == "https://files.zsxq.com/fresh-file?token=fresh"
+
+
+def test_history_mcp_call_retries_transient_rate_limit(monkeypatch):
+    service = ZsxqMcpSyncService.__new__(ZsxqMcpSyncService)
+    service.history_retry_attempts = 3
+    attempts = []
+    waits = []
+    progress_updates = []
+
+    async def fake_call_json(client, name, arguments):
+        attempts.append((name, arguments))
+        if len(attempts) == 1:
+            raise RuntimeError("429 Too Many Requests")
+        return {"success": True}
+
+    async def fake_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(service, "_call_json", fake_call_json)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    result = asyncio.run(service._call_json_with_retry(
+        object(),
+        "get_group_topics",
+        {"group_id": "group-1"},
+        progress_callback=progress_updates.append,
+        progress_context={"group_progress_percent": 12.5},
+    ))
+
+    assert result == {"success": True}
+    assert len(attempts) == 2
+    assert waits == [2]
+    assert progress_updates[0]["phase"] == "retry_wait"
+    assert progress_updates[0]["group_progress_percent"] == 12.5

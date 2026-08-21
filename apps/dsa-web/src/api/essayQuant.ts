@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { EssayQuantDashboard, EssayQuantRule } from '../types/essayQuant';
+import type { EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan, EssayQuantPrecomputeStatus, EssayQuantRule, EssayQuantRunHistory } from '../types/essayQuant';
 
 const payload = (rule: EssayQuantRule) => ({
   name: rule.name, source_query: rule.sourceQuery, signal_direction: rule.signalDirection,
@@ -8,10 +8,19 @@ const payload = (rule: EssayQuantRule) => ({
   first_mention_only: rule.firstMentionOnly, first_mention_window_days: rule.firstMentionWindowDays,
   min_importance: rule.minImportance, min_confidence: rule.minConfidence,
   benchmark_code: rule.benchmarkCode, portfolio_size: rule.portfolioSize, enabled: rule.enabled ?? true,
+  strategy_type: rule.strategyType, raw_note_policy: rule.rawNotePolicy,
+  dedupe_window_days: rule.dedupeWindowDays, transaction_cost_bps: rule.transactionCostBps,
+  validation_method: rule.validationMethod,
 });
 
 export const essayQuantApi = {
-  dashboard: async (): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get('/api/v1/essay-quant/dashboard')).data),
+  dashboard: async (): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get('/api/v1/essay-quant/institution-dashboard')).data),
+  precomputeStatus: async (): Promise<EssayQuantPrecomputeStatus> => toCamelCase((await apiClient.get('/api/v1/essay-quant/precompute/status')).data),
+  requestPrecompute: async (): Promise<EssayQuantPrecomputeStatus> => toCamelCase((await apiClient.post('/api/v1/essay-quant/precompute/run')).data),
+  catalog: async (): Promise<EssayQuantCatalog> => toCamelCase((await apiClient.get('/api/v1/essay-quant/research-catalog')).data),
+  runs: async (): Promise<EssayQuantRunHistory> => toCamelCase((await apiClient.get('/api/v1/essay-quant/runs')).data),
+  plan: async (prompt: string): Promise<EssayQuantPlan> => toCamelCase((await apiClient.post('/api/v1/essay-quant/natural-language/plan', { prompt })).data),
+  executePlan: async (rule: EssayQuantRule): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.post('/api/v1/essay-quant/natural-language/execute', { rule: payload(rule), refresh_prices: true })).data),
   rules: async (): Promise<{ items: EssayQuantRule[]; total: number }> => toCamelCase((await apiClient.get('/api/v1/essay-quant/rules')).data),
   saveRule: async (rule: EssayQuantRule): Promise<EssayQuantRule> => {
     const response = rule.id
@@ -34,11 +43,21 @@ function normalizeDashboard(data: unknown): EssayQuantDashboard {
   });
   return {
     ...normalized,
+    rule: {
+      strategyType: 'essay_event', rawNotePolicy: 'exclude', dedupeWindowDays: 3,
+      transactionCostBps: 12, validationMethod: 'walk_forward',
+      ...((normalized.rule as Record<string, unknown> | undefined) ?? {}),
+    },
     summary: {
       ...summary,
       firstMention30dCount: summary.firstMention30dCount ?? summary.firstMention30DCount ?? 0,
     },
     firstMentions30d: (normalized.firstMentions30d ?? normalized.firstMentions30D ?? []) as EssayQuantDashboard['firstMentions30d'],
     trendSignals,
+    robustness: (normalized.robustness ?? {
+      sampleCount: 0, averageExcessReturn: null, confidenceInterval95: [null, null],
+      tStat: null, payoffRatio: null, positiveRate: null, distribution: [], cohorts: [], sensitivity: [],
+    }) as EssayQuantDashboard['robustness'],
+    factorAnalysis: (normalized.factorAnalysis ?? []) as EssayQuantDashboard['factorAnalysis'],
   } as EssayQuantDashboard;
 }

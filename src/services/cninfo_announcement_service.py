@@ -120,6 +120,14 @@ class CninfoAnnouncementService:
         return self.fetch(start_date=today - timedelta(days=max(1, days) - 1), end_date=today,
                           symbols=symbols, page_size=50, max_pages=5)
 
+    def fetch_recent_market(self, *, days: int = 2, max_pages: int = 30) -> List[Dict[str, Any]]:
+        """Fetch recent full-market metadata without downloading announcement files."""
+        today = datetime.now(timezone(timedelta(hours=8))).date()
+        return self.fetch(
+            start_date=today - timedelta(days=max(1, days) - 1), end_date=today,
+            symbols=[], page_size=100, max_pages=max_pages,
+        )
+
     def _post_json(self, url: str, payload: Dict[str, Any]) -> Any:
         last_error: Optional[Exception] = None
         for attempt in range(self.retries + 1):

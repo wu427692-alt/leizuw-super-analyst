@@ -41,12 +41,25 @@ cleanup() {
 trap cleanup EXIT
 
 /bin/launchctl bootout "gui/$UID/${LABEL}" >/dev/null 2>&1 || true
+for _ in {1..60}; do
+  if ! /bin/launchctl print "gui/$UID/${LABEL}" >/dev/null 2>&1; then
+    break
+  fi
+  /bin/sleep 0.25
+done
+if /bin/launchctl print "gui/$UID/${LABEL}" >/dev/null 2>&1; then
+  echo "Existing LaunchAgent did not finish unloading within 15 seconds." >&2
+  exit 1
+fi
 
 /bin/mkdir -p "${LAUNCH_AGENTS_DIR}" "${APP_PARENT}" "${RUNTIME_ROOT}" "${LOG_DIR}" "${RUNTIME_ROOT}/scripts"
 
 for directory in .venv api bot data_provider src static strategies templates; do
   /usr/bin/ditto "${PROJECT_ROOT}/${directory}" "${RUNTIME_ROOT}/${directory}"
 done
+# Keep content-hashed chunks from earlier builds so a page that was already
+# open during an upgrade can still lazy-load its routes. Vite changes the
+# filename whenever content changes; index.html itself is always replaced.
 for filename in main.py server.py; do
   /usr/bin/install -m 0644 "${PROJECT_ROOT}/${filename}" "${RUNTIME_ROOT}/${filename}"
 done
@@ -77,13 +90,20 @@ share_runtime_path() {
 share_runtime_path "${PROJECT_ROOT}/.env" "${RUNTIME_ROOT}/.env"
 share_runtime_path "${PROJECT_ROOT}/data" "${RUNTIME_ROOT}/data"
 
+WEBUI_PORT="$(cd "${RUNTIME_ROOT}" && "${PYTHON_BIN}" -c 'from src.config import setup_env, get_config; setup_env(); print(get_config().webui_port)')"
+if [[ ! "${WEBUI_PORT}" =~ ^[0-9]+$ ]] || (( WEBUI_PORT < 1 || WEBUI_PORT > 65535 )); then
+  echo "Invalid WEBUI_PORT: ${WEBUI_PORT}" >&2
+  exit 1
+fi
+
 /usr/bin/plutil -create xml1 "${PLIST_TMP}"
 /usr/bin/plutil -insert Label -string "${LABEL}" "${PLIST_TMP}"
 /usr/bin/plutil -insert ProgramArguments -json "[\"/bin/zsh\",\"${RUNNER}\"]" "${PLIST_TMP}"
 /usr/bin/plutil -insert WorkingDirectory -string "${RUNTIME_ROOT}" "${PLIST_TMP}"
 /usr/bin/plutil -insert RunAtLoad -bool true "${PLIST_TMP}"
-/usr/bin/plutil -insert KeepAlive -json '{"SuccessfulExit":false}' "${PLIST_TMP}"
+/usr/bin/plutil -insert KeepAlive -bool true "${PLIST_TMP}"
 /usr/bin/plutil -insert ProcessType -string Background "${PLIST_TMP}"
+/usr/bin/plutil -insert LimitLoadToSessionType -string Aqua "${PLIST_TMP}"
 /usr/bin/plutil -insert ThrottleInterval -integer 10 "${PLIST_TMP}"
 /usr/bin/plutil -insert StandardOutPath -string "${LOG_DIR}/launchd.stdout.log" "${PLIST_TMP}"
 /usr/bin/plutil -insert StandardErrorPath -string "${LOG_DIR}/launchd.stderr.log" "${PLIST_TMP}"
@@ -95,6 +115,7 @@ share_runtime_path "${PROJECT_ROOT}/data" "${RUNTIME_ROOT}/data"
 /bin/mkdir -p "${APP_PATH}/Contents/MacOS" "${APP_PATH}/Contents/Resources"
 /usr/bin/install -m 0755 "${APP_LAUNCHER}" "${APP_PATH}/Contents/MacOS/launcher"
 /usr/bin/printf '%s\n' "${RUNTIME_ROOT}" > "${APP_PATH}/Contents/Resources/project-root.txt"
+/usr/bin/printf '%s\n' "${WEBUI_PORT}" > "${APP_PATH}/Contents/Resources/webui-port.txt"
 
 /usr/bin/plutil -create xml1 "${APP_PATH}/Contents/Info.plist"
 /usr/bin/plutil -insert CFBundleDevelopmentRegion -string zh_CN "${APP_PATH}/Contents/Info.plist"
@@ -109,6 +130,7 @@ share_runtime_path "${PROJECT_ROOT}/data" "${RUNTIME_ROOT}/data"
 /usr/bin/plutil -insert CFBundleIconFile -string AppIcon "${APP_PATH}/Contents/Info.plist"
 /usr/bin/plutil -insert LSMinimumSystemVersion -string 12.0 "${APP_PATH}/Contents/Info.plist"
 /usr/bin/plutil -insert NSHighResolutionCapable -bool true "${APP_PATH}/Contents/Info.plist"
+/usr/bin/plutil -insert LSUIElement -bool true "${APP_PATH}/Contents/Info.plist"
 
 ICONSET_PATH="${PROJECT_ROOT}/docs/assets/dsa_vi/darklogo.iconset"
 if [[ -d "${ICONSET_PATH}" ]]; then
@@ -123,13 +145,35 @@ if ! /usr/bin/defaults read com.apple.dock persistent-apps 2>/dev/null | /usr/bi
   /usr/bin/killall Dock >/dev/null 2>&1 || true
 fi
 
-/bin/launchctl bootstrap "gui/$UID" "${PLIST_PATH}"
+if ! /bin/launchctl bootstrap "gui/$UID" "${PLIST_PATH}"; then
+  # launchd can briefly retain the old job after bootout during a hot upgrade.
+  # Accept a job that became visible despite the error; otherwise retry once.
+  /bin/sleep 2
+  if ! /bin/launchctl print "gui/$UID/${LABEL}" >/dev/null 2>&1; then
+    /bin/launchctl bootstrap "gui/$UID" "${PLIST_PATH}"
+  fi
+fi
 /bin/launchctl enable "gui/$UID/${LABEL}"
 /bin/launchctl kickstart -k "gui/$UID/${LABEL}"
 
-WEBUI_PORT="$(${PYTHON_BIN} -c 'from src.config import setup_env, get_config; setup_env(); print(get_config().webui_port)')"
+WEBUI_URL="http://127.0.0.1:${WEBUI_PORT}"
+READY=false
+for _ in {1..180}; do
+  if /usr/bin/curl --silent --fail --max-time 2 "${WEBUI_URL}/api/health" >/dev/null 2>&1; then
+    READY=true
+    break
+  fi
+  /bin/sleep 0.5
+done
+if [[ "${READY}" != true ]]; then
+  echo "LaunchAgent was installed but the service did not become healthy within 90 seconds." >&2
+  /usr/bin/tail -n 40 "${LOG_DIR}/launchd.stderr.log" >&2 || true
+  exit 1
+fi
+
 echo "Installed LaunchAgent: ${PLIST_PATH}"
 echo "Installed application: ${APP_PATH}"
-echo "Added application to Dock: 财经情报台"
+echo "Dock application ready: 财经情报台"
 echo "Installed runtime: ${RUNTIME_ROOT}"
-echo "Web interface: http://127.0.0.1:${WEBUI_PORT}"
+echo "Health check passed: ${WEBUI_URL}/api/health"
+echo "Web interface: ${WEBUI_URL}"

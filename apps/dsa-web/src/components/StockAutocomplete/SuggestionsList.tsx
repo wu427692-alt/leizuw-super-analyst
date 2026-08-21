@@ -88,11 +88,10 @@ const MARKET_BADGE_CONFIG = {
 } as const;
 
 function MarketBadge({ market }: { market: string }) {
-  const config = MARKET_BADGE_CONFIG[market as keyof typeof MARKET_BADGE_CONFIG];
-
-  if (!config) {
-    throw new Error(`Unsupported market in stock suggestion: ${market}`);
-  }
+  const config = MARKET_BADGE_CONFIG[market as keyof typeof MARKET_BADGE_CONFIG] ?? {
+    label: market || '其他',
+    className: 'border-border/55 bg-elevated/75 text-muted-text',
+  };
 
   return (
     <Badge variant="default" size="sm" className={cn('min-w-[3rem] justify-center shadow-none', config.className)}>

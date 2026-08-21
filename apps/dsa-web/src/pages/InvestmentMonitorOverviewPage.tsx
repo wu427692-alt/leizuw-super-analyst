@@ -1,76 +1,186 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, ExternalLink, RefreshCw, ShieldCheck } from 'lucide-react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { DatabaseZap, ExternalLink, FileText, RefreshCw, Search } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { investmentMonitorApi } from '../api/investmentMonitor';
 import { AppPage, EmptyState } from '../components/common';
 import { InvestmentMonitorNav } from '../components/investmentMonitor/InvestmentMonitorNav';
-import { CHANNEL_LABELS, eventTime } from '../components/investmentMonitor/investmentMonitorMeta';
-import type { IntelligenceDashboard, MonitorEvent } from '../types/investmentMonitor';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import type { MonitorEvent, MonitorEventList, MonitoringSource, MonitorStatus } from '../types/investmentMonitor';
 
-function evidence(event: MonitorEvent) {
-  const row = (event.metrics._evidence ?? {}) as { evidenceLevel?: string; channel?: string };
-  return { level: row.evidenceLevel ?? (event.sourceKey === 'zsxq.essays' ? 'unverified' : 'licensed'), channel: row.channel ?? 'other' };
+const GREEN = '#00E676';
+const SOURCE_GROUPS = [
+  { key: 'official', title: '官方披露', description: '公告与法定披露' },
+  { key: 'licensed', title: '授权数据', description: '行情、财务与企业数据' },
+  { key: 'reported', title: '研究与新闻', description: '媒体和券商发布记录' },
+  { key: 'unverified', title: '另类情报', description: '观点型内容，需二次核验' },
+] as const;
+
+function sourceLevel(source: MonitoringSource) {
+  if (source.config?.evidenceLevel) return source.config.evidenceLevel;
+  if (source.sourceKey === 'cninfo.announcements') return 'official';
+  if (source.sourceKey === 'zsxq.essays') return 'unverified';
+  if (source.category === 'news' || source.category === 'research') return 'reported';
+  return 'licensed';
 }
 
-const EventRow = ({ event, rank }: { event: MonitorEvent; rank?: number }) => {
-  const meta = evidence(event);
-  return <div className="grid grid-cols-[32px_minmax(0,1fr)_76px] gap-3 border-t border-[#D8DADF] py-3 first:border-t-0">
-    <span className="font-mono text-xs text-[#7B7F87]">{rank ? String(rank).padStart(2, '0') : eventTime(event.eventAt).slice(-5)}</span>
-    <div className="min-w-0"><p className="line-clamp-1 text-sm font-semibold text-[#17181A]">{event.title}</p><p className="mt-1 line-clamp-1 text-xs text-[#6B7078]">{event.sourceName} · {CHANNEL_LABELS[meta.channel] ?? meta.channel} · {event.symbols.join(' / ') || '全市场'}</p></div>
-    <div className="text-right"><p className="font-mono text-base font-semibold text-[#17181A]">{event.importanceScore}</p><p className={`text-[10px] ${meta.level === 'unverified' ? 'text-[#B54708]' : 'text-[#027A48]'}`}>{meta.level === 'unverified' ? '待核验' : '事实'}</p></div>
-  </div>;
-};
+function time(value?: string | null, withDate = true) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('zh-CN', withDate
+    ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+    : { hour: '2-digit', minute: '2-digit' });
+}
+
+function freshness(source: MonitoringSource) {
+  if (source.lastStatus === 'failed') return { label: '同步失败', color: '#FF5D5D' };
+  if (source.lastStatus === 'not_configured') return { label: '未配置上游', color: '#717A84' };
+  if (source.freshnessStatus === 'fresh') return { label: '新鲜', color: GREEN };
+  if (source.freshnessStatus === 'stale') return { label: '陈旧', color: '#FFB800' };
+  return { label: '暂无数据', color: '#717A84' };
+}
+
+function EventRow({ event }: { event: MonitorEvent }) {
+  const content = <>
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-2 text-[9px] text-[#717A84]">
+        <span className="font-mono text-[#00E676]">{time(event.eventAt)}</span>
+        {event.symbols.map(symbol => <span key={symbol} className="border border-[#303740] px-1.5 py-0.5">{symbol}</span>)}
+      </div>
+      <h3 className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-[#D7DCE2] group-hover:text-white">{event.title}</h3>
+      {event.summary ? <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#8B949E]">{event.summary}</p> : null}
+    </div>
+    <div className="text-right">
+      <p className="font-mono text-[9px] text-[#717A84]">入库 {time(event.ingestedAt, false)}</p>
+      <span className="mt-2 inline-flex items-center gap-1 text-[9px] font-semibold text-[#00E676]">
+        {event.url ? '打开原文' : '接口原文'} {event.url ? <ExternalLink className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+      </span>
+    </div>
+  </>;
+  const className = 'group grid grid-cols-[minmax(0,1fr)_86px] gap-3 border-t border-[#242A31] px-3 py-3 text-left first:border-t-0 hover:bg-[#0D100E]';
+  return event.url
+    ? <a href={event.url} target="_blank" rel="noreferrer" className={className}>{content}</a>
+    : <Link to={`/investment-monitor/feed?event=${event.id}`} className={className}>{content}</Link>;
+}
 
 export default function InvestmentMonitorOverviewPage() {
-  const [data, setData] = useState<IntelligenceDashboard | null>(null);
-  const [days, setDays] = useState(14);
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<MonitorStatus | null>(null);
+  const [events, setEvents] = useState<MonitorEventList | null>(null);
+  const [selectedSourceKey, setSelectedSourceKey] = useState('');
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDebouncedValue(query, 350);
+  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [error, setError] = useState('');
-  const load = useCallback(async () => {
-    setLoading(true); setError('');
-    try { setData(await investmentMonitorApi.intelligenceDashboard(days)); }
-    catch (err) { setError(err instanceof Error ? err.message : '看板加载失败'); }
-    finally { setLoading(false); }
-  }, [days]);
-  useEffect(() => { void load(); }, [load]);
 
-  const chart = useMemo(() => (data?.dailyTrend ?? []).map(item => ({ ...item, label: item.date.slice(5) })), [data]);
-  const freshSources = data?.sources.fresh ?? data?.sources.healthy ?? 0;
-  const sourceHealth = data?.sources.enabled ? Math.round(freshSources * 100 / data.sources.enabled) : 0;
-  const stats = [
-    ['事实情报', data?.summary.factualCount ?? '—', `${days} 天原始证据`],
-    ['决策信号', data?.summary.highPriorityCount ?? '—', '快照折叠后 · 重要度 ≥ 75'],
-    ['自选股命中', data?.summary.watchlistHits ?? '—', '快照折叠后'],
-    ['活跃来源', data?.summary.sourceCount ?? '—', data ? `${freshSources}/${data.sources.enabled} 数据新鲜` : '正在读取链路状态'],
-  ];
+  const loadStatus = useCallback(async () => {
+    try {
+      const next = await investmentMonitorApi.status();
+      setStatus(next);
+      setSelectedSourceKey(current => {
+        if (current && next.sources.items.some(source => source.sourceKey === current)) return current;
+        return next.sources.items.find(source => (source.storedEventCount ?? 0) > 0)?.sourceKey
+          ?? next.sources.items[0]?.sourceKey
+          ?? '';
+      });
+      setError('');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '渠道状态暂时不可用');
+    } finally {
+      setLoadingStatus(false);
+    }
+  }, []);
 
-  return <AppPage className="max-w-[1680px]">
-    <div className="overflow-hidden border border-[#C9CCD2] bg-[#F7F7F8] font-sans text-[#17181A] shadow-[0_18px_50px_rgba(17,24,39,0.08)]">
-      <div className="flex flex-col justify-between gap-4 border-b border-[#17181A] bg-white px-5 py-5 lg:flex-row lg:items-end">
-        <div><p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[#155EEF]">Intelligence desk / live evidence</p><h1 className="mt-1 text-2xl font-bold tracking-[-0.04em]">投资情报总览</h1><p className="mt-1 text-xs text-[#62666D]">先看异动，再看标的，最后回到证据。所有数字均来自本地统一事件库。</p></div>
-        <div className="flex items-center gap-2"><select aria-label="统计周期" className="h-9 border border-[#C9CCD2] bg-white px-3 text-xs" value={days} onChange={e => setDays(Number(e.target.value))}><option value={7}>近 7 天</option><option value={14}>近 14 天</option><option value={30}>近 30 天</option></select><button onClick={() => void load()} className="inline-flex h-9 items-center gap-2 bg-[#155EEF] px-4 text-xs font-semibold text-white"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />刷新</button></div>
-      </div>
+  const loadEvents = useCallback(async () => {
+    if (!selectedSourceKey) { setEvents(null); return; }
+    setLoadingEvents(true);
+    try {
+      setEvents(await investmentMonitorApi.events({ days: 3650, sourceKey: selectedSourceKey,
+        query: deferredQuery || undefined, pageSize: 40 }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '渠道消息暂时不可用');
+    } finally {
+      setLoadingEvents(false);
+    }
+  }, [deferredQuery, selectedSourceKey]);
+
+  useEffect(() => { void loadStatus(); }, [loadStatus]);
+  useEffect(() => { void loadEvents(); }, [loadEvents]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void Promise.allSettled([loadStatus(), loadEvents()]);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [loadEvents, loadStatus]);
+
+  const groups = useMemo(() => SOURCE_GROUPS.map(group => ({ ...group,
+    items: (status?.sources.items ?? []).filter(source => sourceLevel(source) === group.key),
+  })), [status?.sources.items]);
+  const selectedSource = status?.sources.items.find(source => source.sourceKey === selectedSourceKey) ?? null;
+
+  const syncSelected = async () => {
+    if (!selectedSourceKey || syncing) return;
+    setSyncing(true); setError('');
+    try {
+      await investmentMonitorApi.syncSource(selectedSourceKey);
+      await Promise.allSettled([loadStatus(), loadEvents()]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '渠道同步失败');
+    } finally { setSyncing(false); }
+  };
+
+  const syncAll = async () => {
+    if (syncingAll) return;
+    setSyncingAll(true); setError('');
+    try {
+      await investmentMonitorApi.sync();
+      await Promise.allSettled([loadStatus(), loadEvents()]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '全部渠道同步失败');
+    } finally { setSyncingAll(false); }
+  };
+
+  return <AppPage className="max-w-[1760px]">
+    <main className="overflow-hidden border border-[#242A31] bg-[#050605] font-mono text-[#D7DCE2]">
+      <header className="flex flex-col gap-4 border-b border-[#242A31] bg-[#090B09] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
+        <div><p className="text-[9px] uppercase tracking-[0.22em] text-[#00E676]">统一事件库 · 全部真实来源</p><h1 className="mt-2 text-2xl font-black tracking-[-0.05em] text-white">全渠道情报</h1><p className="mt-1 text-[10px] text-[#717A84]">按信息渠道查看存量、最新时间、同步状态与原始消息；不混入行情看板和自选股分析。</p></div>
+        <div className="flex gap-2"><button onClick={() => void Promise.allSettled([loadStatus(), loadEvents()])} disabled={loadingStatus || loadingEvents} className="inline-flex h-8 items-center gap-2 border border-[#303740] bg-[#0B0C0A] px-3 text-[10px] hover:border-[#00E676] disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${loadingStatus || loadingEvents ? 'animate-spin' : ''}`} />刷新本地情报</button><button onClick={() => void syncAll()} disabled={syncingAll} className="inline-flex h-8 items-center gap-2 border border-[#00E676] px-3 text-[10px] font-bold text-[#00E676] disabled:opacity-50"><DatabaseZap className="h-3.5 w-3.5"/>{syncingAll ? '逐源同步中' : '从上游同步全部'}</button></div>
+      </header>
+
       <InvestmentMonitorNav />
-      {error ? <div className="border-b border-[#FDA29B] bg-[#FEF3F2] px-5 py-3 text-sm text-[#B42318]">{error}</div> : null}
+      {error ? <div role="alert" className="border-b border-[#6B4423] bg-[#19130A] px-4 py-2 text-[10px] text-[#FFB800]">{error}</div> : null}
 
-      <section className="grid border-b border-[#C9CCD2] sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map(([label, value, note], index) => <div key={String(label)} className={`bg-white px-4 py-3 ${index ? 'border-l border-[#D8DADF]' : ''}`}><p className="text-[10px] font-semibold text-[#62666D]">{label}</p><p className="mt-1 font-mono text-2xl font-bold tracking-[-0.04em]">{value}</p><p className="mt-1 text-[9px] text-[#8A8E95]">{note}</p></div>)}
+      <section className="grid grid-cols-2 border-b border-[#242A31] lg:grid-cols-5">
+        {[
+          ['渠道总数', status?.sources.enabled ?? '—'], ['真正有数据', status?.sources.withData ?? '—'],
+          ['当前可用', status?.sources.healthy ?? '—'], ['陈旧 / 空库', (status?.sources.stale ?? 0) + (status?.sources.empty ?? 0)],
+          ['最后调度', time(status?.worker.lastSyncAt, false)],
+        ].map(([label, value]) => <div key={String(label)} className="border-r border-t border-[#242A31] px-4 py-3 first:border-t-0 lg:border-t-0"><p className="text-[9px] text-[#717A84]">{label}</p><p className="mt-1 text-lg font-bold text-white">{value}</p></div>)}
       </section>
 
-      <section className="grid border-b border-[#C9CCD2] xl:grid-cols-[1.55fr_1fr]">
-        <div className="min-w-0 bg-white p-5 xl:border-r xl:border-[#C9CCD2]"><div className="mb-4 flex items-end justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#155EEF]">情报密度</p><h2 className="mt-1 text-lg font-bold">每日事实与待核验信息</h2></div><div className="flex gap-3 text-[10px] text-[#62666D]"><span>■ 事实</span><span className="text-[#B54708]">■ 待核验</span></div></div><div className="h-64 min-w-0"><ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={256} initialDimension={{ width: 500, height: 256 }}><AreaChart data={chart}><CartesianGrid stroke="#E5E7EB" vertical={false}/><XAxis dataKey="label" tick={{ fontSize: 10, fill: '#6B7078' }} axisLine={false} tickLine={false}/><YAxis tick={{ fontSize: 10, fill: '#6B7078' }} axisLine={false} tickLine={false}/><Tooltip/><Area type="monotone" dataKey="factual" stackId="1" stroke="#155EEF" fill="#D9E5FF" name="事实"/><Area type="monotone" dataKey="unverified" stackId="1" stroke="#B54708" fill="#FDEAD7" name="待核验"/></AreaChart></ResponsiveContainer></div></div>
-        <div className="bg-[#EEF2F7] p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#155EEF]">来源可靠性</p><h2 className="mt-1 text-lg font-bold">数据链路状态</h2></div><ShieldCheck className="h-6 w-6 text-[#155EEF]" /></div><p className="mt-8 font-mono text-6xl font-bold tracking-[-0.07em]">{data ? sourceHealth : '—'}{data ? <span className="text-2xl">%</span> : null}</p><p className="mt-2 text-sm text-[#62666D]">{data ? `${data.sources.healthy} 个来源同步成功；${freshSources} 个事实新鲜，${data.sources.stale ?? 0} 个陈旧，${data.sources.empty ?? 0} 个空源。` : '正在检查全部数据链路…'}</p><div className="mt-5 h-2 bg-[#D8DADF]"><div className="h-full bg-[#155EEF]" style={{ width: `${sourceHealth}%` }} /></div><p className="mt-8 text-xs leading-5 text-[#62666D]">口径：同步成功只表示接口无报错；百分比按最新事实时间计算。官方披露、授权接口与媒体记录计入事实，知识星球观点仍单独标为待核验。</p></div>
+      <section aria-labelledby="source-channel-heading">
+        <div className="flex items-center justify-between border-b border-[#242A31] px-4 py-3"><div><h2 id="source-channel-heading" className="text-xs font-bold text-white">信息渠道</h2><p className="mt-1 text-[9px] text-[#717A84]">选择一个渠道查看其真实消息；每个渠道独立同步、独立失败。</p></div><span className={`text-[9px] ${status?.worker.running ? 'text-[#00E676]' : 'text-[#717A84]'}`}>{status?.worker.running ? '后台监控运行中' : '后台监控已停止'}</span></div>
+        <div className="grid xl:grid-cols-4">
+          {groups.map((group, groupIndex) => <section key={group.key} className={groupIndex ? 'border-t border-[#242A31] xl:border-l xl:border-t-0' : ''}>
+            <header className="border-b border-[#242A31] bg-[#090B09] px-3 py-2.5"><div className="flex items-center justify-between"><h3 className="text-[10px] font-bold text-white">{group.title}</h3><span className="text-[9px] text-[#717A84]">{group.items.length}</span></div><p className="mt-0.5 text-[9px] text-[#59616A]">{group.description}</p></header>
+            <div>{group.items.map(source => { const state = freshness(source); const active = source.sourceKey === selectedSourceKey; return <button key={source.sourceKey} onClick={() => setSelectedSourceKey(source.sourceKey)} className={`grid w-full grid-cols-[minmax(0,1fr)_70px] gap-2 border-b border-[#1C211E] px-3 py-2.5 text-left transition-colors ${active ? 'bg-[#0C1710] shadow-[inset_2px_0_0_#00E676]' : 'hover:bg-[#0D100E]'}`}>
+              <span className="min-w-0"><span className={`block truncate text-[10px] font-semibold ${active ? 'text-[#00E676]' : 'text-[#D7DCE2]'}`}>{source.name}</span><span className="mt-1 block truncate text-[8px] text-[#59616A]">{source.config?.originApis?.join(' · ') || source.adapterType}</span><span className="mt-1 block truncate text-[8px]" style={{ color: state.color }}>{state.label} · 最新 {time(source.latestEventAt)}</span></span>
+              <span className="text-right"><span className="block text-sm font-bold text-white">{source.storedEventCount ?? 0}</span><span className="text-[8px] text-[#59616A]">存量</span><span className="mt-1 block text-[8px] text-[#717A84]">收到 {source.lastReceivedCount ?? 0} · 新 {source.lastCreatedCount ?? 0}</span></span>
+            </button>; })}{!group.items.length ? <p className="px-3 py-5 text-[9px] text-[#59616A]">暂无渠道</p> : null}</div>
+          </section>)}
+        </div>
       </section>
 
-      <section className="grid border-b border-[#C9CCD2] xl:grid-cols-[1fr_1.15fr]">
-        <div className="min-w-0 bg-white p-5 xl:border-r xl:border-[#C9CCD2]"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#155EEF]">渠道温度</p><h2 className="mt-1 text-lg font-bold">本周期信息增量与变化</h2><div className="mt-4 h-64 min-w-0"><ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={256} initialDimension={{ width: 500, height: 256 }}><BarChart data={(data?.channels ?? []).slice(0, 8)} layout="vertical"><CartesianGrid stroke="#E5E7EB" horizontal={false}/><XAxis type="number" hide/><YAxis type="category" dataKey="name" width={74} tickFormatter={v => CHANNEL_LABELS[v] ?? v} tick={{ fontSize: 10, fill: '#4B5058' }} axisLine={false} tickLine={false}/><Tooltip labelFormatter={v => CHANNEL_LABELS[String(v)] ?? v}/><Bar dataKey="count" fill="#155EEF" name="本期数量" radius={0}/></BarChart></ResponsiveContainer></div></div>
-        <div className="bg-white p-5"><div className="flex items-end justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#155EEF]">高价值信号</p><h2 className="mt-1 text-lg font-bold">按重要度排序的事实证据</h2></div><span className="text-[10px] text-[#7B7F87]">不是模型猜测</span></div><div className="mt-3">{(data?.signalEvents ?? []).slice(0, 5).map((event, index) => <EventRow key={event.id} event={event} rank={index + 1} />)}{!loading && !data?.signalEvents.length ? <EmptyState title="暂无高价值事实" description="同步数据源后将在这里按重要度排列。" /> : null}</div></div>
+      <section className="border-t border-[#303740]">
+        <div className="flex flex-col gap-3 border-b border-[#242A31] bg-[#090B09] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0"><p className="truncate text-xs font-bold text-white">{selectedSource?.name ?? '请选择信息渠道'}</p><p className="mt-1 truncate text-[9px] text-[#717A84]">{selectedSource ? `${selectedSource.provider} · 最后尝试 ${time(selectedSource.lastSuccessAt)} · 上轮收到 ${selectedSource.lastReceivedCount ?? 0} / 新增 ${selectedSource.lastCreatedCount ?? 0} / 更新 ${selectedSource.lastUpdatedCount ?? 0} · 存量 ${events?.total ?? selectedSource.storedEventCount ?? 0}` : '上方列出全部已接入来源'}</p>{selectedSource?.lastError ? <p className="mt-1 truncate text-[9px] text-[#FFB800]">{selectedSource.lastError}</p> : null}</div>
+          <div className="flex gap-2"><label className="relative min-w-[240px]"><Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[#59616A]"/><input aria-label="搜索当前渠道" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索当前渠道标题或摘要" className="h-8 w-full border border-[#303740] bg-[#050605] pl-8 pr-3 text-[10px] text-white outline-none focus:border-[#00E676]"/></label><button onClick={() => void syncSelected()} disabled={!selectedSource || syncing} className="inline-flex h-8 items-center gap-1.5 border border-[#00E676] px-3 text-[9px] font-bold text-[#00E676] disabled:border-[#303740] disabled:text-[#59616A]"><DatabaseZap className="h-3.5 w-3.5"/>{syncing ? '同步中' : '同步当前渠道'}</button></div>
+        </div>
+        <div aria-live="polite">{!loadingEvents && selectedSource && !events?.items.length ? <EmptyState title="当前渠道暂无匹配消息" description="清除关键词或同步该渠道后再查看。" /> : null}{events?.items.map(event => <EventRow key={event.id} event={event}/>)}</div>
+        <div className="flex items-center justify-between border-t border-[#242A31] px-4 py-2 text-[9px] text-[#59616A]"><span>{loadingEvents ? '正在读取本地事件库，保留现有结果…' : `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><Link to={selectedSourceKey ? `/investment-monitor/feed?source=${encodeURIComponent(selectedSourceKey)}` : '/investment-monitor/feed'} className="text-[#00E676] hover:underline">进入实时流水</Link></div>
       </section>
-
-      <section className="grid xl:grid-cols-[1.3fr_1fr]">
-        <div className="bg-white p-5 xl:border-r xl:border-[#C9CCD2]"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#155EEF]">超级关注股</p><h2 className="mt-1 text-lg font-bold">机会、风险与信息覆盖</h2><div className="mt-4 grid gap-3 sm:grid-cols-2">{(data?.watchlist ?? []).map(card => <a href={`/investment-monitor/watchlist?symbol=${encodeURIComponent(card.symbol)}`} key={card.symbol} className="border border-[#C9CCD2] p-4 transition-colors hover:border-[#155EEF]"><div className="flex items-start justify-between"><div><p className="text-lg font-bold">{card.name}</p><p className="font-mono text-xs text-[#6B7078]">{card.symbol}</p></div><span className="bg-[#EEF4FF] px-2 py-1 font-mono text-xs text-[#155EEF]">{card.eventCount} 条</span></div><div className="mt-6 grid grid-cols-3 gap-2"><div><p className="text-[10px] text-[#7B7F87]">机会</p><p className="font-mono text-xl font-bold text-[#155EEF]">{card.opportunityScore}</p></div><div><p className="text-[10px] text-[#7B7F87]">风险</p><p className="font-mono text-xl font-bold">{card.riskScore}</p></div><div><p className="text-[10px] text-[#7B7F87]">高优先</p><p className="font-mono text-xl font-bold">{card.highPriorityCount}</p></div></div></a>)}</div></div>
-        <div className="bg-[#F7F7F8] p-5"><div className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-[#B54708]"/><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#B54708]">证据冲突</p></div><h2 className="mt-1 text-lg font-bold">同一标的多空事实并存</h2><div className="mt-4 space-y-3">{(data?.contradictions ?? []).map(item => <div key={item.symbol} className="border-l-2 border-[#B54708] bg-white p-3"><p className="font-semibold">{item.name} <span className="font-mono text-xs text-[#6B7078]">{item.symbol}</span></p><div className="mt-2 flex gap-4 text-xs"><span className="inline-flex items-center gap-1 text-[#027A48]"><ArrowUpRight className="h-3 w-3"/>{item.bullishCount} 条利多</span><span className="inline-flex items-center gap-1 text-[#B42318]"><ArrowDownRight className="h-3 w-3"/>{item.bearishCount} 条利空</span></div></div>)}{!data?.contradictions.length ? <p className="border border-dashed border-[#C9CCD2] p-4 text-xs text-[#6B7078]">当前周期未发现自选股事实层面的明显多空冲突。</p> : null}</div><a href="/investment-monitor/analysis" className="mt-5 inline-flex items-center gap-2 text-xs font-semibold text-[#155EEF]">进入综合研判 <ExternalLink className="h-3 w-3"/></a></div>
-      </section>
-    </div>
+    </main>
   </AppPage>;
 }

@@ -24,7 +24,7 @@ from src.config import get_config
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_TABLES = (
-    "stock_daily", "news_intel", "intelligence_sources", "intelligence_items",
+    "stock_daily", "stock_intraday", "stock_ticks", "market_index_bars", "news_intel", "intelligence_sources", "intelligence_items",
     "research_notes", "zsxq_sync_states", "essay_analysis_records", "essay_daily_reports", "monitoring_sources", "monitoring_events",
     "fundamental_snapshot", "analysis_history", "decision_signals",
     "decision_signal_outcomes", "decision_signal_feedback",

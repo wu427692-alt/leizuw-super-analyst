@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
+import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import pandas as pd
@@ -19,9 +22,13 @@ from sqlalchemy import desc, select
 from src.config import get_config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.services.financial_data_service import TushareGatewayService
+from src.services.market_data_service import MarketDataService
 from src.services.cninfo_announcement_service import CninfoAnnouncementError, CninfoAnnouncementService
 from src.services.announcement_artifact_service import AnnouncementArtifactError, AnnouncementArtifactService
+from src.services.eastmoney_guba_service import EastmoneyGubaError, EastmoneyGubaService
+from src.services.essay_consensus_service import EssayConsensusError, EssayConsensusService, EssayConsensusWorker
 from src.services.stock_service import StockService
+from src.services.intelligence_service import IntelligenceService
 from src.storage import (
     DatabaseManager,
     IntelligenceItem,
@@ -61,12 +68,25 @@ _EVENT_ORIGIN_APIS: Dict[str, Sequence[str]] = {
     "company_announcement": ("cninfo_announcement",), "enterprise_registration": ("registration-info",),
     "enterprise_risk": ("risk-overview",), "enterprise_credit": ("credit-evaluation",),
     "enterprise_ipr": ("ipr-score",), "enterprise_history": ("historical-overview",), "essay": ("zsxq_mcp",),
+    "stock_comment_snapshot": ("akshare.stock_comment_em",),
+    "stock_forum_post": ("mguba_public_list",),
 }
 
 def _source(source_key: str, name: str, adapter_type: str, provider: str, category: str,
             cadence: int, *, level: str = "licensed", apis: Sequence[str] = (),
             config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    evidence = {"evidence_level": level, "origin_apis": list(apis)}
+    if cadence <= 60:
+        refresh_mode = "near_realtime"
+    elif cadence <= 3600:
+        refresh_mode = "intraday"
+    else:
+        refresh_mode = "scheduled"
+    evidence = {
+        "evidence_level": level,
+        "origin_apis": list(apis),
+        "refresh_mode": refresh_mode,
+        "target_refresh_seconds": cadence,
+    }
     return {"source_key": source_key, "name": name, "adapter_type": adapter_type,
             "provider": provider, "category": category, "poll_interval_seconds": cadence,
             "config": {**evidence, **(config or {})}}
@@ -113,6 +133,10 @@ BUILTIN_MONITORING_SOURCES = [
             apis=("registration-info", "risk-overview", "credit-evaluation", "ipr-score", "historical-overview")),
     _source("zsxq.essays", "知识星球小作文（待核验）", "mcp", "zsxq", "essay", 30,
             level="unverified", apis=("zsxq_mcp",)),
+    _source("akshare.stock_comments", "东方财富千股千评指标", "akshare", "eastmoney", "comment", 900,
+            level="reported", apis=("stock_comment_em",)),
+    _source("eastmoney.guba_posts", "东方财富股吧公开股评", "html", "eastmoney_guba", "comment", 120,
+            level="unverified", apis=("mguba_public_list",)),
     _source("feeds.intelligence", "RSS / NewsNow 媒体流", "feed", "configurable", "news", 60,
             level="reported", apis=("rss", "atom", "newsnow")),
 ]
@@ -120,6 +144,10 @@ BUILTIN_MONITORING_SOURCES = [
 
 class InvestmentMonitorError(ValueError):
     """Safe validation or upstream error for monitoring APIs."""
+
+
+class MonitoringSourceNotConfigured(InvestmentMonitorError):
+    """The adapter exists, but no upstream source has been enabled yet."""
 
 
 class InvestmentMonitorService:
@@ -132,12 +160,14 @@ class InvestmentMonitorService:
         stock_service: Optional[StockService] = None,
         cninfo: Optional[CninfoAnnouncementService] = None,
         announcement_artifacts: Optional[AnnouncementArtifactService] = None,
+        guba: Optional[EastmoneyGubaService] = None,
     ):
         self.repo = repository or InvestmentMonitorRepository()
         self.tushare = tushare or TushareGatewayService()
         self.stock_service = stock_service or StockService()
         self.cninfo = cninfo or CninfoAnnouncementService()
         self.announcement_artifacts = announcement_artifacts or AnnouncementArtifactService()
+        self.guba = guba or EastmoneyGubaService()
         self.repo.ensure_sources(BUILTIN_MONITORING_SOURCES)
         self.repo.backfill_zsxq_topic_urls()
         self._name_cache: Dict[str, str] = {}
@@ -151,28 +181,108 @@ class InvestmentMonitorService:
         for item in items:
             observed = freshness.get(item["source_key"], {})
             item.update(observed)
+            item["last_run_state"] = (
+                "failed" if item["last_status"] == "failed"
+                else "not_configured" if item["last_status"] == "not_configured"
+                else "received" if int(item.get("last_received_count") or 0) > 0
+                else "empty"
+            )
             latest_raw = observed.get("latest_event_at")
             if not latest_raw:
                 item["freshness_status"] = "empty"
                 item["data_age_seconds"] = None
+                item["freshness_sla_seconds"] = self._freshness_sla_seconds(item)
+                item["data_state"] = "not_configured" if item["last_status"] == "not_configured" else "empty"
                 continue
             latest_at = datetime.fromisoformat(str(latest_raw).replace("Z", "+00:00")).replace(tzinfo=None)
             age_seconds = max(0, int((now - latest_at).total_seconds()))
             # This describes the age of the newest fact, not whether the API call
             # succeeded. Three polling intervals with a one-day floor tolerates
             # quiet periods while still exposing genuinely old or empty channels.
-            threshold = max(86400, int(item["poll_interval_seconds"]) * 3)
+            threshold = self._freshness_sla_seconds(item)
             item["data_age_seconds"] = age_seconds
             item["freshness_status"] = "fresh" if age_seconds <= threshold else "stale"
+            item["data_state"] = item["freshness_status"]
+            item["freshness_sla_seconds"] = threshold
         return {
             "items": items,
             "total": len(items),
-            "healthy": sum(1 for item in items if item["last_status"] == "success"),
+            "healthy": sum(1 for item in items if item["last_status"] == "success" and item["freshness_status"] != "empty"),
+            "operational": sum(1 for item in items if item["last_status"] == "success"),
+            "not_configured": sum(1 for item in items if item["last_status"] == "not_configured"),
             "enabled": sum(1 for item in items if item["enabled"]),
             "with_data": sum(1 for item in items if item["freshness_status"] != "empty"),
             "fresh": sum(1 for item in items if item["freshness_status"] == "fresh"),
             "stale": sum(1 for item in items if item["freshness_status"] == "stale"),
             "empty": sum(1 for item in items if item["freshness_status"] == "empty"),
+        }
+
+    @staticmethod
+    def _freshness_sla_seconds(source: Dict[str, Any]) -> int:
+        """Describe fact freshness by data domain instead of one universal one-day floor."""
+        category = str(source.get("category") or "")
+        cadence = max(30, int(source.get("poll_interval_seconds") or 300))
+        if category in {"news", "essay", "comment"}:
+            return max(900, cadence * 5)
+        if source.get("source_key") == "cninfo.announcements":
+            return max(172800, cadence * 5)
+        if category in {"market", "technical", "capital"}:
+            return max(172800, cadence * 5)
+        if category in {"research", "company", "institution", "ownership"}:
+            return max(259200, cadence * 5)
+        return max(604800, cadence * 5)
+
+    def source_bi(self, *, days: int = 30) -> Dict[str, Any]:
+        """Source-backed BI: inventory, freshness, activity and direct-use contracts."""
+        source_summary = self.list_sources()
+        sources = source_summary["items"]
+        activity = self.repo.source_activity(days=days)
+        dates = [
+            (utc_naive_now().date() - timedelta(days=offset)).isoformat()
+            for offset in range(max(1, days) - 1, -1, -1)
+        ]
+        activity_by_key_date = {
+            (row["source_key"], row["date"]): int(row["count"])
+            for row in activity
+        }
+        category_totals: Counter[str] = Counter()
+        provider_totals: Counter[str] = Counter()
+        daily_totals: Counter[str] = Counter()
+        for source in sources:
+            count = int(source.get("stored_event_count") or 0)
+            category_totals[str(source.get("category") or "other")] += count
+            provider_totals[str(source.get("provider") or "other")] += count
+        for row in activity:
+            daily_totals[row["date"]] += int(row["count"])
+
+        source_rows = []
+        for source in sources:
+            key = source["source_key"]
+            source_rows.append({
+                **source,
+                "period_event_count": sum(activity_by_key_date.get((key, date), 0) for date in dates),
+                "daily_activity": [{"date": date, "count": activity_by_key_date.get((key, date), 0)} for date in dates],
+                "direct_use": {
+                    "events_api": f"/api/v1/investment-monitor/events?source_key={key}",
+                    "sync_api": f"/api/v1/investment-monitor/sources/{key}/sync",
+                    "origin_apis": list((source.get("config") or {}).get("origin_apis") or []),
+                    "local_store": "SQLite.monitoring_events",
+                },
+            })
+        return {
+            "days": days,
+            "generated_at": utc_naive_now().isoformat() + "Z",
+            "summary": {
+                **{key: value for key, value in source_summary.items() if key != "items"},
+                "stored_event_count": sum(int(item.get("stored_event_count") or 0) for item in sources),
+                "period_event_count": sum(daily_totals.values()),
+                "last_run_received": sum(int(item.get("last_received_count") or 0) for item in sources),
+                "last_run_created": sum(int(item.get("last_created_count") or 0) for item in sources),
+            },
+            "daily_trend": [{"date": date, "count": daily_totals[date]} for date in dates],
+            "categories": [{"name": key, "count": value} for key, value in category_totals.most_common()],
+            "providers": [{"name": key, "count": value} for key, value in provider_totals.most_common()],
+            "sources": source_rows,
         }
 
     def compact_event(self, event: Dict[str, Any], *, summary_limit: int = 600) -> Dict[str, Any]:
@@ -185,7 +295,14 @@ class InvestmentMonitorService:
             )
         }
         compact["summary"] = str(event.get("summary") or "")[:max(0, summary_limit)] or None
-        compact["metrics"] = {"_evidence": self._event_evidence(event)}
+        metrics = {"_evidence": self._event_evidence(event)}
+        if event.get("event_type") == "stock_forum_post":
+            raw_metrics = dict(event.get("metrics") or {})
+            metrics.update({
+                key: raw_metrics.get(key)
+                for key in ("post_id", "author", "views", "reply_count", "like_count", "image_urls", "time_text")
+            })
+        compact["metrics"] = metrics
         return compact
 
     def create_external_source(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -334,6 +451,139 @@ class InvestmentMonitorService:
             page_size=page_size,
         )
         return {"items": rows, "total": total, "page": page, "page_size": page_size}
+
+    def sync_dragon_tiger_day(self, trade_date: str, *, include_seats: bool = True) -> Dict[str, Any]:
+        """Fetch and persist the full-market exchange leaderboard for one day."""
+        normalized_date = self._validate_trade_date(trade_date)
+        source = self.repo.get_source("tushare.market_activity")
+        if source is None:
+            raise InvestmentMonitorError("Tushare 龙虎榜数据源未注册")
+        started_at = utc_naive_now()
+        try:
+            top_rows = self.tushare.query("top_list", params={"trade_date": normalized_date})["rows"]
+            inst_rows = self.tushare.query("top_inst", params={"trade_date": normalized_date})["rows"] if include_seats else []
+            events = self._dragon_tiger_events(source, normalized_date, top_rows, inst_rows)
+            saved = self.repo.upsert_events(events)
+            self.repo.update_source_status(
+                source["source_key"], status="success", item_count=len(events),
+                started_at=started_at, success_at=utc_naive_now(),
+            )
+            return {
+                "trade_date": normalized_date,
+                "top_list_count": len(top_rows),
+                "seat_count": len(inst_rows),
+                "include_seats": include_seats,
+                **saved,
+            }
+        except Exception as exc:
+            self.repo.update_source_status(source["source_key"], status="failed", error=str(exc), started_at=started_at)
+            if isinstance(exc, InvestmentMonitorError):
+                raise
+            raise InvestmentMonitorError(f"Tushare 龙虎榜获取失败：{type(exc).__name__}") from exc
+
+    def sync_dragon_tiger_range(self, start_date: str, end_date: str) -> Dict[str, Any]:
+        """Backfill daily summaries for open days; seat detail stays on-demand by day."""
+        start = self._validate_trade_date(start_date)
+        end = self._validate_trade_date(end_date)
+        start_day = datetime.strptime(start, "%Y%m%d")
+        end_day = datetime.strptime(end, "%Y%m%d")
+        if end_day < start_day:
+            raise InvestmentMonitorError("结束日期不能早于开始日期")
+        if (end_day - start_day).days > 120:
+            raise InvestmentMonitorError("单次最多补齐 120 个自然日")
+        calendar = self.tushare.query("trade_cal", params={
+            "exchange": "SSE", "start_date": start, "end_date": end, "is_open": "1",
+        })["rows"]
+        dates = sorted({str(row.get("cal_date") or "") for row in calendar if row.get("cal_date")})
+        results = [self.sync_dragon_tiger_day(value, include_seats=False) for value in dates]
+        return {
+            "start_date": start,
+            "end_date": end,
+            "trade_days": len(dates),
+            "top_list_count": sum(int(item["top_list_count"]) for item in results),
+            "created": sum(int(item["created"]) for item in results),
+            "updated": sum(int(item["updated"]) for item in results),
+            "dates": dates,
+        }
+
+    def dragon_tiger_daily(self, *, trade_date: Optional[str] = None, refresh: bool = False) -> Dict[str, Any]:
+        requested = self._validate_trade_date(trade_date) if trade_date else None
+        if requested:
+            candidates = [requested]
+        else:
+            now = datetime.now(timezone(timedelta(hours=8)))
+            start = (now - timedelta(days=14)).strftime("%Y%m%d")
+            end = now.strftime("%Y%m%d")
+            calendar = self.tushare.query("trade_cal", params={
+                "exchange": "SSE", "start_date": start, "end_date": end, "is_open": "1",
+            })["rows"]
+            candidates = sorted(
+                {str(row.get("cal_date") or "") for row in calendar if row.get("cal_date")}, reverse=True,
+            )
+        selected = candidates[0] if candidates else datetime.now().strftime("%Y%m%d")
+        fetched = False
+        for candidate in candidates[:6] or [selected]:
+            start_at, end_at = self._trade_date_bounds(candidate)
+            top = self.repo.all_events_between(
+                event_types=("dragon_tiger",), start_at=start_at, end_at=end_at,
+            )
+            seats = self.repo.all_events_between(
+                event_types=("institution_seat",), start_at=start_at, end_at=end_at,
+            )
+            if refresh or not top or not seats:
+                self.sync_dragon_tiger_day(candidate, include_seats=True)
+                fetched = True
+                top = self.repo.all_events_between(
+                    event_types=("dragon_tiger",), start_at=start_at, end_at=end_at,
+                )
+                seats = self.repo.all_events_between(
+                    event_types=("institution_seat",), start_at=start_at, end_at=end_at,
+                )
+            if top or requested:
+                selected = candidate
+                break
+        return self._dragon_tiger_daily_payload(selected, top, seats, fetched=fetched)
+
+    def dragon_tiger_history(self, **filters: Any) -> Dict[str, Any]:
+        start = self._validate_trade_date(filters.get("start_date"))
+        end = self._validate_trade_date(filters.get("end_date"))
+        start_day = datetime.strptime(start, "%Y%m%d")
+        end_day = datetime.strptime(end, "%Y%m%d")
+        if end_day < start_day:
+            raise InvestmentMonitorError("结束日期不能早于开始日期")
+        if (end_day - start_day).days > 366:
+            raise InvestmentMonitorError("历史查询最多覆盖 366 个自然日")
+        start_at, _ = self._trade_date_bounds(start)
+        _, end_at = self._trade_date_bounds(end)
+        symbol = self._canonical_ts_code(filters.get("symbol")) if filters.get("symbol") else None
+        query = str(filters.get("query") or "").strip() or None
+        page = max(1, int(filters.get("page") or 1))
+        page_size = max(1, min(int(filters.get("page_size") or 50), 200))
+        rows, total = self.repo.list_events_between(
+            event_types=("dragon_tiger",), start_at=start_at, end_at=end_at,
+            symbol=symbol, query=query, page=page, page_size=page_size,
+        )
+        all_rows = self.repo.all_events_between(
+            event_types=("dragon_tiger",), start_at=start_at, end_at=end_at,
+        )
+        by_date: Dict[str, Dict[str, Any]] = {}
+        for event in all_rows:
+            metrics = event.get("metrics") or {}
+            trade = str(metrics.get("trade_date") or "")
+            bucket = by_date.setdefault(trade, {"trade_date": trade, "rows": 0, "symbols": set(), "net_amount": 0.0})
+            bucket["rows"] += 1
+            bucket["symbols"].update(event.get("symbols") or [])
+            bucket["net_amount"] += self._number(metrics.get("net_amount"))
+        trend = [
+            {**bucket, "symbols": len(bucket["symbols"]), "net_amount": round(bucket["net_amount"], 2)}
+            for _, bucket in sorted(by_date.items())
+        ]
+        return {
+            "items": [self._dragon_tiger_record(event) for event in rows],
+            "total": total, "page": page, "page_size": page_size,
+            "start_date": start, "end_date": end, "trend": trend,
+            "cached_trade_days": len(trend),
+        }
 
     def event_detail(self, event_id: int) -> Dict[str, Any]:
         event = self.repo.get_event(event_id)
@@ -514,13 +764,37 @@ class InvestmentMonitorService:
         }
 
     def super_watchlist(self, *, days: int = 365) -> Dict[str, Any]:
-        """Deep, two-stock workspace built exclusively from normalized evidence."""
+        """Build every watchlist card from shared stores, never page-local fetches."""
         safe_days = max(30, min(int(days), 3650))
-        stocks = [self._super_stock(symbol, days=safe_days) for symbol in self.watchlist()]
+        symbols = self.watchlist()
+        try:
+            quote_rows = MarketDataService().latest_quotes(symbols, refresh_missing=False)
+        except Exception as exc:  # noqa: BLE001 - evidence must still render if quote cache is unavailable.
+            logger.info("Shared quote cache unavailable for super watchlist: %s", type(exc).__name__)
+            quote_rows = []
+        quotes = {
+            str(row.get("stock_code") or "").split(".", 1)[0]: row
+            for row in quote_rows if row.get("stock_code")
+        }
+        source_states = {item["source_key"]: item for item in self.repo.list_sources()}
+        stocks = [
+            self._super_stock(
+                symbol, days=safe_days,
+                live_quote=quotes.get(symbol.split(".", 1)[0]),
+                source_states=source_states,
+            )
+            for symbol in symbols
+        ]
         return {
-            "version": "5.0",
+            "version": "5.1-shared-store",
             "generated_at": utc_naive_now().isoformat() + "Z",
             "days": safe_days,
+            "data_policy": {
+                "market": "market_ticks + market_intraday + stock_daily",
+                "evidence": "monitoring_events",
+                "refresh": "background_workers",
+                "page_fetches_upstream": False,
+            },
             "stocks": stocks,
             "backfill_jobs": self.repo.list_backfill_jobs(stock["symbol"] for stock in stocks),
             "comparison": [
@@ -543,16 +817,23 @@ class InvestmentMonitorService:
             ],
             "iterations": [
                 {"version": "V1", "name": "数据归一", "result": "行情、估值、财务、资金、公告、研报、企业和另类情报统一到证据事件"},
-                {"version": "V2", "name": "单股全景", "result": "华懋科技与胜宏科技分别生成市场、经营、资本、机构、公司五层画像"},
+                {"version": "V2", "name": "单股全景", "result": "每只新增自选股自动生成市场、经营、资本、机构、公司和消息画像"},
                 {"version": "V3", "name": "证据去重", "result": "高频快照只保留最新状态参与评分，原始流水完整保留"},
                 {"version": "V4", "name": "双股对照", "result": "同口径比较估值、增长、盈利质量、筹码和信息覆盖"},
                 {"version": "V5", "name": "研判闭环", "result": "事实底稿、催化、风险、待验证问题和大模型证据包联动"},
             ],
         }
 
-    def _super_stock(self, symbol: str, *, days: int) -> Dict[str, Any]:
-        result = self.list_events(days=days, symbol=symbol, page=1, page_size=200)
-        events = result["items"]
+    def _super_stock(
+        self, symbol: str, *, days: int,
+        live_quote: Optional[Dict[str, Any]] = None,
+        source_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        # Aggregates require the complete symbol dataset.  The previous paginated
+        # read silently discarded events after row 200 and could hide an older but
+        # still-current fundamental snapshot behind newer news and research rows.
+        events = self.repo.all_symbol_events(symbol=symbol, days=days)
+        source_states = source_states or {}
 
         def latest(event_type: str) -> Optional[Dict[str, Any]]:
             return next((item for item in events if item["event_type"] == event_type), None)
@@ -578,6 +859,12 @@ class InvestmentMonitorService:
         research = [item for item in events if item["event_type"] in {"research_report_pdf", "institution_forecast", "institution_survey", "broker_recommendation"}]
         announcements = [item for item in events if item["event_type"] == "company_announcement"]
         essays = [item for item in events if item["event_type"] == "essay"]
+        stock_comments = [item for item in events if item["event_type"] == "stock_forum_post"]
+        message_types = {
+            "news", "long_news", "essay", "enterprise_registration", "enterprise_risk",
+            "enterprise_credit", "enterprise_ipr", "enterprise_history",
+        }
+        messages = [item for item in events if item["event_type"] in message_types]
 
         snapshot_types = {
             "market_open_snapshot", "market_snapshot", "fundamental_snapshot", "capital_chip_snapshot",
@@ -608,8 +895,10 @@ class InvestmentMonitorService:
                 "source_name": event.get("source_name") if event else None,
             })
 
-        price = market.get("close", opening.get("open"))
-        change_pct = market.get("pct_chg", opening.get("open_change_pct"))
+        live_price = self._number(live_quote.get("current_price")) if live_quote else 0.0
+        has_live_quote = live_price > 0
+        price = live_price if has_live_quote else market.get("close", opening.get("open"))
+        change_pct = live_quote.get("change_percent") if has_live_quote else market.get("pct_chg", opening.get("open_change_pct"))
         pe_ttm = market.get("valuation_pe_ttm")
         revenue_yoy = indicator.get("q_sales_yoy", indicator.get("tr_yoy"))
         profit_yoy = indicator.get("netprofit_yoy", indicator.get("q_netprofit_yoy"))
@@ -634,25 +923,57 @@ class InvestmentMonitorService:
                     target.extend(str(value).strip() for value in values if str(value).strip())
 
         dimensions = {
-            "market": {"types": ("market_open_snapshot", "market_snapshot", "technical_factor")},
-            "fundamental": {"types": ("fundamental_snapshot", "earnings_forecast", "earnings_express")},
-            "capital": {"types": ("capital_chip_snapshot", "block_trade", "dragon_tiger", "institution_seat")},
-            "institution": {"types": ("research_report_pdf", "institution_forecast", "institution_survey", "broker_recommendation")},
-            "company": {"types": ("company_announcement", "company_profile", "audit_opinion", "executive_roster")},
-            "ownership": {"types": ("ownership_snapshot", "holder_trade", "share_unlock", "top_shareholders")},
-            "enterprise": {"types": ("enterprise_registration", "enterprise_risk", "enterprise_credit", "enterprise_ipr")},
-            "essay": {"types": ("essay",)},
+            "market": {"types": ("market_open_snapshot", "market_snapshot", "technical_factor"), "sources": ("tushare.market", "tushare.technical")},
+            "fundamental": {"types": ("fundamental_snapshot", "earnings_forecast", "earnings_express"), "sources": ("tushare.fundamentals", "tushare.company")},
+            "capital": {"types": ("capital_chip_snapshot", "block_trade", "dragon_tiger", "institution_seat"), "sources": ("tushare.capital", "tushare.market_activity")},
+            "institution": {"types": ("research_report_pdf", "institution_forecast", "institution_survey", "broker_recommendation"), "sources": ("tushare.institution", "tushare.research_pdf")},
+            "company": {"types": ("company_announcement", "company_profile", "audit_opinion", "executive_roster"), "sources": ("cninfo.announcements", "tushare.company_profile")},
+            "ownership": {"types": ("ownership_snapshot", "holder_trade", "share_unlock", "top_shareholders"), "sources": ("tushare.ownership", "tushare.company_profile")},
+            "enterprise": {"types": ("enterprise_registration", "enterprise_risk", "enterprise_credit", "enterprise_ipr"), "sources": ("tianyancha.enterprise",)},
+            "essay": {"types": ("essay",), "sources": ("zsxq.essays",)},
+            "comment": {
+                "types": ("stock_forum_post",),
+                "sources": ("eastmoney.guba_posts",),
+            },
         }
         coverage = []
         for name, definition in dimensions.items():
             related = [event for event in decision_events if event["event_type"] in definition["types"]]
+            states = [source_states[key] for key in definition["sources"] if key in source_states]
+            sync_times = [str(item.get("last_success_at") or "") for item in states if item.get("last_success_at")]
+            latest_sync = max(sync_times, default=None)
+            cadences = [int(item.get("poll_interval_seconds") or 0) for item in states if item.get("enabled", True)]
+            target_seconds = min(cadences) if cadences else None
+            sync_age = None
+            if latest_sync:
+                try:
+                    parsed_sync = datetime.fromisoformat(latest_sync.replace("Z", "+00:00")).replace(tzinfo=None)
+                    sync_age = max(0, int((utc_naive_now() - parsed_sync).total_seconds()))
+                except ValueError:
+                    sync_age = None
+            freshness = "empty" if not related else "fresh" if sync_age is not None and sync_age <= max(60, (target_seconds or 86400) * 3) else "stale"
             coverage.append({
                 "name": name, "count": len(related),
                 "latest_at": related[0]["event_at"] if related else None,
                 "available": bool(related),
+                "freshness_status": freshness,
+                "last_sync_at": latest_sync,
+                "sync_age_seconds": sync_age,
+                "target_refresh_seconds": target_seconds,
+                "source_keys": list(definition["sources"]),
             })
 
         stock_name = self._stock_name(symbol)
+        try:
+            essay_consensus = EssayConsensusService().snapshot(symbol, stock_name, limit=20)
+        except Exception as exc:  # noqa: BLE001 - an AI cache must never hide the factual stock workspace.
+            logger.info("Essay consensus snapshot unavailable for %s: %s", symbol, type(exc).__name__)
+            essay_consensus = {
+                "status": "failed", "source_count": min(len(essays), 20), "analyzed_count": 0,
+                "pending_count": 0, "summary": "", "estimates": [], "metric_counts": {},
+                "consensus_points": [], "conflicts": [], "caveats": [], "source_notes": [],
+                "error": "一致预期缓存暂时不可用",
+            }
         cutoff = (utc_naive_now() - timedelta(days=days)).date()
         with DatabaseManager.get_instance().get_session() as session:
             bars = session.execute(
@@ -668,9 +989,16 @@ class InvestmentMonitorService:
                 "amount": row.amount, "pct_chg": row.pct_chg,
             } for row in bars],
             "market": {
-                "price": price, "change_pct": change_pct, "open": market.get("open", opening.get("open")),
-                "high": market.get("high"), "low": market.get("low"),
-                "amount": market.get("amount"), "updated_at": (latest("market_snapshot") or latest("market_open_snapshot") or {}).get("event_at"),
+                "price": price, "change_pct": change_pct,
+                "open": live_quote.get("open") if has_live_quote else market.get("open", opening.get("open")),
+                "high": live_quote.get("high") if has_live_quote else market.get("high"),
+                "low": live_quote.get("low") if has_live_quote else market.get("low"),
+                # Tushare daily.amount is 千元; the shared realtime cache stores 元.
+                "amount": live_quote.get("amount") if has_live_quote else self._number(market.get("amount")) * 1000 or None,
+                "updated_at": live_quote.get("update_time") if has_live_quote else (latest("market_snapshot") or latest("market_open_snapshot") or {}).get("event_at"),
+                "source": live_quote.get("source") if has_live_quote else "monitoring_events:tushare.daily",
+                "is_stale": bool(live_quote.get("is_stale")) if has_live_quote else True,
+                "stale_seconds": live_quote.get("stale_seconds") if has_live_quote else None,
             },
             "valuation": {
                 "pe": market.get("valuation_pe"), "pe_ttm": pe_ttm, "pb": market.get("valuation_pb"),
@@ -706,11 +1034,27 @@ class InvestmentMonitorService:
                 "profile": {key: profile.get(key) for key in ("com_name", "chairman", "manager", "secretary", "province", "city", "employees", "main_business", "website")},
                 "announcement_count": len(announcements), "announcements": [self.compact_event(event) for event in announcements[:20]],
             },
-            "alternative": {"essay_count": len(essays), "essays": [self.compact_event(event) for event in essays[:15]], "catalysts": list(dict.fromkeys(essay_catalysts))[:12], "risks": list(dict.fromkeys(essay_risks))[:12]},
+            "alternative": {"essay_count": len(essays), "essays": [self.compact_event(event) for event in essays[:30]], "catalysts": list(dict.fromkeys(essay_catalysts))[:12], "risks": list(dict.fromkeys(essay_risks))[:12]},
+            "consensus": self._consensus_payload(research, essays, essay_consensus),
+            "messages": {
+                "count": len(messages),
+                "items": [self.compact_event(event) for event in messages[:40]],
+                "channels": self._counter_rows(Counter(
+                    "知识星球" if event["event_type"] == "essay"
+                    else "天眼查" if event["event_type"].startswith("enterprise_")
+                    else "相关新闻"
+                    for event in messages
+                )),
+            },
+            "stock_comments": {
+                "count": len(stock_comments),
+                "items": [self.compact_event(event) for event in stock_comments[:20]],
+                "source_note": "只展示东方财富股吧真实公开帖子；保留作者、时间、正文摘录、互动数和图片并标记待核验，点击可在当前页面查看详情。",
+            },
             "signals": signals,
             "coverage": coverage,
             "evidence": {
-                "event_count": len(decision_events), "raw_event_count": result["total"],
+                "event_count": len(decision_events), "raw_event_count": len(events),
                 "factual_count": len(decision_events) - levels["unverified"], "unverified_count": levels["unverified"],
                 "source_count": source_count, "original_link_count": original_count,
                 "original_link_coverage": round(original_count * 100 / len(decision_events), 1) if decision_events else 0,
@@ -724,6 +1068,29 @@ class InvestmentMonitorService:
             return list(self._watchlist_override)
         raw = list(getattr(get_config(), "stock_list", None) or [])
         return list(dict.fromkeys(self._canonical_ts_code(value) for value in raw if str(value).strip()))
+
+    def reindex_watchlist_keywords(self, *, days: int = 3650) -> Dict[str, Any]:
+        """Rebuild local essay-to-watchlist links without refetching upstream data."""
+        aliases = {
+            symbol: self._stock_aliases(self._stock_name(symbol))
+            for symbol in self.watchlist()
+        }
+        result = self.repo.reindex_keyword_symbols(
+            aliases_by_symbol=aliases, days=days, event_types=("essay",),
+        )
+        return {**result, "symbols": len(aliases), "days": max(1, int(days))}
+
+    def equity_watchlist(self) -> List[str]:
+        """Return stock-only symbols for company/fundamental APIs, excluding bonds and funds."""
+        result = []
+        for symbol in self.watchlist():
+            match = _A_SHARE_RE.fullmatch(symbol)
+            if not match:
+                continue
+            code = match.group(1)
+            if code[0] in {"0", "2", "3", "4", "6", "8", "9"}:
+                result.append(symbol)
+        return result
 
     def request_backfill(self, symbol: str, *, days: int = 183) -> Dict[str, Any]:
         code = self._canonical_ts_code(symbol)
@@ -745,13 +1112,13 @@ class InvestmentMonitorService:
             ("cninfo", ["cninfo.announcements"]),
             ("zsxq", ["zsxq.essays"]),
             ("tianyancha", ["tianyancha.enterprise"]),
+            ("stock_comments", ["eastmoney.guba_posts"]),
         ]
         try:
             self._save_backfill_daily(self.watchlist()[0], self._backfill_days)
             for index, (channel, source_keys) in enumerate(groups, start=1):
                 created = updated = received = 0
                 errors: List[str] = []
-                api_capped = False
                 for key in source_keys:
                     source = source_map.get(key)
                     if not source or not source.get("enabled", True):
@@ -767,16 +1134,12 @@ class InvestmentMonitorService:
                     created += int(result.get("created") or 0)
                     updated += int(result.get("updated") or 0)
                     received += int(result.get("received") or 0)
-                    if (key.startswith("tushare.news.") and int(result.get("received") or 0) >= 1500) or (
-                        key == "tushare.long_news" and int(result.get("received") or 0) >= 800
-                    ):
-                        api_capped = True
                     if result.get("status") == "failed":
                         errors.append(str(result.get("error") or "unknown error"))
-                status = "failed" if errors and not (created or updated or received) else "partial" if errors or api_capped else "completed" if (created or updated or received) else "empty"
+                status = "failed" if errors and not (created or updated or received) else "partial" if errors else "completed" if (created or updated or received) else "empty"
                 channels[channel] = {"status": status, "created": created, "updated": updated,
                                      "received": received, "error": "; ".join(errors)[:500] or None,
-                                     "note": "接口返回达到单次上限，已入库结果可能不是完整历史" if api_capped else None}
+                                     "note": None}
                 self.repo.update_backfill_job(job_id, progress=round(index * 100 / len(groups)), channel_status=channels)
             channels["external_feeds"] = {"status": "not_supported", "created": 0,
                                             "note": "RSS/NewsNow 不提供可靠的半年历史接口，仅由增量任务持续更新"}
@@ -805,36 +1168,128 @@ class InvestmentMonitorService:
         return max(default, int(self._backfill_days or 0))
 
     def _sync_sources(self, sources: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        ordered = sorted(sources, key=lambda item: (int(item.get("poll_interval_seconds") or 300), item["source_key"]))
+        max_workers = max(1, min(int(os.getenv("INVESTMENT_MONITOR_MAX_WORKERS", "4")), 12, len(ordered) or 1))
+        if max_workers == 1 or len(ordered) <= 1:
+            results = [self._sync_one(source) for source in ordered]
+            return self._sync_summary(results, max_workers=1)
+
+        # Fetch independent upstreams concurrently so a slow low-frequency API
+        # cannot delay news/ZSXQ refreshes. Persist on this thread to keep SQLite
+        # writes serialized even while WAL readers continue uninterrupted.
+        for source in ordered:
+            started = utc_naive_now()
+            self.repo.update_source_status(source["source_key"], status="running", started_at=started)
+
+        fetched: Dict[str, Any] = {}
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="monitor-source") as executor:
+            futures = {executor.submit(self._timed_source_fetch, source): source for source in ordered}
+            for future in as_completed(futures):
+                source = futures[future]
+                try:
+                    fetched[source["source_key"]] = future.result()
+                except Exception as exc:  # noqa: BLE001 - one source must not stop other refreshes.
+                    fetched[source["source_key"]] = (None, 0, exc)
+
         results = []
+        for source in ordered:
+            key = source["source_key"]
+            value, duration_ms, fetch_error = fetched[key]
+            if fetch_error is not None:
+                if isinstance(fetch_error, MonitoringSourceNotConfigured):
+                    message = str(fetch_error)[:500]
+                    self.repo.update_source_status(
+                        key, status="not_configured", error=message, received_count=0,
+                        created_count=0, updated_count=0, duration_ms=duration_ms,
+                    )
+                    results.append({"source_key": key, "status": "not_configured", "created": 0,
+                                    "updated": 0, "received": 0, "duration_ms": duration_ms, "error": message})
+                    continue
+                safe_error = f"{type(fetch_error).__name__}: {str(fetch_error)[:500]}"
+                logger.warning("[investment-monitor] source %s failed: %s", key, safe_error)
+                self.repo.update_source_status(
+                    key, status="failed", error=safe_error, received_count=0,
+                    created_count=0, updated_count=0, duration_ms=duration_ms,
+                )
+                results.append({"source_key": key, "status": "failed", "created": 0, "updated": 0,
+                                "received": 0, "duration_ms": duration_ms, "error": safe_error})
+                continue
+            try:
+                saved = self.repo.upsert_events(value)
+                self.repo.update_source_status(
+                    key, status="success", item_count=saved["created"],
+                    received_count=saved["received"], created_count=saved["created"],
+                    updated_count=saved["updated"], duration_ms=duration_ms,
+                    success_at=utc_naive_now(),
+                )
+                results.append({"source_key": key, "status": "success", "duration_ms": duration_ms, **saved})
+            except Exception as exc:  # noqa: BLE001 - persistence failure remains source-scoped.
+                safe_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+                logger.warning("[investment-monitor] source %s persistence failed: %s", key, safe_error)
+                self.repo.update_source_status(
+                    key, status="failed", error=safe_error, received_count=0,
+                    created_count=0, updated_count=0, duration_ms=duration_ms,
+                )
+                results.append({"source_key": key, "status": "failed", "created": 0, "updated": 0,
+                                "received": 0, "duration_ms": duration_ms, "error": safe_error})
+        return self._sync_summary(results, max_workers=max_workers)
+
+    def _timed_source_fetch(self, source: Dict[str, Any]) -> tuple[Optional[List[Dict[str, Any]]], int, Optional[Exception]]:
+        """Measure one adapter's upstream work without including other workers' queue time."""
+        started = time.monotonic()
+        try:
+            return self._events_for_source(source), round((time.monotonic() - started) * 1000), None
+        except Exception as exc:  # noqa: BLE001 - returned to the serialized status writer.
+            return None, round((time.monotonic() - started) * 1000), exc
+
+    @staticmethod
+    def _sync_summary(results: Sequence[Dict[str, Any]], *, max_workers: int) -> Dict[str, Any]:
         totals = Counter()
-        for source in sources:
-            result = self._sync_one(source)
-            results.append(result)
+        for result in results:
             totals["sources"] += 1
             totals[result["status"]] += 1
             totals["created"] += int(result.get("created") or 0)
             totals["updated"] += int(result.get("updated") or 0)
-        return {"totals": dict(totals), "sources": results}
+        totals["max_workers"] = max_workers
+        return {"totals": dict(totals), "sources": list(results)}
 
     def _sync_one(self, source: Dict[str, Any]) -> Dict[str, Any]:
         key = source["source_key"]
         started = utc_naive_now()
+        monotonic_started = time.monotonic()
         self.repo.update_source_status(key, status="running", started_at=started)
         try:
             events = self._events_for_source(source)
             saved = self.repo.upsert_events(events)
+            duration_ms = round((time.monotonic() - monotonic_started) * 1000)
             self.repo.update_source_status(
                 key,
                 status="success",
                 item_count=saved["created"],
+                received_count=saved["received"], created_count=saved["created"],
+                updated_count=saved["updated"], duration_ms=duration_ms,
                 success_at=utc_naive_now(),
             )
-            return {"source_key": key, "status": "success", **saved}
+            return {"source_key": key, "status": "success", "duration_ms": duration_ms, **saved}
+        except MonitoringSourceNotConfigured as exc:
+            duration_ms = round((time.monotonic() - monotonic_started) * 1000)
+            message = str(exc)[:500]
+            self.repo.update_source_status(
+                key, status="not_configured", error=message, received_count=0,
+                created_count=0, updated_count=0, duration_ms=duration_ms,
+            )
+            return {"source_key": key, "status": "not_configured", "created": 0,
+                    "updated": 0, "received": 0, "duration_ms": duration_ms, "error": message}
         except Exception as exc:  # noqa: BLE001 - one adapter must not stop other sources.
             safe_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            duration_ms = round((time.monotonic() - monotonic_started) * 1000)
             logger.warning("[investment-monitor] source %s failed: %s", key, safe_error)
-            self.repo.update_source_status(key, status="failed", error=safe_error)
-            return {"source_key": key, "status": "failed", "created": 0, "updated": 0, "error": safe_error}
+            self.repo.update_source_status(
+                key, status="failed", error=safe_error, received_count=0,
+                created_count=0, updated_count=0, duration_ms=duration_ms,
+            )
+            return {"source_key": key, "status": "failed", "created": 0, "updated": 0,
+                    "received": 0, "duration_ms": duration_ms, "error": safe_error}
 
     def _events_for_source(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         key = source["source_key"]
@@ -869,9 +1324,13 @@ class InvestmentMonitorService:
         if key == "tianyancha.enterprise":
             return self._tianyancha_events(source)
         if key == "cninfo.announcements":
-            return self._announcement_events(source, self.cninfo.fetch_recent(self.watchlist(), days=2))
+            return self._announcement_events(source, self.cninfo.fetch_recent_market(days=2, max_pages=30))
         if key == "zsxq.essays":
             return self._zsxq_events(source)
+        if key == "akshare.stock_comments":
+            return self._akshare_stock_comment_events(source)
+        if key == "eastmoney.guba_posts":
+            return self._eastmoney_guba_events(source)
         if key == "feeds.intelligence":
             return self._feed_events(source)
         if source["adapter_type"] in {"api", "webhook", "mcp"}:
@@ -943,7 +1402,7 @@ class InvestmentMonitorService:
         events = []
         start = (utc_naive_now() - timedelta(days=self._history_window(10))).strftime("%Y%m%d")
         end = utc_naive_now().strftime("%Y%m%d")
-        for ts_code in self.watchlist():
+        for ts_code in self.equity_watchlist():
             daily = self.tushare.query("daily", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             basic = self.tushare.query("daily_basic", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             if not daily:
@@ -974,12 +1433,16 @@ class InvestmentMonitorService:
         now = datetime.now()
         start = now - timedelta(days=self._backfill_days) if self._backfill_days else now - timedelta(hours=3)
         src = str(source.get("config", {}).get("src") or source["provider"])
-        rows = self.tushare.query("news", params={
-            "src": src,
-            "start_date": start.strftime("%Y-%m-%d %H:%M:%S"),
-            "end_date": now.strftime("%Y-%m-%d %H:%M:%S"),
-            "limit": 1500,
-        })["rows"]
+        rows: List[Dict[str, Any]] = []
+        window_start = start
+        while window_start < now:
+            window_end = min(window_start + timedelta(days=30), now)
+            rows.extend(self._paged_tushare_rows("news", params={
+                "src": src,
+                "start_date": window_start.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_date": window_end.strftime("%Y-%m-%d %H:%M:%S"),
+            }, limit=1500, max_pages=20 if self._backfill_days else 1))
+            window_start = window_end
         events = []
         names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
         for row in rows:
@@ -987,6 +1450,8 @@ class InvestmentMonitorService:
             title = str(row.get("title") or "").strip() or content[:80]
             text = f"{title} {content}"
             symbols = self._symbols_for_text(text, names)
+            if self._backfill_days:
+                symbols = [symbol for symbol in symbols if symbol in names]
             if self._backfill_days and not symbols:
                 continue
             perspective = "company" if any(word in text for word in _COMPANY_WORDS) else "investor"
@@ -1014,7 +1479,7 @@ class InvestmentMonitorService:
         events = []
         start = (utc_naive_now() - timedelta(days=self._history_window(30))).strftime("%Y%m%d")
         end = utc_naive_now().strftime("%Y%m%d")
-        for ts_code in self.watchlist():
+        for ts_code in self.equity_watchlist():
             report_rows = self.tushare.query("report_rc", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for row in report_rows:
@@ -1068,7 +1533,7 @@ class InvestmentMonitorService:
         now = utc_naive_now()
         end = now.strftime("%Y%m%d")
         start = (now - timedelta(days=self._history_window(120))).strftime("%Y%m%d")
-        symbols = set(self.watchlist())
+        symbols = set(self.equity_watchlist())
         trade_date = end
         if symbols:
             daily = self.tushare.query("daily", params={
@@ -1078,33 +1543,14 @@ class InvestmentMonitorService:
             if daily:
                 trade_date = str(daily[0].get("trade_date") or end)
 
-        top_rows = [row for row in self.tushare.query("top_list", params={"trade_date": trade_date})["rows"]
-                    if row.get("ts_code") in symbols]
-        inst_rows = [row for row in self.tushare.query("top_inst", params={"trade_date": trade_date})["rows"]
-                     if row.get("ts_code") in symbols]
+        # 龙虎榜 is a market-wide exchange disclosure. Persisting only the
+        # watchlist made the capital channel look connected while discarding
+        # nearly all rows, so the normal worker now materializes the full day.
+        top_rows = self.tushare.query("top_list", params={"trade_date": trade_date})["rows"]
+        inst_rows = self.tushare.query("top_inst", params={"trade_date": trade_date})["rows"]
         limit_rows = [row for row in self.tushare.query("limit_list_d", params={"trade_date": trade_date})["rows"]
                       if row.get("ts_code") in symbols]
-        for row in top_rows:
-            code = str(row.get("ts_code"))
-            events.append(self._base_event(
-                source, external_id=f"top_list:{trade_date}:{code}", event_type="dragon_tiger",
-                perspective="institution", title=f"{self._stock_name(code)} 龙虎榜：{row.get('reason') or '交易异动'}",
-                summary=f"净买入 {row.get('net_amount')}，买入 {row.get('l_buy')}，卖出 {row.get('l_sell')}，成交占比 {row.get('amount_rate')}%。",
-                symbols=[code], sentiment="bullish" if self._number(row.get("net_amount")) > 0 else "bearish",
-                importance=82, event_at=self._parse_date(trade_date), tags=["龙虎榜", "交易所披露"],
-                actors=["沪深交易所"], metrics=row, raw=row,
-            ))
-        for row in inst_rows:
-            code = str(row.get("ts_code"))
-            external = hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()[:28]
-            events.append(self._base_event(
-                source, external_id=f"top_inst:{external}", event_type="institution_seat",
-                perspective="institution", title=f"{self._stock_name(code)} 机构席位：{row.get('exalter') or '披露席位'}",
-                summary=f"方向 {row.get('side') or '-'}，买入 {row.get('buy')}，卖出 {row.get('sell')}，净买入 {row.get('net_buy')}。",
-                symbols=[code], sentiment="bullish" if self._number(row.get("net_buy")) > 0 else "bearish",
-                importance=80, event_at=self._parse_date(trade_date), tags=["机构席位", "龙虎榜"],
-                actors=[str(row.get("exalter") or "")], metrics=row, raw=row,
-            ))
+        events.extend(self._dragon_tiger_events(source, trade_date, top_rows, inst_rows))
         for row in limit_rows:
             code = str(row.get("ts_code"))
             direction = str(row.get("limit") or "")
@@ -1154,6 +1600,51 @@ class InvestmentMonitorService:
                     event_at=self._parse_date(row.get("trade_date") or row.get("suspend_date")),
                     tags=["停复牌"], actors=[self._stock_name(code)], metrics=row, raw=row,
                 ))
+        return events
+
+    def _dragon_tiger_events(
+        self, source: Dict[str, Any], trade_date: str,
+        top_rows: Sequence[Dict[str, Any]], inst_rows: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        names = {
+            str(row.get("ts_code") or ""): str(row.get("name") or row.get("ts_code") or "")
+            for row in top_rows
+        }
+        for row in top_rows:
+            code = self._canonical_ts_code(row.get("ts_code"))
+            reason = str(row.get("reason") or "交易异动")
+            identity = hashlib.sha256(f"{trade_date}|{code}|{reason}".encode()).hexdigest()[:20]
+            events.append(self._base_event(
+                source, external_id=f"top_list:{identity}", event_type="dragon_tiger",
+                perspective="institution", title=f"{row.get('name') or code} 龙虎榜：{reason}",
+                summary=(
+                    f"净额 {row.get('net_amount')} 元，买入 {row.get('l_buy')} 元，"
+                    f"卖出 {row.get('l_sell')} 元，龙虎榜成交占比 {row.get('amount_rate')}%。"
+                ),
+                symbols=[code], sentiment="bullish" if self._number(row.get("net_amount")) > 0 else "bearish",
+                importance=82, event_at=self._parse_date(trade_date), tags=["龙虎榜", "交易所披露"],
+                actors=["沪深交易所"], metrics=row, raw=row,
+            ))
+        for row in inst_rows:
+            code = self._canonical_ts_code(row.get("ts_code"))
+            reason = str(row.get("reason") or "交易异动")
+            exalter = str(row.get("exalter") or "披露席位")
+            side = str(row.get("side") or "")
+            identity = hashlib.sha256(
+                f"{trade_date}|{code}|{reason}|{exalter}|{side}".encode(),
+            ).hexdigest()[:24]
+            events.append(self._base_event(
+                source, external_id=f"top_inst:{identity}", event_type="institution_seat",
+                perspective="institution", title=f"{names.get(code) or code} 席位：{exalter}",
+                summary=(
+                    f"买卖类型 {side or '-'}，买入 {row.get('buy')} 元，"
+                    f"卖出 {row.get('sell')} 元，净额 {row.get('net_buy')} 元。"
+                ),
+                symbols=[code], sentiment="bullish" if self._number(row.get("net_buy")) > 0 else "bearish",
+                importance=80, event_at=self._parse_date(trade_date), tags=["机构席位", "龙虎榜"],
+                actors=[exalter], metrics=row, raw=row,
+            ))
         return events
 
     def _tushare_market_theme_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1254,7 +1745,7 @@ class InvestmentMonitorService:
         now = utc_naive_now()
         end = now.strftime("%Y%m%d")
         start = (now - timedelta(days=730)).strftime("%Y%m%d")
-        for code in self.watchlist():
+        for code in self.equity_watchlist():
             company_rows = self.tushare.query("stock_company", params={"ts_code": code})["rows"]
             if company_rows:
                 row = company_rows[0]
@@ -1369,7 +1860,7 @@ class InvestmentMonitorService:
             ("stk_holdertrade", "holder_trade", 76, "股东增减持"),
             ("share_float", "share_unlock", 72, "限售解禁"),
         ]
-        for ts_code in self.watchlist():
+        for ts_code in self.equity_watchlist():
             for api_name, event_type, importance, label in endpoints:
                 rows = self.tushare.query(api_name, params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
                 for row in rows:
@@ -1395,7 +1886,7 @@ class InvestmentMonitorService:
         events = []
         start = (utc_naive_now() - timedelta(days=550)).strftime("%Y%m%d")
         end = utc_naive_now().strftime("%Y%m%d")
-        for ts_code in self.watchlist():
+        for ts_code in self.equity_watchlist():
             indicator = self.tushare.query("fina_indicator", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             income = self.tushare.query("income", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             balance = self.tushare.query("balancesheet", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
@@ -1441,7 +1932,7 @@ class InvestmentMonitorService:
             "margin_balance": sum(self._number(row.get("rzrqye")) for row in market_margin),
             "exchanges": market_margin,
         }
-        for ts_code in self.watchlist():
+        for ts_code in self.equity_watchlist():
             perf = self.tushare.query("cyq_perf", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             margin = self.tushare.query("margin_detail", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             moneyflow = self.tushare.query("moneyflow", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
@@ -1474,7 +1965,7 @@ class InvestmentMonitorService:
         events = []
         start = (utc_naive_now() - timedelta(days=self._history_window(30))).strftime("%Y%m%d")
         end = utc_naive_now().strftime("%Y%m%d")
-        for ts_code in self.watchlist():
+        for ts_code in self.equity_watchlist():
             rows = self.tushare.query("stk_factor", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             nine_rows = self.tushare.query("stk_nineturn", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             if not rows:
@@ -1505,7 +1996,7 @@ class InvestmentMonitorService:
         events = []
         start = (utc_naive_now() - timedelta(days=365)).strftime("%Y%m%d")
         end = utc_naive_now().strftime("%Y%m%d")
-        for ts_code in self.watchlist():
+        for ts_code in self.equity_watchlist():
             pledge = self.tushare.query("pledge_stat", params={"ts_code": ts_code})["rows"]
             unlocks = self.tushare.query("share_float", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             trades = self.tushare.query("stk_holdertrade", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
@@ -1535,19 +2026,15 @@ class InvestmentMonitorService:
         cursor = start_dt
         while cursor <= end_dt:
             chunk_end = min(cursor + timedelta(days=29), end_dt)
-            for offset in (0, 1000, 2000):
-                rows = self.tushare.query("research_report", params={
-                    "start_date": cursor.strftime("%Y%m%d"), "end_date": chunk_end.strftime("%Y%m%d"),
-                    "limit": 1000, "offset": offset,
-                }, fields=fields)["rows"]
-                for row in rows:
-                    url = str(row.get("url") or "")
-                    key = url or hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()
-                    reports[key] = row
-                if len(rows) < 1000:
-                    break
+            rows = self._paged_tushare_rows("research_report", params={
+                "start_date": cursor.strftime("%Y%m%d"), "end_date": chunk_end.strftime("%Y%m%d"),
+            }, limit=1000, max_pages=20, fields=fields)
+            for row in rows:
+                url = str(row.get("url") or "")
+                key = url or hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()
+                reports[key] = row
             cursor = chunk_end + timedelta(days=1)
-        names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
+        names = {symbol: self._stock_name(symbol) for symbol in self.equity_watchlist()}
         events = []
         for key, row in reports.items():
             haystack = " ".join(str(row.get(field) or "") for field in ("title", "abstr", "name", "ts_code", "ind_name"))
@@ -1568,13 +2055,20 @@ class InvestmentMonitorService:
     def _tushare_long_news_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         now = datetime.now()
         start = now - timedelta(days=self._backfill_days) if self._backfill_days else now - timedelta(hours=30)
-        rows = self.tushare.query("major_news", params={
-            "src": "新浪财经", "start_date": start.strftime("%Y-%m-%d %H:%M:%S"),
-            "end_date": now.strftime("%Y-%m-%d %H:%M:%S"), "limit": 800,
-        })["rows"]
+        rows: List[Dict[str, Any]] = []
+        window_start = start
+        while window_start < now:
+            window_end = min(window_start + timedelta(days=30), now)
+            rows.extend(self._paged_tushare_rows("major_news", params={
+                "src": "新浪财经", "start_date": window_start.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_date": window_end.strftime("%Y-%m-%d %H:%M:%S"),
+            }, limit=800, max_pages=20 if self._backfill_days else 1))
+            window_start = window_end
         cctv = []
-        for day in {now.strftime("%Y%m%d"), (now - timedelta(days=1)).strftime("%Y%m%d")}:
-            cctv.extend(self.tushare.query("cctv_news", params={"date": day})["rows"])
+        cursor_day = start.date() if self._backfill_days else (now - timedelta(days=1)).date()
+        while cursor_day <= now.date():
+            cctv.extend(self.tushare.query("cctv_news", params={"date": cursor_day.strftime("%Y%m%d")})["rows"])
+            cursor_day += timedelta(days=1)
         names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
         events = []
         for provider, items in (("新浪财经", rows), ("新闻联播", cctv)):
@@ -1582,6 +2076,8 @@ class InvestmentMonitorService:
                 title = str(row.get("title") or row.get("content") or "")[:500]
                 content = str(row.get("content") or "")
                 symbols = self._symbols_for_text(f"{title} {content}", names)
+                if self._backfill_days:
+                    symbols = [symbol for symbol in symbols if symbol in names]
                 if not symbols:
                     continue
                 external = hashlib.sha256(f"{provider}|{row.get('pub_time') or row.get('date')}|{title}".encode()).hexdigest()[:32]
@@ -1593,6 +2089,28 @@ class InvestmentMonitorService:
                     tags=["长篇新闻", provider, *self._text_tags(f"{title} {content}")], actors=[provider], raw=row,
                 ))
         return events
+
+    def _paged_tushare_rows(
+        self, api_name: str, *, params: Dict[str, Any], limit: int,
+        max_pages: int, fields: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Read bounded Tushare pages and stop if an upstream ignores offset."""
+        collected: List[Dict[str, Any]] = []
+        previous_signature = ""
+        for page in range(max(1, int(max_pages))):
+            page_rows = self.tushare.query(
+                api_name,
+                params={**params, "limit": limit, "offset": page * limit},
+                fields=list(fields) if fields else None,
+            )["rows"]
+            signature = hashlib.sha256(json.dumps(page_rows, sort_keys=True, default=str).encode()).hexdigest()
+            if page and signature == previous_signature:
+                break
+            collected.extend(page_rows)
+            if len(page_rows) < limit:
+                break
+            previous_signature = signature
+        return collected
 
     def _tianyancha_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Fetch licensed enterprise facts through the authenticated Tianyancha CLI."""
@@ -1607,7 +2125,7 @@ class InvestmentMonitorService:
         )
         events: List[Dict[str, Any]] = []
         queried_at = utc_naive_now()
-        for code in self.watchlist():
+        for code in self.equity_watchlist():
             company_rows = self.tushare.query("stock_company", params={"ts_code": code})["rows"]
             company_name = str((company_rows[0] if company_rows else {}).get("com_name") or self._stock_name(code))
             for command, event_type, label, perspective in facets:
@@ -1663,12 +2181,14 @@ class InvestmentMonitorService:
                 .where(ResearchNote.created_at >= cutoff)
                 .order_by(desc(ResearchNote.created_at))
             ).all()
+        names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
         events = []
         for analysis, note in rows:
             completed = analysis is not None and analysis.status == "completed"
             mentions = self._json(analysis.stock_mentions_json, []) if completed else []
             symbols = [item.get("ts_code") for item in mentions if item.get("ts_code")]
             symbols.extend(value for value in (note.symbol_codes or "").split(",") if value)
+            symbols.extend(self._symbols_for_text(f"{note.title}\n{note.content or ''}", names))
             symbols = list(dict.fromkeys(self._canonical_ts_code(value) for value in symbols if value))
             if self._backfill_days and not set(symbols).intersection(self.watchlist()):
                 continue
@@ -1676,6 +2196,7 @@ class InvestmentMonitorService:
             perspective = "institution" if category in {"broker_view", "company_research"} else "company" if category in {"earnings", "risk_warning"} else "investor"
             files = self._json(note.files_json, [])
             images = self._json(note.images_json, [])
+            analysis_payload = self._json(analysis.raw_response, {}) if completed else {}
             topic_url = (
                 f"https://wx.zsxq.com/group/{note.group_id}/topic/{note.topic_id}"
                 if note.group_id and note.topic_id else None
@@ -1702,6 +2223,10 @@ class InvestmentMonitorService:
                     "stock_mentions": mentions,
                     "catalysts": self._json(analysis.catalysts_json, []) if completed else [],
                     "risks": self._json(analysis.risks_json, []) if completed else [],
+                    "earnings_impact": str(analysis_payload.get("earnings_impact") or "")[:1000],
+                    "valuation_impact": str(analysis_payload.get("valuation_impact") or "")[:1000],
+                    "information_type": str(analysis_payload.get("information_type") or "unknown"),
+                    "source_quality": str(analysis_payload.get("source_quality") or "unknown"),
                     "images": images, "files": files,
                 },
                 url=topic_url,
@@ -1709,7 +2234,126 @@ class InvestmentMonitorService:
             ))
         return events
 
+    def _akshare_stock_comment_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Persist Eastmoney's structured post-close 千股千评 indicators.
+
+        This source intentionally does not fetch or expose Xueqiu discussion-heat
+        rankings. Genuine public user comments are handled separately by the
+        bounded ``eastmoney.guba_posts`` adapter.
+        """
+        try:
+            import akshare as ak
+            from data_provider.akshare_fetcher import _akshare_call_with_timeout
+        except Exception as exc:  # noqa: BLE001 - optional provider
+            raise InvestmentMonitorError(f"AKShare 股评接口不可用：{type(exc).__name__}") from exc
+
+        symbols = {symbol.split(".")[0]: symbol for symbol in self.equity_watchlist()}
+        if not symbols:
+            return []
+
+        comment_frame = _akshare_call_with_timeout(
+            ak.stock_comment_em, timeout=25, call_name="stock_comment_em",
+        )
+        events: List[Dict[str, Any]] = []
+        for raw_row in self._frame_records(comment_frame):
+            code = str(raw_row.get("代码") or raw_row.get("股票代码") or "").zfill(6)
+            symbol = symbols.get(code)
+            if not symbol:
+                continue
+            name = str(raw_row.get("名称") or self._stock_name(symbol))
+            score = self._optional_number(raw_row.get("综合得分"))
+            rank = self._optional_number(raw_row.get("目前排名"))
+            focus = self._optional_number(raw_row.get("关注指数"))
+            trade_date = raw_row.get("交易日")
+            title = f"{name} 东方财富千股千评"
+            summary = "，".join(value for value in (
+                f"综合得分 {score:g}" if score is not None else "",
+                f"当前排名 {int(rank)}" if rank is not None else "",
+                f"关注指数 {focus:g}" if focus is not None else "",
+            ) if value) or "东方财富千股千评已更新。"
+            external = hashlib.sha256(f"comment|{code}|{trade_date}".encode()).hexdigest()[:32]
+            events.append(self._base_event(
+                source, external_id=external, event_type="stock_comment_snapshot",
+                perspective="investor", title=title, summary=summary, symbols=[symbol],
+                sentiment="neutral", importance=55,
+                event_at=self._parse_date(trade_date), tags=["千股千评", "市场评论指标"],
+                actors=["东方财富"], metrics=raw_row,
+                url=f"https://data.eastmoney.com/stockcomment/stock/{code}.html", raw=raw_row,
+            ))
+
+        return events
+
+    def _eastmoney_guba_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Persist genuine public forum-post excerpts for the current equity watchlist."""
+        try:
+            rows = self.guba.fetch_latest(self.equity_watchlist(), limit_per_symbol=20)
+        except EastmoneyGubaError as exc:
+            raise InvestmentMonitorError(str(exc)) from exc
+        symbols = {symbol.split(".")[0]: symbol for symbol in self.equity_watchlist()}
+        events: List[Dict[str, Any]] = []
+        for row in rows:
+            code = str(row.get("code") or "").zfill(6)
+            symbol = symbols.get(code)
+            content = str(row.get("content") or "").strip()
+            post_id = str(row.get("post_id") or "").strip()
+            if not symbol or not content or not post_id:
+                continue
+            author = str(row.get("author") or "东方财富股吧用户").strip()
+            views = int(row.get("views") or 0)
+            replies = int(row.get("reply_count") or 0)
+            likes = int(row.get("like_count") or 0)
+            images = list(row.get("image_urls") or [])[:9]
+            importance = max(35, min(68, 42 + min(replies, 12) + min(views // 500, 8)))
+            title = content if len(content) <= 120 else content[:117].rstrip() + "…"
+            metrics = {
+                "post_id": post_id,
+                "author": author,
+                "views": views,
+                "reply_count": replies,
+                "like_count": likes,
+                "image_urls": images,
+                "time_text": str(row.get("time_text") or ""),
+            }
+            events.append(self._base_event(
+                source, external_id=f"guba:{post_id}", event_type="stock_forum_post",
+                perspective="investor", title=title, summary=content, symbols=[symbol],
+                sentiment=self._sentiment(content), importance=importance, confidence=0.35,
+                event_at=row.get("published_at") or utc_naive_now(),
+                tags=["东方财富股吧", "公开股评", "待核验"] + (["含图片"] if images else []),
+                actors=[author, "东方财富股吧"], metrics=metrics,
+                url=str(row.get("url") or "") or None, raw=row,
+            ))
+        return events
+
+    @staticmethod
+    def _frame_records(frame: Any) -> List[Dict[str, Any]]:
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            return []
+        records = []
+        for row in frame.to_dict(orient="records"):
+            records.append({
+                str(key): None if pd.isna(value) else value.isoformat() if hasattr(value, "isoformat") else value
+                for key, value in row.items()
+            })
+        return records
+
+    @staticmethod
+    def _optional_number(value: Any) -> Optional[float]:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if pd.notna(number) else None
+
     def _feed_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+        intelligence = IntelligenceService()
+        enabled = intelligence.list_sources(enabled=True, page=1, page_size=1)
+        if int(enabled.get("total") or 0) == 0:
+            raise MonitoringSourceNotConfigured("尚未启用 RSS、Atom 或 NewsNow 上游来源")
+        fetch_result = intelligence.fetch_enabled_sources()
+        failed = [item for item in fetch_result.get("results") or [] if not item.get("ok")]
+        if failed and len(failed) == int(fetch_result.get("source_count") or 0):
+            raise InvestmentMonitorError(f"全部外部媒体源拉取失败：{failed[0].get('error') or 'upstream unavailable'}")
         cutoff = utc_naive_now() - timedelta(days=7)
         db = DatabaseManager.get_instance()
         with db.get_session() as session:
@@ -1845,6 +2489,96 @@ class InvestmentMonitorService:
         self._name_cache[ts_code] = name
         return name
 
+    def _dragon_tiger_daily_payload(
+        self, trade_date: str, top: Sequence[Dict[str, Any]],
+        seats: Sequence[Dict[str, Any]], *, fetched: bool,
+    ) -> Dict[str, Any]:
+        seat_records = [self._dragon_tiger_seat_record(event) for event in seats]
+        by_symbol: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for seat in seat_records:
+            by_symbol[seat["ts_code"]].append(seat)
+        records = []
+        for event in top:
+            record = self._dragon_tiger_record(event)
+            same_symbol = by_symbol.get(record["ts_code"], [])
+            same_reason = [seat for seat in same_symbol if seat["reason"] == record["reason"]]
+            record["seats"] = same_reason or same_symbol
+            records.append(record)
+        records.sort(key=lambda item: abs(self._number(item.get("net_amount"))), reverse=True)
+        net_total = sum(self._number(item.get("net_amount")) for item in records)
+        return {
+            "trade_date": trade_date,
+            "generated_at": utc_naive_now().isoformat() + "Z",
+            "source": {
+                "provider": "Tushare Pro",
+                "apis": ["top_list", "top_inst"],
+                "fetched": fetched,
+                "amount_unit": "yuan",
+                "update_note": "交易所披露口径，Tushare 通常于交易日晚间更新",
+            },
+            "summary": {
+                "row_count": len(records),
+                "symbol_count": len({item["ts_code"] for item in records}),
+                "seat_count": len(seat_records),
+                "positive_count": sum(self._number(item.get("net_amount")) > 0 for item in records),
+                "negative_count": sum(self._number(item.get("net_amount")) < 0 for item in records),
+                "net_amount": round(net_total, 2),
+                "buy_amount": round(sum(self._number(item.get("l_buy")) for item in records), 2),
+                "sell_amount": round(sum(self._number(item.get("l_sell")) for item in records), 2),
+            },
+            "items": records,
+        }
+
+    @staticmethod
+    def _dragon_tiger_record(event: Dict[str, Any]) -> Dict[str, Any]:
+        metrics = dict(event.get("metrics") or {})
+        metrics.pop("_evidence", None)
+        symbol = str((event.get("symbols") or [metrics.get("ts_code") or ""])[0])
+        return {
+            "event_id": event.get("id"), "trade_date": str(metrics.get("trade_date") or ""),
+            "ts_code": symbol, "name": str(metrics.get("name") or symbol),
+            "close": metrics.get("close"), "pct_change": metrics.get("pct_change"),
+            "turnover_rate": metrics.get("turnover_rate"), "amount": metrics.get("amount"),
+            "l_sell": metrics.get("l_sell"), "l_buy": metrics.get("l_buy"),
+            "l_amount": metrics.get("l_amount"), "net_amount": metrics.get("net_amount"),
+            "net_rate": metrics.get("net_rate"), "amount_rate": metrics.get("amount_rate"),
+            "float_values": metrics.get("float_values"),
+            "reason": str(metrics.get("reason") or "交易异动"),
+        }
+
+    @staticmethod
+    def _dragon_tiger_seat_record(event: Dict[str, Any]) -> Dict[str, Any]:
+        metrics = dict(event.get("metrics") or {})
+        metrics.pop("_evidence", None)
+        symbol = str((event.get("symbols") or [metrics.get("ts_code") or ""])[0])
+        return {
+            "event_id": event.get("id"), "trade_date": str(metrics.get("trade_date") or ""),
+            "ts_code": symbol, "exalter": str(metrics.get("exalter") or "披露席位"),
+            "buy": metrics.get("buy"), "buy_rate": metrics.get("buy_rate"),
+            "sell": metrics.get("sell"), "sell_rate": metrics.get("sell_rate"),
+            "net_buy": metrics.get("net_buy"), "side": str(metrics.get("side") or ""),
+            "reason": str(metrics.get("reason") or "交易异动"),
+        }
+
+    @staticmethod
+    def _validate_trade_date(value: Any) -> str:
+        raw = str(value or "").strip().replace("-", "")
+        try:
+            parsed = datetime.strptime(raw, "%Y%m%d")
+        except ValueError as exc:
+            raise InvestmentMonitorError("交易日期必须使用 YYYY-MM-DD 或 YYYYMMDD") from exc
+        if parsed.year < 2005 or parsed.year > datetime.now().year + 1:
+            raise InvestmentMonitorError("龙虎榜日期超出可查询范围")
+        return parsed.strftime("%Y%m%d")
+
+    @staticmethod
+    def _trade_date_bounds(trade_date: str) -> tuple[datetime, datetime]:
+        local_start = datetime.strptime(trade_date, "%Y%m%d").replace(
+            tzinfo=timezone(timedelta(hours=8)),
+        )
+        start_at = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+        return start_at, start_at + timedelta(days=1)
+
     @staticmethod
     def _canonical_ts_code(value: Any) -> str:
         raw = str(value or "").strip().upper().replace("SS", "SH")
@@ -1859,9 +2593,30 @@ class InvestmentMonitorService:
     def _symbols_for_text(self, text: str, names: Dict[str, str]) -> List[str]:
         symbols = {self._canonical_ts_code(match.group(0)) for match in _A_SHARE_RE.finditer(text)}
         for symbol, name in names.items():
-            if name and name != symbol and name in text:
+            if any(alias in text for alias in self._stock_aliases(name)):
                 symbols.add(symbol)
         return sorted(symbols)
+
+    @staticmethod
+    def _stock_aliases(name: str) -> List[str]:
+        """Return conservative watchlist-only aliases, e.g. 华懋科技 -> 华懋.
+
+        Two-character aliases are allowed because matching is limited to the
+        user's watchlist rather than the entire A-share universe.
+        """
+        normalized = re.sub(r"^(?:\*?ST|S\*ST)", "", str(name or "").strip(), flags=re.I)
+        if not normalized:
+            return []
+        aliases = [normalized]
+        suffixes = (
+            "科技", "股份", "集团", "控股", "实业", "电子", "材料", "新材",
+            "生物", "医药", "能源", "工业", "电气", "信息", "网络", "软件",
+        )
+        for suffix in suffixes:
+            if normalized.endswith(suffix) and len(normalized) - len(suffix) >= 2:
+                aliases.append(normalized[:-len(suffix)])
+                break
+        return list(dict.fromkeys(alias for alias in aliases if len(alias) >= 2))
 
     @staticmethod
     def _sentiment(text: str) -> str:
@@ -1935,6 +2690,98 @@ class InvestmentMonitorService:
         # Tushare news and the project's realtime quote adapters return naive
         # China-market timestamps. Persist all monitoring timestamps as UTC.
         return parsed.replace(tzinfo=timezone(timedelta(hours=8))).astimezone(timezone.utc).replace(tzinfo=None)
+
+    def essay_consensus(self, symbol: str) -> Dict[str, Any]:
+        code = self._canonical_ts_code(symbol)
+        name = self._stock_name(code)
+        return {"symbol": code, "name": name, "consensus": EssayConsensusService().snapshot(code, name, limit=20)}
+
+    def request_essay_consensus(self, symbol: str) -> Dict[str, Any]:
+        code = self._canonical_ts_code(symbol)
+        if code not in self.watchlist():
+            raise InvestmentMonitorError("只能分析当前自选股的小作文一致预期")
+        name = self._stock_name(code)
+        try:
+            snapshot = EssayConsensusService().enqueue(code, name, limit=20, force=True)
+            worker = EssayConsensusWorker.get_instance().start()
+        except EssayConsensusError as exc:
+            raise InvestmentMonitorError(str(exc)) from exc
+        return {"symbol": code, "name": name, "consensus": snapshot, "worker": worker}
+
+    @classmethod
+    def _consensus_payload(
+        cls, research: Sequence[Dict[str, Any]], essays: Sequence[Dict[str, Any]],
+        essay_snapshot: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        broker_rows = [event for event in research if event.get("event_type") == "institution_forecast"]
+        ratings: Counter = Counter()
+        target_prices: List[float] = []
+        forecast_buckets: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+        for event in broker_rows:
+            metrics = dict(event.get("metrics") or {})
+            rating = str(metrics.get("rating") or "未评级").strip() or "未评级"
+            ratings[rating] += 1
+            for key in ("target_price_min", "target_price_max"):
+                value = cls._optional_number(metrics.get(key))
+                if value is not None:
+                    target_prices.append(value)
+            for row in metrics.get("forecasts") or []:
+                if not isinstance(row, dict):
+                    continue
+                period = str(row.get("quarter") or "未注明预测期")
+                for field in ("eps", "pe", "np", "op_rt", "roe"):
+                    value = cls._optional_number(row.get(field))
+                    if value is not None:
+                        forecast_buckets[period][field].append(value)
+
+        forecast_rows = []
+        for period, values in sorted(forecast_buckets.items()):
+            row: Dict[str, Any] = {"period": period, "sample_count": max((len(items) for items in values.values()), default=0)}
+            for field, items in values.items():
+                row[f"{field}_median"] = cls._median(items)
+                row[f"{field}_min"] = min(items)
+                row[f"{field}_max"] = max(items)
+            forecast_rows.append(row)
+
+        essay_analysis = dict(essay_snapshot or {})
+        essay_expectations = [{
+            "event_id": item.get("event_id"), "topic_id": item.get("topic_id"),
+            "title": item.get("title"), "text": item.get("value_text") or "",
+            "event_at": item.get("event_at"), "metric": item.get("metric") or "other",
+            "period": item.get("period") or "未注明", "unit": item.get("unit") or "",
+            "value_low": item.get("value_low"), "value_high": item.get("value_high"),
+            "direction": item.get("direction") or "unclear", "evidence": item.get("evidence") or "",
+            "confidence": item.get("confidence"),
+        } for item in essay_analysis.get("estimates") or []]
+
+        as_of = max(
+            (str(event.get("event_at") or "") for event in (*broker_rows, *essays)),
+            default="",
+        ) or None
+        return {
+            "broker_report_count": len(broker_rows),
+            "ratings": cls._counter_rows(ratings),
+            "target_price": {
+                "sample_count": len(target_prices),
+                "min": min(target_prices) if target_prices else None,
+                "median": cls._median(target_prices),
+                "max": max(target_prices) if target_prices else None,
+            },
+            "forecasts": forecast_rows,
+            "essay_expectation_count": len(essay_expectations),
+            "essay_expectations": essay_expectations[:20],
+            "essay_analysis": essay_analysis,
+            "as_of": as_of,
+            "method": "券商数字采用 report_rc 同预测期中位数；小作文侧把该股票最近匹配的 20 篇原文作为独立 DeepSeek 任务，抽取利润、EPS、目标价、市值目标、估值倍数等推测及原文证据。两类口径分栏展示、不混算。",
+        }
+
+    @staticmethod
+    def _median(values: Sequence[float]) -> Optional[float]:
+        ordered = sorted(float(value) for value in values)
+        if not ordered:
+            return None
+        middle = len(ordered) // 2
+        return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
 
     @staticmethod
     def _number(value: Any) -> float:

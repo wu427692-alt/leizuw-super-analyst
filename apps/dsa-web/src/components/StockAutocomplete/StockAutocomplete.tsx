@@ -77,7 +77,7 @@ class StockAutocompleteBoundary extends Component<
   }
 
   override componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Autocomplete runtime error. Falling back to plain input.', error, errorInfo);
+    console.warn('Autocomplete runtime unavailable; using plain input.', error, errorInfo);
   }
 
   override render() {
@@ -170,7 +170,7 @@ function StockAutocompleteInner({
       return;
     }
 
-    console.error('Autocomplete runtime fallback activated.', autocompleteError);
+    console.warn('Autocomplete fallback activated.', autocompleteError);
   }, [autocompleteError]);
 
   // Keyboard event handling

@@ -28,6 +28,7 @@ from src.services.financial_data_service import (
     TushareGatewayService,
 )
 from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncError, ZsxqMcpSyncService, ZsxqMcpSyncWorker
+from src.services.data_storage_service import DataStorageMaintenanceWorker, DataStorageService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,6 +63,24 @@ def _upstream_error(exc: Exception) -> HTTPException:
 )
 def list_sources():
     return FinancialDataService().list_sources()
+
+
+@router.get(
+    "/storage/status",
+    summary="查看统一财经事实库、逻辑数据域和新鲜度",
+)
+def storage_status(include_integrity: bool = Query(False, description="是否执行 SQLite quick_check")):
+    result = DataStorageService().status(include_integrity=include_integrity)
+    result["maintenance_worker"] = DataStorageMaintenanceWorker.get_instance().status()
+    return result
+
+
+@router.post(
+    "/storage/optimize",
+    summary="安全优化 SQLite 查询计划并执行非阻塞 WAL 检查点",
+)
+def optimize_storage():
+    return DataStorageMaintenanceWorker.get_instance().run_now()
 
 
 @router.post(

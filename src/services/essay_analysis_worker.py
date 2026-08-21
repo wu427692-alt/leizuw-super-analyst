@@ -50,22 +50,26 @@ class EssayAnalysisWorker:
                 cls._instance = cls()
             return cls._instance
 
-    def start(self) -> Dict[str, Any]:
+    def start(self, *, bootstrap_recent: bool = True) -> Dict[str, Any]:
         analyzer = DeepSeekEssayAnalyzer()
         if not analyzer.configured:
             raise EssayAnalysisError("DEEPSEEK_API_KEY is not configured")
         with self._state_lock:
-            if self._thread is not None and self._thread.is_alive():
-                return self.status()
-            self._stop_event.clear()
-            self._started_at = time.time()
-            self._last_error = None
-            self._thread = threading.Thread(
-                target=self._run,
-                name="essay-analysis-worker",
-                daemon=True,
-            )
-            self._thread.start()
+            already_running = self._thread is not None and self._thread.is_alive()
+            if not already_running:
+                self._stop_event.clear()
+                self._started_at = time.time()
+                self._last_error = None
+                self._thread = threading.Thread(
+                    target=self._run,
+                    args=(bootstrap_recent,),
+                    name="essay-analysis-worker",
+                    daemon=True,
+                )
+                self._thread.start()
+        # Never call status() while holding _state_lock. The worker is commonly
+        # already active when a user adds historical notes; the old nested lock
+        # acquisition deadlocked that request until the browser timed out.
         return self.status()
 
     def stop(self, *, timeout: float = 10.0) -> Dict[str, Any]:
@@ -92,14 +96,15 @@ class EssayAnalysisWorker:
                 "failed_in_process": self._failed,
             }
 
-    def _run(self) -> None:
+    def _run(self, bootstrap_recent: bool = True) -> None:
         repository = EssayAnalysisRepository()
         service = EssayAnalysisService(repository=repository)
         try:
             recovered = repository.recover_stale()
             if recovered:
                 logger.info("[essay-radar] recovered %s stale processing tasks", recovered)
-            service.enqueue_recent(days=self.backfill_days)
+            if bootstrap_recent:
+                service.enqueue_recent(days=self.backfill_days)
             with ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="essay-deepseek") as executor:
                 futures: set[Future] = set()
                 while not self._stop_event.is_set():

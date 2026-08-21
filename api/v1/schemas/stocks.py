@@ -28,7 +28,12 @@ class StockQuote(BaseModel):
     prev_close: Optional[float] = Field(None, description="昨收价")
     volume: Optional[float] = Field(None, description="成交量（股）")
     amount: Optional[float] = Field(None, description="成交额（元）")
+    second_volume: Optional[float] = Field(None, description="最近一秒新增成交量（股）")
+    second_amount: Optional[float] = Field(None, description="最近一秒新增成交额（元）")
     update_time: Optional[str] = Field(None, description="更新时间")
+    source: Optional[str] = Field(None, description="行情来源")
+    stale_seconds: Optional[float] = Field(None, description="距本地最近采集秒数")
+    is_stale: Optional[bool] = Field(None, description="行情是否已陈旧")
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
@@ -52,12 +57,14 @@ class KLineData(BaseModel):
     """K 线数据点"""
     
     date: str = Field(..., description="日期")
-    open: float = Field(..., description="开盘价")
-    high: float = Field(..., description="最高价")
-    low: float = Field(..., description="最低价")
-    close: float = Field(..., description="收盘价")
-    volume: Optional[float] = Field(None, description="成交量")
-    amount: Optional[float] = Field(None, description="成交额")
+    open: Optional[float] = Field(None, description="开盘价")
+    high: Optional[float] = Field(None, description="最高价")
+    low: Optional[float] = Field(None, description="最低价")
+    close: Optional[float] = Field(None, description="收盘价")
+    volume: Optional[float] = Field(None, description="当前周期成交量；秒级点为本秒新增量")
+    amount: Optional[float] = Field(None, description="当前周期成交额；秒级点为本秒新增额")
+    cumulative_volume: Optional[float] = Field(None, description="秒级点对应的当日累计成交量")
+    cumulative_amount: Optional[float] = Field(None, description="秒级点对应的当日累计成交额")
     change_percent: Optional[float] = Field(None, description="涨跌幅 (%)")
     
     model_config = ConfigDict(json_schema_extra={
@@ -96,6 +103,13 @@ class StockHistoryResponse(BaseModel):
     stock_code: str = Field(..., description="股票代码")
     stock_name: Optional[str] = Field(None, description="股票名称")
     period: str = Field(..., description="K 线周期")
+    range: Optional[str] = Field(None, description="时间范围")
+    source: Optional[str] = Field(None, description="实际数据来源")
+    stored_count: int = Field(0, description="本地返回记录数")
+    latest_at: Optional[str] = Field(None, description="最新一条数据时间")
+    pre_close: Optional[float] = Field(None, description="昨收价，主要用于日内涨跌幅基准")
+    refreshed: bool = Field(False, description="本次是否请求上游并写入本地")
+    storage: str = Field("sqlite", description="本地存储类型")
     data: List[KLineData] = Field(default_factory=list, description="K 线数据列表")
     
     model_config = ConfigDict(json_schema_extra={

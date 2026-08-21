@@ -12,7 +12,7 @@ from pathlib import Path
 import threading
 import time
 import tomllib
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 from src.repositories.research_note_repo import ResearchNoteRepository
@@ -36,6 +36,14 @@ class ZsxqMcpSyncService:
         self.notes = ResearchNoteService(self.repo)
         self.max_pages = max(1, min(int(os.getenv("ZSXQ_MCP_MAX_PAGES_PER_SYNC", "10")), 100))
         self.timeout = max(5, min(int(os.getenv("ZSXQ_MCP_TIMEOUT_SEC", "45")), 300))
+        self.history_request_interval = max(
+            0.25,
+            min(float(os.getenv("ZSXQ_MCP_HISTORY_REQUEST_INTERVAL_SEC", "0.75")), 10.0),
+        )
+        self.history_retry_attempts = max(
+            1,
+            min(int(os.getenv("ZSXQ_MCP_HISTORY_RETRY_ATTEMPTS", "6")), 10),
+        )
 
     @property
     def available(self) -> bool:
@@ -56,18 +64,30 @@ class ZsxqMcpSyncService:
         except Exception as exc:
             raise ZsxqMcpSyncError(f"知识星球 MCP 增量同步失败：{type(exc).__name__}") from exc
 
-    def sync_history(self, *, days: int) -> Dict[str, Any]:
+    def sync_history(
+        self,
+        *,
+        days: int,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
         """Backfill raw notes for research without automatically spending AI tokens."""
         safe_days = max(1, min(int(days), 730))
         url = self._mcp_url()
         if not url:
             raise ZsxqMcpSyncError("未配置 ZSXQ MCP；请设置 ZSXQ_MCP_URL 或 Codex mcp_servers.zsxq")
         try:
+            configured_max_pages = os.getenv("ZSXQ_MCP_HISTORY_MAX_PAGES")
+            history_max_pages = (
+                int(configured_max_pages)
+                if configured_max_pages
+                else max(500, safe_days * 20)
+            )
             return asyncio.run(self._sync_async(
                 url,
                 history_days=safe_days,
                 enqueue_analysis=False,
-                max_pages=max(1, min(int(os.getenv("ZSXQ_MCP_HISTORY_MAX_PAGES", "500")), 2000)),
+                max_pages=max(1, min(history_max_pages, 50000)),
+                progress_callback=progress_callback,
             ))
         except ZsxqMcpSyncError:
             raise
@@ -81,24 +101,58 @@ class ZsxqMcpSyncService:
         history_days: Optional[int] = None,
         enqueue_analysis: bool = True,
         max_pages: Optional[int] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         from mcp import Client
 
         latest = self.repo.latest_created_by_group()
+        oldest = self.repo.oldest_created_by_group() if history_days else {}
         totals = {"groups": 0, "received": 0, "created": 0, "updated": 0, "unchanged": 0,
                   "media_downloaded": 0, "failed_groups": 0, "incomplete_groups": 0}
         history_cutoff = utc_naive_now() - timedelta(days=history_days) if history_days else None
+        self._emit_progress(progress_callback, phase="connecting", progress_percent=1.0,
+                            message="正在连接知识星球 MCP")
         async with Client(url, read_timeout_seconds=self.timeout) as client:
+            self._emit_progress(progress_callback, phase="discovering_groups", progress_percent=2.0,
+                                message="正在读取知识星球列表")
             groups = await self._configured_groups(client)
-            for group in groups:
+            group_total = len(groups)
+            completed_pages = 0
+            completed_received = 0
+            self._emit_progress(
+                progress_callback,
+                phase="fetching",
+                progress_percent=3.0,
+                groups_total=group_total,
+                groups_completed=0,
+                message=f"已找到 {group_total} 个知识星球，开始分页获取",
+            )
+            for group_index, group in enumerate(groups):
+                def relay_group_progress(update: Dict[str, Any]) -> None:
+                    local_progress = max(0.0, min(float(update.get("group_progress_percent") or 0), 100.0))
+                    overall = 3.0 + ((group_index + local_progress / 100.0) / max(group_total, 1)) * 94.0
+                    self._emit_progress(
+                        progress_callback,
+                        **update,
+                        progress_percent=round(min(overall, 97.0), 1),
+                        groups_total=group_total,
+                        groups_completed=group_index,
+                        pages_fetched=completed_pages + int(update.get("group_pages_fetched") or 0),
+                        received=completed_received + int(update.get("group_received") or 0),
+                    )
+
                 result = await self._sync_group(
                     client,
                     group,
                     latest.get(group["group_id"]),
+                    history_cursor=oldest.get(group["group_id"]),
                     history_cutoff=history_cutoff,
                     enqueue_analysis=enqueue_analysis,
                     max_pages=max_pages,
+                    progress_callback=relay_group_progress,
                 )
+                completed_pages += int(result.get("pages_fetched") or 0)
+                completed_received += int(result.get("received") or 0)
                 totals["groups"] += 1
                 for key in ("received", "created", "updated", "unchanged", "media_downloaded"):
                     totals[key] += int(result.get(key) or 0)
@@ -106,6 +160,21 @@ class ZsxqMcpSyncService:
                     totals["failed_groups"] += 1
                 elif history_days and not result.get("history_complete"):
                     totals["incomplete_groups"] += 1
+                self._emit_progress(
+                    progress_callback,
+                    phase="fetching" if group_index + 1 < group_total else "finalizing",
+                    progress_percent=round(min(3.0 + ((group_index + 1) / max(group_total, 1)) * 94.0, 99.0), 1),
+                    groups_total=group_total,
+                    groups_completed=group_index + 1,
+                    current_group_id=group["group_id"],
+                    current_group_name=group["name"],
+                    pages_fetched=completed_pages,
+                    received=completed_received,
+                    created=totals["created"],
+                    updated=totals["updated"],
+                    unchanged=totals["unchanged"],
+                    message=f"{group['name']} 已完成，正在整理同步结果",
+                )
         return {
             "mode": "history_backfill" if history_days else "incremental",
             "history_days": history_days,
@@ -125,14 +194,17 @@ class ZsxqMcpSyncService:
             return groups
         existing = self.repo.source_summary()
         if existing:
-            return [{"group_id": row["group_id"], "name": row["group_name"]} for row in existing]
+            return [{"group_id": str(row["group_id"]), "name": str(row["group_name"])} for row in existing]
         profile = await self._call_json(client, "get_self_info", {})
         user_id = str((profile.get("user") or {}).get("user_id") or "")
         if not user_id:
             raise ZsxqMcpSyncError("知识星球 MCP 未返回当前用户 ID")
         payload = await self._call_json(client, "get_user_groups", {"user_id": user_id, "limit": 200, "scope": "normal"})
-        return [{"group_id": str(row["group_id"]), "name": str(row.get("name") or row["group_id"])}
-                for row in payload.get("groups") or []]
+        return [
+            {"group_id": str(row.get("group_id") or ""), "name": str(row.get("name") or row.get("group_id") or "")}
+            for row in payload.get("groups") or []
+            if row.get("group_id")
+        ]
 
     async def _sync_group(
         self,
@@ -140,15 +212,26 @@ class ZsxqMcpSyncService:
         group: Dict[str, str],
         cursor: Optional[datetime],
         *,
+        history_cursor: Optional[datetime] = None,
         history_cutoff: Optional[datetime] = None,
         enqueue_analysis: bool = True,
         max_pages: Optional[int] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         group_id, group_name = group["group_id"], group["name"]
         self.repo.update_sync_state(group_id, group_name, last_attempt_at=utc_naive_now(), last_status="running", last_error=None)
         received: List[Dict[str, Any]] = []
-        end_time: Optional[str] = None
+        seen_topic_ids: set[str] = set()
+        aggregate = {"created": 0, "updated": 0, "unchanged": 0}
+        received_count = 0
+        newest: Optional[Dict[str, Any]] = None
+        end_time: Optional[str] = (
+            history_cursor.isoformat(timespec="milliseconds") + "Z"
+            if history_cutoff is not None and history_cursor is not None and history_cursor > history_cutoff
+            else None
+        )
         pages_fetched = 0
+        last_group_progress = 0.0
         history_complete = history_cutoff is None
         try:
             page_limit = max_pages or self.max_pages
@@ -157,7 +240,19 @@ class ZsxqMcpSyncService:
                 args: Dict[str, Any] = {"group_id": group_id, "limit": 30, "scope": "all"}
                 if end_time:
                     args["end_time"] = end_time
-                page = await self._call_json(client, "get_group_topics", args)
+                page = await self._call_json_with_retry(
+                    client,
+                    "get_group_topics",
+                    args,
+                    progress_callback=progress_callback if history_cutoff is not None else None,
+                    progress_context={
+                        "current_group_id": group_id,
+                        "current_group_name": group_name,
+                        "group_pages_fetched": pages_fetched - 1,
+                        "group_received": received_count,
+                        "group_progress_percent": last_group_progress,
+                    },
+                )
                 if page.get("success") is False:
                     raise ZsxqMcpSyncError(str(page.get("error") or "知识星球返回失败")[:300])
                 topics = page.get("topics_brief") or []
@@ -169,11 +264,63 @@ class ZsxqMcpSyncService:
                         topic for topic in valid_topics
                         if _parse_datetime(topic.get("create_time"), field_name="create_time") >= history_cutoff
                     ]
-                received.extend(valid_topics)
+                    page_topics: List[Dict[str, Any]] = []
+                    for topic in valid_topics:
+                        topic_id = str(topic.get("topic_id") or "")
+                        if topic_id and topic_id not in seen_topic_ids:
+                            seen_topic_ids.add(topic_id)
+                            page_topics.append(topic)
+                    if page_topics:
+                        saved = self.notes.import_topics(
+                            page_topics,
+                            group_id=group_id,
+                            group_name=group_name,
+                            enqueue_analysis=enqueue_analysis,
+                        )
+                        for key in aggregate:
+                            aggregate[key] += int(saved.get(key) or 0)
+                        received_count += len(page_topics)
+                        page_newest = max(page_topics, key=lambda topic: str(topic.get("create_time") or ""))
+                        if newest is None or str(page_newest.get("create_time") or "") > str(newest.get("create_time") or ""):
+                            newest = page_newest
+                else:
+                    received.extend(valid_topics)
+                oldest = min((_parse_datetime(topic.get("create_time"), field_name="create_time") for topic in topics), default=None)
+                coverage = 0.0
+                if history_cutoff is not None and oldest is not None:
+                    total_seconds = max((utc_naive_now() - history_cutoff).total_seconds(), 1.0)
+                    coverage = min(max((utc_naive_now() - oldest).total_seconds() / total_seconds * 100.0, 0.0), 100.0)
+                    last_group_progress = round(min(coverage * 0.82, 82.0), 1)
+                self._emit_progress(
+                    progress_callback,
+                    phase="fetching",
+                    group_progress_percent=last_group_progress if history_cutoff else 40.0,
+                    current_group_id=group_id,
+                    current_group_name=group_name,
+                    group_pages_fetched=pages_fetched,
+                    group_received=received_count if history_cutoff is not None else len(received),
+                    oldest_at=oldest.isoformat() + "Z" if oldest else None,
+                    message=f"{group_name}：已获取 {pages_fetched} 页 / {received_count if history_cutoff is not None else len(received)} 条",
+                )
+                if history_cutoff is not None and page_topics:
+                    self._emit_progress(
+                        progress_callback,
+                        phase="saving",
+                        group_progress_percent=round(min(coverage * 0.82 + 0.5, 82.0), 1),
+                        current_group_id=group_id,
+                        current_group_name=group_name,
+                        group_pages_fetched=pages_fetched,
+                        group_received=received_count,
+                        group_saved=received_count,
+                        oldest_at=oldest.isoformat() + "Z" if oldest else None,
+                        created=aggregate["created"],
+                        updated=aggregate["updated"],
+                        unchanged=aggregate["unchanged"],
+                        message=f"{group_name}：{received_count} 条已写入本地库",
+                    )
                 if not topics or not page.get("has_more"):
                     history_complete = True
                     break
-                oldest = min((_parse_datetime(topic.get("create_time"), field_name="create_time") for topic in topics), default=None)
                 if history_cutoff is not None and oldest is not None and oldest <= history_cutoff:
                     history_complete = True
                     break
@@ -183,28 +330,33 @@ class ZsxqMcpSyncService:
                 if not end_time:
                     history_complete = True
                     break
-            deduped = {str(topic.get("topic_id")): topic for topic in received if topic.get("topic_id")}
-            topics = list(deduped.values())
-            aggregate = {"created": 0, "updated": 0, "unchanged": 0}
-            for offset in range(0, len(topics), 200):
-                saved = self.notes.import_topics(
-                    topics[offset:offset + 200],
-                    group_id=group_id,
-                    group_name=group_name,
-                    enqueue_analysis=enqueue_analysis,
-                )
-                for key in aggregate:
-                    aggregate[key] += int(saved.get(key) or 0)
-            newest = max(topics, key=lambda topic: str(topic.get("create_time") or ""), default=None)
+                if history_cutoff is not None:
+                    await asyncio.sleep(self.history_request_interval)
+            if history_cutoff is None:
+                deduped = {str(topic.get("topic_id")): topic for topic in received if topic.get("topic_id")}
+                topics = list(deduped.values())
+                received_count = len(topics)
+                for offset in range(0, len(topics), 200):
+                    saved = self.notes.import_topics(
+                        topics[offset:offset + 200],
+                        group_id=group_id,
+                        group_name=group_name,
+                        enqueue_analysis=enqueue_analysis,
+                    )
+                    for key in aggregate:
+                        aggregate[key] += int(saved.get(key) or 0)
+                newest = max(topics, key=lambda topic: str(topic.get("create_time") or ""), default=None)
             newest_at = _parse_datetime(newest.get("create_time"), field_name="create_time") if newest else cursor
             saved_count = aggregate["created"] + aggregate["updated"]
             self.repo.update_sync_state(
                 group_id, group_name, last_status="success", last_success_at=utc_naive_now(),
-                last_topic_id=str(newest.get("topic_id")) if newest else None, last_topic_at=newest_at,
-                last_received=len(topics), last_saved=saved_count, last_media_downloaded=0,
-                total_saved=(next((row["total_saved"] for row in self.repo.list_sync_states() if row["group_id"] == group_id), 0) + saved_count),
+                last_topic_id=str(newest.get("topic_id")) if newest else None,
+                last_topic_at=newest_at,
+                last_received=received_count, last_saved=saved_count, last_media_downloaded=0,
+                total_saved=(next((row["total_saved"] for row in self.repo.list_sync_states()
+                                   if row["group_id"] == group_id), 0) + saved_count),
             )
-            return {"group_id": group_id, "status": "success", "received": len(topics),
+            return {"group_id": group_id, "status": "success", "received": received_count,
                     "media_downloaded": 0, "media_storage": "remote_only",
                     "analysis_enqueued": enqueue_analysis, "pages_fetched": pages_fetched,
                     "history_complete": history_complete, **aggregate}
@@ -212,7 +364,60 @@ class ZsxqMcpSyncService:
             safe = f"{type(exc).__name__}: {str(exc)[:400]}"
             self.repo.update_sync_state(group_id, group_name, last_status="failed", last_error=safe)
             logger.warning("[zsxq-mcp] group %s failed: %s", group_id, safe)
-            return {"group_id": group_id, "status": "failed", "error": safe}
+            return {
+                "group_id": group_id,
+                "status": "failed",
+                "error": safe,
+                "received": received_count,
+                "created": aggregate["created"],
+                "updated": aggregate["updated"],
+                "unchanged": aggregate["unchanged"],
+                "media_downloaded": 0,
+                "pages_fetched": pages_fetched,
+                "history_complete": False,
+            }
+
+    async def _call_json_with_retry(
+        self,
+        client: Any,
+        name: str,
+        arguments: Dict[str, Any],
+        *,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        progress_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.history_retry_attempts + 1):
+            try:
+                return await self._call_json(client, name, arguments)
+            except Exception as exc:
+                last_error = exc
+                if attempt >= self.history_retry_attempts:
+                    raise
+                delay = min(2 ** attempt, 30)
+                self._emit_progress(
+                    progress_callback,
+                    **(progress_context or {}),
+                    phase="retry_wait",
+                    retry_attempt=attempt,
+                    retry_in_seconds=delay,
+                    message=f"知识星球触发限流或短暂异常，{delay} 秒后自动重试（{attempt}/{self.history_retry_attempts - 1}）",
+                )
+                await asyncio.sleep(delay)
+        assert last_error is not None
+        raise last_error
+
+    @staticmethod
+    def _emit_progress(
+        callback: Optional[Callable[[Dict[str, Any]], None]],
+        **payload: Any,
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            callback(payload)
+        except Exception:
+            logger.debug("[zsxq-mcp] progress callback failed", exc_info=True)
 
     async def resolve_media_url(self, topic_id: str, kind: str, asset_id: str) -> str:
         """Resolve a fresh ZSXQ URL on demand without downloading media locally."""
@@ -302,6 +507,7 @@ class ZsxqMcpSyncWorker:
         self.interval = max(10.0, min(float(os.getenv("ZSXQ_MCP_POLL_SEC", "30")), 3600.0))
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._state_lock = threading.Lock()
         self._sync_lock = threading.Lock()
         self._last_sync_at: Optional[float] = None
@@ -316,6 +522,17 @@ class ZsxqMcpSyncWorker:
             "finished_at": None,
             "result": None,
             "error": None,
+            "phase": "idle",
+            "progress_percent": 0.0,
+            "groups_total": 0,
+            "groups_completed": 0,
+            "pages_fetched": 0,
+            "received": 0,
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "message": None,
+            "last_progress_at": None,
         }
 
     @classmethod
@@ -329,21 +546,34 @@ class ZsxqMcpSyncWorker:
         with self._state_lock:
             if self._thread is None or not self._thread.is_alive():
                 self._stop.clear()
+                self._wake.clear()
                 self._thread = threading.Thread(target=self._run, name="zsxq-mcp-sync-worker", daemon=True)
                 self._thread.start()
         return self.status()
 
     def stop(self, timeout: float = 10.0) -> Dict[str, Any]:
         self._stop.set()
+        self._wake.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout)
         return self.status()
+
+    def trigger(self) -> Dict[str, Any]:
+        """Wake incremental MCP synchronization without starting a parallel sync."""
+        self.start()
+        self._wake.set()
+        return {**self.status(), "refresh_requested": True}
 
     def sync_now(self) -> Dict[str, Any]:
         if not self._sync_lock.acquire(blocking=False):
             return {"status": "already_running", "totals": self._last_result or {}}
         try:
             result = ZsxqMcpSyncService().sync_once()
+            totals = result.get("totals") or {}
+            if int(totals.get("created") or 0) + int(totals.get("updated") or 0) > 0:
+                from src.services.essay_quant_worker import EssayQuantWorker
+
+                EssayQuantWorker.get_instance().request_refresh("zsxq_incremental")
             with self._state_lock:
                 self._last_sync_at = time.time(); self._last_result = result.get("totals"); self._last_error = None
             return result
@@ -363,6 +593,17 @@ class ZsxqMcpSyncWorker:
                 "finished_at": None,
                 "result": None,
                 "error": None,
+                "phase": "waiting_for_incremental_sync",
+                "progress_percent": 0.0,
+                "groups_total": 0,
+                "groups_completed": 0,
+                "pages_fetched": 0,
+                "received": 0,
+                "created": 0,
+                "updated": 0,
+                "unchanged": 0,
+                "message": "正在等待当前增量同步结束",
+                "last_progress_at": self._iso(time.time()),
             }
             self._history_thread = threading.Thread(
                 target=self._run_history_backfill,
@@ -378,6 +619,7 @@ class ZsxqMcpSyncWorker:
             return {"running": bool(self._thread and self._thread.is_alive()), "poll_seconds": self.interval,
                     "syncing": self._sync_lock.locked(),
                     "last_sync_at": self._iso(self._last_sync_at), "last_result": self._last_result,
+                    "last_sync_age_seconds": max(0, int(time.time() - self._last_sync_at)) if self._last_sync_at else None,
                     "last_error": self._last_error,
                     "history_backfill": dict(self._history_state),
                     **ZsxqMcpSyncService().status()}
@@ -391,19 +633,59 @@ class ZsxqMcpSyncWorker:
                 logger.warning("[zsxq-mcp] sync cycle failed: %s", safe)
                 with self._state_lock:
                     self._last_error = safe
-            self._stop.wait(self.interval)
+            self._wake.wait(self.interval)
+            self._wake.clear()
 
     def _run_history_backfill(self, days: int) -> None:
         self._sync_lock.acquire()
         try:
-            result = ZsxqMcpSyncService().sync_history(days=days)
+            self._update_history_progress({
+                "phase": "connecting",
+                "progress_percent": 1.0,
+                "message": "开始连接知识星球 MCP",
+            })
+            result = ZsxqMcpSyncService().sync_history(
+                days=days,
+                progress_callback=self._update_history_progress,
+            )
+            totals = result.get("totals") or {}
+            if int(totals.get("created") or 0) + int(totals.get("updated") or 0) > 0:
+                from src.services.essay_quant_worker import EssayQuantWorker
+
+                EssayQuantWorker.get_instance().request_refresh("zsxq_history_backfill", force=True)
             with self._state_lock:
-                self._history_state.update({
-                    "running": False,
-                    "finished_at": self._iso(time.time()),
-                    "result": result.get("totals"),
-                    "error": None,
-                })
+                if int(totals.get("failed_groups") or 0) > 0:
+                    self._history_state.update({
+                        "running": False,
+                        "finished_at": self._iso(time.time()),
+                        "result": totals,
+                        "error": f"{int(totals['failed_groups'])} 个知识星球同步失败；已入库的数据已保留，可重新执行继续补齐",
+                        "phase": "failed",
+                        "message": "历史纪要同步失败",
+                        "last_progress_at": self._iso(time.time()),
+                    })
+                elif int(totals.get("incomplete_groups") or 0) > 0:
+                    self._history_state.update({
+                        "running": False,
+                        "finished_at": self._iso(time.time()),
+                        "result": totals,
+                        "error": None,
+                        "phase": "incomplete",
+                        "progress_percent": min(float(self._history_state.get("progress_percent") or 0), 99.0),
+                        "message": "已达到分页安全上限，当前范围尚未完整覆盖",
+                        "last_progress_at": self._iso(time.time()),
+                    })
+                else:
+                    self._history_state.update({
+                        "running": False,
+                        "finished_at": self._iso(time.time()),
+                        "result": totals,
+                        "error": None,
+                        "phase": "completed",
+                        "progress_percent": 100.0,
+                        "message": "历史纪要同步完成",
+                        "last_progress_at": self._iso(time.time()),
+                    })
         except Exception as exc:
             safe = f"{type(exc).__name__}: {str(exc)[:400]}"
             logger.warning("[zsxq-mcp] history backfill failed: %s", safe)
@@ -412,9 +694,25 @@ class ZsxqMcpSyncWorker:
                     "running": False,
                     "finished_at": self._iso(time.time()),
                     "error": safe,
+                    "phase": "failed",
+                    "message": "历史纪要同步失败",
+                    "last_progress_at": self._iso(time.time()),
                 })
         finally:
             self._sync_lock.release()
+
+    def _update_history_progress(self, update: Dict[str, Any]) -> None:
+        allowed = {
+            "phase", "progress_percent", "groups_total", "groups_completed",
+            "current_group_id", "current_group_name", "pages_fetched", "received",
+            "created", "updated", "unchanged", "message", "oldest_at", "group_saved",
+            "retry_attempt", "retry_in_seconds",
+        }
+        with self._state_lock:
+            for key, value in update.items():
+                if key in allowed:
+                    self._history_state[key] = value
+            self._history_state["last_progress_at"] = self._iso(time.time())
 
     @staticmethod
     def _iso(value: Optional[float]) -> Optional[str]:

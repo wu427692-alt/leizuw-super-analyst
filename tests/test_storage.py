@@ -157,7 +157,9 @@ class TestStorage(unittest.TestCase):
 
         with db.get_session() as session:
             count = session.execute(
-                select(func.count()).select_from(DatabaseSchemaMigration)
+                select(func.count()).select_from(DatabaseSchemaMigration).where(
+                    DatabaseSchemaMigration.version == CURRENT_SCHEMA_VERSION
+                )
             ).scalar_one()
 
         self.assertEqual(count, 1)

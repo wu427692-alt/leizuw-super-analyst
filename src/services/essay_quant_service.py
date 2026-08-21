@@ -6,15 +6,19 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
 import hashlib
 import json
 import math
 import os
+import random
 import re
+import statistics
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, text
 
+from src.data.stock_index_loader import get_index_stock_name, get_stock_name_index_map
 from src.services.financial_data_service import TushareGatewayService
 from src.storage import (
     DatabaseManager,
@@ -58,6 +62,7 @@ class EssayQuantService:
     def __init__(self, db: Optional[DatabaseManager] = None, tushare: Optional[TushareGatewayService] = None):
         self.db = db or DatabaseManager.get_instance()
         self.tushare = tushare or TushareGatewayService()
+        self._coverage: Dict[str, Any] = {}
 
     def list_rules(self) -> Dict[str, Any]:
         with self.db.get_session() as session:
@@ -73,14 +78,69 @@ class EssayQuantService:
             if row is None:
                 row = EssayQuantRuleRecord()
                 session.add(row)
+            advanced_keys = {"strategy_type", "raw_note_policy", "dedupe_window_days", "transaction_cost_bps", "validation_method"}
             for key, value in fields.items():
-                if key != "holding_periods":
+                if key not in {"holding_periods", *advanced_keys}:
                     setattr(row, key, value)
             row.holding_periods_json = json.dumps(fields["holding_periods"])
+            row.research_config_json = json.dumps({key: fields[key] for key in advanced_keys}, ensure_ascii=False)
             row.updated_at = utc_naive_now()
             session.commit()
             session.refresh(row)
             return self._rule_dict(row)
+
+    def list_runs(self, limit: int = 30) -> Dict[str, Any]:
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(EssayQuantRunRecord).order_by(desc(EssayQuantRunRecord.id)).limit(max(1, min(limit, 100)))
+            ).scalars().all()
+        items = []
+        for row in rows:
+            rule = _loads(row.rule_json, {})
+            result = _loads(row.result_json, {})
+            robustness = result.get("robustness") or {}
+            items.append({
+                "id": row.id, "name": rule.get("name") or f"研究 #{row.id}",
+                "strategy_type": rule.get("strategy_type", "essay_event"),
+                "event_count": row.event_count, "mature_event_count": row.mature_event_count,
+                "price_cutoff": row.price_cutoff,
+                "primary_average_excess": robustness.get("average_excess_return"),
+                "confidence_interval": robustness.get("confidence_interval_95"),
+                "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+            })
+        return {"items": items, "total": len(items)}
+
+    def research_catalog(self) -> Dict[str, Any]:
+        """Return real local data inventory plus the supported research methods."""
+        definitions = (
+            ("essays", "知识星球", "research_notes", "created_at", "事件研究、情报因子、机构追踪"),
+            ("essay_analysis", "AI 结构化观点", "essay_analysis_records", "updated_at", "方向、重要度、置信度、个股映射"),
+            ("market", "Tushare 行情", "stock_daily", "date", "收益、波动、动量、基准"),
+            ("announcements", "公告与全渠道事件", "monitoring_events", "event_at", "事件窗口、风险过滤"),
+            ("news", "财经新闻", "intelligence_items", "published_at", "舆情因子、催化验证"),
+            ("fundamentals", "财务与估值", "fundamental_snapshot", "created_at", "基本面因子、估值分层"),
+            ("portfolio", "组合与持仓", "portfolio_daily_snapshots", "snapshot_date", "归因、风险、实盘对照"),
+        )
+        assets = []
+        with self.db.get_session() as session:
+            table_names = set(session.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).scalars().all())
+            for key, name, table, date_column, usage in definitions:
+                if table not in table_names:
+                    assets.append({"key": key, "name": name, "count": 0, "latest_at": None, "usage": usage, "status": "not_ready"})
+                    continue
+                row = session.execute(text(f'SELECT COUNT(*) AS count, MAX("{date_column}") AS latest_at FROM "{table}"')).mappings().one()
+                assets.append({"key": key, "name": name, "count": int(row["count"] or 0),
+                               "latest_at": str(row["latest_at"]) if row["latest_at"] is not None else None,
+                               "usage": usage, "status": "ready" if row["count"] else "empty"})
+        methods = [
+            {"key": "event_study", "name": "事件研究", "purpose": "检验公告、研报、小作文或新闻发生后的超额收益", "output": "事件窗、置信区间、分组收益"},
+            {"key": "multi_factor", "name": "多因子选股", "purpose": "组合行情、财务、筹码、资金与情报因子进行截面排序", "output": "因子分层、强弱差、交互信号"},
+            {"key": "hybrid_intelligence", "name": "情报混合策略", "purpose": "将非结构化观点与结构化市场因子联合验证", "output": "交互效应、因子贡献、组合曲线"},
+            {"key": "institution_track", "name": "机构胜率追踪", "purpose": "按研究团队、行业与市场状态评估观点有效性", "output": "收缩胜率、样本外稳定性、排名"},
+            {"key": "portfolio", "name": "组合与持仓", "purpose": "把研究信号转为有成本和仓位约束的组合", "output": "收益、回撤、风险归因、交易明细"},
+        ]
+        return {"generated_at": utc_naive_now().isoformat() + "Z", "assets": assets, "methods": methods,
+                "safeguards": ["时间顺序切分", "重复信号聚类", "交易成本", "置信区间", "参数敏感性", "样本外验证"]}
 
     def latest_dashboard(self) -> Dict[str, Any]:
         with self.db.get_session() as session:
@@ -92,6 +152,22 @@ class EssayQuantService:
             return result
         return self.run(self._normalize_rule({}), refresh_prices=False, max_symbols=30, persist=False)
 
+    def latest_institution_dashboard(self) -> Dict[str, Any]:
+        """Return the durable all-institution baseline, never a user's custom rule."""
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(EssayQuantRunRecord).order_by(desc(EssayQuantRunRecord.id)).limit(100)
+            ).scalars().all()
+        for row in rows:
+            rule = _loads(row.rule_json, {})
+            if rule.get("name") != "后台全量机构预计算" or rule.get("source_query"):
+                continue
+            result = _loads(row.result_json, {})
+            result["run_id"] = row.id
+            result["rule_id"] = row.rule_id
+            return result
+        return self.latest_dashboard()
+
     def run(
         self,
         payload: Dict[str, Any],
@@ -100,21 +176,33 @@ class EssayQuantService:
         max_symbols: int = 30,
         persist: bool = True,
         rule_id: Optional[int] = None,
+        apply_adjustment: bool = True,
     ) -> Dict[str, Any]:
         rule = self._normalize_rule(payload)
         events = self._essay_events(rule)
         symbol_counts = Counter(event["symbol"] for event in events)
-        selected_symbols = [symbol for symbol, _ in symbol_counts.most_common(max(2, min(int(max_symbols), 60)))]
-        events = [event for event in events if event["symbol"] in selected_symbols]
+        all_symbols = list(symbol_counts)
+        refresh_limit = max(2, min(int(max_symbols), 60))
+        existing_prices = self._price_map(all_symbols, rule["lookback_days"] + max(rule["holding_periods"]) + 60)
+        unpriced = [symbol for symbol, _ in symbol_counts.most_common() if not existing_prices.get(symbol.split(".")[0])]
+        priced = [symbol for symbol, _ in symbol_counts.most_common() if existing_prices.get(symbol.split(".")[0])]
+        refresh_symbols = (unpriced + priced)[:refresh_limit]
         factor_map: Dict[str, Dict[date, float]] = {}
         warnings: List[str] = []
-        if refresh_prices and selected_symbols:
+        if refresh_prices and refresh_symbols:
             factor_map, refresh_warnings = self._hydrate_prices(
-                selected_symbols, rule["benchmark_code"], rule["lookback_days"] + max(rule["holding_periods"]) + 45,
+                refresh_symbols, rule["benchmark_code"], rule["lookback_days"] + max(rule["holding_periods"]) + 45,
             )
             warnings.extend(refresh_warnings)
-        price_map = self._price_map(selected_symbols + [rule["benchmark_code"]], rule["lookback_days"] + max(rule["holding_periods"]) + 60)
+            if not apply_adjustment:
+                factor_map = {}
+        price_map = self._price_map(all_symbols + [rule["benchmark_code"]], rule["lookback_days"] + max(rule["holding_periods"]) + 60)
         evaluated = [self._evaluate_event(event, price_map, factor_map, rule) for event in events]
+        self._coverage.update({
+            "resolved_symbol_count": len(all_symbols),
+            "priced_symbol_count": sum(bool(price_map.get(symbol.split(".")[0])) for symbol in all_symbols),
+            "price_refresh_symbol_count": len(refresh_symbols) if refresh_prices else 0,
+        })
         dashboard = self._dashboard(rule, evaluated, price_map, factor_map, warnings, bool(factor_map))
         if persist:
             source_hash = hashlib.sha256(json.dumps([
@@ -149,12 +237,19 @@ class EssayQuantService:
                 .order_by(ResearchNote.created_at)
             ).all()
         raw_events: List[Dict[str, Any]] = []
+        note_ids: set[str] = set()
+        analyzed_note_ids: set[str] = set()
+        resolved_note_ids: set[str] = set()
+        invalid_symbol_mentions = 0
         query = rule["source_query"].lower()
         for note, analysis in rows:
+            note_ids.add(note.topic_id)
             searchable = " ".join((note.group_name or "", note.author_name or "", note.title or "", note.content or "")).lower()
             if query and query not in searchable:
                 continue
             completed = analysis is not None and analysis.status == "completed"
+            if completed:
+                analyzed_note_ids.add(note.topic_id)
             if completed and (
                 int(analysis.importance_score or 0) < rule["min_importance"]
                 or float(analysis.confidence_score or 0) < rule["min_confidence"]
@@ -162,14 +257,19 @@ class EssayQuantService:
                 continue
             raw = _loads(analysis.raw_response, {}) if completed else {}
             novelty = int(raw.get("novelty_score") or 0)
+            if not completed and rule["raw_note_policy"] == "exclude":
+                continue
             mentions = _loads(analysis.stock_mentions_json, []) if completed else []
             if not mentions:
                 stance = self._raw_note_stance(searchable)
                 mentions = self._raw_note_mentions(note, stance)
             for mention in mentions:
                 symbol = self._canonical_code(mention.get("ts_code"))
-                if not symbol:
+                if not symbol or not get_index_stock_name(symbol):
+                    if symbol:
+                        invalid_symbol_mentions += 1
                     continue
+                resolved_note_ids.add(note.topic_id)
                 stance = str(mention.get("stance") or "neutral").lower()
                 if rule["signal_direction"] == "bullish" and stance != "bullish":
                     continue
@@ -197,6 +297,8 @@ class EssayQuantService:
         first_seen: Dict[str, date] = {}
         eligible_cutoff = datetime.now(_SH_TZ).date() - timedelta(days=rule["lookback_days"])
         result = []
+        cluster_last_seen: Dict[Tuple[str, str, str], date] = {}
+        duplicate_event_count = 0
         for event in raw_events:
             previous = first_seen.get(event["symbol"])
             event["first_mention"] = previous is None or (event["event_date"] - previous).days > rule["first_mention_window_days"]
@@ -205,7 +307,24 @@ class EssayQuantService:
                 continue
             if rule["first_mention_only"] and not event["first_mention"]:
                 continue
+            cluster_key = (event["symbol"], event["research_group"], event["stance"])
+            cluster_previous = cluster_last_seen.get(cluster_key)
+            if cluster_previous and (event["event_date"] - cluster_previous).days <= rule["dedupe_window_days"]:
+                duplicate_event_count += 1
+                continue
+            cluster_last_seen[cluster_key] = event["event_date"]
             result.append(event)
+        self._coverage = {
+            "notes_scanned": len(note_ids),
+            "analyzed_note_count": len(analyzed_note_ids),
+            "raw_note_count": len(note_ids - analyzed_note_ids),
+            "resolved_note_count": len(resolved_note_ids),
+            "unresolved_note_count": len(note_ids - resolved_note_ids),
+            "research_group_count": len({event["research_group"] for event in result if event["research_group"] != "其他来源"}),
+            "invalid_symbol_mentions_filtered": invalid_symbol_mentions,
+            "duplicate_event_count": duplicate_event_count,
+            "raw_note_policy": rule["raw_note_policy"],
+        }
         return result
 
     @staticmethod
@@ -225,9 +344,12 @@ class EssayQuantService:
         matches: Dict[str, str] = {}
         for value in (note.symbol_codes or "").split(","):
             symbol = EssayQuantService._canonical_code(value)
-            if symbol:
-                matches[symbol] = symbol
+            name = get_index_stock_name(symbol) if symbol else None
+            if symbol and name:
+                matches[symbol] = name
         text = f"{note.title or ''} {note.content or ''}"
+        for symbol, name in EssayQuantService._stock_names_in_text(text).items():
+            matches.setdefault(symbol, name)
         configured = os.getenv("ESSAY_WATCHLIST") or "603306.SH:华懋科技,300476.SZ:胜宏科技"
         for item in configured.split(","):
             raw_symbol, _, raw_name = item.strip().partition(":")
@@ -245,6 +367,42 @@ class EssayQuantService:
             }
             for symbol, name in matches.items()
         ]
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _stock_name_trie() -> Dict[str, Any]:
+        """Build a deterministic local A-share name matcher without calling AI."""
+        names: Dict[str, str] = {}
+        for code, name in get_stock_name_index_map().items():
+            symbol = EssayQuantService._canonical_code(code)
+            clean_name = str(name or "").strip()
+            if symbol and len(clean_name) >= 3 and not clean_name.upper().startswith(("ST", "*ST")):
+                names.setdefault(clean_name, symbol)
+        root: Dict[str, Any] = {}
+        for name, symbol in names.items():
+            node = root
+            for char in name:
+                node = node.setdefault(char, {})
+            node.setdefault("__matches__", []).append((name, symbol))
+        return root
+
+    @staticmethod
+    def _stock_names_in_text(text: str, limit: int = 12) -> Dict[str, str]:
+        root = EssayQuantService._stock_name_trie()
+        found: Dict[str, str] = {}
+        source = str(text or "")
+        for start in range(len(source)):
+            node = root
+            for char in source[start:start + 12]:
+                child = node.get(char)
+                if not isinstance(child, dict):
+                    break
+                node = child
+                for name, symbol in node.get("__matches__", []):
+                    found.setdefault(symbol, name)
+                    if len(found) >= limit:
+                        return found
+        return found
 
     def _hydrate_prices(self, symbols: Sequence[str], benchmark: str, days: int) -> Tuple[Dict[str, Dict[date, float]], List[str]]:
         if not self.tushare.available:
@@ -333,9 +491,11 @@ class EssayQuantService:
                 continue
             exit_row = future[period - 1]
             exit_factor = factors.get(event["symbol"], {}).get(exit_row["date"], 1.0)
-            stock_return = (float(exit_row["close"]) * exit_factor / entry_price - 1) * 100
+            direction = -1.0 if event.get("stance") == "bearish" else 1.0
+            gross_return = (float(exit_row["close"]) * exit_factor / entry_price - 1) * 100 * direction
+            stock_return = gross_return - rule["transaction_cost_bps"] / 100.0
             benchmark_exit = next((item for item in benchmark_future if item["date"] >= exit_row["date"]), None)
-            benchmark_return = ((float(benchmark_exit["close"]) / benchmark_entry - 1) * 100) if benchmark_entry and benchmark_exit else 0.0
+            benchmark_return = ((float(benchmark_exit["close"]) / benchmark_entry - 1) * 100 * direction) if benchmark_entry and benchmark_exit else 0.0
             row["returns"][str(period)] = round(stock_return, 3)
             row["excess_returns"][str(period)] = round(stock_return - benchmark_return, 3)
             row["mature_periods"].append(period)
@@ -408,6 +568,9 @@ class EssayQuantService:
         trend_signals = self._trend_signals(events, prices, factors)
         portfolio = self._portfolio(rankings, trend_signals, prices, factors, rule)
         cutoff = max((row["date"] for series in prices.values() for row in series), default=None)
+        primary_values = [float(event["excess_returns"][str(primary)]) for event in mature]
+        robustness = self._robustness(primary_values, events, primary, rule)
+        factor_analysis = self._factor_analysis(mature, primary)
         return {
             "generated_at": utc_naive_now().isoformat() + "Z", "rule": rule,
             "summary": {"event_count": len(events), "mature_event_count": len(mature),
@@ -415,19 +578,115 @@ class EssayQuantService:
                         "first_mention_30d_count": len(first_mentions),
                         "metrics": [metric(period) for period in periods],
                         "excess_metrics": [metric(period, "excess_returns") for period in periods]},
-            "event_curve": curve, "research_group_rankings": rankings[:30],
+            "event_curve": curve, "research_group_rankings": rankings[:30], "robustness": robustness,
+            "factor_analysis": factor_analysis,
             "first_mentions_30d": [self._public_event(event) for event in first_mentions[:50]],
             "hype_analysis": hype_buckets, "trend_signals": trend_signals[:30], "portfolio": portfolio,
             "events": [self._public_event(event) for event in sorted(events, key=lambda item: item["event_at"], reverse=True)[:100]],
             "data_quality": {"essay_source": "research_notes + optional essay_analysis_records", "price_source": "stock_daily / Tushare daily",
+                             **self._coverage,
                              "raw_unanalyzed_event_count": sum(event.get("analysis_status") == "raw_unanalyzed" for event in events),
                              "price_basis": "Tushare复权因子" if adjusted else "本地原始日线（未复权）",
                              "price_cutoff": cutoff.isoformat() if cutoff else None,
                              "entry_rule": "事件后首个交易日开盘", "exit_rule": "第N个交易日收盘",
+                             "transaction_cost_bps": rule["transaction_cost_bps"],
+                             "validation_method": rule["validation_method"],
                              "benchmark": rule["benchmark_code"], "survivorship_note": "仅统计有证券代码且具备到期行情的事件；未成熟样本不计胜率。",
                              "ranking_note": "主排名至少需要3个到期样本，并使用10个中性先验样本收缩胜率与超额收益；小样本仅展示。",
                              "warnings": warnings},
         }
+
+    @staticmethod
+    def _robustness(values: Sequence[float], events: Sequence[Dict[str, Any]], primary: int, rule: Dict[str, Any]) -> Dict[str, Any]:
+        clean = [float(value) for value in values if math.isfinite(float(value))]
+        if not clean:
+            return {"sample_count": 0, "average_excess_return": None, "confidence_interval_95": [None, None],
+                    "t_stat": None, "payoff_ratio": None, "distribution": [], "cohorts": [], "sensitivity": []}
+        mean = statistics.fmean(clean)
+        std = statistics.stdev(clean) if len(clean) > 1 else 0.0
+        t_stat = mean / (std / math.sqrt(len(clean))) if std > 0 else None
+        rng = random.Random(20260821)
+        sample = clean if len(clean) <= 5000 else rng.sample(clean, 5000)
+        boot = sorted(statistics.fmean(rng.choices(sample, k=len(sample))) for _ in range(300))
+        lower = boot[max(0, int(len(boot) * .025) - 1)]
+        upper = boot[min(len(boot) - 1, int(len(boot) * .975))]
+        positives = [value for value in clean if value > 0]
+        negatives = [abs(value) for value in clean if value < 0]
+        low, high = min(clean), max(clean)
+        width = max((high - low) / 10, .01)
+        distribution = []
+        for index in range(10):
+            start = low + index * width
+            end = high + .000001 if index == 9 else start + width
+            distribution.append({"range": f"{start:.1f}~{end:.1f}", "midpoint": round((start + end) / 2, 3),
+                                 "count": sum(start <= value < end for value in clean)})
+        cohort_values: Dict[str, List[float]] = defaultdict(list)
+        for event in events:
+            value = event.get("excess_returns", {}).get(str(primary))
+            if value is not None:
+                cohort_values[str(event.get("event_at", ""))[:7]].append(float(value))
+        cohorts = [{"period": key, "sample_count": len(rows), "average_excess_return": round(statistics.fmean(rows), 3),
+                    "win_rate": round(sum(value > 0 for value in rows) * 100 / len(rows), 1)}
+                   for key, rows in sorted(cohort_values.items())[-18:]]
+        sensitivity = [{"label": f"成本 {bps}bp", "transaction_cost_bps": bps,
+                        "average_excess_return": round(mean + (rule["transaction_cost_bps"] - bps) / 100.0, 3)}
+                       for bps in (0, 6, 12, 20, 30)]
+        ordered = sorted(
+            ((str(event.get("event_at") or ""), float(event["excess_returns"][str(primary)]))
+             for event in events if str(primary) in event.get("excess_returns", {})),
+            key=lambda item: item[0],
+        )
+        split_at = max(1, min(len(ordered) - 1, int(len(ordered) * .7))) if len(ordered) > 1 else len(ordered)
+        train_values = [value for _, value in ordered[:split_at]]
+        test_values = [value for _, value in ordered[split_at:]]
+        folds = []
+        for index in range(5):
+            start = len(ordered) * index // 5
+            end = len(ordered) * (index + 1) // 5
+            rows = ordered[start:end]
+            if rows:
+                folds.append({"fold": index + 1, "start_at": rows[0][0][:10], "end_at": rows[-1][0][:10],
+                              "sample_count": len(rows), "average_excess_return": round(statistics.fmean(value for _, value in rows), 3)})
+        validation = {"method": rule["validation_method"], "train_sample_count": len(train_values),
+                      "test_sample_count": len(test_values),
+                      "train_average_excess_return": round(statistics.fmean(train_values), 3) if train_values else None,
+                      "test_average_excess_return": round(statistics.fmean(test_values), 3) if test_values else None,
+                      "split_date": ordered[split_at][0][:10] if test_values else None, "walk_forward_folds": folds}
+        return {"sample_count": len(clean), "average_excess_return": round(mean, 3),
+                "confidence_interval_95": [round(lower, 3), round(upper, 3)],
+                "t_stat": round(t_stat, 3) if t_stat is not None else None,
+                "payoff_ratio": round(statistics.fmean(positives) / statistics.fmean(negatives), 3) if positives and negatives else None,
+                "positive_rate": round(len(positives) * 100 / len(clean), 1), "distribution": distribution,
+                "cohorts": cohorts, "sensitivity": sensitivity, "validation": validation,
+                "out_of_sample_note": "按事件时间展示月度队列；正式策略应在样本外区间确认后再使用。"}
+
+    @staticmethod
+    def _factor_analysis(events: Sequence[Dict[str, Any]], primary: int) -> List[Dict[str, Any]]:
+        """Create transparent monotonic buckets for non-structured essay factors."""
+        definitions = (
+            ("importance_score", "重要度"), ("confidence_score", "置信度"),
+            ("novelty_score", "信息增量"), ("hype_score", "观点强度"),
+        )
+        result: List[Dict[str, Any]] = []
+        for key, label in definitions:
+            eligible = [event for event in events if str(primary) in event.get("excess_returns", {})]
+            if not eligible:
+                continue
+            sorted_rows = sorted(eligible, key=lambda event: float(event.get(key) or 0))
+            buckets = []
+            for index, bucket_name in enumerate(("低", "中", "高")):
+                start = len(sorted_rows) * index // 3
+                end = len(sorted_rows) * (index + 1) // 3
+                rows = sorted_rows[start:end]
+                values = [float(event["excess_returns"][str(primary)]) for event in rows]
+                buckets.append({"bucket": bucket_name, "sample_count": len(values),
+                                "average_excess_return": round(statistics.fmean(values), 3) if values else None,
+                                "win_rate": round(sum(value > 0 for value in values) * 100 / len(values), 1) if values else None})
+            low = buckets[0]["average_excess_return"]
+            high = buckets[-1]["average_excess_return"]
+            result.append({"factor": key, "label": label, "buckets": buckets,
+                           "high_low_spread": round(float(high) - float(low), 3) if high is not None and low is not None else None})
+        return result
 
     def _trend_signals(self, events: Sequence[Dict[str, Any]], prices: Dict[str, List[Dict[str, Any]]], factors: Dict[str, Dict[date, float]]) -> List[Dict[str, Any]]:
         latest_by_symbol: Dict[str, Dict[str, Any]] = {}
@@ -543,14 +802,25 @@ class EssayQuantService:
             "benchmark_code": EssayQuantService._canonical_code(payload.get("benchmark_code") or "000300.SH") or "000300.SH",
             "portfolio_size": max(2, min(int(payload.get("portfolio_size") or 10), 30)),
             "enabled": bool(payload.get("enabled", True)),
+            "strategy_type": str(payload.get("strategy_type") or "essay_event")[:40],
+            "raw_note_policy": "include" if str(payload.get("raw_note_policy") or "exclude") == "include" else "exclude",
+            "dedupe_window_days": max(0, min(int(3 if payload.get("dedupe_window_days") is None else payload.get("dedupe_window_days")), 30)),
+            "transaction_cost_bps": max(0.0, min(float(12 if payload.get("transaction_cost_bps") is None else payload.get("transaction_cost_bps")), 200.0)),
+            "validation_method": str(payload.get("validation_method") or "walk_forward") if str(payload.get("validation_method") or "walk_forward") in {"walk_forward", "time_split", "none"} else "walk_forward",
         }
 
     @staticmethod
     def _rule_dict(row: EssayQuantRuleRecord) -> Dict[str, Any]:
+        config = _loads(row.research_config_json, {})
         return {"id": row.id, "name": row.name, "source_query": row.source_query, "signal_direction": row.signal_direction,
                 "lookback_days": row.lookback_days, "holding_periods": _loads(row.holding_periods_json, [5, 10, 20]),
                 "first_mention_only": bool(row.first_mention_only), "first_mention_window_days": row.first_mention_window_days,
                 "min_importance": row.min_importance, "min_confidence": row.min_confidence,
                 "benchmark_code": row.benchmark_code, "portfolio_size": row.portfolio_size, "enabled": bool(row.enabled),
+                "strategy_type": config.get("strategy_type", "essay_event"),
+                "raw_note_policy": config.get("raw_note_policy", "exclude"),
+                "dedupe_window_days": config.get("dedupe_window_days", 3),
+                "transaction_cost_bps": config.get("transaction_cost_bps", 12),
+                "validation_method": config.get("validation_method", "walk_forward"),
                 "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
                 "updated_at": row.updated_at.isoformat() + "Z" if row.updated_at else None}

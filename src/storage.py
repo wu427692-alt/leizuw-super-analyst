@@ -62,6 +62,9 @@ from src.utils.sniper_points import extract_sniper_points, parse_sniper_value
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 CURRENT_SCHEMA_VERSION = "2026-06-05-create-all-baseline"
+SQLITE_RUNTIME_INDEX_MIGRATION = "2026-08-20-sqlite-runtime-index-optimization"
+MARKET_TICK_VOLUME_MIGRATION = "2026-08-20-second-level-volume-deltas"
+MONITOR_SOURCE_TELEMETRY_MIGRATION = "2026-08-20-monitor-source-run-telemetry"
 INTELLIGENCE_ITEM_NULL_SCOPE_VALUE = "__dsa_null_scope__"
 
 # SQLAlchemy ORM 基类
@@ -118,7 +121,7 @@ class StockDaily(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     
     # 股票代码（如 600519, 000001）
-    code = Column(String(10), nullable=False, index=True)
+    code = Column(String(10), nullable=False)
     
     # 交易日期
     date = Column(Date, nullable=False, index=True)
@@ -150,7 +153,6 @@ class StockDaily(Base):
     # 唯一约束：同一股票同一日期只能有一条数据
     __table_args__ = (
         UniqueConstraint('code', 'date', name='uix_code_date'),
-        Index('ix_code_date', 'code', 'date'),
     )
     
     def __repr__(self):
@@ -174,6 +176,102 @@ class StockDaily(Base):
             'volume_ratio': self.volume_ratio,
             'data_source': self.data_source,
         }
+
+
+class StockIntraday(Base):
+    """Locally persisted intraday OHLCV bars for charts and monitoring."""
+
+    __tablename__ = "stock_intraday"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(16), nullable=False)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    frequency = Column(String(8), nullable=False, default="1MIN")
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    amount = Column(Float)
+    data_source = Column(String(50))
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("code", "timestamp", "frequency", name="uix_intraday_code_time_freq"),
+        Index("ix_intraday_code_freq_time", "code", "frequency", "timestamp"),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "code": self.code,
+            "timestamp": self.timestamp,
+            "frequency": self.frequency,
+            "open": self.open,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
+            "volume": self.volume,
+            "amount": self.amount,
+            "data_source": self.data_source,
+        }
+
+
+class StockTick(Base):
+    """One-second watchlist snapshots keyed by local collection second."""
+
+    __tablename__ = "stock_ticks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(16), nullable=False)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    price = Column(Float)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    pre_close = Column(Float)
+    volume = Column(Float)
+    amount = Column(Float)
+    volume_delta = Column(Float)
+    amount_delta = Column(Float)
+    change = Column(Float)
+    pct_chg = Column(Float)
+    data_source = Column(String(50), nullable=False)
+    fetched_at = Column(DateTime, default=datetime.now, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("code", "timestamp", name="uix_tick_code_time"),
+    )
+
+
+class MarketIndexBar(Base):
+    """Exchange-qualified index bars kept separate from six-digit stock keys."""
+
+    __tablename__ = "market_index_bars"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(24), nullable=False)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    frequency = Column(String(8), nullable=False)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    amount = Column(Float)
+    volume_delta = Column(Float)
+    amount_delta = Column(Float)
+    pct_chg = Column(Float)
+    data_source = Column(String(50))
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "timestamp", "frequency", name="uix_index_symbol_time_freq"),
+        Index("ix_index_symbol_freq_time", "symbol", "frequency", "timestamp"),
+    )
 
 
 class NewsIntel(Base):
@@ -290,7 +388,7 @@ class ResearchNote(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     topic_id = Column(String(32), nullable=False, unique=True, index=True)
-    group_id = Column(String(32), nullable=False, index=True)
+    group_id = Column(String(32), nullable=False)
     group_name = Column(String(100), nullable=False, index=True)
     title = Column(String(500), nullable=False)
     content = Column(Text)
@@ -298,7 +396,7 @@ class ResearchNote(Base):
     author_name = Column(String(100), index=True)
     topic_type = Column(String(32), nullable=False, default='talk', index=True)
     text_type = Column(String(32))
-    digested = Column(Boolean, nullable=False, default=False, index=True)
+    digested = Column(Boolean, nullable=False, default=False)
     sticky = Column(Boolean, nullable=False, default=False, index=True)
     symbol_codes = Column(Text, nullable=False, default='')
     files_json = Column(Text)
@@ -349,12 +447,12 @@ class EssayAnalysisRecord(Base):
         unique=True,
         index=True,
     )
-    status = Column(String(20), nullable=False, default='pending', index=True)
+    status = Column(String(20), nullable=False, default='pending')
     model = Column(String(100), nullable=False)
     prompt_version = Column(String(32), nullable=False, index=True)
     input_hash = Column(String(64), nullable=False, index=True)
     summary = Column(Text)
-    primary_category = Column(String(40), index=True)
+    primary_category = Column(String(40))
     sentiment = Column(String(20), index=True)
     time_horizon = Column(String(20), index=True)
     importance_score = Column(Integer, index=True)
@@ -382,6 +480,31 @@ class EssayAnalysisRecord(Base):
         Index('ix_essay_analysis_status_retry', 'status', 'next_retry_at'),
         Index('ix_essay_analysis_category_sentiment', 'primary_category', 'sentiment'),
     )
+
+
+class EssayConsensusRecord(Base):
+    """One durable AI expectation snapshot for a watchlist stock's latest essays."""
+
+    __tablename__ = 'essay_consensus_records'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(16), nullable=False, unique=True, index=True)
+    stock_name = Column(String(100), nullable=False)
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    model = Column(String(100), nullable=False)
+    prompt_version = Column(String(64), nullable=False, index=True)
+    source_count = Column(Integer, nullable=False, default=0)
+    source_hash = Column(String(64), nullable=False, index=True)
+    source_topic_ids_json = Column(Text, nullable=False, default='[]')
+    result_json = Column(Text)
+    error_message = Column(Text)
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+    started_at = Column(DateTime, index=True)
+    completed_at = Column(DateTime, index=True)
 
 
 class EssayDailyReportRecord(Base):
@@ -430,6 +553,9 @@ class EssayQuantRuleRecord(Base):
     benchmark_code = Column(String(16), nullable=False, default='000300.SH')
     portfolio_size = Column(Integer, nullable=False, default=10)
     enabled = Column(Boolean, nullable=False, default=True, index=True)
+    # Advanced research controls are intentionally kept in one versionable
+    # document so new safeguards do not require one database column per knob.
+    research_config_json = Column(Text, nullable=False, default='{}')
     created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
     updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
 
@@ -469,6 +595,10 @@ class MonitoringSourceRecord(Base):
     last_started_at = Column(DateTime, index=True)
     last_success_at = Column(DateTime, index=True)
     last_item_count = Column(Integer, nullable=False, default=0)
+    last_received_count = Column(Integer, nullable=False, default=0)
+    last_created_count = Column(Integer, nullable=False, default=0)
+    last_updated_count = Column(Integer, nullable=False, default=0)
+    last_duration_ms = Column(Integer, nullable=False, default=0)
     total_item_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
     updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
@@ -484,12 +614,12 @@ class MonitoringEventRecord(Base):
     __tablename__ = 'monitoring_events'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    source_key = Column(String(100), nullable=False, index=True)
+    source_key = Column(String(100), nullable=False)
     source_name = Column(String(120), nullable=False, index=True)
     source_type = Column(String(32), nullable=False, index=True)
     external_id = Column(String(160), nullable=False)
-    event_type = Column(String(40), nullable=False, index=True)
-    perspective = Column(String(20), nullable=False, index=True)
+    event_type = Column(String(40), nullable=False)
+    perspective = Column(String(20), nullable=False)
     title = Column(String(500), nullable=False)
     summary = Column(Text)
     url = Column(String(1000))
@@ -1443,10 +1573,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
             # 创建所有表
             Base.metadata.create_all(self._engine)
+            self._ensure_second_level_volume_columns()
+            self._ensure_monitor_source_telemetry_columns()
             self._ensure_llm_usage_telemetry_columns()
+            self._ensure_essay_quant_research_config_column()
             self._ensure_intelligence_item_scope_values()
             self._ensure_schema_migration_record()
             self._ensure_intelligence_items_unique_index()
+            self._apply_sqlite_runtime_index_optimization()
 
             self._initialized = True
             logger.info(f"数据库初始化完成: {db_url}")
@@ -1464,6 +1598,22 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._SessionLocal = None
             self.__class__._instance = None
             raise
+
+    def _ensure_essay_quant_research_config_column(self) -> None:
+        """Backfill the versionable quant-research configuration on existing SQLite DBs."""
+        if not self._is_sqlite_engine:
+            return
+        try:
+            existing = {column["name"] for column in inspect(self._engine).get_columns(EssayQuantRuleRecord.__tablename__)}
+        except Exception as exc:
+            logger.warning("量化研究配置列检查失败，已跳过: %s", exc)
+            return
+        if "research_config_json" in existing:
+            return
+        with self._engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE essay_quant_rules ADD COLUMN research_config_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
     def _ensure_schema_migration_record(self) -> None:
         session = self._SessionLocal()
@@ -1490,6 +1640,143 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             raise
         finally:
             session.close()
+
+    def _apply_sqlite_runtime_index_optimization(self) -> None:
+        """Remove exact left-prefix duplicates that only amplify hot-table writes."""
+        if not self._is_sqlite_engine or not self._sqlite_file_db:
+            return
+        with self._SessionLocal() as session:
+            if session.get(DatabaseSchemaMigration, SQLITE_RUNTIME_INDEX_MIGRATION) is not None:
+                return
+
+        redundant_indexes = (
+            "ix_code_date",
+            "ix_stock_daily_code",
+            "ix_stock_intraday_code",
+            "ix_tick_code_time",
+            "ix_stock_ticks_code",
+            "ix_market_index_bars_symbol",
+            "ix_research_notes_group_id",
+            "ix_research_notes_digested",
+            "ix_essay_analysis_records_status",
+            "ix_essay_analysis_records_primary_category",
+            "ix_monitoring_events_source_key",
+            "ix_monitoring_events_event_type",
+            "ix_monitoring_events_perspective",
+        )
+        with self._engine.begin() as connection:
+            for index_name in redundant_indexes:
+                connection.exec_driver_sql(f'DROP INDEX IF EXISTS "{index_name}"')
+            connection.execute(sqlite_insert(DatabaseSchemaMigration).values(
+                version=SQLITE_RUNTIME_INDEX_MIGRATION,
+                description=(
+                    "Drop redundant hot-table indexes covered by unique or composite left-prefix indexes"
+                ),
+            ).on_conflict_do_nothing(index_elements=["version"]))
+        try:
+            with self._engine.connect() as connection:
+                connection.exec_driver_sql("PRAGMA optimize=0x10002")
+        except Exception as exc:  # noqa: BLE001 - planner maintenance is best effort.
+            logger.warning("SQLite PRAGMA optimize failed after index migration: %s", exc)
+
+    def _ensure_second_level_volume_columns(self) -> None:
+        """Add cumulative-to-interval volume fields and backfill existing second snapshots."""
+        if not self._is_sqlite_engine:
+            return
+        column_specs = {
+            StockTick.__tablename__: {"volume_delta": "FLOAT", "amount_delta": "FLOAT"},
+            MarketIndexBar.__tablename__: {"volume_delta": "FLOAT", "amount_delta": "FLOAT"},
+        }
+        for table_name, columns in column_specs.items():
+            existing = {column["name"] for column in inspect(self._engine).get_columns(table_name)}
+            for column_name, column_type in columns.items():
+                if column_name in existing:
+                    continue
+                with self._engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {column_type}'
+                    )
+                existing.add(column_name)
+
+        with self._SessionLocal() as session:
+            if session.get(DatabaseSchemaMigration, MARKET_TICK_VOLUME_MIGRATION) is not None:
+                return
+
+        with self._engine.begin() as connection:
+            connection.exec_driver_sql("""
+                WITH previous AS (
+                    SELECT id, volume, amount,
+                           LAG(volume) OVER (
+                               PARTITION BY code, date(timestamp) ORDER BY timestamp, id
+                           ) AS previous_volume,
+                           LAG(amount) OVER (
+                               PARTITION BY code, date(timestamp) ORDER BY timestamp, id
+                           ) AS previous_amount
+                    FROM stock_ticks
+                ), deltas AS (
+                    SELECT id,
+                           CASE WHEN previous_volume IS NOT NULL AND volume >= previous_volume
+                                THEN volume - previous_volume END AS next_volume_delta,
+                           CASE WHEN previous_amount IS NOT NULL AND amount >= previous_amount
+                                THEN amount - previous_amount END AS next_amount_delta
+                    FROM previous
+                )
+                UPDATE stock_ticks
+                SET volume_delta = (SELECT next_volume_delta FROM deltas WHERE deltas.id = stock_ticks.id),
+                    amount_delta = (SELECT next_amount_delta FROM deltas WHERE deltas.id = stock_ticks.id)
+                WHERE id IN (SELECT id FROM deltas)
+            """)
+            connection.exec_driver_sql("""
+                WITH previous AS (
+                    SELECT id, volume, amount,
+                           LAG(volume) OVER (
+                               PARTITION BY symbol, date(timestamp) ORDER BY timestamp, id
+                           ) AS previous_volume,
+                           LAG(amount) OVER (
+                               PARTITION BY symbol, date(timestamp) ORDER BY timestamp, id
+                           ) AS previous_amount
+                    FROM market_index_bars
+                    WHERE frequency = '1SEC'
+                ), deltas AS (
+                    SELECT id,
+                           CASE WHEN previous_volume IS NOT NULL AND volume >= previous_volume
+                                THEN volume - previous_volume END AS next_volume_delta,
+                           CASE WHEN previous_amount IS NOT NULL AND amount >= previous_amount
+                                THEN amount - previous_amount END AS next_amount_delta
+                    FROM previous
+                )
+                UPDATE market_index_bars
+                SET volume_delta = (SELECT next_volume_delta FROM deltas WHERE deltas.id = market_index_bars.id),
+                    amount_delta = (SELECT next_amount_delta FROM deltas WHERE deltas.id = market_index_bars.id)
+                WHERE id IN (SELECT id FROM deltas)
+            """)
+            connection.execute(sqlite_insert(DatabaseSchemaMigration).values(
+                version=MARKET_TICK_VOLUME_MIGRATION,
+                description="Add and backfill per-second volume/amount deltas while retaining daily cumulative values",
+            ).on_conflict_do_nothing(index_elements=["version"]))
+
+    def _ensure_monitor_source_telemetry_columns(self) -> None:
+        """Keep last-run fetch telemetry available on existing SQLite databases."""
+        if not self._is_sqlite_engine:
+            return
+        table_name = MonitoringSourceRecord.__tablename__
+        columns = {
+            "last_received_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_created_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_updated_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_duration_ms": "INTEGER NOT NULL DEFAULT 0",
+        }
+        existing = {column["name"] for column in inspect(self._engine).get_columns(table_name)}
+        with self._engine.begin() as connection:
+            for column_name, column_type in columns.items():
+                if column_name not in existing:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {column_type}'
+                    )
+            connection.execute(sqlite_insert(DatabaseSchemaMigration).values(
+                version=MONITOR_SOURCE_TELEMETRY_MIGRATION,
+                description="Add received/created/updated/duration telemetry to monitoring sources",
+            ).on_conflict_do_nothing(index_elements=["version"]))
 
     def _ensure_intelligence_items_unique_index(self) -> None:
         if not self._is_sqlite_engine:
@@ -1717,6 +2004,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 cursor.execute(f"PRAGMA busy_timeout={int(self._sqlite_busy_timeout_ms)}")
                 if self._sqlite_file_db and self._sqlite_wal_enabled:
                     cursor.execute("PRAGMA journal_mode=WAL")
+                    cursor.execute("PRAGMA synchronous=NORMAL")
+                    cursor.execute("PRAGMA wal_autocheckpoint=1000")
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute("PRAGMA temp_store=MEMORY")
             except Exception as exc:
                 logger.warning("初始化 SQLite PRAGMA 失败: %s", exc)
             finally:

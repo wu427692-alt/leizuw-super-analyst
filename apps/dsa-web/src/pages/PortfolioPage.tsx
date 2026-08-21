@@ -52,6 +52,7 @@ import type {
 import { areStockCodesEquivalent, normalizeStockCode } from '../utils/stockCode';
 import { parseDecisionSignalDate } from '../utils/decisionSignalTime';
 import { buildDecisionActionLabelMap, getDecisionActionLabel } from '../utils/decisionAction';
+import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 
 const PIE_COLORS = ['#00d4ff', '#00ff88', '#ffaa00', '#ff7a45', '#7f8cff', '#ff4466'];
 const DEFAULT_PAGE_SIZE = 20;
@@ -463,13 +464,28 @@ const PortfolioPage: React.FC = () => {
     }
   }, [writeBlocked]);
 
+  const portfolioSymbols = useMemo(() => (snapshot?.accounts ?? []).flatMap(account =>
+    (account.positions ?? []).filter(position => position.market === 'cn').map(position => position.symbol)
+  ), [snapshot]);
+  const { quotes: livePositionQuotes, keyFor: quoteKey } = useRealtimeQuotes(portfolioSymbols);
+
   const positionRows: FlatPosition[] = useMemo(() => {
     if (!snapshot) return [];
     const rows: FlatPosition[] = [];
     for (const account of snapshot.accounts || []) {
       for (const position of account.positions || []) {
+        const live = position.market === 'cn' ? livePositionQuotes.get(quoteKey(position.symbol)) : undefined;
+        const lastPrice = live?.currentPrice ?? position.lastPrice;
+        const marketValueBase = live ? lastPrice * position.quantity : position.marketValueBase;
+        const unrealizedPnlBase = live ? marketValueBase - position.totalCost : position.unrealizedPnlBase;
         rows.push({
           ...position,
+          lastPrice, marketValueBase, unrealizedPnlBase,
+          unrealizedPnlPct: live && position.totalCost ? unrealizedPnlBase / position.totalCost * 100 : position.unrealizedPnlPct,
+          priceSource: live ? 'local_second_tick' : position.priceSource,
+          priceProvider: live?.source ?? position.priceProvider,
+          priceDate: live?.updateTime ?? position.priceDate,
+          priceStale: live?.isStale ?? position.priceStale,
           accountId: account.accountId,
           accountName: account.accountName,
         });
@@ -477,7 +493,7 @@ const PortfolioPage: React.FC = () => {
     }
     rows.sort((a, b) => Number(b.marketValueBase || 0) - Number(a.marketValueBase || 0));
     return rows;
-  }, [snapshot]);
+  }, [livePositionQuotes, quoteKey, snapshot]);
 
   const snapshotMatchesAccountScope = useMemo(() => {
     if (!snapshot) return false;

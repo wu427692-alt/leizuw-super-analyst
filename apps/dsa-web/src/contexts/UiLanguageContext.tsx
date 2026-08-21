@@ -28,6 +28,13 @@ export const UiLanguageProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   useEffect(() => {
     if (typeof document !== 'undefined') {
       document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
+      // All visible copy is provided by the application's own dictionaries.
+      // Prevent browser translation extensions from translating it a second
+      // time and corrupting finance terms such as "周K" and "筹码获利比例".
+      document.documentElement.setAttribute('translate', 'no');
+      document.documentElement.classList.add('notranslate');
+      document.body?.setAttribute('translate', 'no');
+      document.body?.classList.add('notranslate');
     }
   }, [language]);
 

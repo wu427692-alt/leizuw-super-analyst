@@ -113,10 +113,16 @@ describe('UiLanguageContext', () => {
 
     const toggle = screen.getByRole('button', { name: '切换界面语言' });
     expect(screen.getByText('界面语言')).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe('zh-CN');
+    expect(document.documentElement).toHaveAttribute('translate', 'no');
+    expect(document.documentElement).toHaveClass('notranslate');
+    expect(document.body).toHaveAttribute('translate', 'no');
 
     fireEvent.click(toggle);
 
     expect(localStorage.getItem(UI_LANGUAGE_STORAGE_KEY)).toBe('en');
+    expect(document.documentElement.lang).toBe('en');
+    expect(document.documentElement).toHaveAttribute('translate', 'no');
     expect(screen.getByRole('button', { name: 'Switch UI language' })).toBeInTheDocument();
     expect(screen.getByText('English')).toBeInTheDocument();
   });

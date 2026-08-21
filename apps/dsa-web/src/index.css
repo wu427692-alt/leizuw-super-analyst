@@ -2908,3 +2908,66 @@ textarea {
     text-align: left;
   }
 }
+
+/* Unified dark aurora material for data-heavy workspaces. */
+.app-page {
+  position: relative;
+  isolation: isolate;
+}
+.app-page::before {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: '';
+  background:
+    radial-gradient(circle at 18% 0%, hsl(var(--cyan) / .055), transparent 30rem),
+    radial-gradient(circle at 92% 12%, rgba(168, 85, 247, .05), transparent 34rem);
+}
+
+.aurora-workbench-shell {
+  overflow: hidden;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border) / .75) !important;
+  border-radius: 24px;
+  background: linear-gradient(145deg, hsl(var(--card) / .88), hsl(var(--background) / .72)) !important;
+  box-shadow: 0 24px 76px rgba(0, 0, 0, .26), inset 0 1px rgba(255, 255, 255, .035) !important;
+  backdrop-filter: blur(20px);
+}
+.aurora-workbench-shell * { border-color: hsl(var(--border) / .68) !important; }
+.aurora-workbench-shell [class~="bg-white"],
+.aurora-workbench-shell [class~="bg-[#F7F7F8]"],
+.aurora-workbench-shell [class~="bg-[#EEF2F7]"] {
+  background: hsl(var(--card) / .5) !important;
+}
+.aurora-workbench-shell [class~="bg-[#EEF4FF]"] { background: hsl(var(--cyan) / .1) !important; }
+.aurora-workbench-shell [class~="bg-[#D8DADF]"] { background: hsl(var(--border)) !important; }
+.aurora-workbench-shell [class~="text-[#17181A]"] { color: hsl(var(--foreground)) !important; }
+.aurora-workbench-shell [class~="text-[#4B5058]"],
+.aurora-workbench-shell [class~="text-[#62666D]"],
+.aurora-workbench-shell [class~="text-[#6B7078]"],
+.aurora-workbench-shell [class~="text-[#7B7F87]"],
+.aurora-workbench-shell [class~="text-[#8A8E95]"] { color: hsl(var(--secondary-text)) !important; }
+.aurora-workbench-shell [class~="text-[#155EEF]"] { color: hsl(var(--cyan)) !important; }
+.aurora-workbench-shell [class~="bg-[#155EEF]"] {
+  color: hsl(var(--primary-foreground)) !important;
+  background: linear-gradient(120deg, hsl(var(--cyan)), hsl(var(--primary))) !important;
+  box-shadow: 0 10px 26px hsl(var(--cyan) / .16);
+}
+.aurora-workbench-shell select,
+.aurora-workbench-shell input,
+.aurora-workbench-shell textarea {
+  color: hsl(var(--foreground));
+  background: hsl(var(--background) / .62) !important;
+  border-radius: 9px;
+}
+.aurora-workbench-shell section > div[class~="bg-white"],
+.aurora-workbench-shell section > a {
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+.aurora-workbench-shell section > a:hover { transform: translateY(-2px); }
+
+@media (max-width: 720px) {
+  .aurora-workbench { padding-inline: 8px !important; }
+  .aurora-workbench-shell { border-radius: 18px; }
+}

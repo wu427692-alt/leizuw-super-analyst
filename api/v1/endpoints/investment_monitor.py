@@ -12,9 +12,10 @@ from fastapi import BackgroundTasks
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
-from api.v1.schemas.investment_monitor import AnnouncementPackageRequest, AnnouncementSyncRequest, ExternalEventBatch, MonitorSyncRequest, MonitoringSourceCreate
+from api.v1.schemas.investment_monitor import AnnouncementPackageRequest, AnnouncementSyncRequest, DragonTigerSyncRequest, ExternalEventBatch, MonitorSyncRequest, MonitoringSourceCreate
 from src.services.investment_monitor_service import InvestmentMonitorError, InvestmentMonitorService
 from src.services.investment_monitor_worker import InvestmentMonitorWorker
+from src.services.sync_watchdog_worker import SyncWatchdogWorker
 from src.services.watchlist_backfill_worker import WatchlistBackfillWorker
 from src.services.icloud_knowledge_service import ICloudKnowledgeError, ICloudKnowledgeService, ICloudKnowledgeWorker
 
@@ -27,7 +28,16 @@ def _error(exc: Exception, status_code: int = 400) -> HTTPException:
 
 @router.get("/status", summary="监控任务与全部消息源健康状态")
 def status():
-    return {"worker": InvestmentMonitorWorker.get_instance().status(), "sources": InvestmentMonitorService().list_sources()}
+    return {
+        "watchdog": SyncWatchdogWorker.get_instance().status(),
+        "worker": InvestmentMonitorWorker.get_instance().status(),
+        "sources": InvestmentMonitorService().list_sources(),
+    }
+
+
+@router.post("/watchdog/audit", summary="立即检查同步心跳并自动修复")
+def audit_sync_watchdog():
+    return SyncWatchdogWorker.get_instance().audit_once()
 
 
 @router.get("/sources", summary="列出内置和外部消息源")
@@ -86,6 +96,47 @@ def intelligence_dashboard(days: int = Query(14, ge=7, le=90)):
     return InvestmentMonitorService().intelligence_dashboard(days=days)
 
 
+@router.get("/source-bi", summary="全部数据源存量、增量、时效与可调用能力 BI")
+def source_bi(days: int = Query(30, ge=7, le=90)):
+    return InvestmentMonitorService().source_bi(days=days)
+
+
+@router.get("/dragon-tiger/daily", summary="龙虎榜单日全市场明细与营业部席位")
+def dragon_tiger_daily(
+    trade_date: Optional[str] = None,
+    refresh: bool = Query(False, description="直接调用 Tushare top_list/top_inst 刷新该交易日"),
+):
+    try:
+        return InvestmentMonitorService().dragon_tiger_daily(trade_date=trade_date, refresh=refresh)
+    except InvestmentMonitorError as exc:
+        raise _error(exc, 502 if "获取失败" in str(exc) else 400)
+
+
+@router.get("/dragon-tiger/history", summary="查询本地龙虎榜历史库")
+def dragon_tiger_history(
+    start_date: str, end_date: str, symbol: Optional[str] = None,
+    query: Optional[str] = None, page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    try:
+        return InvestmentMonitorService().dragon_tiger_history(
+            start_date=start_date, end_date=end_date, symbol=symbol,
+            query=query, page=page, page_size=page_size,
+        )
+    except InvestmentMonitorError as exc:
+        raise _error(exc, 400)
+
+
+@router.post("/dragon-tiger/sync", summary="按交易日历补齐龙虎榜历史摘要")
+def sync_dragon_tiger(request: DragonTigerSyncRequest):
+    try:
+        return InvestmentMonitorService().sync_dragon_tiger_range(
+            request.start_date, request.end_date,
+        )
+    except InvestmentMonitorError as exc:
+        raise _error(exc, 502 if "获取失败" in str(exc) else 400)
+
+
 @router.get("/events", summary="筛选统一消息事件流")
 def events(
     days: int = Query(7, ge=1, le=3650), symbol: Optional[str] = None,
@@ -116,9 +167,38 @@ def symbol_detail(symbol: str, days: int = Query(30, ge=1, le=3650)):
     return InvestmentMonitorService().symbol_detail(symbol, days=days)
 
 
-@router.get("/super-watchlist", summary="华懋科技与胜宏科技超级关注股工作台")
+@router.get("/super-watchlist", summary="动态自选股全渠道证据工作台")
 def super_watchlist(days: int = Query(365, ge=30, le=3650)):
     return InvestmentMonitorService().super_watchlist(days=days)
+
+
+@router.get("/super-watchlist/{symbol}/essay-consensus", summary="读取最近20篇小作文的独立 AI 一致预期快照")
+def essay_consensus(symbol: str):
+    try:
+        return InvestmentMonitorService().essay_consensus(symbol)
+    except InvestmentMonitorError as exc:
+        raise _error(exc, 400)
+
+
+@router.post("/super-watchlist/{symbol}/essay-consensus/analyze", summary="重新分析该股票最近20篇匹配小作文")
+def analyze_essay_consensus(symbol: str):
+    try:
+        return InvestmentMonitorService().request_essay_consensus(symbol)
+    except InvestmentMonitorError as exc:
+        raise _error(exc, 503 if "DEEPSEEK" in str(exc).upper() else 400)
+
+
+@router.post("/super-watchlist/refresh", summary="刷新共享行情并唤醒到期情报源")
+def refresh_super_watchlist():
+    from src.services.market_data_worker import MarketDataWorker
+
+    monitor = InvestmentMonitorService()
+    return {
+        "market": MarketDataWorker.get_instance().run_now(),
+        "keyword_index": monitor.reindex_watchlist_keywords(),
+        "intelligence": InvestmentMonitorWorker.get_instance().trigger(),
+        "mode": "shared_workers",
+    }
 
 
 @router.post("/super-watchlist/{symbol}/backfill", summary="重跑单只自选股最近半年全渠道回填")

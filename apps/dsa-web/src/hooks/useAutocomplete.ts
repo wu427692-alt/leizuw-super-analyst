@@ -99,7 +99,9 @@ export function useAutocomplete(
       setHighlightedIndex(-1);
     } catch (caught) {
       const runtimeError = caught instanceof Error ? caught : new Error('Autocomplete search failed');
-      console.error('Autocomplete search failed. Falling back to plain input.', runtimeError);
+      // A malformed optional index entry must never take down the page while
+      // the user is typing. Plain input remains fully usable as a fallback.
+      console.warn('Autocomplete search unavailable; using plain input.', runtimeError);
       setError(runtimeError);
       setRuntimeFallback(true);
       setSuggestions([]);
