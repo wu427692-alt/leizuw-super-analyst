@@ -189,6 +189,22 @@ def stock_workspace(
         raise _error(exc, 400)
 
 
+@router.get("/research-center", summary="功能能力、数据健康与自选股证据决策工作台")
+def research_center(request: Request):
+    """Assemble a user-scoped, local-first research operating system."""
+    from src.services.research_decision_service import ResearchDecisionService
+
+    user_id = int(getattr(request.state, "user_id", 0) or 0)
+    symbols = None
+    if user_id > 0:
+        from src.services.user_account_service import UserAccountService
+        symbols = UserAccountService().list_watchlist(user_id)
+    try:
+        return ResearchDecisionService().overview(symbols=symbols)
+    except InvestmentMonitorError as exc:
+        raise _error(exc, 400)
+
+
 @router.get("/super-watchlist/{symbol}/essay-consensus", summary="读取最近20篇小作文的独立 AI 一致预期快照")
 def essay_consensus(symbol: str):
     try:

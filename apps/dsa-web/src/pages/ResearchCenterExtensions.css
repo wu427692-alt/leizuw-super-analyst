@@ -1,0 +1,88 @@
+.rc-uses {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.rc-uses article {
+  min-height: 145px;
+  padding: 18px;
+  border-right: 1px solid var(--rc-line);
+  border-bottom: 1px solid var(--rc-line);
+}
+
+.rc-uses article:last-child {
+  border-right: 0;
+}
+
+.rc-uses span,
+.rc-reflection > article > span {
+  color: var(--rc-signal);
+  font-size: 9px;
+}
+
+.rc-uses h3,
+.rc-reflection h3 {
+  margin: 16px 0 8px;
+  color: #fff;
+  font-size: 11px;
+}
+
+.rc-uses p,
+.rc-reflection p {
+  margin: 0;
+  color: #8f979f;
+  font-size: 8px;
+  line-height: 1.65;
+}
+
+.rc-reflection {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.rc-reflection article {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 14px;
+  min-height: 155px;
+  padding: 18px;
+  border-right: 1px solid var(--rc-line);
+  border-bottom: 1px solid var(--rc-line);
+}
+
+.rc-reflection article:nth-child(2n) {
+  border-right: 0;
+}
+
+.rc-reflection h3 {
+  margin: 0 0 8px;
+}
+
+.rc-reflection strong {
+  display: block;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #171b18;
+  color: var(--rc-signal);
+  font-size: 8px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+  .rc-uses {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .rc-uses,
+  .rc-reflection {
+    grid-template-columns: 1fr;
+  }
+
+  .rc-reflection article,
+  .rc-uses article {
+    border-right: 0;
+  }
+}

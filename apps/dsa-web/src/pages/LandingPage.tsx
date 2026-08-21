@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, BarChart3, FlaskConical, Network, Radar } from 'lucide-react';
+import { ArrowRight, BarChart3, FlaskConical, Network, Radar, ShieldCheck } from 'lucide-react';
 import './LandingPage.css';
 
 const capabilities = [
@@ -9,6 +9,7 @@ const capabilities = [
   { label: '全渠道情报', icon: Network },
   { label: '小作文洞察', icon: Radar },
   { label: '量化回测', icon: FlaskConical },
+  { label: '证据决策', icon: ShieldCheck },
 ];
 
 const leftSignals = [

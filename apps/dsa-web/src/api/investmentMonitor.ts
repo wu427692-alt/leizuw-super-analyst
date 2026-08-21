@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { AnnouncementCategoryList, AnnouncementSyncRequest, CloudKnowledgeStatus, DragonTigerDaily, DragonTigerHistory, DragonTigerSyncResult, EssayConsensusAnalysis, IntelligenceDashboard, InvestmentMonitorDashboard, MonitorEvent, MonitorEventList, MonitorStatus, MonitorSymbolDetail, SourceBI, StockWorkspace, SuperWatchlistDashboard, WatchlistBackfillJob } from '../types/investmentMonitor';
+import type { AnnouncementCategoryList, AnnouncementSyncRequest, CloudKnowledgeStatus, DragonTigerDaily, DragonTigerHistory, DragonTigerSyncResult, EssayConsensusAnalysis, IntelligenceDashboard, InvestmentMonitorDashboard, MonitorEvent, MonitorEventList, MonitorStatus, MonitorSymbolDetail, ResearchCenterOverview, SourceBI, StockWorkspace, SuperWatchlistDashboard, WatchlistBackfillJob } from '../types/investmentMonitor';
 
 export const investmentMonitorApi = {
   dashboard: async (days = 7): Promise<InvestmentMonitorDashboard> => {
@@ -51,6 +51,10 @@ export const investmentMonitorApi = {
       params: { days, refresh },
     });
     return toCamelCase<StockWorkspace>(response.data);
+  },
+  researchCenter: async (): Promise<ResearchCenterOverview> => {
+    const response = await apiClient.get('/api/v1/investment-monitor/research-center', { timeout: 45000 });
+    return toCamelCase<ResearchCenterOverview>(response.data);
   },
   refreshSuperWatchlist: async (): Promise<unknown> => {
     const response = await apiClient.post('/api/v1/investment-monitor/super-watchlist/refresh', undefined, { timeout: 60000 });

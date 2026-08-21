@@ -69,4 +69,15 @@ describe('investmentMonitorApi dragon tiger endpoints', () => {
     expect(apiClient.get).toHaveBeenCalledWith('/api/v1/investment-monitor/source-bi', { params: { days: 30 } });
     expect(result.summary.storedEventCount).toBe(23945);
   });
+
+  it('loads the evidence research center without triggering upstream refreshes', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { version: '3.0-evidence-operating-system', system: { stored_event_count: 41901 }, decision_packets: [] },
+    });
+
+    const result = await investmentMonitorApi.researchCenter();
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/v1/investment-monitor/research-center', { timeout: 45000 });
+    expect(result.system.storedEventCount).toBe(41901);
+  });
 });

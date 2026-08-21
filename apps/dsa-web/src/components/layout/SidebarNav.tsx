@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, BarChart3, Bell, BriefcaseBusiness, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Radar, RadioTower, Search, Star } from 'lucide-react';
+import { Activity, BarChart3, Bell, BriefcaseBusiness, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
 import { useAgentChatStore } from '../../stores/agentChatStore';
@@ -27,6 +27,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'home', labelKey: 'layout.nav.home', to: '/app', icon: Home, exact: true },
+  { key: 'research-center', labelKey: 'layout.nav.researchCenter', to: '/research-center', icon: ShieldCheck },
   { key: 'chat', labelKey: 'layout.nav.chat', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
   { key: 'essay-radar', labelKey: 'layout.nav.essayRadar', to: '/essay-radar', icon: Radar },
   { key: 'essay-quant', labelKey: 'layout.nav.essayQuant', to: '/essay-quant', icon: FlaskConical },

@@ -284,7 +284,7 @@
   position: relative;
   z-index: 7;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   min-height: 7.3rem;
   margin-top: clamp(-1.75rem, -2vh, -0.5rem);
   margin-bottom: clamp(1.25rem, 3vh, 2.2rem);

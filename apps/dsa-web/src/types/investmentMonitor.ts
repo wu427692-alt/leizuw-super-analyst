@@ -238,6 +238,30 @@ export type StockWorkspace = {
   iterations: Array<{ version: string; name: string; result: string }>;
 };
 
+export type ResearchDecisionPacket = {
+  symbol: string; name: string; state: '可进入研究' | '需要补证' | '数据不足'; readinessScore: number;
+  scoreComponents: Array<{ name: string; score: number; weight: number }>;
+  market: SuperWatchlistStock['market']; evidence: SuperWatchlistStock['evidence'];
+  latestEvidenceAt?: string | null; changes: MonitorEvent[];
+  agreement: { bullishFacts: number; bearishFacts: number; conflict: boolean };
+  expectations: { brokerReports: number; essayEstimates: number; asOf?: string | null; method?: string | null };
+  invalidationEvidence: SuperWatchlistStock['signals'];
+  verificationTasks: Array<{ priority: string; task: string; reason: string }>;
+  coverage: SuperWatchlistStock['coverage']; disclaimer: string;
+};
+
+export type ResearchCenterOverview = {
+  version: string; generatedAt: string;
+  iterations: Array<{ version: string; name: string; result: string }>;
+  system: { sourceCount: number; storedEventCount: number; freshSourceCount: number; liveMonitorCount: number; attentionSourceCount: number; watchlistCount: number };
+  decisionPackets: ResearchDecisionPacket[];
+  functions: Array<{ name: string; route: string; purpose: string; data: string[]; output: string }>;
+  architecture: Array<{ layer: string; logic: string }>;
+  dataSources: SourceBI['sources']; principles: string[];
+  decisionUses: Array<{ name: string; value: string }>;
+  reflection: Array<{ gap: string; impact: string; upgrade: string }>;
+};
+
 export type WatchlistBackfillJob = {
   id: number; symbol: string; stockName?: string | null; days: number;
   status: 'pending' | 'running' | 'completed' | 'partial' | 'failed'; progress: number;
