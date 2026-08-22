@@ -46,6 +46,7 @@ _SELLSIDE_SECTORS = (
 )
 
 _STRATEGY_TYPES = {"essay_event", "multi_factor", "hybrid_intelligence", "institution_track", "portfolio"}
+_OWNER_UNSET = object()
 
 _METHOD_DEFINITIONS = [
     {
@@ -105,10 +106,17 @@ def _loads(value: Optional[str], fallback: Any) -> Any:
 class EssayQuantService:
     """Turn essay mentions into bounded, auditable daily-bar event studies."""
 
-    def __init__(self, db: Optional[DatabaseManager] = None, tushare: Optional[TushareGatewayService] = None):
+    def __init__(
+        self,
+        db: Optional[DatabaseManager] = None,
+        tushare: Optional[TushareGatewayService] = None,
+        owner_id: object = _OWNER_UNSET,
+    ):
         self.db = db or DatabaseManager.get_instance()
         self.tushare = tushare or TushareGatewayService()
-        self.owner_id = current_owner_id()
+        # Background threads do not inherit request ContextVars. Callers that
+        # leave the request lifecycle must capture and pass the owner explicitly.
+        self.owner_id = current_owner_id() if owner_id is _OWNER_UNSET else owner_id
         self._coverage: Dict[str, Any] = {}
         self._target_price_date: Optional[date] = None
 
@@ -152,23 +160,58 @@ class EssayQuantService:
                 select(EssayQuantRunRecord)
                 .where(self._owner_clause(EssayQuantRunRecord))
                 .order_by(desc(EssayQuantRunRecord.id))
-                .limit(max(1, min(limit, 100)))
+                # Fetch a wider window because system-owned maintenance runs
+                # are deliberately filtered from the investor-facing history.
+                .limit(max(20, min(limit * 4, 400)))
             ).scalars().all()
         items = []
         for row in rows:
             rule = _loads(row.rule_json, {})
+            if self._is_system_run(rule):
+                continue
             result = _loads(row.result_json, {})
             robustness = result.get("robustness") or {}
+            validation = robustness.get("validation") or {}
+            test_excess = validation.get("test_average_excess_return")
+            ci = robustness.get("confidence_interval_95") or [None, None]
+            max_drawdown = (result.get("portfolio") or {}).get("max_drawdown")
             items.append({
                 "id": row.id, "name": rule.get("name") or f"研究 #{row.id}",
                 "strategy_type": rule.get("strategy_type", "essay_event"),
                 "event_count": row.event_count, "mature_event_count": row.mature_event_count,
                 "price_cutoff": row.price_cutoff,
                 "primary_average_excess": robustness.get("average_excess_return"),
-                "confidence_interval": robustness.get("confidence_interval_95"),
+                "out_of_sample_excess": test_excess,
+                "confidence_interval": ci,
+                "max_drawdown": max_drawdown,
+                "verdict": self._research_verdict(
+                    mature_count=int(row.mature_event_count or 0),
+                    out_of_sample_excess=test_excess,
+                    confidence_interval=ci,
+                    max_drawdown=max_drawdown,
+                ),
                 "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
             })
+            if len(items) >= max(1, min(limit, 100)):
+                break
         return {"items": items, "total": len(items)}
+
+    def get_run(self, run_id: int) -> Dict[str, Any]:
+        """Return one immutable result only when it belongs to this owner."""
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(EssayQuantRunRecord).where(
+                    EssayQuantRunRecord.id == int(run_id),
+                    self._owner_clause(EssayQuantRunRecord),
+                )
+            ).scalar_one_or_none()
+        if row is None:
+            raise EssayQuantError("量化运行结果不存在")
+        result = _loads(row.result_json, {})
+        result["run_id"] = row.id
+        result["rule_id"] = row.rule_id
+        result["snapshot_hash"] = (row.source_hash or "")[:16]
+        return result
 
     def research_catalog(self) -> Dict[str, Any]:
         """Return real local data inventory plus the supported research methods."""
@@ -197,17 +240,49 @@ class EssayQuantService:
 
     def latest_dashboard(self) -> Dict[str, Any]:
         with self.db.get_session() as session:
-            row = session.execute(
+            rows = session.execute(
                 select(EssayQuantRunRecord)
                 .where(self._owner_clause(EssayQuantRunRecord))
-                .order_by(desc(EssayQuantRunRecord.id)).limit(1)
-            ).scalar_one_or_none()
-        if row:
+                .order_by(desc(EssayQuantRunRecord.id)).limit(100)
+            ).scalars().all()
+        row = next((item for item in rows if not self._is_system_run(_loads(item.rule_json, {}))), None)
+        if row is not None:
             result = _loads(row.result_json, {})
             result["run_id"] = row.id
             result["rule_id"] = row.rule_id
+            result["snapshot_hash"] = (row.source_hash or "")[:16]
             return result
         return self.run(self._normalize_rule({}), refresh_prices=False, max_symbols=30, persist=False)
+
+    @staticmethod
+    def _is_system_run(rule: Dict[str, Any]) -> bool:
+        """Keep automated maintenance snapshots out of user research history."""
+        return str(rule.get("name") or "").strip() == "后台全量机构预计算"
+
+    @staticmethod
+    def _research_verdict(
+        *,
+        mature_count: int,
+        out_of_sample_excess: Any,
+        confidence_interval: Any,
+        max_drawdown: Any,
+    ) -> str:
+        """Return a conservative, explainable research-use verdict."""
+        try:
+            low, high = confidence_interval[:2]
+        except (TypeError, ValueError):
+            low, high = None, None
+        if mature_count < 30:
+            return "样本不足"
+        if out_of_sample_excess is None:
+            return "等待样本外检验"
+        if float(out_of_sample_excess) <= 0:
+            return "暂不采用"
+        if low is None or high is None or float(low) <= 0 <= float(high):
+            return "仅可观察"
+        if max_drawdown is not None and float(max_drawdown) <= -20:
+            return "风险偏高"
+        return "可进入模拟观察"
 
     def latest_institution_dashboard(self) -> Dict[str, Any]:
         """Return the durable all-institution baseline, never a user's custom rule."""

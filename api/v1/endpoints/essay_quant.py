@@ -5,9 +5,12 @@ from api.v1.schemas.essay_quant import (
     EssayQuantNaturalLanguageRequest,
     EssayQuantRuleRequest,
     EssayQuantRunRequest,
+    EssayQuantTaskListResponse,
+    EssayQuantTaskResponse,
 )
 from src.services.essay_quant_planner import EssayQuantNaturalLanguagePlanner
 from src.services.essay_quant_service import EssayQuantError, EssayQuantService
+from src.services.essay_quant_task_service import EssayQuantTaskManager
 from src.services.essay_quant_worker import EssayQuantWorker
 
 router = APIRouter()
@@ -30,6 +33,45 @@ def research_catalog():
 @router.get("/runs", summary="读取量化研究运行历史")
 def runs(limit: int = 30):
     return EssayQuantService().list_runs(limit)
+
+
+@router.get("/runs/{run_id}", summary="读取本人一次已完成的量化运行结果")
+def run_result(run_id: int):
+    try:
+        return EssayQuantService().get_run(run_id)
+    except EssayQuantError as exc:
+        raise _error(exc, 404)
+
+
+@router.post(
+    "/tasks",
+    status_code=202,
+    response_model=EssayQuantTaskResponse,
+    summary="提交本人量化后台任务",
+)
+def create_task(request: EssayQuantRunRequest):
+    return EssayQuantTaskManager.get_instance().submit(request.model_dump())
+
+
+@router.get(
+    "/tasks",
+    response_model=EssayQuantTaskListResponse,
+    summary="读取本人量化后台任务",
+)
+def list_tasks(limit: int = 50):
+    return EssayQuantTaskManager.get_instance().list_tasks(limit)
+
+
+@router.get(
+    "/tasks/{task_id}",
+    response_model=EssayQuantTaskResponse,
+    summary="读取本人量化后台任务状态",
+)
+def task_status(task_id: str):
+    task = EssayQuantTaskManager.get_instance().get_task(task_id)
+    if task is None:
+        raise _error(EssayQuantError("量化后台任务不存在"), 404)
+    return task
 
 
 @router.post("/natural-language/plan", summary="用大模型生成受约束量化研究方案与模板代码")

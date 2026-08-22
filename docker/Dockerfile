@@ -14,6 +14,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY apps/dsa-web/ ./
 RUN npm run build
+RUN npm install -g tyc-cli@0.3.8
 
 # Pin to bookworm: wkhtmltopdf was removed from Debian testing (2025)
 FROM python:3.11-slim-bookworm
@@ -56,7 +57,11 @@ COPY bot/ ./bot/
 COPY src/ ./src/
 COPY strategies/ ./strategies/
 COPY --from=web-builder /app/static ./static/
+COPY --from=web-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=web-builder /usr/local/lib/node_modules/tyc-cli /usr/local/lib/node_modules/tyc-cli
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN ln -s /usr/local/lib/node_modules/tyc-cli/dist/index.js /usr/local/bin/tyc
 
 # Verify the bundled AlphaSift adapter from requirements.
 RUN python -c "import alphasift.dsa_adapter"

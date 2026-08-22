@@ -73,6 +73,10 @@ def test_institution_dashboard_is_not_overwritten_by_custom_run(quant, monkeypat
     assert custom["run_id"] > baseline["run_id"]
     assert quant.latest_dashboard()["run_id"] == custom["run_id"]
     assert quant.latest_institution_dashboard()["run_id"] == baseline["run_id"]
+    visible_runs = quant.list_runs()
+    assert visible_runs["total"] == 1
+    assert [item["id"] for item in visible_runs["items"]] == [custom["run_id"]]
+    assert visible_runs["items"][0]["name"] == "中信电子跟踪策略"
 
 
 def test_unanalyzed_history_with_explicit_symbol_is_available_to_backtest(quant, monkeypatch):

@@ -19,7 +19,7 @@ describe('essayQuantApi', () => {
 
     const result = await essayQuantApi.dashboard();
 
-    expect(apiClient.get).toHaveBeenCalledWith('/api/v1/essay-quant/institution-dashboard');
+    expect(apiClient.get).toHaveBeenCalledWith('/api/v1/essay-quant/dashboard');
     expect(result.summary.firstMention30dCount).toBe(2);
     expect(result.firstMentions30d[0].topicId).toBe('one');
     expect(result.trendSignals[0].momentum20d).toBe(3.5);
@@ -44,5 +44,19 @@ describe('essayQuantApi', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/api/v1/essay-quant/run', expect.objectContaining({
       strategy_type: 'essay_event', refresh_prices: false,
     }), { timeout: 180000 });
+  });
+
+  it('submits a durable background task without holding the page request open', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { task_id: 'task-1', status: 'queued', progress: 0 } });
+    await essayQuantApi.startTask({
+      name: '后台事件研究', sourceQuery: '', signalDirection: 'all', lookbackDays: 365,
+      holdingPeriods: [5, 10, 20], firstMentionOnly: false, firstMentionWindowDays: 180,
+      minImportance: 60, minConfidence: 0.5, benchmarkCode: '000300.SH', portfolioSize: 10,
+      strategyType: 'essay_event', rawNotePolicy: 'exclude', dedupeWindowDays: 3,
+      transactionCostBps: 12, validationMethod: 'walk_forward',
+    });
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/essay-quant/tasks', expect.objectContaining({
+      name: '后台事件研究', refresh_prices: false,
+    }));
   });
 });

@@ -1086,7 +1086,13 @@ def start_api_server(host: str, port: int, config: Config) -> None:
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()
 
-    timeout_seconds = 3.0
+    try:
+        timeout_seconds = max(
+            3.0,
+            min(float(os.getenv("API_STARTUP_TIMEOUT_SECONDS", "60")), 300.0),
+        )
+    except (TypeError, ValueError):
+        timeout_seconds = 60.0
     wait_deadline = time.time() + timeout_seconds
     while time.time() < wait_deadline:
         if startup_error:

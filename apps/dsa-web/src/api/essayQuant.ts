@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan, EssayQuantPrecomputeStatus, EssayQuantRule, EssayQuantRunHistory } from '../types/essayQuant';
+import type { EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan, EssayQuantPrecomputeStatus, EssayQuantRule, EssayQuantRunHistory, EssayQuantTask, EssayQuantTaskList } from '../types/essayQuant';
 
 const payload = (rule: EssayQuantRule) => ({
   name: rule.name, source_query: rule.sourceQuery, signal_direction: rule.signalDirection,
@@ -14,11 +14,17 @@ const payload = (rule: EssayQuantRule) => ({
 });
 
 export const essayQuantApi = {
-  dashboard: async (): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get('/api/v1/essay-quant/institution-dashboard')).data),
+  dashboard: async (): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get('/api/v1/essay-quant/dashboard')).data),
   precomputeStatus: async (): Promise<EssayQuantPrecomputeStatus> => toCamelCase((await apiClient.get('/api/v1/essay-quant/precompute/status')).data),
   requestPrecompute: async (): Promise<EssayQuantPrecomputeStatus> => toCamelCase((await apiClient.post('/api/v1/essay-quant/precompute/run')).data),
   catalog: async (): Promise<EssayQuantCatalog> => toCamelCase((await apiClient.get('/api/v1/essay-quant/research-catalog')).data),
   runs: async (): Promise<EssayQuantRunHistory> => toCamelCase((await apiClient.get('/api/v1/essay-quant/runs')).data),
+  tasks: async (): Promise<EssayQuantTaskList> => toCamelCase((await apiClient.get('/api/v1/essay-quant/tasks')).data),
+  taskStatus: async (taskId: string): Promise<EssayQuantTask> => toCamelCase((await apiClient.get(`/api/v1/essay-quant/tasks/${taskId}`)).data),
+  runResult: async (runId: number): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get(`/api/v1/essay-quant/runs/${runId}`)).data),
+  startTask: async (rule: EssayQuantRule): Promise<EssayQuantTask> => toCamelCase((await apiClient.post('/api/v1/essay-quant/tasks', {
+    ...payload(rule), rule_id: rule.id, refresh_prices: false, max_symbols: 30,
+  })).data),
   plan: async (prompt: string): Promise<EssayQuantPlan> => toCamelCase((await apiClient.post('/api/v1/essay-quant/natural-language/plan', { prompt })).data),
   executePlan: async (rule: EssayQuantRule): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.post('/api/v1/essay-quant/natural-language/execute', { rule: payload(rule), refresh_prices: false }, { timeout: 180000 })).data),
   rules: async (): Promise<{ items: EssayQuantRule[]; total: number }> => toCamelCase((await apiClient.get('/api/v1/essay-quant/rules')).data),

@@ -643,6 +643,30 @@ class EssayQuantRunRecord(Base):
     created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
 
 
+class EssayQuantTaskRecord(Base):
+    """Durable owner-scoped background execution state for quant research."""
+
+    __tablename__ = 'essay_quant_tasks'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(64), nullable=False, unique=True, index=True)
+    owner_id = Column(String(64), index=True)
+    status = Column(String(20), nullable=False, default='queued', index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    message = Column(String(300), nullable=False, default='任务已加入后台队列')
+    request_json = Column(Text, nullable=False)
+    result_run_id = Column(Integer, ForeignKey('essay_quant_runs.id', ondelete='SET NULL'), index=True)
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+    started_at = Column(DateTime, index=True)
+    completed_at = Column(DateTime, index=True)
+
+    __table_args__ = (
+        Index('ix_essay_quant_task_owner_status', 'owner_id', 'status'),
+    )
+
+
 class MonitoringSourceRecord(Base):
     """可插拔投资情报源及其健康状态。"""
 

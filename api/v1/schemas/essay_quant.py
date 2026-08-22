@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,3 +36,22 @@ class EssayQuantNaturalLanguageRequest(BaseModel):
 class EssayQuantExecutePlanRequest(BaseModel):
     rule: EssayQuantRuleRequest
     refresh_prices: bool = True
+
+
+class EssayQuantTaskResponse(BaseModel):
+    task_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    progress: int = Field(ge=0, le=100)
+    message: str
+    name: str
+    strategy_type: str
+    result_run_id: Optional[int] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class EssayQuantTaskListResponse(BaseModel):
+    items: List[EssayQuantTaskResponse]
+    total: int

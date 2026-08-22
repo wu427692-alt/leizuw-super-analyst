@@ -1,0 +1,23 @@
+services:
+  server:
+    env_file:
+      - ../.env
+      - ../cloud-config/.env
+    volumes:
+      - ../cloud-config:/app/config
+      - ../tyc-config:/home/dsa/.tyc
+    environment:
+      - API_PORT=8000
+      - API_STARTUP_TIMEOUT_SECONDS=120
+      - WEBUI_HOST=0.0.0.0
+      - DATABASE_PATH=/app/data/stock_analysis.db
+      - ENV_FILE=/app/config/.env
+      - MAX_WORKERS=1
+      - INVESTMENT_MONITOR_MAX_WORKERS=2
+      - ICLOUD_KNOWLEDGE_AUTO_START=false
+    deploy:
+      resources:
+        limits:
+          memory: 1400M
+        reservations:
+          memory: 512M

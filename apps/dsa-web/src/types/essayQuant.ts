@@ -26,7 +26,7 @@ export type EssayQuantMethodAnalysis = {
   diagnostics: Array<{ label: string; value?: string | number | null; note: string }>;
 };
 export type EssayQuantDashboard = {
-  runId?: number; ruleId?: number; generatedAt: string; rule: EssayQuantRule;
+  runId?: number; ruleId?: number; snapshotHash?: string; generatedAt: string; rule: EssayQuantRule;
   summary: { eventCount: number; matureEventCount: number; coveredStockCount: number; firstMention30dCount: number; metrics: QuantMetric[]; excessMetrics: QuantMetric[] };
   eventCurve: Array<{ day: number; strategy?: number | null; benchmark?: number | null; sampleCount: number }>;
   researchGroupRankings: Array<{ researchGroup: string; eventCount: number; matureCount: number; rankEligible?: boolean; winRate: number; adjustedWinRate: number; averageReturn: number; averageExcessReturn?: number | null; score: number }>;
@@ -48,7 +48,28 @@ export type EssayQuantCatalog = {
   safeguards: string[];
 };
 
-export type EssayQuantRunHistory = { items: Array<{ id: number; name: string; strategyType: string; eventCount: number; matureEventCount: number; priceCutoff?: string | null; primaryAverageExcess?: number | null; confidenceInterval?: [number | null, number | null]; createdAt?: string | null }>; total: number };
+export type EssayQuantRunHistory = { items: Array<{
+  id: number; name: string; strategyType: string; eventCount: number; matureEventCount: number;
+  priceCutoff?: string | null; primaryAverageExcess?: number | null;
+  outOfSampleExcess?: number | null; confidenceInterval?: [number | null, number | null];
+  maxDrawdown?: number | null; verdict?: string | null; createdAt?: string | null;
+}>; total: number };
+
+export type EssayQuantTask = {
+  taskId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  message: string;
+  name: string;
+  strategyType: string;
+  resultRunId?: number | null;
+  error?: string | null;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+};
+
+export type EssayQuantTaskList = { items: EssayQuantTask[]; total: number };
 
 export type EssayQuantPlan = {
   prompt: string;

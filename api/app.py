@@ -320,6 +320,7 @@ async def app_lifespan(app: FastAPI):
     market_data_worker = None
     data_storage_worker = None
     essay_quant_worker = None
+    essay_quant_task_manager = None
     if os.getenv("DATA_STORAGE_MAINTENANCE_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.data_storage_service import DataStorageMaintenanceWorker
@@ -378,6 +379,14 @@ async def app_lifespan(app: FastAPI):
             app.state.essay_quant_worker = essay_quant_worker
         except Exception as exc:  # noqa: BLE001
             logger.warning("Essay quant precompute worker did not start: %s", exc)
+    try:
+        from src.services.essay_quant_task_service import EssayQuantTaskManager
+
+        essay_quant_task_manager = EssayQuantTaskManager.get_instance()
+        essay_quant_task_manager.start()
+        app.state.essay_quant_task_manager = essay_quant_task_manager
+    except Exception as exc:  # noqa: BLE001 - user tasks must not prevent API startup.
+        logger.warning("Essay quant task manager did not start: %s", exc)
     if os.getenv("INVESTMENT_MONITOR_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.investment_monitor_worker import InvestmentMonitorWorker
@@ -451,6 +460,10 @@ async def app_lifespan(app: FastAPI):
             essay_quant_worker.stop()
             if hasattr(app.state, "essay_quant_worker"):
                 delattr(app.state, "essay_quant_worker")
+        if essay_quant_task_manager is not None:
+            essay_quant_task_manager.stop()
+            if hasattr(app.state, "essay_quant_task_manager"):
+                delattr(app.state, "essay_quant_task_manager")
         if icloud_knowledge_worker is not None:
             icloud_knowledge_worker.stop()
             if hasattr(app.state, "icloud_knowledge_worker"):

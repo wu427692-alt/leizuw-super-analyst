@@ -28,7 +28,9 @@ env/
 .git/
 .github/
 .claude/reviews/
-data/
+/data/
+!src/data/
+!src/data/**
 logs/
 reports/
 *.log
