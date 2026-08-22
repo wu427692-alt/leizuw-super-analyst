@@ -3,6 +3,7 @@ import json
 import os
 
 import pytest
+from sqlalchemy import event
 
 from src.config import Config
 from src.services.essay_quant_service import EssayQuantService
@@ -77,6 +78,39 @@ def test_institution_dashboard_is_not_overwritten_by_custom_run(quant, monkeypat
     assert visible_runs["total"] == 1
     assert [item["id"] for item in visible_runs["items"]] == [custom["run_id"]]
     assert visible_runs["items"][0]["name"] == "中信电子跟踪策略"
+
+
+def test_dashboard_candidate_lookup_does_not_materialize_every_result(quant, monkeypatch):
+    monkeypatch.setattr("src.services.essay_quant_service.utc_naive_now", lambda: datetime(2026, 8, 10))
+    quant.run(
+        {"name": "后台全量机构预计算", "source_query": "", "lookback_days": 30, "holding_periods": [5]},
+        refresh_prices=False,
+        persist=True,
+    )
+    quant.run(
+        {"name": "用户策略", "source_query": "中信", "lookback_days": 30, "holding_periods": [5]},
+        refresh_prices=False,
+        persist=True,
+    )
+    statements = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    event.listen(quant.db._engine, "before_cursor_execute", capture)
+    try:
+        quant.latest_dashboard()
+        quant.latest_institution_dashboard()
+        quant.list_runs()
+    finally:
+        event.remove(quant.db._engine, "before_cursor_execute", capture)
+
+    candidate_queries = [
+        statement for statement in statements
+        if "essay_quant_runs" in statement and "rule_json" in statement and "LIMIT" in statement
+    ]
+    assert candidate_queries
+    assert all("result_json" not in statement.split("FROM", 1)[0] for statement in candidate_queries)
 
 
 def test_unanalyzed_history_with_explicit_symbol_is_available_to_backtest(quant, monkeypatch):

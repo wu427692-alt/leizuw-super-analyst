@@ -37,6 +37,10 @@ services:
       - APP_STARTUP_WARMUP_DELAY_SECONDS=4
       - SQLITE_CACHE_SIZE_KIB=32768
       - SQLITE_MMAP_SIZE_MB=128
+      # Data adapters create short-lived Pandas/HTTP buffers. Limit glibc arena
+      # fragmentation and return large freed blocks sooner on small instances.
+      - MALLOC_ARENA_MAX=2
+      - MALLOC_TRIM_THRESHOLD_=131072
       - USER_SESSION_CACHE_SECONDS=30
       - ESSAY_QUANT_AUTO_START=false
       - DATA_STORAGE_MAINTENANCE_AUTO_START=false

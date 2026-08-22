@@ -17,6 +17,7 @@ import statistics
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import desc, func, or_, select, text
+from sqlalchemy.orm import load_only
 
 from src.data.stock_index_loader import get_index_stock_name, get_stock_name_index_map
 from src.request_identity import current_owner_id
@@ -155,20 +156,35 @@ class EssayQuantService:
             return self._rule_dict(row)
 
     def list_runs(self, limit: int = 30) -> Dict[str, Any]:
+        requested = max(1, min(limit, 100))
         with self.db.get_session() as session:
-            rows = session.execute(
+            # result_json contains the full event path and can be hundreds of
+            # kilobytes per run.  Read only the tiny rule document while
+            # deciding which maintenance rows to hide, then hydrate just the
+            # investor-visible rows.  The previous query materialized as many
+            # as 400 complete backtests on every history refresh.
+            candidates = session.execute(
                 select(EssayQuantRunRecord)
+                .options(load_only(EssayQuantRunRecord.id, EssayQuantRunRecord.rule_json))
                 .where(self._owner_clause(EssayQuantRunRecord))
                 .order_by(desc(EssayQuantRunRecord.id))
                 # Fetch a wider window because system-owned maintenance runs
                 # are deliberately filtered from the investor-facing history.
                 .limit(max(20, min(limit * 4, 400)))
             ).scalars().all()
+            visible_ids = [
+                row.id for row in candidates
+                if not self._is_system_run(_loads(row.rule_json, {}))
+            ][:requested]
+            rows = [] if not visible_ids else session.execute(
+                select(EssayQuantRunRecord)
+                .where(EssayQuantRunRecord.id.in_(visible_ids))
+                .order_by(desc(EssayQuantRunRecord.id))
+                .execution_options(populate_existing=True)
+            ).scalars().all()
         items = []
         for row in rows:
             rule = _loads(row.rule_json, {})
-            if self._is_system_run(rule):
-                continue
             result = _loads(row.result_json, {})
             robustness = result.get("robustness") or {}
             validation = robustness.get("validation") or {}
@@ -192,7 +208,7 @@ class EssayQuantService:
                 ),
                 "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
             })
-            if len(items) >= max(1, min(limit, 100)):
+            if len(items) >= requested:
                 break
         return {"items": items, "total": len(items)}
 
@@ -240,12 +256,21 @@ class EssayQuantService:
 
     def latest_dashboard(self) -> Dict[str, Any]:
         with self.db.get_session() as session:
-            rows = session.execute(
+            candidates = session.execute(
                 select(EssayQuantRunRecord)
+                .options(load_only(EssayQuantRunRecord.id, EssayQuantRunRecord.rule_json))
                 .where(self._owner_clause(EssayQuantRunRecord))
                 .order_by(desc(EssayQuantRunRecord.id)).limit(100)
             ).scalars().all()
-        row = next((item for item in rows if not self._is_system_run(_loads(item.rule_json, {}))), None)
+            candidate = next((
+                item for item in candidates
+                if not self._is_system_run(_loads(item.rule_json, {}))
+            ), None)
+            row = session.execute(
+                select(EssayQuantRunRecord)
+                .where(EssayQuantRunRecord.id == candidate.id)
+                .execution_options(populate_existing=True)
+            ).scalar_one() if candidate is not None else None
         if row is not None:
             result = _loads(row.result_json, {})
             result["run_id"] = row.id
@@ -287,15 +312,22 @@ class EssayQuantService:
     def latest_institution_dashboard(self) -> Dict[str, Any]:
         """Return the durable all-institution baseline, never a user's custom rule."""
         with self.db.get_session() as session:
-            rows = session.execute(
+            candidates = session.execute(
                 select(EssayQuantRunRecord)
+                .options(load_only(EssayQuantRunRecord.id, EssayQuantRunRecord.rule_json))
                 .where(EssayQuantRunRecord.owner_id.is_(None))
                 .order_by(desc(EssayQuantRunRecord.id)).limit(100)
             ).scalars().all()
-        for row in rows:
-            rule = _loads(row.rule_json, {})
-            if rule.get("name") != "后台全量机构预计算" or rule.get("source_query"):
-                continue
+            candidate = next((item for item in candidates if (
+                (rule := _loads(item.rule_json, {})).get("name") == "后台全量机构预计算"
+                and not rule.get("source_query")
+            )), None)
+            row = session.execute(
+                select(EssayQuantRunRecord)
+                .where(EssayQuantRunRecord.id == candidate.id)
+                .execution_options(populate_existing=True)
+            ).scalar_one() if candidate is not None else None
+        if row is not None:
             result = _loads(row.result_json, {})
             result["run_id"] = row.id
             result["rule_id"] = row.rule_id
