@@ -18,6 +18,12 @@ services:
       - INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES=10
       - INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES=360
       - MARKET_TICK_POLL_SECONDS=60
+      # The persistent cloud database already contains historical bars. Avoid
+      # reloading years of history after every container restart; newly added
+      # symbols still trigger their own incremental bootstrap.
+      - MARKET_STARTUP_BOOTSTRAP_ENABLED=false
+      - MARKET_INTRADAY_SESSIONS=5
+      - MARKET_DAILY_HISTORY_DAYS=730
       - ZSXQ_MCP_POLL_SEC=10
       - ZSXQ_MCP_MAX_PAGES_PER_SYNC=3
       - ESSAY_ANALYSIS_POLL_SEC=5
@@ -39,6 +45,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1100M
+          # The first catch-up pass can briefly exceed 1.1 GiB while a single
+          # upstream client materializes a full-market response.  Keep worker
+          # concurrency at one, but leave enough cgroup headroom to use the
+          # host's configured swap instead of entering a restart loop.
+          memory: 1400M
         reservations:
-          memory: 384M
+          memory: 512M

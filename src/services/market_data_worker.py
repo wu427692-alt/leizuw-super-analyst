@@ -65,7 +65,10 @@ class MarketDataWorker:
                 self._thread = threading.Thread(target=self._run, name="market-data-worker", daemon=True)
                 self._thread.start()
                 started_new = True
-        if started_new:
+        startup_bootstrap_enabled = os.getenv(
+            "MARKET_STARTUP_BOOTSTRAP_ENABLED", "true",
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if started_new and startup_bootstrap_enabled:
             self._schedule_bootstrap(list(get_config().stock_list))
         return self.status()
 
