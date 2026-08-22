@@ -149,15 +149,30 @@ class EssayAnalysisRepository:
         progress = self.progress()
         now = utc_naive_now()
         with self.db.get_session() as session:
-            unqueued, earliest, latest = session.execute(
-                select(
-                    func.count(ResearchNote.id),
-                    func.min(ResearchNote.created_at),
-                    func.max(ResearchNote.created_at),
-                )
-                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
-                .where(EssayAnalysisRecord.id.is_(None))
-            ).one()
+            # Counting missing rows through a full LEFT JOIN became the
+            # slowest essay-system endpoint once the local archive passed one
+            # hundred thousand notes. The FK is one-to-one, so total minus
+            # queued is exact and uses the two primary-key indexes.
+            total_notes = session.execute(select(func.count(ResearchNote.id))).scalar() or 0
+            queued_notes = session.execute(select(func.count(EssayAnalysisRecord.id))).scalar() or 0
+            unqueued = max(0, int(total_notes) - int(queued_notes))
+            earliest = latest = None
+            if unqueued:
+                missing_analysis = ~select(EssayAnalysisRecord.id).where(
+                    EssayAnalysisRecord.topic_id == ResearchNote.topic_id
+                ).exists()
+                earliest = session.execute(
+                    select(ResearchNote.created_at)
+                    .where(missing_analysis)
+                    .order_by(asc(ResearchNote.created_at), asc(ResearchNote.id))
+                    .limit(1)
+                ).scalar_one_or_none()
+                latest = session.execute(
+                    select(ResearchNote.created_at)
+                    .where(missing_analysis)
+                    .order_by(desc(ResearchNote.created_at), desc(ResearchNote.id))
+                    .limit(1)
+                ).scalar_one_or_none()
             (
                 earliest_note,
                 latest_note,

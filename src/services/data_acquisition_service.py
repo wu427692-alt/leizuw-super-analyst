@@ -511,7 +511,8 @@ class DataAcquisitionService:
                 resolved_key = str(resolved.get("name") or resolved.get("creditCode") or search_key)
                 rows.append({"query_company": search_key, "facet": "entity_resolution", "status": "success", "payload": resolved})
                 commands = TYC_FULL_COMMANDS if resource == "company_full" else {resource: TYC_COMMANDS[resource]}
-                with ThreadPoolExecutor(max_workers=min(6, len(commands))) as pool:
+                worker_limit = max(1, min(int(os.getenv("DATA_ACQUISITION_MAX_WORKERS", "6")), 6))
+                with ThreadPoolExecutor(max_workers=min(worker_limit, len(commands))) as pool:
                     futures = {pool.submit(self._run_tyc, command, resolved_key): facet for facet, command in commands.items()}
                     for future in as_completed(futures):
                         facet = futures[future]

@@ -905,7 +905,8 @@ class EssayQuantService:
             )
             return symbol, daily, adj
 
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="essay-quant-price") as executor:
+        price_workers = max(1, min(int(os.getenv("ESSAY_QUANT_PRICE_WORKERS", "4")), 4))
+        with ThreadPoolExecutor(max_workers=price_workers, thread_name_prefix="essay-quant-price") as executor:
             future_map = {executor.submit(fetch, symbol): symbol for symbol in symbols}
             for future in as_completed(future_map):
                 symbol = future_map[future]

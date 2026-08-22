@@ -14,6 +14,11 @@ services:
       - ENV_FILE=/app/config/.env
       - MAX_WORKERS=1
       - INVESTMENT_MONITOR_MAX_WORKERS=1
+      - ESSAY_ANALYSIS_CONCURRENCY=1
+      - DATA_ACQUISITION_MAX_WORKERS=1
+      - ESSAY_QUANT_PRICE_WORKERS=1
+      - GENERATION_BACKEND_MAX_CONCURRENCY=1
+      - LOCAL_CLI_BACKEND_MAX_CONCURRENCY=1
       - INVESTMENT_MONITOR_POLL_SEC=15
       - INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES=10
       - INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES=360
@@ -32,9 +37,11 @@ services:
       - CNINFO_WATCHLIST_WINDOWS_PER_CYCLE=1
       - SYNC_WATCHDOG_INTERVAL_SEC=120
       - SYNC_WATCHDOG_STALE_MULTIPLIER=12
-      - APP_STARTUP_WARMUP=false
+      # Warm only lightweight, indexed first-page views after the API is
+      # already listening. Heavy dashboards stay lazy and cache-backed.
+      - APP_STARTUP_WARMUP=true
       - APP_STARTUP_WARMUP_PROFILE=essential
-      - APP_STARTUP_WARMUP_DELAY_SECONDS=4
+      - APP_STARTUP_WARMUP_DELAY_SECONDS=10
       - SQLITE_CACHE_SIZE_KIB=32768
       - SQLITE_MMAP_SIZE_MB=128
       # Data adapters create short-lived Pandas/HTTP buffers. Limit glibc arena
@@ -49,6 +56,9 @@ services:
     deploy:
       resources:
         limits:
+          # Preserve enough CPU for SSH, nginx and the kernel even when a
+          # user starts a large quant/data task on the 2-vCPU instance.
+          cpus: "1.75"
           # The first catch-up pass can briefly exceed 1.1 GiB while a single
           # upstream client materializes a full-market response.  Keep worker
           # concurrency at one, but leave enough cgroup headroom to use the

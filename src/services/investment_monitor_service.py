@@ -638,37 +638,49 @@ class InvestmentMonitorService:
     def dashboard(self, *, days: int = 7) -> Dict[str, Any]:
         safe_days = max(1, min(int(days), 90))
         watchlist = self.watchlist()
-        events = [event for event in self.repo.all_recent_events(days=safe_days) if event["event_type"] != "realtime_quote"]
-        perspective_counts = Counter(event["perspective"] for event in events)
-        type_counts = Counter(event["event_type"] for event in events)
-        source_counts = Counter(event["source_key"] for event in events)
-        evidence_counts = Counter(self._event_evidence(event)["evidence_level"] for event in events)
-        channel_counts = Counter(self._event_evidence(event)["channel"] for event in events)
-        original_count = sum(1 for event in events if event.get("url"))
-        symbol_buckets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        for event in events:
-            for symbol in event["symbols"]:
-                symbol_buckets[symbol].append(event)
+        stats = self.repo.recent_event_stats(days=safe_days)
+        # Only the visible event cards need document bodies. Counts and
+        # distributions above are exact SQL aggregates, so a dashboard request
+        # never materialises the full news/essay corpus in Python.
+        events = self.repo.all_recent_events(days=safe_days, limit=120)
+        perspective_counts = Counter(stats["perspectives"])
+        type_counts = Counter(stats["event_types"])
+        source_counts = Counter(stats["sources"])
+        source_rows = self.repo.list_sources()
+        source_meta = {row["source_key"]: row for row in source_rows}
+        evidence_counts: Counter = Counter()
+        channel_counts: Counter = Counter()
+        for source_key, count in source_counts.items():
+            source = source_meta.get(source_key) or {}
+            config = source.get("config") or {}
+            evidence_counts[str(config.get("evidence_level") or "unverified")] += count
+            channel_counts[str(source.get("category") or "other")] += count
+        symbol_buckets = {
+            symbol: self.repo.all_symbol_events(symbol=symbol, days=safe_days)
+            for symbol in watchlist
+        }
         cards = [
             self._symbol_card(symbol, self._stock_name(symbol), symbol_buckets.get(symbol, []))
             for symbol in watchlist
         ]
-        latest = sorted(events, key=lambda event: event.get("event_at") or "", reverse=True)
+        latest = events
+        event_count = int(stats["event_count"])
+        original_count = int(stats["original_link_count"])
         return {
             "days": safe_days,
             "generated_at": utc_naive_now().isoformat() + "Z",
             "watchlist": cards,
             "summary": {
-                "event_count": len(events),
+                "event_count": event_count,
                 "watchlist_count": len(watchlist),
-                "high_priority_count": sum(1 for event in events if event["importance_score"] >= 75),
-                "bullish_count": sum(1 for event in events if event["sentiment"] == "bullish"),
-                "bearish_count": sum(1 for event in events if event["sentiment"] == "bearish"),
-                "active_source_count": len(source_counts),
-                "factual_count": len(events) - evidence_counts["unverified"],
+                "high_priority_count": int(stats["high_priority_count"]),
+                "bullish_count": int(stats["bullish_count"]),
+                "bearish_count": int(stats["bearish_count"]),
+                "active_source_count": int(stats["active_source_count"]),
+                "factual_count": event_count - evidence_counts["unverified"],
                 "unverified_count": evidence_counts["unverified"],
                 "original_link_count": original_count,
-                "original_link_coverage": round(original_count * 100 / len(events), 1) if events else 0,
+                "original_link_coverage": round(original_count * 100 / event_count, 1) if event_count else 0,
             },
             "perspectives": self._counter_rows(perspective_counts),
             "event_types": self._counter_rows(type_counts, 12),
@@ -683,7 +695,11 @@ class InvestmentMonitorService:
     def intelligence_dashboard(self, *, days: int = 14) -> Dict[str, Any]:
         """Decision-oriented aggregates for the multi-page intelligence workbench."""
         safe_days = max(7, min(int(days), 90))
-        events = [event for event in self.repo.all_recent_events(days=safe_days * 2) if event["event_type"] != "realtime_quote"]
+        current_stats = self.repo.recent_event_stats(days=safe_days)
+        combined_stats = self.repo.recent_event_stats(days=safe_days * 2)
+        # Keep a bounded document window for cards and contradictions. Exact
+        # totals/trends come from narrow SQL aggregates above.
+        events = self.repo.all_recent_events(days=safe_days * 2, limit=5000)
         now = utc_naive_now()
         current_cutoff = now - timedelta(days=safe_days)
         previous_cutoff = now - timedelta(days=safe_days * 2)
@@ -720,26 +736,44 @@ class InvestmentMonitorService:
                 seen_snapshots.add(key)
             decision_current.append(event)
 
+        source_rows = self.repo.list_sources()
+        source_meta = {row["source_key"]: row for row in source_rows}
+
+        def source_evidence(source_key: str) -> str:
+            config = (source_meta.get(source_key) or {}).get("config") or {}
+            return str(config.get("evidence_level") or "unverified")
+
+        def source_channel(source_key: str) -> str:
+            return str((source_meta.get(source_key) or {}).get("category") or "other")
+
         daily: Dict[str, Counter] = defaultdict(Counter)
         for offset in range(safe_days - 1, -1, -1):
             daily[(now - timedelta(days=offset)).date().isoformat()]
-        channel_rows: Dict[str, Counter] = defaultdict(Counter)
-        for event in current:
-            day = parsed_at(event).date().isoformat()
+        for row in current_stats["daily_sources"]:
+            day = str(row["date"])
             if day not in daily:
                 continue
-            evidence = self._event_evidence(event)
-            level, channel = evidence["evidence_level"], evidence["channel"]
-            daily[day]["total"] += 1
-            daily[day]["high_priority"] += int(event["importance_score"] >= 75)
-            daily[day]["unverified"] += int(level == "unverified")
-            daily[day]["factual"] += int(level != "unverified")
-            channel_rows[channel]["count"] += 1
-            channel_rows[channel]["high_priority"] += int(event["importance_score"] >= 75)
-            channel_rows[channel][event["sentiment"]] += 1
+            count = int(row["count"])
+            daily[day]["total"] += count
+            daily[day]["high_priority"] += int(row["high_priority"])
+            if source_evidence(str(row["source_key"])) == "unverified":
+                daily[day]["unverified"] += count
+            else:
+                daily[day]["factual"] += count
 
-        current_channels = Counter(self._event_evidence(event)["channel"] for event in current)
-        previous_channels = Counter(self._event_evidence(event)["channel"] for event in previous)
+        channel_rows: Dict[str, Counter] = defaultdict(Counter)
+        current_channels: Counter = Counter()
+        previous_channels: Counter = Counter()
+        for source_key, count in current_stats["sources"].items():
+            channel = source_channel(source_key)
+            current_channels[channel] += int(count)
+            channel_rows[channel]["count"] += int(count)
+            channel_rows[channel]["high_priority"] += int(current_stats["source_high_priority"].get(source_key, 0))
+            for sentiment, sentiment_count in current_stats["source_sentiments"].get(source_key, {}).items():
+                channel_rows[channel][sentiment] += int(sentiment_count)
+        for source_key, combined_count in combined_stats["sources"].items():
+            previous_count = max(0, int(combined_count) - int(current_stats["sources"].get(source_key, 0)))
+            previous_channels[source_channel(source_key)] += previous_count
         channels = []
         for channel, count in current_channels.most_common():
             prior = previous_channels[channel]
@@ -768,19 +802,24 @@ class InvestmentMonitorService:
                     "bearish_evidence": self.compact_event(bears[0]),
                 })
 
-        factual = [event for event in current if self._event_evidence(event)["evidence_level"] != "unverified"]
         decision_factual = [event for event in decision_current if self._event_evidence(event)["evidence_level"] != "unverified"]
         latest = sorted(current, key=parsed_at, reverse=True)
         signal_events = sorted(decision_factual, key=lambda item: (item["importance_score"], parsed_at(item)), reverse=True)
+        event_count = int(current_stats["event_count"])
+        previous_event_count = max(0, int(combined_stats["event_count"]) - event_count)
+        unverified_count = sum(
+            int(count) for source_key, count in current_stats["sources"].items()
+            if source_evidence(source_key) == "unverified"
+        )
         return {
             "days": safe_days, "generated_at": now.isoformat() + "Z",
             "summary": {
-                "event_count": len(current), "previous_event_count": len(previous),
-                "event_change_pct": round((len(current) - len(previous)) * 100 / len(previous), 1) if previous else (100.0 if current else 0.0),
-                "factual_count": len(factual),
-                "high_priority_count": sum(1 for event in decision_current if event["importance_score"] >= 75),
+                "event_count": event_count, "previous_event_count": previous_event_count,
+                "event_change_pct": round((event_count - previous_event_count) * 100 / previous_event_count, 1) if previous_event_count else (100.0 if event_count else 0.0),
+                "factual_count": event_count - unverified_count,
+                "high_priority_count": int(current_stats["high_priority_count"]),
                 "watchlist_hits": sum(1 for event in decision_current if event["symbols"]),
-                "source_count": len({event["source_key"] for event in current}),
+                "source_count": int(current_stats["active_source_count"]),
             },
             "daily_trend": [{"date": day, **dict(bucket)} for day, bucket in sorted(daily.items())],
             "channels": channels,

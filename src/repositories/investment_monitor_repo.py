@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import and_, desc, func, not_, or_, select, tuple_
+from sqlalchemy import and_, case, desc, func, not_, or_, select, tuple_
+from sqlalchemy.orm import load_only
 
 from src.storage import (
     DatabaseManager,
@@ -282,22 +283,114 @@ class InvestmentMonitorRepository:
     def source_event_freshness(self) -> Dict[str, Dict[str, Any]]:
         """Return actual source-data recency, independent of scheduler success."""
         with self.db.get_session() as session:
-            rows = session.execute(
+            source_keys = session.execute(
+                select(MonitoringSourceRecord.source_key).order_by(MonitoringSourceRecord.source_key)
+            ).scalars().all()
+            result: Dict[str, Dict[str, Any]] = {}
+            for source_key in source_keys:
+                # The previous GROUP BY read event_at and ingested_at from the
+                # whole event table. On a 2 GiB host that could hold the API for
+                # more than ten seconds. The source/time and unique source/id
+                # indexes make these small per-source probes predictable.
+                latest = session.execute(
+                    select(MonitoringEventRecord.event_at, MonitoringEventRecord.ingested_at)
+                    .where(MonitoringEventRecord.source_key == source_key)
+                    .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+                    .limit(1)
+                ).first()
+                event_count = session.execute(
+                    select(func.count(MonitoringEventRecord.id))
+                    .where(MonitoringEventRecord.source_key == source_key)
+                ).scalar() or 0
+                result[str(source_key)] = {
+                    "latest_event_at": self._iso(latest[0]) if latest else None,
+                    "latest_ingested_at": self._iso(latest[1]) if latest else None,
+                    "stored_event_count": int(event_count),
+                }
+        return result
+
+    def recent_event_stats(self, *, days: int = 7) -> Dict[str, Any]:
+        """Exact narrow-column aggregates for dashboards without hydrating documents."""
+        cutoff = utc_naive_now() - timedelta(days=max(1, int(days)))
+        conditions = (
+            MonitoringEventRecord.event_at >= cutoff,
+            MonitoringEventRecord.event_type != "realtime_quote",
+        )
+        with self.db.get_session() as session:
+            summary = session.execute(select(
+                func.count(MonitoringEventRecord.id),
+                func.count(func.distinct(MonitoringEventRecord.source_key)),
+                func.sum(case((MonitoringEventRecord.importance_score >= 75, 1), else_=0)),
+                func.sum(case((MonitoringEventRecord.sentiment == "bullish", 1), else_=0)),
+                func.sum(case((MonitoringEventRecord.sentiment == "bearish", 1), else_=0)),
+                func.sum(case((and_(MonitoringEventRecord.url.is_not(None), MonitoringEventRecord.url != ""), 1), else_=0)),
+            ).where(*conditions)).one()
+
+            def grouped(column: Any) -> Dict[str, int]:
+                rows = session.execute(
+                    select(column, func.count(MonitoringEventRecord.id))
+                    .where(*conditions)
+                    .group_by(column)
+                ).all()
+                return {str(key or "unknown"): int(count or 0) for key, count in rows}
+
+            source_sentiments: Dict[str, Dict[str, int]] = {}
+            for source_key, sentiment, count in session.execute(
                 select(
                     MonitoringEventRecord.source_key,
-                    func.max(MonitoringEventRecord.event_at),
-                    func.max(MonitoringEventRecord.ingested_at),
+                    MonitoringEventRecord.sentiment,
                     func.count(MonitoringEventRecord.id),
-                ).group_by(MonitoringEventRecord.source_key)
-            ).all()
-        return {
-            str(source_key): {
-                "latest_event_at": self._iso(latest_event_at),
-                "latest_ingested_at": self._iso(latest_ingested_at),
-                "stored_event_count": int(event_count or 0),
+                ).where(*conditions).group_by(
+                    MonitoringEventRecord.source_key,
+                    MonitoringEventRecord.sentiment,
+                )
+            ).all():
+                source_sentiments.setdefault(str(source_key), {})[str(sentiment or "neutral")] = int(count or 0)
+
+            source_high_priority = {
+                str(source_key): int(count or 0)
+                for source_key, count in session.execute(
+                    select(
+                        MonitoringEventRecord.source_key,
+                        func.count(MonitoringEventRecord.id),
+                    ).where(
+                        *conditions,
+                        MonitoringEventRecord.importance_score >= 75,
+                    ).group_by(MonitoringEventRecord.source_key)
+                ).all()
             }
-            for source_key, latest_event_at, latest_ingested_at, event_count in rows
-        }
+
+            daily_sources = [{
+                "date": str(event_date),
+                "source_key": str(source_key),
+                "count": int(count or 0),
+                "high_priority": int(high_priority or 0),
+            } for event_date, source_key, count, high_priority in session.execute(
+                select(
+                    func.date(MonitoringEventRecord.event_at),
+                    MonitoringEventRecord.source_key,
+                    func.count(MonitoringEventRecord.id),
+                    func.sum(case((MonitoringEventRecord.importance_score >= 75, 1), else_=0)),
+                ).where(*conditions).group_by(
+                    func.date(MonitoringEventRecord.event_at),
+                    MonitoringEventRecord.source_key,
+                )
+            ).all()]
+
+            return {
+                "event_count": int(summary[0] or 0),
+                "active_source_count": int(summary[1] or 0),
+                "high_priority_count": int(summary[2] or 0),
+                "bullish_count": int(summary[3] or 0),
+                "bearish_count": int(summary[4] or 0),
+                "original_link_count": int(summary[5] or 0),
+                "perspectives": grouped(MonitoringEventRecord.perspective),
+                "event_types": grouped(MonitoringEventRecord.event_type),
+                "sources": grouped(MonitoringEventRecord.source_key),
+                "source_sentiments": source_sentiments,
+                "source_high_priority": source_high_priority,
+                "daily_sources": daily_sources,
+            }
 
     def due_sources(self, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         current = now or utc_naive_now()
@@ -497,13 +590,28 @@ class InvestmentMonitorRepository:
             ).scalars().all()
         return [self._event_dict(row) for row in rows], int(total)
 
-    def all_recent_events(self, *, days: int = 7) -> List[Dict[str, Any]]:
+    def all_recent_events(self, *, days: int = 7, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         with self.db.get_session() as session:
-            rows = session.execute(
+            query = (
                 select(MonitoringEventRecord)
                 .where(MonitoringEventRecord.event_at >= utc_naive_now() - timedelta(days=max(1, days)))
                 .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
-            ).scalars().all()
+                .options(load_only(
+                    MonitoringEventRecord.id, MonitoringEventRecord.source_key,
+                    MonitoringEventRecord.source_name, MonitoringEventRecord.source_type,
+                    MonitoringEventRecord.external_id, MonitoringEventRecord.event_type,
+                    MonitoringEventRecord.perspective, MonitoringEventRecord.title,
+                    MonitoringEventRecord.summary, MonitoringEventRecord.url,
+                    MonitoringEventRecord.symbol_codes, MonitoringEventRecord.sentiment,
+                    MonitoringEventRecord.importance_score, MonitoringEventRecord.confidence_score,
+                    MonitoringEventRecord.tags_json, MonitoringEventRecord.actors_json,
+                    MonitoringEventRecord.metrics_json, MonitoringEventRecord.event_at,
+                    MonitoringEventRecord.ingested_at,
+                ))
+            )
+            if limit is not None:
+                query = query.limit(max(1, int(limit)))
+            rows = session.execute(query).scalars().all()
         return [self._event_dict(row) for row in rows]
 
     def all_symbol_events(self, *, symbol: str, days: int) -> List[Dict[str, Any]]:
@@ -522,6 +630,18 @@ class InvestmentMonitorRepository:
                     MonitoringEventRecord.symbol_codes.like(f"%{symbol}%"),
                     MonitoringEventRecord.event_type != "realtime_quote",
                 ).order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+                .options(load_only(
+                    MonitoringEventRecord.id, MonitoringEventRecord.source_key,
+                    MonitoringEventRecord.source_name, MonitoringEventRecord.source_type,
+                    MonitoringEventRecord.external_id, MonitoringEventRecord.event_type,
+                    MonitoringEventRecord.perspective, MonitoringEventRecord.title,
+                    MonitoringEventRecord.summary, MonitoringEventRecord.url,
+                    MonitoringEventRecord.symbol_codes, MonitoringEventRecord.sentiment,
+                    MonitoringEventRecord.importance_score, MonitoringEventRecord.confidence_score,
+                    MonitoringEventRecord.tags_json, MonitoringEventRecord.actors_json,
+                    MonitoringEventRecord.metrics_json, MonitoringEventRecord.event_at,
+                    MonitoringEventRecord.ingested_at,
+                ))
             ).scalars().all()
         return [self._event_dict(row) for row in rows]
 
