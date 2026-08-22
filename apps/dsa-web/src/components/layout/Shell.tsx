@@ -41,7 +41,7 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
       <header className="mobile-app-bar lg:hidden">
         <div className="mobile-app-bar__brand">
           <span><BarChart3 aria-hidden="true" /></span>
-          <div><strong>DSA</strong><small>财经情报与研究</small></div>
+          <div><strong>乐子乌超级价值</strong><small>财经情报与研究</small></div>
         </div>
         <div className="mobile-app-bar__actions">
           <UiLanguageToggle />

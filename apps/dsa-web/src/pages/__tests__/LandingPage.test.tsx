@@ -7,12 +7,13 @@ describe('LandingPage', () => {
   it('introduces the real platform and enters the dashboard', () => {
     render(<MemoryRouter><LandingPage /></MemoryRouter>);
 
-    expect(screen.getByRole('heading', { name: /把市场噪声，\s*变成可以行动的证据。/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /把复杂市场，\s*变成可验证的投资线索。/ })).toBeInTheDocument();
+    expect(screen.getByText('乐子乌超级价值')).toBeInTheDocument();
     expect(screen.getByText('实时行情')).toBeInTheDocument();
     expect(screen.getByText('全渠道情报')).toBeInTheDocument();
     expect(screen.getByText('小作文洞察')).toBeInTheDocument();
-    expect(screen.getByText('量化回测')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /进入财经情报台/ })).toHaveAttribute('href', '/app');
+    expect(screen.getByText('量化研究')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /进入研究终端/ })[0]).toHaveAttribute('href', '/app');
   });
 
   it('updates the visual field without blocking the CTA', () => {
@@ -24,7 +25,7 @@ describe('LandingPage', () => {
 
     fireEvent.pointerMove(page, { clientX: 750, clientY: 200 });
 
-    expect(page.style.getPropertyValue('--pointer-x')).toBe('6px');
-    expect(screen.getByRole('link', { name: /进入财经情报台/ })).toBeVisible();
+    expect(page.style.getPropertyValue('--pointer-x')).toBe('3.5px');
+    expect(screen.getAllByRole('link', { name: /进入研究终端/ })[0]).toBeVisible();
   });
 });

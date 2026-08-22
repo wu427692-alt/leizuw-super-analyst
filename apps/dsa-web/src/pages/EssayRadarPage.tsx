@@ -430,7 +430,7 @@ const EssayRadarPage = () => {
 
   useEffect(() => {
     const viewLabel = VIEW_META.find((item) => item.view === view)?.label ?? '小作文雷达';
-    document.title = `${viewLabel} · 小作文雷达 - DSA`;
+    document.title = `${viewLabel} · 小作文雷达 - 乐子乌超级价值`;
   }, [view]);
 
   const loadView = useCallback(async (_requestVersion: number) => {

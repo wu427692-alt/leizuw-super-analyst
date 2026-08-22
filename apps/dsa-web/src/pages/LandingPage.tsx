@@ -1,127 +1,102 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, BarChart3, FlaskConical, Network, Radar, ShieldCheck } from 'lucide-react';
+import {
+  ArrowRight, BarChart3, Building2, DatabaseZap, FileText, FlaskConical,
+  Landmark, MessageCircleMore, Network, Radar, ShieldCheck,
+} from 'lucide-react';
 import './LandingPage.css';
 
-const capabilities = [
-  { label: '实时行情', icon: BarChart3 },
-  { label: '全渠道情报', icon: Network },
-  { label: '小作文洞察', icon: Radar },
-  { label: '量化回测', icon: FlaskConical },
-  { label: '证据决策', icon: ShieldCheck },
+const sources = [
+  { label: '公告', note: '交易所 · 巨潮', icon: FileText },
+  { label: '研报', note: '券商 · 机构', icon: Landmark },
+  { label: '知识星球', note: '纪要 · 观点', icon: Radar },
+  { label: '企业事实', note: '工商 · 股权', icon: Building2 },
+  { label: '公开讨论', note: '论坛 · 媒体', icon: MessageCircleMore },
 ];
 
-const leftSignals = [
-  { label: '行情', y: 125, color: 'violet' },
-  { label: '公告', y: 225, color: 'magenta' },
-  { label: '研报', y: 325, color: 'violet' },
-  { label: '知识星球', y: 425, color: 'cyan' },
-  { label: '企业事实', y: 525, color: 'cyan' },
-  { label: '公开股评', y: 625, color: 'magenta' },
-] as const;
+const capabilities = [
+  { label: '实时行情', note: '分时 · 日线 · 市场广度', icon: BarChart3, status: '实时更新' },
+  { label: '全渠道情报', note: '公告 · 研报 · 新闻 · 企业', icon: Network, status: '持续汇聚' },
+  { label: '小作文洞察', note: '实体识别 · 热点追踪 · 证据', icon: Radar, status: '智能识别' },
+  { label: '量化研究', note: '因子 · 样本外 · 稳健性', icon: FlaskConical, status: '体系化研究' },
+  { label: '证据决策', note: '时间轴 · 证据链 · 任务', icon: ShieldCheck, status: '可信可追溯' },
+];
 
-const rightSignals = [
-  { label: '市场', y: 215, color: 'magenta' },
-  { label: '公司', y: 345, color: 'cyan' },
-  { label: '机构', y: 475, color: 'cyan' },
-  { label: '证据链', y: 605, color: 'violet' },
-] as const;
+const evidence = [
+  { time: '09:31', source: '公告', text: '关键合同与经营事项进入证据链' },
+  { time: '09:42', source: '研报', text: '盈利预测与假设变化完成结构化' },
+  { time: '10:15', source: '知识星球', text: '产业纪要与市场观点完成关联' },
+  { time: '10:28', source: '企业事实', text: '股权与知识产权变化完成核验' },
+];
 
-const pathForLeftSignal = (y: number, index: number) => (
-  `M 30 ${y} C ${170 + index * 12} ${y - 72}, ${325 - index * 9} ${345 + (y - 360) * 0.22}, 488 360`
-);
-
-const pathForRightSignal = (y: number, index: number) => (
-  `M 488 360 C ${650 + index * 11} ${350 + (y - 360) * 0.12}, ${720 - index * 9} ${y - 84}, 895 ${y}`
-);
-
-const SignalField = () => (
-  <div className="landing-signal-field" aria-hidden="true">
-    <svg viewBox="0 0 930 720" role="presentation" focusable="false">
+const EvidenceMap = () => (
+  <div className="landing-evidence-map" id="data-map" aria-label="全域数据汇聚为可验证证据的动态示意">
+    <svg className="landing-evidence-lines" viewBox="0 0 760 560" aria-hidden="true">
       <defs>
-        <linearGradient id="landing-flow-left" x1="0" x2="1">
-          <stop offset="0" stopColor="#5d34d0" stopOpacity="0" />
-          <stop offset="0.52" stopColor="#a855f7" stopOpacity="0.92" />
-          <stop offset="1" stopColor="#ff006e" />
+        <linearGradient id="evidence-line" x1="0" x2="1">
+          <stop offset="0" stopColor="#1c4ed8" stopOpacity="0.16" />
+          <stop offset="0.54" stopColor="#38bdf8" stopOpacity="0.95" />
+          <stop offset="1" stopColor="#60a5fa" stopOpacity="0.2" />
         </linearGradient>
-        <linearGradient id="landing-flow-right" x1="0" x2="1">
-          <stop offset="0" stopColor="#ff006e" />
-          <stop offset="0.48" stopColor="#5d34d0" />
-          <stop offset="1" stopColor="#00f0ff" stopOpacity="0" />
-        </linearGradient>
-        <radialGradient id="landing-core" cx="50%" cy="50%" r="50%">
-          <stop offset="0" stopColor="#ffffff" />
-          <stop offset="0.18" stopColor="#ff8ddb" />
-          <stop offset="0.48" stopColor="#9f33ff" />
-          <stop offset="1" stopColor="#00f0ff" stopOpacity="0" />
-        </radialGradient>
-        <filter id="landing-glow" x="-80%" y="-80%" width="260%" height="260%">
-          <feGaussianBlur stdDeviation="8" result="blur" />
+        <filter id="evidence-glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="5" result="blur" />
           <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
         </filter>
       </defs>
-
-      <g className="landing-orbits">
-        {[58, 92, 128, 166].map((radius) => (
-          <circle key={radius} cx="488" cy="360" r={radius} />
-        ))}
-        <path d="M 310 360 H 666" />
-        <path d="M 488 182 V 538" />
-      </g>
-
-      <g className="landing-flow landing-flow-left">
-        {leftSignals.map((signal, index) => (
-          <path key={signal.label} d={pathForLeftSignal(signal.y, index)} pathLength="1" />
-        ))}
-      </g>
-      <g className="landing-flow landing-flow-right">
-        {rightSignals.map((signal, index) => (
-          <path key={signal.label} d={pathForRightSignal(signal.y, index)} pathLength="1" />
-        ))}
-      </g>
-
-      <g className="landing-flow-nodes">
-        {leftSignals.map((signal, index) => (
-          <g key={signal.label} className={`landing-node landing-node-${signal.color}`}>
-            <circle cx="92" cy={signal.y} r="22" />
-            <circle cx="92" cy={signal.y} r="4" />
-            <text x="57" y={signal.y + 5} textAnchor="end">{signal.label}</text>
-            <circle className="landing-traveller" cx="0" cy="0" r="3.5">
-              <animateMotion dur={`${4.5 + index * 0.37}s`} repeatCount="indefinite" path={pathForLeftSignal(signal.y, index)} />
-            </circle>
-          </g>
-        ))}
-        {rightSignals.map((signal, index) => (
-          <g key={signal.label} className={`landing-node landing-node-${signal.color}`}>
-            <circle cx="850" cy={signal.y} r="22" />
-            <circle cx="850" cy={signal.y} r="4" />
-            <text x="818" y={signal.y + 5} textAnchor="end">{signal.label}</text>
-            <circle className="landing-traveller" cx="0" cy="0" r="3.5">
-              <animateMotion dur={`${4.9 + index * 0.43}s`} repeatCount="indefinite" path={pathForRightSignal(signal.y, index)} />
-            </circle>
-          </g>
-        ))}
-      </g>
-
-      <g className="landing-core" filter="url(#landing-glow)">
-        <circle cx="488" cy="360" r="74" fill="url(#landing-core)" opacity="0.38" />
-        <circle cx="488" cy="360" r="48" />
-        <path d="M488 329C494 349 500 355 520 360C500 366 494 372 488 392C482 372 476 366 456 360C476 355 482 349 488 329Z" />
-      </g>
+      {[132, 202, 272, 342, 412].map((y, index) => (
+        <path key={y} className="landing-flow-line" d={`M 120 ${y} C 255 ${y}, 260 ${278 + (y - 272) * 0.16}, 380 278 C 495 ${278 + (y - 272) * 0.12}, 510 ${128 + index * 74}, 646 ${128 + index * 74}`} pathLength="1" />
+      ))}
+      <circle className="landing-flow-pulse" cx="380" cy="278" r="72" />
+      <circle className="landing-flow-pulse is-delayed" cx="380" cy="278" r="72" />
     </svg>
+
+    <div className="landing-market-trace" aria-hidden="true">
+      <span>A股 · 日线</span>
+      <svg viewBox="0 0 280 86"><path d="M4 70 L22 59 L39 63 L55 35 L73 46 L92 25 L110 38 L130 31 L147 49 L165 39 L183 57 L202 31 L219 27 L237 36 L254 14 L276 8" /></svg>
+    </div>
+
+    <div className="landing-source-list">
+      {sources.map(({ label, note, icon: Icon }) => (
+        <div className="landing-source" key={label}>
+          <span><Icon aria-hidden="true" /></span>
+          <div><strong>{label}</strong><small>{note}</small></div>
+        </div>
+      ))}
+    </div>
+
+    <div className="landing-company-core">
+      <Building2 aria-hidden="true" /><strong>上市公司</strong><small>事实中心</small><i />
+    </div>
+
+    <div className="landing-decision-chain" aria-hidden="true">
+      <span>数据汇聚</span><ArrowRight /><span>证据沉淀</span><ArrowRight /><span>支持决策</span>
+    </div>
+
+    <aside className="landing-evidence-timeline" id="evidence">
+      <header><strong>证据时间轴</strong><span>实时</span></header>
+      <div>
+        {evidence.map((item) => (
+          <article key={`${item.time}-${item.source}`}>
+            <time>{item.time}</time><span /><p><b>{item.source}</b>{item.text}</p>
+          </article>
+        ))}
+      </div>
+    </aside>
   </div>
 );
 
 const LandingPage = () => {
   const pageRef = useRef<HTMLElement>(null);
 
+  useEffect(() => { document.title = '乐子乌超级价值 · 全域财经研究平台'; }, []);
+
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - bounds.left) / bounds.width;
     const y = (event.clientY - bounds.top) / bounds.height;
-    pageRef.current?.style.setProperty('--pointer-x', `${(x - 0.5) * 24}px`);
-    pageRef.current?.style.setProperty('--pointer-y', `${(y - 0.5) * 18}px`);
+    pageRef.current?.style.setProperty('--pointer-x', `${(x - 0.5) * 14}px`);
+    pageRef.current?.style.setProperty('--pointer-y', `${(y - 0.5) * 10}px`);
     pageRef.current?.style.setProperty('--pointer-glow-x', `${x * 100}%`);
     pageRef.current?.style.setProperty('--pointer-glow-y', `${y * 100}%`);
   }, []);
@@ -129,51 +104,37 @@ const LandingPage = () => {
   const resetPointer = useCallback(() => {
     pageRef.current?.style.setProperty('--pointer-x', '0px');
     pageRef.current?.style.setProperty('--pointer-y', '0px');
-    pageRef.current?.style.setProperty('--pointer-glow-x', '62%');
-    pageRef.current?.style.setProperty('--pointer-glow-y', '42%');
+    pageRef.current?.style.setProperty('--pointer-glow-x', '68%');
+    pageRef.current?.style.setProperty('--pointer-glow-y', '34%');
   }, []);
 
   return (
-    <main
-      ref={pageRef}
-      className="landing-page"
-      onPointerMove={handlePointerMove}
-      onPointerLeave={resetPointer}
-    >
-      <div className="landing-mesh" aria-hidden="true" />
-      <div className="landing-noise" aria-hidden="true" />
-
+    <main ref={pageRef} className="landing-page" onPointerMove={handlePointerMove} onPointerLeave={resetPointer}>
+      <div className="landing-mesh" aria-hidden="true" /><div className="landing-noise" aria-hidden="true" />
       <header className="landing-header">
-        <Link className="landing-brand" to="/" aria-label="DSA 财经情报台简介页">
-          DSA
-        </Link>
+        <Link className="landing-brand" to="/" aria-label="乐子乌超级价值首页"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link>
+        <nav aria-label="首页栏目"><a href="#data-map">全域数据</a><a href="#capabilities">研究工作台</a><a href="#evidence">决策证据</a></nav>
+        <Link className="landing-header-enter" to="/app">进入研究终端<ArrowRight aria-hidden="true" /></Link>
       </header>
 
       <section className="landing-hero" aria-labelledby="landing-title">
         <div className="landing-copy">
-          <h1 id="landing-title">
-            <span>把市场噪声，</span>
-            变成可以行动的证据。
-          </h1>
-          <p>
-            聚合行情、公告、研报、知识星球、企业事实与公开股评，
-            以统一时间线连接市场、公司与机构。
-          </p>
-          <Link className="landing-enter" to="/app">
-            <span>进入财经情报台</span>
-            <ArrowRight aria-hidden="true" />
-          </Link>
+          <h1 id="landing-title">把复杂市场，<span>变成可验证的投资线索。</span></h1>
+          <p>连接行情、公告、研报、知识星球、企业事实与公开讨论，在同一时间轴中追踪公司、机构与市场。</p>
+          <div className="landing-actions">
+            <Link className="landing-enter" to="/app">进入研究终端<ArrowRight aria-hidden="true" /></Link>
+            <a className="landing-data-link" href="#data-map">查看数据版图<ArrowRight aria-hidden="true" /></a>
+          </div>
         </div>
-
-        <SignalField />
+        <EvidenceMap />
       </section>
 
-      <section className="landing-capabilities" aria-label="平台核心能力">
-        {capabilities.map(({ label, icon: Icon }) => (
-          <div className="landing-capability" key={label}>
-            <span className="landing-capability-icon"><Icon aria-hidden="true" /></span>
-            <strong>{label}</strong>
-          </div>
+      <section className="landing-capabilities" id="capabilities" aria-label="平台核心能力">
+        {capabilities.map(({ label, note, icon: Icon, status }, index) => (
+          <article className="landing-capability" key={label}>
+            <span className="landing-capability-number">0{index + 1}</span><span className="landing-capability-icon"><Icon aria-hidden="true" /></span>
+            <div><strong>{label}</strong><small>{note}</small><em><i />{status}</em></div>
+          </article>
         ))}
       </section>
     </main>

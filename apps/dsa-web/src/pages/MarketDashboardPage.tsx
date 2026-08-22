@@ -202,7 +202,7 @@ const MarketDashboardPage = () => {
     const timer = window.setTimeout(() => void load(), 8_000);
     return () => window.clearTimeout(timer);
   }, [error, load]);
-  useEffect(() => { document.title = '市场总览 - DSA'; }, []);
+  useEffect(() => { document.title = '市场总览 - 乐子乌超级价值'; }, []);
 
   const watchlistSymbols = useMemo(() => (data?.watchlist ?? []).map(card => card.symbol), [data]);
   const watchlistSymbolKey = watchlistSymbols.join('|');

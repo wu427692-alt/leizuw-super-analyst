@@ -100,7 +100,7 @@ function formatNotificationStatus(notification: AlertNotificationItem): string {
 
 const AlertsPage: React.FC = () => {
   useEffect(() => {
-    document.title = '告警中心 - DSA';
+    document.title = '告警中心 - 乐子乌超级价值';
   }, []);
 
   const [rules, setRules] = useState<AlertRuleItem[]>([]);

@@ -36,7 +36,7 @@ const UserAccessPage: React.FC = () => {
     <main className="user-access-page">
       <div className="user-access-grid" aria-hidden="true" />
       <section className="user-access-story">
-        <Link to="/" className="user-access-brand"><span>DSA</span> FINANCIAL INTELLIGENCE</Link>
+        <Link to="/" className="user-access-brand"><span>乐子乌超级价值</span> FINANCIAL INTELLIGENCE</Link>
         <div className="user-access-copy">
           <p className="user-access-kicker"><RadioTower /> PRIVATE DATA WORKSPACE</p>
           <h1>一套共享事实库，<br /><em>每个人拥有独立工作台。</em></h1>

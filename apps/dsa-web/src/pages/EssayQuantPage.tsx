@@ -152,7 +152,7 @@ export default function EssayQuantPage() {
     if (historyJob.status === 'fulfilled' && historyJob.value) setHistory(historyJob.value);
   }, [active]);
   useEffect(() => {
-    void load(); document.title = '量化回测与数据利用 - DSA';
+    void load(); document.title = '量化回测与数据利用 - 乐子乌超级价值';
   }, [load]);
   useEffect(() => {
     const hasActiveTasks = taskList.items.some(item => item.status === 'queued' || item.status === 'running');

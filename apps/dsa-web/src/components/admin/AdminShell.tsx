@@ -40,9 +40,9 @@ export const AdminShell: React.FC<AdminShellProps> = ({ children }) => {
   return (
     <div className="admin-shell min-h-screen text-slate-100">
       <aside className="admin-sidebar">
-        <NavLink to="/admin" className="admin-brand" aria-label="DSA 管理后台">
+        <NavLink to="/admin" className="admin-brand" aria-label="乐子乌超级价值管理后台">
           <span className="admin-brand-mark"><Braces size={18} /></span>
-          <span><strong>DSA</strong><small>ADMIN CONSOLE</small></span>
+          <span><strong>乐子乌超级价值</strong><small>ADMIN CONSOLE</small></span>
         </NavLink>
 
         <nav className="admin-nav" aria-label="管理员导航">
