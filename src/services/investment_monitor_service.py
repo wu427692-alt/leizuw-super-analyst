@@ -18,7 +18,7 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import pandas as pd
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, select
 
 from src.config import get_config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
@@ -2372,20 +2372,38 @@ class InvestmentMonitorService:
         )
         db = DatabaseManager.get_instance()
         with db.get_session() as session:
-            query = (
-                select(EssayAnalysisRecord, ResearchNote)
-                .select_from(ResearchNote)
-                .outerjoin(EssayAnalysisRecord, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
-                .order_by(desc(ResearchNote.created_at))
-            )
             if self._backfill_days:
-                query = query.where(ResearchNote.created_at >= cutoff)
+                rows = session.execute(
+                    select(EssayAnalysisRecord, ResearchNote)
+                    .select_from(ResearchNote)
+                    .outerjoin(EssayAnalysisRecord, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
+                    .where(ResearchNote.created_at >= cutoff)
+                    .order_by(desc(ResearchNote.created_at))
+                ).all()
             else:
-                query = query.where(or_(
-                    ResearchNote.synced_at >= cutoff,
-                    EssayAnalysisRecord.updated_at >= cutoff,
-                ))
-            rows = session.execute(query).all()
+                # Do not express this as an OR across the joined note and
+                # analysis tables. SQLite otherwise scans and materialises the
+                # large note/content rows on every ten-second projection pass,
+                # even when the upstream MCP cursor saved nothing. Discover
+                # changed topic ids through the two timestamp indexes first,
+                # then hydrate only the matching documents.
+                note_topic_ids = session.execute(
+                    select(ResearchNote.topic_id).where(ResearchNote.synced_at >= cutoff)
+                ).scalars().all()
+                analysis_topic_ids = session.execute(
+                    select(EssayAnalysisRecord.topic_id).where(EssayAnalysisRecord.updated_at >= cutoff)
+                ).scalars().all()
+                topic_ids = list(dict.fromkeys([*note_topic_ids, *analysis_topic_ids]))
+                rows = []
+                for offset in range(0, len(topic_ids), 500):
+                    chunk = topic_ids[offset:offset + 500]
+                    rows.extend(session.execute(
+                        select(EssayAnalysisRecord, ResearchNote)
+                        .select_from(ResearchNote)
+                        .outerjoin(EssayAnalysisRecord, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
+                        .where(ResearchNote.topic_id.in_(chunk))
+                    ).all())
+                rows.sort(key=lambda pair: pair[1].created_at, reverse=True)
         names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
         events = []
         for analysis, note in rows:

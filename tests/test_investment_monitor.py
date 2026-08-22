@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -13,7 +13,7 @@ from src.config import Config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.repositories.market_data_repo import MarketDataRepository
 from src.services.investment_monitor_service import BUILTIN_MONITORING_SOURCES, InvestmentMonitorService
-from src.storage import DatabaseManager
+from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, utc_naive_now
 
 
 class FakeTushare:
@@ -465,6 +465,41 @@ def test_watchlist_keyword_aliases_match_short_company_names(monitor):
     assert monitor._symbols_for_text("华懋产能释放超预期", names) == ["603306.SH"]
     assert monitor._symbols_for_text("胜宏订单与300476景气度更新", names) == ["300476.SZ"]
     assert monitor._symbols_for_text("无关行业观点", names) == []
+
+
+def test_zsxq_projection_only_hydrates_incrementally_changed_topics(monitor):
+    now = utc_naive_now()
+    source = monitor.repo.get_source("zsxq.essays")
+    source["last_success_at"] = now.isoformat() + "Z"
+    with monitor.repo.db.get_session() as session:
+        session.add_all([
+            ResearchNote(
+                topic_id="recent-note", group_id="g1", group_name="调研纪要",
+                title="贵州茅台最新渠道", content="新增原文", content_hash="h1",
+                created_at=now, synced_at=now,
+            ),
+            ResearchNote(
+                topic_id="recent-analysis", group_id="g1", group_name="调研纪要",
+                title="贵州茅台分析更新", content="旧原文，新分析", content_hash="h2",
+                created_at=now - timedelta(days=2), synced_at=now - timedelta(days=2),
+            ),
+            ResearchNote(
+                topic_id="stale-topic", group_id="g1", group_name="调研纪要",
+                title="历史原文", content="没有变化", content_hash="h3",
+                created_at=now - timedelta(days=3), synced_at=now - timedelta(days=3),
+            ),
+        ])
+        session.flush()
+        session.add(EssayAnalysisRecord(
+            topic_id="recent-analysis", status="completed", model="test",
+            prompt_version="v1", input_hash="a1", summary="分析刚更新",
+            updated_at=now,
+        ))
+        session.commit()
+
+    events = monitor._zsxq_events(source)
+
+    assert {event["external_id"] for event in events} == {"recent-note", "recent-analysis"}
 
 
 def test_watchlist_keyword_reindex_updates_existing_local_essay(monitor, monkeypatch):
