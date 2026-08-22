@@ -22,8 +22,8 @@ from api.v1.endpoints import system_config
 from api.v1.schemas.system_config import (
     DiscoverLLMChannelModelsRequest,
     ImportSystemConfigRequest,
-    TestLLMChannelRequest,
-    TestNotificationChannelRequest,
+    TestLLMChannelRequest as LLMChannelTestRequest,
+    TestNotificationChannelRequest as NotificationChannelTestRequest,
     UpdateSystemConfigRequest,
 )
 import src.auth as auth
@@ -689,7 +689,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
             },
         ) as mock_test:
             payload = system_config.test_llm_channel(
-                request=TestLLMChannelRequest(
+                request=LLMChannelTestRequest(
                     name="primary",
                     protocol="openai",
                     base_url="https://api.example.com/v1",
@@ -734,7 +734,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
             },
         ) as mock_test:
             payload = system_config.test_notification_channel(
-                request=TestNotificationChannelRequest(
+                request=NotificationChannelTestRequest(
                     channel="wechat",
                     items=[{"key": "WECHAT_WEBHOOK_URL", "value": "https://example.com/hook"}],
                     title="DSA 通知测试",
@@ -752,14 +752,14 @@ class SystemConfigApiTestCase(unittest.TestCase):
         self.assertEqual(mock_test.call_args.kwargs["timeout_seconds"], 5)
 
     def test_test_notification_channel_schema_accepts_p6_channels(self) -> None:
-        ntfy_request = TestNotificationChannelRequest(
+        ntfy_request = NotificationChannelTestRequest(
             channel="ntfy",
             items=[{"key": "NTFY_URL", "value": "https://ntfy.sh/dsa-topic"}],
             title="DSA 通知测试",
             content="hello",
             timeout_seconds=5,
         )
-        gotify_request = TestNotificationChannelRequest(
+        gotify_request = NotificationChannelTestRequest(
             channel="gotify",
             items=[
                 {"key": "GOTIFY_URL", "value": "https://gotify.example"},

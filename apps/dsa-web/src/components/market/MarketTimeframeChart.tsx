@@ -233,12 +233,12 @@ export function MarketTimeframeChart({
   const volumeHeight = compact ? 72 : 100;
   const chartMargin = { top: 8, right: compact ? 8 : 16, bottom: 0, left: 0 };
 
-  return <section className={`overflow-hidden border border-border/70 bg-background/25 ${className}`}>
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-2 py-1.5">
-      <div className="flex shrink-0 items-center">
+  return <section className={`market-timeframe-chart overflow-hidden border border-border/70 bg-background/25 ${className}`}>
+    <div className="market-chart-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-2 py-1.5">
+      <div className="market-chart-periods flex shrink-0 items-center">
         {PERIODS.map((item) => <button key={item.value} onClick={() => selectPeriod(item.value)} className={`h-7 whitespace-nowrap border px-3 text-[10px] font-semibold ${period === item.value ? 'border-cyan/70 bg-cyan/15 text-cyan' : 'border-transparent text-secondary-text hover:border-border'}`}>{item.label}</button>)}
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="market-chart-ranges flex shrink-0 items-center gap-1">
         {RANGES[period].map((item) => <button key={item.value} onClick={() => setRange(item.value)} className={`h-6 whitespace-nowrap px-2 text-[9px] ${range === item.value ? 'border-b-2 border-cyan font-bold text-cyan' : 'text-secondary-text'}`}>{item.label}</button>)}
         <button aria-label="刷新行情" onClick={() => void load(true)} className="ml-1 p-1 text-secondary-text hover:text-cyan"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /></button>
       </div>

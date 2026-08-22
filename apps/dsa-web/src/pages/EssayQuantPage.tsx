@@ -44,6 +44,23 @@ const EXAMPLES = [
   '检验高热度小作文是否反而跑输，排除未做AI分析的历史原文，加入20bp交易成本。',
 ];
 
+type QuantSection = typeof NAV[number][0];
+type QuantModule = 'dashboard' | 'catalog' | 'history' | 'rules' | 'precompute';
+const QUANT_SECTIONS = new Set<QuantSection>(NAV.map(([key]) => key));
+
+const SECTION_MODULES: Record<QuantSection, QuantModule[]> = {
+  overview: ['dashboard', 'catalog', 'precompute'],
+  builder: ['dashboard', 'catalog', 'rules', 'precompute'],
+  'natural-language': ['catalog', 'precompute'],
+  results: ['dashboard', 'precompute'],
+  data: ['dashboard', 'catalog', 'precompute'],
+  history: ['history', 'precompute'],
+};
+
+const MODULE_LABELS: Record<QuantModule, string> = {
+  dashboard: '量化基线', catalog: '数据资产目录', history: '运行历史', rules: '研究规则', precompute: '后台计算状态',
+};
+
 const n = (value?: number | null, digits = 1) => value == null ? '—' : value.toFixed(digits);
 const pct = (value?: number | null, digits = 1) => value == null ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(digits)}%`;
 const compact = (value?: number | null) => value == null ? '—' : new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
@@ -89,7 +106,8 @@ function StableChart({ children }: { children: React.ReactElement }) {
 export default function EssayQuantPage() {
   const location = useLocation(); const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
-  const active = (searchParams.get('section') || location.pathname.split('/')[2] || 'overview') as typeof NAV[number][0];
+  const requestedSection = searchParams.get('section') || location.pathname.split('/')[2] || 'overview';
+  const active: QuantSection = QUANT_SECTIONS.has(requestedSection as QuantSection) ? requestedSection as QuantSection : 'overview';
   const requestedMethodKey = searchParams.get('method');
   const [data, setData] = useState<EssayQuantDashboard | null>(null);
   const [catalog, setCatalog] = useState<EssayQuantCatalog | null>(null);
@@ -99,23 +117,29 @@ export default function EssayQuantPage() {
   const [precompute, setPrecompute] = useState<EssayQuantPrecomputeStatus | null>(null);
   const [loading, setLoading] = useState(true); const [progress, setProgress] = useState(12);
   const [running, setRunning] = useState(false); const [message, setMessage] = useState('');
+  const [messageScope, setMessageScope] = useState<QuantSection | null>(null);
+  const [failedModules, setFailedModules] = useState<QuantModule[]>([]);
+  const initiallyLoaded = useRef(false);
   const [prompt, setPrompt] = useState(EXAMPLES[0]); const [plan, setPlan] = useState<EssayQuantPlan | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true); setProgress(18); setMessage('');
-    const jobs = [essayQuantApi.dashboard(), essayQuantApi.catalog(), essayQuantApi.runs(), essayQuantApi.rules(), essayQuantApi.precomputeStatus()] as const;
+    if (!initiallyLoaded.current) setLoading(true);
+    setProgress(18); setMessage(''); setMessageScope(null); setFailedModules([]);
+    const tasks: Record<QuantModule, () => Promise<void>> = {
+      dashboard: async () => { const value = await essayQuantApi.dashboard(); setData(value); setRule({ ...DEFAULT_RULE, ...value.rule }); },
+      catalog: async () => { setCatalog(await essayQuantApi.catalog()); },
+      history: async () => { setHistory(await essayQuantApi.runs()); },
+      rules: async () => { const value = await essayQuantApi.rules(); setRules(value.items); },
+      precompute: async () => { setPrecompute(await essayQuantApi.precomputeStatus()); },
+    };
+    const modules = SECTION_MODULES[active];
     const timer = window.setInterval(() => setProgress(current => Math.min(88, current + 7)), 140);
-    const settled = await Promise.allSettled(jobs); window.clearInterval(timer); setProgress(100);
-    const [dashboardJob, catalogJob, historyJob, rulesJob, precomputeJob] = settled;
-    if (dashboardJob.status === 'fulfilled') { setData(dashboardJob.value); setRule({ ...DEFAULT_RULE, ...dashboardJob.value.rule }); }
-    if (catalogJob.status === 'fulfilled') setCatalog(catalogJob.value);
-    if (historyJob.status === 'fulfilled') setHistory(historyJob.value);
-    if (rulesJob.status === 'fulfilled') setRules(rulesJob.value.items);
-    if (precomputeJob.status === 'fulfilled') setPrecompute(precomputeJob.value);
-    const failed = settled.filter(item => item.status === 'rejected').length;
-    if (failed) setMessage(`${failed} 个后台模块尚未就绪，页面已保留其余真实数据；可稍后重试。`);
+    const settled = await Promise.allSettled(modules.map(key => tasks[key]()));
+    window.clearInterval(timer); setProgress(100);
+    setFailedModules(modules.filter((_, index) => settled[index]?.status === 'rejected'));
+    initiallyLoaded.current = true;
     window.setTimeout(() => setLoading(false), 160);
-  }, []);
+  }, [active]);
   const refreshLive = useCallback(async () => {
     const [precomputeJob, dashboardJob] = await Promise.allSettled([
       essayQuantApi.precomputeStatus(),
@@ -140,26 +164,26 @@ export default function EssayQuantPage() {
   }, [catalog, requestedMethodKey]);
 
   const run = async (target = rule) => {
-    setRunning(true); setMessage('正在读取本地最新行情、聚类事件并执行稳健性检验…');
-    try { const result = await essayQuantApi.run(target); setData(result); setRule({ ...DEFAULT_RULE, ...result.rule }); setHistory(await essayQuantApi.runs()); navigate('/essay-quant?section=results'); setMessage(`研究完成：${result.summary.matureEventCount} 个到期有效样本，结果已保存。`); }
+    setRunning(true); setMessageScope(active); setMessage('正在读取本地最新行情、聚类事件并执行稳健性检验…');
+    try { const result = await essayQuantApi.run(target); setData(result); setRule({ ...DEFAULT_RULE, ...result.rule }); setHistory(await essayQuantApi.runs()); setMessageScope('results'); navigate('/essay-quant?section=results'); setMessage(`研究完成：${result.summary.matureEventCount} 个到期有效样本，结果已保存。`); }
     catch (error) { setMessage(error instanceof Error ? error.message : '回测执行失败'); }
     finally { setRunning(false); }
   };
   const save = async () => {
-    setRunning(true);
+    setRunning(true); setMessageScope(active);
     try { const saved = await essayQuantApi.saveRule(rule); setRule(saved); setRules(current => [saved, ...current.filter(item => item.id !== saved.id)]); setMessage('研究规则已保存'); }
     catch (error) { setMessage(error instanceof Error ? error.message : '保存失败'); }
     finally { setRunning(false); }
   };
   const generatePlan = async () => {
-    setRunning(true); setPlan(null); setMessage('DeepSeek 正在把需求拆成信号、样本、成本和验证任务…');
+    setRunning(true); setMessageScope(active); setPlan(null); setMessage('DeepSeek 正在把需求拆成信号、样本、成本和验证任务…');
     try { const result = await essayQuantApi.plan(prompt); setPlan(result); setRule({ ...DEFAULT_RULE, ...result.rule }); setMessage('研究方案已生成，请检查假设和安全边界后再执行。'); }
     catch (error) { setMessage(error instanceof Error ? error.message : '研究方案生成失败'); }
     finally { setRunning(false); }
   };
   const executePlan = async () => {
-    if (!plan) return; setRunning(true); setMessage('已确认方案，正在安全研究引擎中执行…');
-    try { const result = await essayQuantApi.executePlan(plan.rule); setData(result); setHistory(await essayQuantApi.runs()); navigate('/essay-quant?section=results'); setMessage('自然语言研究任务执行完成。'); }
+    if (!plan) return; setRunning(true); setMessageScope(active); setMessage('已确认方案，正在安全研究引擎中执行…');
+    try { const result = await essayQuantApi.executePlan(plan.rule); setData(result); setHistory(await essayQuantApi.runs()); setMessageScope('results'); navigate('/essay-quant?section=results'); setMessage('自然语言研究任务执行完成。'); }
     catch (error) { setMessage(error instanceof Error ? error.message : '方案执行失败'); }
     finally { setRunning(false); }
   };
@@ -167,15 +191,21 @@ export default function EssayQuantPage() {
   const metric = (period: number, excess = false): QuantMetric | undefined => (excess ? data?.summary.excessMetrics : data?.summary.metrics)?.find(item => item.period === period);
   const portfolioChart = useMemo(() => { let peak = 0; return (data?.portfolio.curve ?? []).map(item => { const value = (item.value - 1) * 100; peak = Math.max(peak, item.value); return { ...item, value, drawdown: peak ? (item.value / peak - 1) * 100 : 0 }; }); }, [data]);
   const freshness = data?.dataQuality.priceFreshnessRatio ?? 0;
+  const latestHistoryCutoff = history.items[0]?.priceCutoff;
+  const visibleFailures = failedModules.filter(key => key !== 'precompute');
+  const loadNotice = visibleFailures.length
+    ? `${visibleFailures.map(key => MODULE_LABELS[key]).join('、')}暂时未更新；页面已保留可用数据，并会在后台继续重试。`
+    : '';
   const activeMethod = catalog?.methods.find(item => (
     item.template.strategyType || (item.key === 'event_study' ? 'essay_event' : item.key)
   ) === rule.strategyType) ?? null;
 
   if (loading) return <AppPage className="aurora-workbench max-w-[1720px] px-3 py-3"><LoadingScreen progress={progress} /></AppPage>;
   return <AppPage className="aurora-workbench max-w-[1760px] px-2 pb-8 pt-2 md:px-3"><div className="essay-quant-terminal">
-    <header className="quant-header"><div><span className="quant-eyebrow"><FlaskConical /> QUANT RESEARCH OS</span><h1>量化回测与数据利用</h1><p>把非结构化情报、行情、基本面和资金数据变成可复现、可解释、可质疑的研究结果。</p></div><div className="quant-header-actions"><Status ok={!precompute?.dirty && !precompute?.computing}>{precompute?.computing ? '机构基线计算中' : precompute?.dirty ? '等待增量重算' : '机构基线已就绪'}</Status><Status ok={freshness >= 98}>行情 {data?.dataQuality.priceTargetDate || '检测中'} · {freshness.toFixed(1)}%</Status><span className="quant-auto-sync"><RadioTower />自动同步</span></div></header>
+    <header className="quant-header"><div><span className="quant-eyebrow"><FlaskConical /> QUANT RESEARCH OS</span><h1>量化回测与数据利用</h1><p>把非结构化情报、行情、基本面和资金数据变成可复现、可解释、可质疑的研究结果。</p></div><div className="quant-header-actions"><Status ok={!precompute?.dirty && !precompute?.computing}>{precompute?.computing ? '机构基线计算中' : precompute?.dirty ? '等待增量重算' : '机构基线已就绪'}</Status>{active === 'history' ? <Status ok={Boolean(latestHistoryCutoff)}>历史行情截止 {latestHistoryCutoff || '检测中'}</Status> : <Status ok={freshness >= 98}>行情 {data?.dataQuality.priceTargetDate || '检测中'} · {freshness.toFixed(1)}%</Status>}<span className="quant-auto-sync"><RadioTower />自动同步</span></div></header>
     <nav className="quant-tabs" aria-label="量化研究栏目">{NAV.map(([key, label, Icon]) => <button key={key} className={active === key ? 'is-active' : ''} onClick={() => navigate(key === 'overview' ? '/essay-quant' : `/essay-quant?section=${key}`)}><Icon />{label}</button>)}</nav>
-    {message ? <div className="quant-message" aria-live="polite">{running ? <LoaderCircle className="is-spinning" /> : <Activity />}{message}</div> : null}
+    {message && messageScope === active ? <div className="quant-message" aria-live="polite">{running ? <LoaderCircle className="is-spinning" /> : <Activity />}{message}</div> : null}
+    {loadNotice ? <div className="quant-message" aria-live="polite"><Activity />{loadNotice}</div> : null}
     {data && freshness < 98 ? <div className="quant-message is-warning"><TriangleAlert />当前仅 {data.dataQuality.currentPriceSymbolCount ?? 0}/{data.dataQuality.resolvedSymbolCount ?? 0} 个量化标的覆盖目标交易日，后台正在自动补齐；历史结果仍可查看。</div> : null}
     {active === 'overview' && <Overview catalog={catalog} data={data} onMethod={(method) => { setRule(buildMethodRule(method)); navigate(`/essay-quant?section=builder&method=${encodeURIComponent(method.key)}`); }} onNatural={() => navigate('/essay-quant?section=natural-language')} />}
     {active === 'builder' && <Builder method={activeMethod} rule={rule} rules={rules} running={running} setRule={setRule} onRun={() => void run()} onSave={() => void save()} />}

@@ -9,6 +9,7 @@ export type ApiErrorCategory =
   | 'portfolio_oversell'
   | 'portfolio_busy'
   | 'upstream_llm_400'
+  | 'request_timeout'
   | 'upstream_timeout'
   | 'upstream_network'
   | 'local_connection_failed'
@@ -463,7 +464,17 @@ export function parseApiError(error: unknown): ParsedApiError {
     });
   }
 
-  if (includesAny(matchText, ['timeout', 'timed out', 'read timeout', 'connect timeout']) || code === 'ECONNABORTED') {
+  if (!response && ['ECONNABORTED', 'ETIMEDOUT'].includes(String(code || ''))) {
+    return createParsedApiError({
+      title: '请求响应超时',
+      message: '本次页面请求超过等待时间；已经加载的内容不受影响，系统会在后台重试。',
+      rawMessage,
+      status,
+      category: 'request_timeout',
+    });
+  }
+
+  if (includesAny(matchText, ['timeout', 'timed out', 'read timeout', 'connect timeout'])) {
     return createParsedApiError({
       title: '连接上游服务超时',
       message: '服务端访问外部依赖时超时，请稍后重试，或检查当前网络与代理设置。',

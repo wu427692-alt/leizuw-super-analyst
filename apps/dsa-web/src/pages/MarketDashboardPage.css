@@ -203,6 +203,89 @@
     background-size: 24px 24px;
   }
 
+  .market-command-center .market-overview-header {
+    gap: 8px;
+  }
+
+  .market-command-center .market-overview-header > button {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  .market-command-center .market-index-rail {
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .market-command-center .market-index-switch {
+    min-width: min(76vw, 220px);
+    scroll-snap-align: start;
+  }
+
+  .market-command-center .market-main-quote-head > div:last-child {
+    display: none;
+  }
+
+  .market-command-center .market-overseas-row {
+    grid-template-columns: minmax(82px, 1fr) minmax(86px, 1fr) 64px;
+    gap: 8px;
+    min-height: 54px;
+  }
+
+  .market-command-center .market-watchlist-switcher {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+  }
+
+  .market-command-center .market-watchlist-switcher button {
+    min-height: 42px;
+    flex: 0 0 auto;
+  }
+
+  .market-command-center .market-latest-event {
+    grid-template-columns: 40px minmax(0, 1fr);
+    min-height: 52px;
+  }
+
+  .market-command-center .market-latest-event > div {
+    grid-column: 2;
+  }
+
+  .market-command-center .market-ai-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-command-center .market-ai-actions button {
+    min-height: 84px;
+  }
+
+  .market-timeframe-chart .market-chart-toolbar {
+    display: block;
+    overflow-x: auto;
+    padding: 0;
+    scrollbar-width: none;
+  }
+
+  .market-timeframe-chart .market-chart-periods,
+  .market-timeframe-chart .market-chart-ranges {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .market-timeframe-chart .market-chart-periods button,
+  .market-timeframe-chart .market-chart-ranges button {
+    min-height: 38px;
+    flex: 1 0 auto;
+  }
+
+  .market-timeframe-chart .market-chart-ranges {
+    border-top: 1px solid hsl(var(--border) / .45);
+  }
+
   .market-command-center .market-histogram__column {
     grid-template-rows: 18px 76px 30px;
     padding-right: 2px;

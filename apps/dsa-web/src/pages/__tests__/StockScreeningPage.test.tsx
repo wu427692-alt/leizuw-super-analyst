@@ -906,7 +906,7 @@ describe('StockScreeningPage', () => {
     expect(await screen.findByText('选股任务运行中')).toBeInTheDocument();
     await waitFor(() => expect(getScreenTask).toHaveBeenCalledTimes(1));
     expect(screen.getByText('选股运行中')).toBeInTheDocument();
-    expect(screen.getByText(/连接上游服务超时/)).toBeInTheDocument();
+    expect(screen.getByText(/请求响应超时/)).toBeInTheDocument();
     expect(window.sessionStorage.getItem('dsa.alphasift.activeScreenTask.v1')).toContain('screen-task-1');
   });
 
