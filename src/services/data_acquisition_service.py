@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 
 MAX_TASKS = 12
 MAX_ROWS_PER_DATASET = 2000
+MAX_RESEARCH_REPORT_RECALL_ROWS = max(
+    5000, min(int(os.getenv("DATA_ACQUISITION_REPORT_RECALL_MAX_ROWS", "100000")), 200000)
+)
+MAX_RESEARCH_REPORT_RESULTS = max(
+    20, min(int(os.getenv("DATA_ACQUISITION_REPORT_MAX_RESULTS", "500")), MAX_ROWS_PER_DATASET)
+)
 _RESOURCE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 # The planner sees the most useful productized endpoints. The executor still supports
@@ -101,7 +107,11 @@ TYC_FULL_COMMANDS = {
     "historical_overview": ["history", "historical-overview"],
 }
 
-_FILE_REQUEST_RE = re.compile(r"(?:下载|打包|附上|包含|提供).{0,8}(?:文件|附件|PDF|原文)|(?:文件|附件|PDF).{0,8}(?:下载|打包|一并)", re.I)
+_FILE_REQUEST_RE = re.compile(
+    r"(?:下载|打包|附上|包含|提供).{0,10}(?:文件|附件|PDF|原文|研报|报告)"
+    r"|(?:文件|附件|PDF|原文|研报|报告).{0,10}(?:下载|打包|一并)",
+    re.I,
+)
 MAX_DOWNLOAD_FILES = 100
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_PACKAGE_FILE_BYTES = 500 * 1024 * 1024
@@ -110,6 +120,8 @@ PLANNER_SYSTEM = """你是财经数据产品的数据调度规划器。把用户
 只能使用 capability_catalog 中的数据源和资源。只获取用户明确要求的数据维度，不得因为目录中存在其他能力就一并添加；用户要求“只/仅/不要”时必须严格排除未要求渠道。多维综合请求再覆盖行情、财务、资金、公告、新闻、机构观点、知识星球和工商风险中真正相关的维度，避免重复。
 股票代码必须使用 Tushare 格式，如 603306.SH、300476.SZ。日期参数使用 YYYYMMDD；本地库日期使用 YYYY-MM-DD。
 公告必须使用 cninfo.announcements 现场调用巨潮接口重新检索，不得使用本地公告缓存。Tushare 数据必须按维度直接调用对应 api_name；研报 PDF 库使用 research_report，盈利预测使用 report_rc，新闻使用 news/major_news，不能用 monitor.events 代替。不要向新闻接口传 ts_code。
+研报主题请求必须把用户原话中的主题拆成 scope.keywords 和 research_report.params.topics；“或/或者”使用 keyword_mode=any。时间范围必须据 today 精确计算，不得用接口默认的20天代替“最近两年”。“最好是深度研究”设 depth_preference=prefer，“只要/必须是深度研究”设为strict，并设 ai_filter=true。
+例：“下载最近两年低空经济或无人机方向的深度研报” => scope.keywords=["低空经济","无人机"]，scope.start_date=当天向前两年，scope.end_date=today，task.params={"topics":["低空经济","无人机"],"keyword_mode":"any","depth_preference":"prefer","ai_filter":true,...}，include_files=true。
 知识星球使用 created_from、created_to、query 或 symbol；天眼查的 company_name 可以是单个名称或名称数组。
 必须输出全局 scope：symbols、company_names、keywords、start_date、end_date、market_wide。除非用户明确要求全市场，market_wide 必须为 false。
 每个任务必须包含 source、resource、label、reason、params、fields。params 只能包含该渠道实际查询参数，不能用空参数拉全量。最多12个任务。
@@ -138,6 +150,101 @@ def _json_safe(value: Any) -> Any:
         except (TypeError, ValueError):
             pass
     return str(value)
+
+
+_REPORT_TOPIC_ALIASES: Dict[str, List[str]] = {
+    "低空经济": ["低空经济", "低空", "通用航空", "通航", "eVTOL", "飞行汽车", "城市空中交通", "UAM"],
+    "无人机": ["无人机", "无人飞行器", "UAV", "无人航空器", "无人航空", "飞控"],
+}
+_REPORT_INTERNAL_PARAMS = {
+    "topics", "keywords", "keyword", "query", "keyword_mode", "depth_preference",
+    "ai_filter", "max_results", "strict_depth",
+}
+_REPORT_TOPIC_STOPWORDS = {
+    "研报", "报告", "研究", "深度", "深度研究", "主题", "方向", "最近", "近期",
+    "下载", "打包", "最好", "都是", "我要", "筛选", "数据",
+}
+
+
+def _split_search_terms(value: Any) -> List[str]:
+    """Normalize planner/user topic values without treating an OR phrase as one literal."""
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    terms: List[str] = []
+    for item in values:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        for part in re.split(r"(?:或者|以及|和|\bor\b|[\s,，、;；|/]+)", text, flags=re.I):
+            cleaned = re.sub(r"^(?:关于|聚焦|围绕|主题(?:要是|是|为)?)+", "", part.strip())
+            cleaned = re.sub(r"(?:方向|主题|板块|产业|行业)$", "", cleaned).strip()
+            if not cleaned or cleaned in _REPORT_TOPIC_STOPWORDS or len(cleaned) > 40:
+                continue
+            terms.append(cleaned)
+    return list(dict.fromkeys(terms))
+
+
+def _extract_report_topics(request_text: str) -> List[str]:
+    """Extract a conservative topic set as a guard when the LLM drops constraints."""
+    text = str(request_text or "").strip()
+    topics: List[str] = []
+    for canonical, aliases in _REPORT_TOPIC_ALIASES.items():
+        if any(alias.lower() in text.lower() for alias in aliases):
+            topics.append(canonical)
+    patterns = (
+        r"主题(?:要是|是|为)?(.{1,80}?)(?:[，。；;]|最好|优先|最近|近\s*\d|过去|$)",
+        r"(?:关于|聚焦|围绕)(.{1,60}?)(?:的)?(?:研报|报告|[，。；;]|$)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.I):
+            topics.extend(_split_search_terms(match.group(1)))
+    return list(dict.fromkeys(topics))
+
+
+def _chinese_number(value: str) -> Optional[int]:
+    raw = str(value or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    mapping = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+               "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    if raw in mapping:
+        return mapping[raw]
+    if "十" in raw and len(raw) <= 3:
+        left, _, right = raw.partition("十")
+        return mapping.get(left, 1) * 10 + mapping.get(right, 0)
+    return None
+
+
+def _shift_years(day: date, years: int) -> date:
+    try:
+        return day.replace(year=day.year - years)
+    except ValueError:  # February 29.
+        return day.replace(year=day.year - years, day=28)
+
+
+def _extract_requested_date_range(request_text: str) -> Optional[tuple[str, str]]:
+    """Return an explicit natural-language date constraint, independent of the planner."""
+    text = str(request_text or "")
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    explicit = re.findall(r"(?<!\d)(20\d{2})[-/.\u5e74](\d{1,2})[-/.\u6708](\d{1,2})(?:\u65e5)?(?!\d)", text)
+    if len(explicit) >= 2:
+        dates = sorted(date(int(year), int(month), int(day)) for year, month, day in explicit[:2])
+        return dates[0].isoformat(), dates[-1].isoformat()
+    compact = re.findall(r"(?<!\d)(20\d{6})(?!\d)", text)
+    if len(compact) >= 2:
+        dates = sorted(datetime.strptime(value, "%Y%m%d").date() for value in compact[:2])
+        return dates[0].isoformat(), dates[-1].isoformat()
+    for unit, multiplier in (("年", 1), ("个月", 30), ("月", 30), ("天", 1)):
+        match = re.search(rf"(?:最近|近|过去)\s*([\d零一二两三四五六七八九十]+)\s*{unit}", text)
+        if not match:
+            continue
+        count = _chinese_number(match.group(1))
+        if not count or count > 20_000:
+            continue
+        start = _shift_years(today, count) if unit == "年" else today - timedelta(days=count * multiplier)
+        return start.isoformat(), today.isoformat()
+    if "今年" in text:
+        return date(today.year, 1, 1).isoformat(), today.isoformat()
+    return None
 
 
 class DataAcquisitionPlanner:
@@ -277,7 +384,8 @@ class DataAcquisitionService:
         }
 
     def plan(self, request_text: str) -> Dict[str, Any]:
-        return self.planner.plan(str(request_text or "").strip())
+        request_text = str(request_text or "").strip()
+        return self._validate_plan(self.planner.plan(request_text), request_text)
 
     def run(
         self,
@@ -408,6 +516,7 @@ class DataAcquisitionService:
         if not tasks:
             raise DataAcquisitionError("取数计划没有可执行任务")
         scope = self.normalize_scope(plan.get("scope"), tasks, request_text)
+        self._enforce_research_report_constraints(tasks, scope, request_text)
         return {"title": str(plan.get("title") or "一站式财经数据包")[:120],
                 "objective": str(plan.get("objective") or request_text)[:1000], "tasks": tasks,
                 "scope": scope,
@@ -434,17 +543,16 @@ class DataAcquisitionService:
             if str(value).strip():
                 names.add(str(value).strip())
         for value in scope.get("keywords") if isinstance(scope.get("keywords"), list) else []:
-            if str(value).strip():
-                keywords.add(str(value).strip())
+            keywords.update(_split_search_terms(value))
         for task in tasks:
             params = task.get("params") or {}
             for key in ("company_name", "company_names"):
                 values = params.get(key, [])
                 values = values if isinstance(values, list) else [values]
                 names.update(str(value).strip() for value in values if str(value).strip())
-            values = params.get("keywords", [])
-            values = values if isinstance(values, list) else [values]
-            keywords.update(str(value).strip() for value in values if str(value).strip())
+            if task.get("resource") == "research_report":
+                for key in ("topics", "keywords", "keyword", "query"):
+                    keywords.update(_split_search_terms(params.get(key)))
         request_and_names = f"{request_text}\n{' '.join(names)}".lower()
         for watch_symbol, watch_name in EssayDailyReportService._daily_watchlist():
             if watch_name.lower() in request_and_names:
@@ -460,6 +568,65 @@ class DataAcquisitionService:
         return {"symbols": sorted(symbols), "company_names": sorted(names), "keywords": sorted(keywords),
                 "start_date": start_date, "end_date": end_date,
                 "market_wide": bool(scope.get("market_wide", False))}
+
+    @staticmethod
+    def _enforce_research_report_constraints(
+        tasks: List[Dict[str, Any]], scope: Dict[str, Any], request_text: str,
+    ) -> None:
+        """Make report selection deterministic even when the LLM plan is incomplete."""
+        report_tasks = [
+            task for task in tasks
+            if task.get("source") == "tushare" and task.get("resource") == "research_report"
+        ]
+        if not report_tasks:
+            return
+
+        requested_range = _extract_requested_date_range(request_text)
+        if requested_range:
+            scope["start_date"], scope["end_date"] = requested_range
+        if not scope.get("start_date") or not scope.get("end_date"):
+            today = datetime.now(timezone(timedelta(hours=8))).date()
+            scope["start_date"] = (today - timedelta(days=365)).isoformat()
+            scope["end_date"] = today.isoformat()
+
+        topics = list(scope.get("keywords") or [])
+        topics.extend(_extract_report_topics(request_text))
+        for task in report_tasks:
+            params = task.get("params") or {}
+            for key in ("topics", "keywords", "keyword", "query"):
+                topics.extend(_split_search_terms(params.get(key)))
+        topics = list(dict.fromkeys(value for value in topics if value))
+        scope["keywords"] = sorted(set(topics))
+        if topics:
+            # Topic-wide retrieval is still a scoped query; market_wide means no textual filter.
+            scope["market_wide"] = False
+
+        has_entity_selector = bool(scope.get("symbols") or scope.get("company_names"))
+        if not topics and not has_entity_selector and not scope.get("market_wide"):
+            raise DataAcquisitionError("研报任务缺少主题、公司或股票范围，已阻止全量获取")
+
+        strict_depth = bool(re.search(r"(?:只要|仅要|必须|全部|都要).{0,8}深度", request_text))
+        prefer_depth = strict_depth or bool(re.search(r"(?:深度研究|深度研报|深度报告|最好.{0,8}深度)", request_text))
+        mode = "any" if len(topics) > 1 or re.search(r"(?:或者|或|\bor\b)", request_text, re.I) else "all"
+        for task in report_tasks:
+            params = dict(task.get("params") or {})
+            params.update({
+                "start_date": str(scope["start_date"]).replace("-", ""),
+                "end_date": str(scope["end_date"]).replace("-", ""),
+                "topics": topics,
+                "keyword_mode": mode,
+                "depth_preference": "strict" if strict_depth else "prefer" if prefer_depth else "none",
+                "ai_filter": bool(params.get("ai_filter", True)) if topics else False,
+                "max_results": DataAcquisitionService._bounded_report_result_limit(params.get("max_results")),
+            })
+            task["params"] = params
+
+    @staticmethod
+    def _bounded_report_result_limit(value: Any) -> int:
+        try:
+            return max(1, min(int(value or MAX_RESEARCH_REPORT_RESULTS), MAX_ROWS_PER_DATASET))
+        except (TypeError, ValueError):
+            return MAX_RESEARCH_REPORT_RESULTS
 
     def _execute_task(self, task: Dict[str, Any], scope: Dict[str, Any]) -> List[Dict[str, Any]]:
         source, resource, params = task["source"], task["resource"], dict(task["params"])
@@ -581,14 +748,13 @@ class DataAcquisitionService:
 
     def _execute_tushare(self, task: Dict[str, Any], scope: Dict[str, Any]) -> List[Dict[str, Any]]:
         resource = task["resource"]
+        if resource == "research_report":
+            return self._execute_research_reports(task, scope)
         query_params = dict(task["params"])
         raw_codes = query_params.pop("ts_codes", query_params.get("ts_code", ""))
         codes = raw_codes if isinstance(raw_codes, list) else [value.strip() for value in str(raw_codes).split(",") if value.strip()]
         codes = codes or list(scope.get("symbols") or [])
         fields = list(task.get("fields") or [])
-        if resource == "research_report":
-            required = ["trade_date", "abstr", "title", "report_type", "author", "name", "ts_code", "inst_csname", "ind_name", "url"]
-            fields = list(dict.fromkeys([*fields, *required]))
         if resource in {"news", "major_news"}:
             query_params.pop("ts_code", None)
             for key in ("keyword", "keywords", "query", "company_name", "company_names", "symbol", "symbols"):
@@ -606,10 +772,6 @@ class DataAcquisitionService:
                 if raw:
                     query_params[key] = raw
             codes = []
-        elif resource == "research_report":
-            query_params.setdefault("start_date", str(scope.get("start_date") or "").replace("-", ""))
-            query_params.setdefault("end_date", str(scope.get("end_date") or "").replace("-", ""))
-            query_params = {key: value for key, value in query_params.items() if value not in (None, "", [])}
 
         param_sets = []
         if codes and resource not in {"news", "major_news"}:
@@ -617,13 +779,10 @@ class DataAcquisitionService:
                 current = dict(query_params)
                 current["ts_code"] = code
                 param_sets.append(current)
-            if resource == "research_report" and scope.get("company_names"):
-                # Industry/strategy reports often omit ts_code but mention the company in abstr.
-                param_sets.append(dict(query_params))
         else:
             param_sets.append(query_params)
 
-        page_size = 1000 if resource == "research_report" else 1500 if resource == "news" else 800 if resource == "major_news" else 0
+        page_size = 1500 if resource == "news" else 800 if resource == "major_news" else 0
         rows: List[Dict[str, Any]] = []
         for base in param_sets:
             if not page_size:
@@ -646,6 +805,288 @@ class DataAcquisitionService:
             )
             unique[identity] = row
         return list(unique.values())
+
+    def _execute_research_reports(self, task: Dict[str, Any], scope: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Recall the full requested period, then rank/filter before exporting anything."""
+        params = dict(task.get("params") or {})
+        topics: List[str] = []
+        for key in ("topics", "keywords", "keyword", "query"):
+            topics.extend(_split_search_terms(params.get(key)))
+        topics.extend(str(value).strip() for value in scope.get("keywords") or [] if str(value).strip())
+        topics = list(dict.fromkeys(topics))
+        mode = "all" if str(params.get("keyword_mode") or "any").lower() == "all" else "any"
+        depth_preference = str(params.get("depth_preference") or "none").lower()
+        ai_filter = bool(params.get("ai_filter")) and bool(topics)
+        max_results = self._bounded_report_result_limit(params.get("max_results"))
+
+        start = self._as_date(params.get("start_date") or scope.get("start_date"), default_days=365)
+        end = self._as_date(params.get("end_date") or scope.get("end_date"), default_days=0)
+        if end < start:
+            raise DataAcquisitionError("研报开始日期不能晚于结束日期")
+        codes = params.get("ts_codes") or params.get("ts_code") or scope.get("symbols") or []
+        codes = codes if isinstance(codes, list) else [value.strip() for value in str(codes).split(",") if value.strip()]
+        if not topics and not codes and not scope.get("company_names") and not scope.get("market_wide"):
+            raise DataAcquisitionError("研报筛选条件丢失，已阻止全量下载")
+
+        fields = list(dict.fromkeys([
+            *(task.get("fields") or []), "trade_date", "abstr", "title", "report_type",
+            "author", "name", "ts_code", "inst_csname", "ind_name", "url",
+        ]))
+        upstream_base = {
+            key: value for key, value in params.items()
+            if key not in _REPORT_INTERNAL_PARAMS and key not in {"limit", "offset", "ts_codes"}
+            and value not in (None, "", [])
+        }
+        upstream_base.pop("start_date", None)
+        upstream_base.pop("end_date", None)
+
+        selectors: List[Optional[str]] = [str(value) for value in codes[:20]] if codes else [None]
+        if codes and topics:
+            # Industry/strategy reports often have no ts_code and must join the topic recall.
+            selectors.append(None)
+        rows_by_identity: Dict[str, Dict[str, Any]] = {}
+        scanned = 0
+        recall_truncated = False
+        for selector in selectors:
+            for window_start, window_end in self._report_date_windows(start, end):
+                for offset in range(0, MAX_RESEARCH_REPORT_RECALL_ROWS, 1000):
+                    current = {
+                        **upstream_base,
+                        "start_date": window_start.strftime("%Y%m%d"),
+                        "end_date": window_end.strftime("%Y%m%d"),
+                        "limit": 1000,
+                        "offset": offset,
+                    }
+                    if selector:
+                        current["ts_code"] = selector
+                    result = self.financial.query(
+                        source="tushare", resource="research_report", params=current, fields=fields,
+                    )
+                    page = result.get("rows") or []
+                    scanned += len(page)
+                    for raw_row in page:
+                        row = _json_safe(raw_row)
+                        scored = self._score_research_report(row, topics, mode)
+                        if scored is None:
+                            continue
+                        if depth_preference == "strict" and int(scored.get("深度评分") or 0) < 45:
+                            continue
+                        identity = json.dumps(
+                            [scored.get("trade_date"), scored.get("title"), scored.get("url")],
+                            ensure_ascii=False, default=str,
+                        )
+                        rows_by_identity[identity] = scored
+                    if scanned >= MAX_RESEARCH_REPORT_RECALL_ROWS:
+                        recall_truncated = True
+                        break
+                    if len(page) < 1000:
+                        break
+                if recall_truncated:
+                    break
+            if recall_truncated:
+                break
+
+        candidates = list(rows_by_identity.values())
+        if not topics:
+            candidates = self._filter_rows(candidates, "tushare", "research_report", scope)
+        candidates.sort(
+            key=lambda row: (
+                int(row.get("深度评分") or 0) if depth_preference in {"prefer", "strict"} else 0,
+                int(row.get("相关性评分") or 0),
+                str(row.get("trade_date") or ""),
+            ),
+            reverse=True,
+        )
+        review_pool = candidates[:max(max_results * 3, max_results)]
+        if ai_filter and review_pool:
+            review_pool = self._ai_review_research_reports(review_pool, topics, depth_preference)
+        selected = review_pool[:max_results]
+        for row in selected:
+            row["检索开始日期"] = start.isoformat()
+            row["检索结束日期"] = end.isoformat()
+            row["候选扫描数"] = scanned
+            row["召回是否截断"] = recall_truncated
+        return selected
+
+    @staticmethod
+    def _report_date_windows(start: date, end: date) -> List[tuple[date, date]]:
+        windows: List[tuple[date, date]] = []
+        cursor = end
+        while cursor >= start:
+            window_start = max(start, cursor - timedelta(days=30))
+            windows.append((window_start, cursor))
+            cursor = window_start - timedelta(days=1)
+        return windows
+
+    @staticmethod
+    def _score_research_report(
+        row: Dict[str, Any], topics: List[str], mode: str,
+    ) -> Optional[Dict[str, Any]]:
+        title = str(row.get("title") or "")
+        abstract = str(row.get("abstr") or "")
+        industry = str(row.get("ind_name") or "")
+        company = str(row.get("name") or "")
+        title_lower, abstract_lower = title.lower(), abstract.lower()
+        context_lower = f"{industry} {company}".lower()
+        matched_topics: List[str] = []
+        matched_terms: List[str] = []
+        relevance = 0
+        for topic in topics:
+            aliases = _REPORT_TOPIC_ALIASES.get(topic, [topic])
+            topic_hit = False
+            topic_score = 0
+            for alias in aliases:
+                needle = alias.lower()
+                if not needle:
+                    continue
+                if needle in title_lower:
+                    topic_score = max(topic_score, 55 if alias == topic else 42)
+                    topic_hit = True
+                    matched_terms.append(alias)
+                if needle in abstract_lower:
+                    topic_score = max(topic_score, 35 if alias == topic else 24)
+                    topic_hit = True
+                    matched_terms.append(alias)
+                if needle in context_lower:
+                    topic_score = max(topic_score, 30)
+                    topic_hit = True
+                    matched_terms.append(alias)
+            if topic_hit:
+                matched_topics.append(topic)
+                relevance += topic_score
+        if topics and ((mode == "all" and len(matched_topics) != len(topics)) or (mode != "all" and not matched_topics)):
+            return None
+        relevance = min(100, relevance + max(0, len(set(matched_topics)) - 1) * 10)
+
+        report_type = str(row.get("report_type") or "")
+        depth_text = f"{title} {report_type}"
+        depth = 0
+        depth_reasons: List[str] = []
+        for term, points in (("深度", 55), ("专题", 45), ("产业链", 35), ("全景", 35),
+                             ("白皮书", 35), ("年度策略", 30), ("行业研究", 25)):
+            if term in depth_text:
+                depth = max(depth, points)
+                depth_reasons.append(term)
+        if len(abstract) >= 500:
+            depth += 20
+            depth_reasons.append("长摘要")
+        elif len(abstract) >= 200:
+            depth += 10
+            depth_reasons.append("完整摘要")
+        if row.get("url"):
+            depth += 10
+            depth_reasons.append("可下载PDF")
+        if re.search(r"(?:日报|周报|早报|晨报|快评|点评)", title):
+            depth -= 30
+            depth_reasons.append("短评类扣分")
+        enriched = dict(row)
+        enriched.update({
+            "筛选命中主题": "、".join(dict.fromkeys(matched_topics)),
+            "筛选命中词": "、".join(dict.fromkeys(matched_terms)),
+            "相关性评分": relevance,
+            "深度评分": max(0, min(100, depth)),
+            "深度判定": "高" if depth >= 60 else "中" if depth >= 35 else "普通",
+            "深度判定依据": "、".join(dict.fromkeys(depth_reasons)) or "未出现深度研究特征",
+            "AI语义复核": "待复核",
+            "AI复核说明": "",
+        })
+        return enriched
+
+    def _ai_review_research_reports(
+        self, rows: List[Dict[str, Any]], topics: List[str], depth_preference: str,
+    ) -> List[Dict[str, Any]]:
+        """Use structured semantic classification; never execute model-generated code."""
+        enabled = str(os.getenv("DATA_ACQUISITION_REPORT_AI_FILTER", "1")).lower() not in {"0", "false", "off"}
+        api_key = str(getattr(self.planner, "api_key", "") or "").strip()
+        base_url = str(getattr(self.planner, "base_url", "") or "").rstrip("/")
+        model = str(getattr(self.planner, "model", "") or DEFAULT_ESSAY_MODEL)
+        if not enabled or not api_key or not base_url:
+            for row in rows:
+                row["AI语义复核"] = "未执行（使用确定性筛选）"
+            return rows
+
+        batches = [rows[index:index + 25] for index in range(0, len(rows), 25)]
+
+        def review(batch_index: int, batch: List[Dict[str, Any]]) -> tuple[int, Optional[Dict[int, Dict[str, Any]]]]:
+            items = [{
+                "id": index,
+                "title": str(row.get("title") or "")[:300],
+                "abstract": str(row.get("abstr") or "")[:1400],
+                "industry": str(row.get("ind_name") or "")[:100],
+                "report_type": str(row.get("report_type") or "")[:100],
+            } for index, row in enumerate(batch)]
+            system = (
+                "你是券商研报语义筛选器。用户主题之间是 OR；只根据标题、摘要和行业判断。"
+                "概念真正相关才 relevant=true，偶然出现或仅宏观提及应为false。"
+                "depth_score评估是否是系统深度研究，而非日报/周报/事件快评。"
+                "输出严格JSON：{\"items\":[{\"id\":0,\"relevant\":true,\"score\":0-100,"
+                "\"depth_score\":0-100,\"matched_topics\":[],\"reason\":\"20字内\"}]}。"
+            )
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": json.dumps({"topics": topics, "reports": items}, ensure_ascii=False)},
+                ],
+                "response_format": {"type": "json_object"},
+                "thinking": {"type": "disabled"},
+                "temperature": 0,
+                "max_tokens": 3500,
+                "stream": False,
+            }
+            try:
+                response = requests.post(
+                    f"{base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=max(20, min(int(getattr(self.planner, "timeout", 120)), 180)),
+                )
+                response.raise_for_status()
+                parsed = json.loads(repair_json(response.json()["choices"][0]["message"]["content"]))
+                reviewed = {
+                    int(item["id"]): item for item in parsed.get("items") or []
+                    if isinstance(item, dict) and str(item.get("id", "")).isdigit()
+                }
+                return batch_index, reviewed
+            except Exception:
+                logger.warning("Research report AI review batch failed index=%s", batch_index)
+                return batch_index, None
+
+        reviews: Dict[int, Optional[Dict[int, Dict[str, Any]]]] = {}
+        workers = min(6, len(batches))
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futures = [pool.submit(review, index, batch) for index, batch in enumerate(batches)]
+            for future in as_completed(futures):
+                batch_index, result = future.result()
+                reviews[batch_index] = result
+
+        kept: List[Dict[str, Any]] = []
+        for batch_index, batch in enumerate(batches):
+            reviewed = reviews.get(batch_index)
+            for local_index, row in enumerate(batch):
+                item = reviewed.get(local_index) if reviewed else None
+                if not item:
+                    row["AI语义复核"] = "上游不可用，已回退确定性筛选"
+                    kept.append(row)
+                    continue
+                ai_score = max(0, min(int(item.get("score") or 0), 100))
+                ai_depth = max(0, min(int(item.get("depth_score") or 0), 100))
+                row["AI语义复核"] = "通过" if item.get("relevant") else "排除"
+                row["AI相关性评分"] = ai_score
+                row["AI深度评分"] = ai_depth
+                row["AI复核说明"] = str(item.get("reason") or "")[:120]
+                relevant = bool(item.get("relevant")) and ai_score >= 50
+                deep_enough = depth_preference != "strict" or max(ai_depth, int(row.get("深度评分") or 0)) >= 45
+                if relevant and deep_enough:
+                    kept.append(row)
+        kept.sort(
+            key=lambda row: (
+                int(row.get("AI深度评分") or row.get("深度评分") or 0),
+                int(row.get("AI相关性评分") or row.get("相关性评分") or 0),
+                str(row.get("trade_date") or ""),
+            ), reverse=True,
+        )
+        return kept
 
     @staticmethod
     def _run_tyc(command: List[str], search_key: str) -> Any:
@@ -754,17 +1195,41 @@ class DataAcquisitionService:
             raise DataAcquisitionError("原始文件达到单包 500MB 上限")
         limit = min(MAX_FILE_BYTES, remaining)
         temporary = target.with_suffix(target.suffix + ".part")
+        session = requests.Session()
+        response: Optional[requests.Response] = None
         try:
-            with requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.cninfo.com.cn/"}, timeout=(10, 90), stream=True) as response:
+            hostname = (urlparse(url).hostname or "").lower()
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+                "Referer": "https://data.eastmoney.com/report/" if hostname == "pdf.dfcfw.com" else "https://www.cninfo.com.cn/",
+            }
+            response = session.get(url, headers=headers, timeout=(10, 90), stream=True)
+            if hostname == "pdf.dfcfw.com" and response.status_code == 200:
+                declared = int(response.headers.get("Content-Length") or 0)
+                if 0 < declared < 16 * 1024:
+                    challenge = response.content.decode("utf-8", errors="ignore")
+                    cookies = DataAcquisitionService._solve_eastmoney_pdf_challenge(challenge)
+                    response.close()
+                    response = None
+                    if not cookies:
+                        raise DataAcquisitionError("研报 PDF 下载验证失败")
+                    for key, value in cookies.items():
+                        session.cookies.set(key, value, domain="pdf.dfcfw.com", path="/")
+                    response = session.get(url, headers=headers, timeout=(10, 90), stream=True)
+            with response:
                 response.raise_for_status()
                 declared = int(response.headers.get("Content-Length") or 0)
                 if declared > limit:
                     raise DataAcquisitionError("原始文件超过大小上限")
                 size = 0
+                first_chunk = True
                 with temporary.open("wb") as output:
                     for chunk in response.iter_content(64 * 1024):
                         if not chunk:
                             continue
+                        if first_chunk and ".pdf" in urlparse(url).path.lower() and not chunk.startswith(b"%PDF-"):
+                            raise DataAcquisitionError("上游未返回有效 PDF 文件")
+                        first_chunk = False
                         size += len(chunk)
                         if size > limit:
                             raise DataAcquisitionError("原始文件超过大小上限")
@@ -772,7 +1237,23 @@ class DataAcquisitionService:
             temporary.replace(target)
             return size
         finally:
+            if response is not None:
+                response.close()
+            session.close()
             temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _solve_eastmoney_pdf_challenge(script: str) -> Dict[str, str]:
+        if "EO_Bot_Ssid" not in script or "__tst_status" not in script:
+            return {}
+        ssid_match = re.search(r't=a\[_0x[0-9a-f]+\("0x7"\)\]\(t,(\d+)\)', script, re.I)
+        block_match = re.search(r"var e=\{(.+?)\},t=0", script, re.S)
+        if not ssid_match or not block_match:
+            return {}
+        values = [int(value) for value in re.findall(r":(\d+)", block_match.group(1))[:3]]
+        if len(values) != 3:
+            return {}
+        return {"EO_Bot_Ssid": ssid_match.group(1), "__tst_status": f"{sum(values)}#"}
 
     def _write_artifacts(self, directory: Path, job_id: str, request_text: str,
                          plan: Dict[str, Any], datasets: List[Dict[str, Any]], *,

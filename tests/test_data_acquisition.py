@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import time
 import zipfile
 
 from src.services.data_acquisition_service import DataAcquisitionService
+from src.services.data_acquisition_service import DataAcquisitionError
 from src.services.data_acquisition_task_service import DataAcquisitionTaskService
 
 
@@ -279,6 +281,146 @@ def test_scope_resolves_configured_watchlist_name_to_symbol(monkeypatch) -> None
     )
     assert scope["symbols"] == ["603306.SH"]
     assert scope["company_names"] == ["华懋科技"]
+
+
+def test_research_report_request_enforces_topics_two_years_and_download(tmp_path: Path):
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=FakeFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    expected_start = today.replace(year=today.year - 2)
+    raw_plan = {
+        "title": "研报下载",
+        "tasks": [{
+            "id": "reports", "source": "tushare", "resource": "research_report",
+            "label": "研报", "reason": "下载", "fields": [],
+            "params": {"keyword": "低空经济 无人机", "start_date": "20260801", "end_date": "20260821"},
+        }],
+        "scope": {"symbols": [], "company_names": [], "keywords": [],
+                  "start_date": "2026-08-01", "end_date": "2026-08-21", "market_wide": False},
+    }
+
+    plan = service._validate_plan(
+        raw_plan, "我要下载研报，主题要是低空经济或者无人机方向，最好都是深度研究，最近两年的",
+    )
+
+    assert plan["include_files"] is True
+    assert plan["scope"]["start_date"] == expected_start.isoformat()
+    assert plan["scope"]["end_date"] == today.isoformat()
+    assert set(plan["scope"]["keywords"]) >= {"低空经济", "无人机"}
+    params = plan["tasks"][0]["params"]
+    assert params["start_date"] == expected_start.strftime("%Y%m%d")
+    assert params["end_date"] == today.strftime("%Y%m%d")
+    assert params["keyword_mode"] == "any"
+    assert params["depth_preference"] == "prefer"
+    assert params["ai_filter"] is True
+
+
+def test_research_report_pipeline_filters_before_export_and_never_sends_internal_keywords(
+    tmp_path: Path, monkeypatch,
+):
+    calls = []
+
+    class ReportFinancial(FakeFinancial):
+        def query(self, *, source, resource, params, fields=None):
+            del source, fields
+            assert resource == "research_report"
+            calls.append(dict(params))
+            if params["end_date"] != "20260821" or params["offset"]:
+                return {"rows": []}
+            return {"rows": [
+                {"trade_date": "20260820", "title": "低空经济产业链深度研究", "abstr": "低空经济 eVTOL 产业链全景",
+                 "report_type": "行业研报", "ind_name": "航空", "url": "https://example.com/low.pdf"},
+                {"trade_date": "20260820", "title": "保险行业深度研究", "abstr": "银保业务趋势",
+                 "report_type": "行业研报", "ind_name": "保险", "url": "https://example.com/insurance.pdf"},
+                {"trade_date": "20260819", "title": "无人机行业周报", "abstr": "UAV 需求跟踪",
+                 "report_type": "行业研报", "ind_name": "军工", "url": "https://example.com/drone.pdf"},
+            ]}
+
+    monkeypatch.setenv("DATA_ACQUISITION_REPORT_AI_FILTER", "0")
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=ReportFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    task = {
+        "source": "tushare", "resource": "research_report", "fields": [],
+        "params": {"start_date": "20240821", "end_date": "20260821", "topics": ["低空经济", "无人机"],
+                   "keyword": "低空经济 无人机", "keyword_mode": "any", "depth_preference": "prefer",
+                   "ai_filter": True, "max_results": 100},
+    }
+    scope = {"symbols": [], "company_names": [], "keywords": ["低空经济", "无人机"],
+             "start_date": "2024-08-21", "end_date": "2026-08-21", "market_wide": False}
+
+    rows = service._execute_tushare(task, scope)
+
+    assert [row["title"] for row in rows] == ["低空经济产业链深度研究", "无人机行业周报"]
+    assert rows[0]["筛选命中主题"] == "低空经济"
+    assert rows[0]["深度评分"] > rows[1]["深度评分"]
+    assert all(not ({"topics", "keywords", "keyword", "query", "keyword_mode", "depth_preference", "ai_filter"} & set(call)) for call in calls)
+    assert min(call["start_date"] for call in calls) == "20240821"
+    assert max(call["end_date"] for call in calls) == "20260821"
+
+
+def test_research_report_without_any_scope_is_blocked(tmp_path: Path):
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=FakeFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    raw_plan = {
+        "tasks": [{"source": "tushare", "resource": "research_report", "params": {}, "fields": []}],
+        "scope": {"symbols": [], "company_names": [], "keywords": [], "market_wide": False},
+    }
+    try:
+        service._validate_plan(raw_plan, "下载一些研报")
+    except DataAcquisitionError as exc:
+        assert "已阻止全量获取" in str(exc)
+    else:
+        raise AssertionError("unscoped research report acquisition should be blocked")
+
+
+def test_research_report_ai_review_excludes_incidental_keyword_mentions(tmp_path: Path, monkeypatch):
+    class ReviewPlanner(FakePlanner):
+        base_url = "https://api.example.test"
+        timeout = 30
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({"items": [
+                {"id": 0, "relevant": True, "score": 94, "depth_score": 86,
+                 "matched_topics": ["低空经济"], "reason": "主题深度研究"},
+                {"id": 1, "relevant": False, "score": 8, "depth_score": 80,
+                 "matched_topics": [], "reason": "仅作为下游提及"},
+            ]}, ensure_ascii=False)}}]}
+
+    monkeypatch.setattr("src.services.data_acquisition_service.requests.post", lambda *args, **kwargs: FakeResponse())
+    service = DataAcquisitionService(
+        planner=ReviewPlanner(), financial=FakeFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    rows = [
+        {"title": "低空经济产业深度", "abstr": "eVTOL 产业链", "ind_name": "航空",
+         "report_type": "行业研报", "相关性评分": 80, "深度评分": 80},
+        {"title": "镁行业深度", "abstr": "下游包括汽车、低空经济和无人机", "ind_name": "金属",
+         "report_type": "行业研报", "相关性评分": 80, "深度评分": 80},
+    ]
+
+    reviewed = service._ai_review_research_reports(rows, ["低空经济", "无人机"], "prefer")
+
+    assert [row["title"] for row in reviewed] == ["低空经济产业深度"]
+    assert reviewed[0]["AI语义复核"] == "通过"
+
+
+def test_eastmoney_pdf_challenge_is_solved_without_browser_execution():
+    script = """<script>
+    function a(a){function n(){t=a[_0x649a(\"0x7\")](t,2952200192);}
+    var e={WTKkN:2108261434,bOYDu:56644541,dtzqS:function(a,n){return a+n},wyeCN:152937612},t=0;}
+    document.cookie=\"__tst_status=\"+a(0),document.cookie=\"EO_Bot_Ssid=\"+a(1);
+    </script>"""
+
+    assert DataAcquisitionService._solve_eastmoney_pdf_challenge(script) == {
+        "EO_Bot_Ssid": "2952200192",
+        "__tst_status": "2317843587#",
+    }
 
 
 def test_tianyancha_entity_resolution_keeps_l0_relevance_order(tmp_path: Path, monkeypatch):

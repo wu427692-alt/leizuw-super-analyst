@@ -5,6 +5,7 @@ import { AppPage, Badge, Card, EmptyState, PageHeader, StatCard } from '../compo
 import type { AcquisitionCapabilities, AcquisitionDownloadProgress, AcquisitionJob, AcquisitionPlan, AcquisitionRunTask } from '../types/dataAcquisition';
 
 const EXAMPLES = [
+  '下载最近两年低空经济或无人机方向的研报，优先深度研究，用 AI 复核相关性后打包 PDF',
   '打包华懋科技和胜宏科技近90天行情、估值、资金、公告、研报、新闻和知识星球小作文，并补充工商与风险信息',
   '获取胜宏科技最近8个季度财务三表、财务指标、机构研报和股东增减持，按数据源分别导出',
   '整理华懋科技本月所有公告、新闻、小作文和机构观点，并下载公告PDF、研报及相关附件一起打包',
@@ -221,6 +222,14 @@ const DataAcquisitionPage = () => {
               <div className="flex items-start justify-between gap-3"><span className="text-xs font-semibold text-primary">{String(index + 1).padStart(2, '0')}</span><Badge>{SOURCE_LABELS[task.source] ?? task.source}</Badge></div>
               <h3 className="mt-3 font-semibold text-foreground">{task.label}</h3>
               <p className="mt-1 text-xs leading-5 text-secondary-text">{task.reason || '按用户需求获取该数据集'}</p>
+              {task.resource === 'research_report' ? <div className="mt-3 space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-[11px] text-secondary-text">
+                <p className="font-medium text-foreground">主题召回 → 深度评分 → AI 语义复核 → 合格 PDF</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(Array.isArray(task.params.topics) ? task.params.topics : []).map((topic) => <Badge key={String(topic)}>{String(topic)}</Badge>)}
+                  <Badge>{String(task.params.keywordMode ?? task.params.keyword_mode ?? 'any').toLowerCase() === 'any' ? '任一主题命中' : '全部主题命中'}</Badge>
+                  <Badge variant="success">{task.params.aiFilter ?? task.params.ai_filter ? 'AI 复核开启' : '确定性筛选'}</Badge>
+                </div>
+              </div> : null}
               <code className="mt-3 block truncate rounded-lg bg-card px-2 py-1.5 text-[11px] text-secondary-text">{task.source}.{task.resource}</code>
             </div>)}
           </div>
