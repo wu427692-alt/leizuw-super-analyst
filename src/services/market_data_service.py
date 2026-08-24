@@ -85,21 +85,35 @@ class MarketDataService:
             refreshed = self.refresh_ticks([code]) > 0 if refresh else False
             session_count = 5 if selected_range == "5d" else 1
             storage_days = 14 if session_count == 5 else 7
-            tick_rows = self._regular_session_rows(self._tick_rows(code, storage_days), code)
+            raw_tick_rows = self._tick_rows(code, storage_days)
+            tick_rows = self._regular_session_rows(raw_tick_rows, code)
             minute_rows = self._regular_session_rows(self._intraday_rows(code, storage_days), code)
             available_dates = {row.timestamp.date() for row in [*tick_rows, *minute_rows]}
             if refresh or len(available_dates) < session_count:
                 refreshed = self.refresh_historical_intraday([code], sessions=session_count) > 0 or refreshed
-                tick_rows = self._regular_session_rows(self._tick_rows(code, storage_days), code)
+                raw_tick_rows = self._tick_rows(code, storage_days)
+                tick_rows = self._regular_session_rows(raw_tick_rows, code)
                 minute_rows = self._regular_session_rows(self._intraday_rows(code, storage_days), code)
             if not tick_rows and not minute_rows:
                 refreshed = self.refresh_ticks([code]) > 0 or refreshed
-                tick_rows = self._regular_session_rows(self._tick_rows(code, storage_days), code)
+                raw_tick_rows = self._tick_rows(code, storage_days)
+                tick_rows = self._regular_session_rows(raw_tick_rows, code)
             rows = _merge_second_and_minute_rows(tick_rows, minute_rows, sessions=session_count)
+            completed_session = _latest_completed_a_share_session()
             rows = _append_completed_stock_close(
                 rows,
                 self.repo.latest_daily([code]).get(code),
-                _latest_completed_a_share_session(),
+                completed_session,
+            )
+            # A user-scoped watchlist can receive the final Tencent snapshot
+            # before its Tushare daily bar has been backfilled.  Off-session
+            # snapshots are deliberately excluded from the plotted stream, but
+            # a same-day snapshot received after 15:00 is still authoritative
+            # closing evidence and must terminate an otherwise partial line.
+            rows = _append_completed_stock_snapshot_close(
+                rows,
+                max(raw_tick_rows, key=lambda row: row.timestamp) if raw_tick_rows else None,
+                completed_session,
             )
             pre_close = _intraday_pre_close(
                 rows,
@@ -755,9 +769,15 @@ def _append_completed_close(
         return rows
     # A daily volume is cumulative, not a factual 15:00 minute volume.  Keep
     # the closing point at zero volume instead of drawing a false final spike.
+    daily_open = _float_or_none(getattr(daily, "open", None))
+    daily_high = _float_or_none(getattr(daily, "high", None))
+    daily_low = _float_or_none(getattr(daily, "low", None))
     closing_row = SimpleNamespace(
         timestamp=datetime.combine(completed_session, datetime.min.time()).replace(hour=15),
-        open=close, high=close, low=close, close=close,
+        open=daily_open if daily_open is not None else close,
+        high=daily_high if daily_high is not None else close,
+        low=daily_low if daily_low is not None else close,
+        close=close,
         volume=0.0, amount=0.0, volume_delta=0.0, amount_delta=0.0,
         pct_chg=_float_or_none(getattr(daily, "pct_chg", None)),
         frequency="1MIN",
@@ -773,6 +793,47 @@ def _append_completed_stock_close(rows: List[Any], daily: Any, completed_session
         completed_session,
         daily_date=getattr(daily, "date", None),
     )
+
+
+def _append_completed_stock_snapshot_close(
+    rows: List[Any], snapshot: Any, completed_session: date,
+) -> List[Any]:
+    """Use a post-close exchange snapshot when the same-day daily bar is absent."""
+    timestamp = getattr(snapshot, "timestamp", None)
+    if (
+        not rows
+        or snapshot is None
+        or not callable(getattr(timestamp, "date", None))
+        or timestamp.date() != completed_session
+        or timestamp.time() < datetime.strptime("15:00", "%H:%M").time()
+    ):
+        return rows
+    session_rows = [
+        row for row in rows
+        if callable(getattr(getattr(row, "timestamp", None), "date", None))
+        and row.timestamp.date() == completed_session
+    ]
+    session_close_time = datetime.strptime("15:00", "%H:%M").time()
+    if not session_rows or max(row.timestamp for row in session_rows).time() >= session_close_time:
+        return rows
+    close = _float_or_none(getattr(snapshot, "price", None))
+    if close is None or close <= 0:
+        return rows
+    high = _float_or_none(getattr(snapshot, "high", None))
+    low = _float_or_none(getattr(snapshot, "low", None))
+    opening = _float_or_none(getattr(snapshot, "open", None))
+    closing_row = SimpleNamespace(
+        timestamp=datetime.combine(completed_session, datetime.min.time()).replace(hour=15),
+        open=opening if opening is not None else close,
+        high=high if high is not None else close,
+        low=low if low is not None else close,
+        close=close,
+        volume=0.0, amount=0.0, volume_delta=0.0, amount_delta=0.0,
+        pct_chg=_float_or_none(getattr(snapshot, "pct_chg", None)),
+        frequency="1MIN",
+        data_source=f"{getattr(snapshot, 'data_source', None) or 'local.snapshot'}:official_close",
+    )
+    return sorted([*rows, closing_row], key=lambda row: row.timestamp)
 
 
 def _append_completed_index_close(rows: List[Any], daily: Any, completed_session: date) -> List[Any]:

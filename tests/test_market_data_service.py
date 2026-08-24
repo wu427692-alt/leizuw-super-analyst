@@ -516,6 +516,46 @@ def test_index_intraday_ends_on_official_close_when_snapshot_missed_1500(market_
     assert "official_close" in result["source"]
 
 
+def test_stock_intraday_uses_post_close_snapshot_when_daily_bar_is_not_backfilled(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    with market_db.get_session() as session:
+        session.add(StockDaily(
+            code="300308", date=date(2026, 8, 21), close=943.0, data_source="test.daily",
+        ))
+        session.commit()
+    repo.upsert_intraday("300308", [{
+        "timestamp": datetime(2026, 8, 24, 14, 54), "open": 873.03,
+        "high": 873.03, "low": 873.03, "close": 873.03,
+    }], source="tencent.5day_minute")
+    repo.upsert_ticks([{
+        "code": "300308", "timestamp": datetime(2026, 8, 24, 16, 14, 27),
+        "price": 870.22, "open": 945.0, "high": 949.73, "low": 850.0,
+        "pre_close": 943.0, "change": -72.78, "change_percent": -7.72,
+    }], source="tencent.snapshot")
+    monkeypatch.setattr(
+        "src.services.market_data_service.datetime",
+        type("FixedDateTime", (datetime,), {
+            "now": classmethod(lambda cls: datetime(2026, 8, 24, 16, 30)),
+            "strptime": datetime.strptime,
+            "combine": datetime.combine,
+        }),
+    )
+    service = MarketDataService(
+        repository=repo, fetcher=_NoNetworkFetcher(), tushare=_UnavailableGateway(),
+        realtime_batch_fetcher=lambda _codes: [], minute_history_fetcher=lambda _symbol: [],
+    )
+
+    result = service.get_series("300308", period="intraday", range_key="1d")
+
+    assert result["latest_at"] == "2026-08-24T15:00"
+    assert result["data"][-1]["close"] == 870.22
+    assert result["data"][-1]["high"] == 949.73
+    assert result["data"][-1]["low"] == 850.0
+    assert result["data"][-1]["volume"] == 0.0
+    assert result["pre_close"] == 943.0
+    assert "official_close" in result["source"]
+
+
 def test_large_index_history_is_batched_below_sqlite_variable_limit(market_db):
     repo = MarketDataRepository(market_db)
     rows = [{
