@@ -12,7 +12,7 @@ import { AppPage, Badge, Drawer, EmptyState } from '../components/common';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import type {
   EssayAnalysis, EssayAnalysisList, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayInsights,
-  EssayAudioFile, EssayAudioFileList, EssayHistoricalBacklog, EssayStatus, EssayWordCloud,
+  EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFile, EssayAudioFileList, EssayHistoricalBacklog, EssayStatus, EssayWordCloud,
 } from '../types/essayRadar';
 import './EssayRadarPage.css';
 
@@ -22,7 +22,7 @@ type AtlasHorizon = 'short' | 'medium' | 'long' | 'custom';
 const VIEW_META: Array<{ view: RadarView; path: string; label: string; icon: typeof Sparkles }> = [
   { view: 'overview', path: '/essay-radar', label: '今日研判', icon: Sparkles },
   { view: 'atlas', path: '/essay-radar/insights', label: '洞察图谱', icon: GitBranch },
-  { view: 'feed', path: '/essay-radar/feed', label: '信息流', icon: ListFilter },
+  { view: 'feed', path: '/essay-radar/feed', label: '检索与获取', icon: ListFilter },
   { view: 'trends', path: '/essay-radar/trends', label: '趋势追踪', icon: TrendingUp },
   { view: 'reports', path: '/essay-radar/reports', label: '每日报告', icon: Brain },
   { view: 'system', path: '/essay-radar/system', label: '数据管理', icon: Settings2 },
@@ -41,6 +41,7 @@ const ANALYSIS_STATUS_LABELS: Record<string, string> = {
   media_only: '录音资料',
 };
 const FEED_PAGE_CACHE_LIMIT = 80;
+const AUDIO_BATCH_TASK_STORAGE_KEY = 'dsa:essay-radar:audio-batch-task';
 
 function radarView(pathname: string): RadarView {
   if (pathname.endsWith('/insights')) return 'atlas';
@@ -110,7 +111,7 @@ function sentimentVariant(value?: string | null) {
 
 function RadarNavigation({ active }: { active: RadarView }) {
   return (
-    <nav className="essay-tabs" aria-label="小作文工作台页面">
+    <nav className="essay-tabs" aria-label="机构段子与录音工作台页面">
       {VIEW_META.map(({ view, path, label, icon: Icon }) => (
         <Link key={view} to={path} className={active === view ? 'is-active' : ''}>
           <Icon className="h-4 w-4" />
@@ -503,6 +504,12 @@ const EssayRadarPage = () => {
   const [exportingFeed, setExportingFeed] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
+  const [audioBatchTask, setAudioBatchTask] = useState<EssayAudioBatchTask | null>(null);
+  const [activeAudioBatchTaskId, setActiveAudioBatchTaskId] = useState(
+    () => window.localStorage.getItem(AUDIO_BATCH_TASK_STORAGE_KEY) ?? '',
+  );
+  const [audioDownloadProgress, setAudioDownloadProgress] = useState<EssayAudioDownloadProgress | null>(null);
+  const [audioDownloadLoading, setAudioDownloadLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<string | null>(null);
   const feedPageCacheRef = useRef(new Map<string, EssayAnalysisList>());
@@ -513,9 +520,32 @@ const EssayRadarPage = () => {
   const loadedViewsRef = useRef(new Set<RadarView>());
 
   useEffect(() => {
-    const viewLabel = VIEW_META.find((item) => item.view === view)?.label ?? '小作文雷达';
-    document.title = `${viewLabel} · 小作文雷达 - 乐子乌超级价值`;
+    const viewLabel = VIEW_META.find((item) => item.view === view)?.label ?? '机构段子与录音';
+    document.title = `${viewLabel} · 机构段子与录音 - 乐子乌超级价值`;
   }, [view]);
+
+  useEffect(() => {
+    if (!activeAudioBatchTaskId) return undefined;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const next = await essayRadarApi.audioBatchTask(activeAudioBatchTaskId);
+        if (cancelled) return;
+        setAudioBatchTask(next);
+        if (next.status === 'queued' || next.status === 'running') {
+          timer = window.setTimeout(() => void poll(), 1000);
+        }
+      } catch {
+        if (cancelled) return;
+        window.localStorage.removeItem(AUDIO_BATCH_TASK_STORAGE_KEY);
+        setActiveAudioBatchTaskId('');
+        setAudioBatchTask(null);
+      }
+    };
+    void poll();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeAudioBatchTaskId]);
 
   const loadView = useCallback(async (_requestVersion: number) => {
     void _requestVersion;
@@ -820,11 +850,14 @@ const EssayRadarPage = () => {
     setExportNotice(null);
     try {
       if (feedMode === 'audio') {
-        const blob = await essayRadarApi.downloadSelectedAudio([...selectedAudio.values()].map((item) => ({
+        const task = await essayRadarApi.startAudioBatchTask([...selectedAudio.values()].map((item) => ({
           topicId: item.topicId, fileId: item.fileId,
         })));
-        downloadBlob(blob, `知识星球录音_已选${selectedCount}个_${new Date().toISOString().slice(0, 10)}.zip`);
-        setExportNotice(`已将 ${selectedCount} 个录音源文件打包下载。`);
+        setAudioBatchTask(task);
+        setActiveAudioBatchTaskId(task.taskId);
+        setAudioDownloadProgress(null);
+        window.localStorage.setItem(AUDIO_BATCH_TASK_STORAGE_KEY, task.taskId);
+        setExportNotice(`已提交 ${selectedCount} 个录音到后台打包，可以离开本页；返回后会继续显示进度。`);
       } else {
         const blob = await essayRadarApi.exportSelected([...selectedEssays]);
         downloadBlob(blob, `小作文已选原文_${selectedCount}篇_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -834,6 +867,23 @@ const EssayRadarPage = () => {
       setExportNotice(errorText(caught, feedMode === 'audio' ? '录音批量下载失败，请稍后重试。' : '小作文批量下载失败，请稍后重试。'));
     } finally {
       setBatchActionLoading(false);
+    }
+  };
+
+  const downloadCompletedAudioBatch = async () => {
+    if (!audioBatchTask || audioBatchTask.status !== 'completed' || audioDownloadLoading) return;
+    setAudioDownloadLoading(true);
+    setAudioDownloadProgress({ loaded: 0 });
+    setExportNotice(null);
+    try {
+      const blob = await essayRadarApi.downloadAudioBatchTask(audioBatchTask.taskId, setAudioDownloadProgress);
+      setAudioDownloadProgress({ loaded: blob.size, total: blob.size, percent: 100 });
+      downloadBlob(blob, audioBatchTask.downloadName || `知识星球录音_${audioBatchTask.taskId}.zip`);
+      setExportNotice(`ZIP 下载完成，共 ${audioBatchTask.totalFiles} 个录音源文件。`);
+    } catch (caught) {
+      setExportNotice(errorText(caught, '录音 ZIP 下载失败，后台压缩包仍会保留 48 小时，可以稍后重试。'));
+    } finally {
+      setAudioDownloadLoading(false);
     }
   };
 
@@ -882,7 +932,7 @@ const EssayRadarPage = () => {
       <header className="essay-header">
         <div>
           <div className="essay-live-line"><span className={workerActive ? 'is-live' : ''} />知识星球自动增量库 · 最近入库 {formatTime(insights?.latestDataAt || status?.mcpSync.lastSyncAt || historicalBacklog?.latestSyncedAt, true)}</div>
-          <h1>{view === 'atlas' ? '小作文洞察图谱' : '小作文研判台'}</h1>
+          <h1>{view === 'atlas' ? '机构段子洞察图谱' : '机构段子与录音'}</h1>
           <p>{view === 'atlas' ? '按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。' : '新增小作文自动入库、自动分析、自动生成日报；页面静默更新，不需要手动刷新。'}</p>
         </div>
         <div className="essay-auto-state" aria-label="自动更新状态"><strong>{workerActive ? '全自动运行中' : '自动恢复中'}</strong><span>MCP {status?.mcpSync.pollSeconds ?? 10} 秒 · 页面 15 秒</span><small>本页更新 {formatClock(lastAutoRefreshAt)}</small></div>
@@ -904,7 +954,7 @@ const EssayRadarPage = () => {
 
           <div className="essay-overview-grid">
             <section className="essay-panel essay-priority">
-              <div className="essay-panel-head"><div><span>昨日新增 · 按信息增量排序</span><h2>优先核验</h2></div><Link to="/essay-radar/feed">进入全部信息流</Link></div>
+              <div className="essay-panel-head"><div><span>昨日新增 · 按信息增量排序</span><h2>优先核验</h2></div><Link to="/essay-radar/feed">进入检索与获取</Link></div>
               <div className="essay-signal-list">
                 {insights?.highNoveltySignals.slice(0, 7).map((item) => <SignalRow key={item.topicId} item={item} onOpen={setSelected} />)}
                 {!loading && !insights?.highNoveltySignals.length ? <EmptyState title="暂无高增量信号" description="等待新增纪要完成分析。" icon={<Sparkles className="h-7 w-7" />} /> : null}
@@ -961,7 +1011,7 @@ const EssayRadarPage = () => {
               <div>{activityWindows.map((item) => <div key={item.label}><span>{item.label}</span><i><b style={{ width: `${(item.value / activityMax) * 100}%` }} /></i><strong>{item.value.toLocaleString()}</strong></div>)}</div>
             </div>
           </section>
-          <div className="essay-content-switch" role="tablist" aria-label="信息流内容类型">
+          <div className="essay-content-switch" role="tablist" aria-label="检索与获取内容类型">
             <button type="button" role="tab" aria-selected={feedMode === 'essays'} className={feedMode === 'essays' ? 'is-active' : ''} onClick={() => { setFeedMode('essays'); setPage(1); setFeedNotice(null); setExportNotice(null); }}><FileText className="h-4 w-4" /><span>小作文</span><small>原文与分析</small></button>
             <button type="button" role="tab" aria-selected={feedMode === 'audio'} className={feedMode === 'audio' ? 'is-active' : ''} onClick={() => { setFeedMode('audio'); setPage(1); setFeedNotice(null); setExportNotice(null); }}><Headphones className="h-4 w-4" /><span>录音文件</span><small>一个文件一行</small></button>
           </div>
@@ -996,12 +1046,35 @@ const EssayRadarPage = () => {
             <div>
               <button type="button" onClick={toggleCurrentPageSelection} disabled={!currentFeedTotal}>全选/取消本页</button>
               <button type="button" onClick={() => feedMode === 'audio' ? setSelectedAudio(new Map()) : setSelectedEssays(new Set())} disabled={feedMode === 'audio' ? !selectedAudio.size : !selectedEssays.size}>清空已选</button>
-              <button type="button" className="is-primary" onClick={() => void downloadSelected()} disabled={batchActionLoading || (feedMode === 'audio' ? !selectedAudio.size : !selectedEssays.size)}>
+              <button type="button" className="is-primary" onClick={() => void downloadSelected()} disabled={batchActionLoading || (feedMode === 'audio' ? !selectedAudio.size || audioBatchTask?.status === 'queued' || audioBatchTask?.status === 'running' : !selectedEssays.size)}>
                 {batchActionLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                {batchActionLoading ? '正在打包' : feedMode === 'audio' ? '批量下载录音 ZIP' : '下载已选原文 Excel'}
+                {batchActionLoading ? '正在提交' : feedMode === 'audio' ? '提交后台打包' : '下载已选原文 Excel'}
               </button>
             </div>
           </div>
+          {feedMode === 'audio' && audioBatchTask ? <section className={`essay-audio-task is-${audioBatchTask.status}`} aria-live="polite">
+            <div className="essay-audio-task-head">
+              <div><span>后台录音打包</span><strong>{audioBatchTask.message}</strong></div>
+              <b>{audioBatchTask.progress}%</b>
+            </div>
+            <div className="essay-audio-task-track" role="progressbar" aria-label="录音后台下载与打包进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={audioBatchTask.progress}>
+              <i style={{ width: `${audioBatchTask.progress}%` }} />
+            </div>
+            <div className="essay-audio-task-facts">
+              <span>已完成 {audioBatchTask.completedFiles}/{audioBatchTask.totalFiles} 个</span>
+              <span>{audioBatchTask.totalBytes ? `${formatAssetSize(audioBatchTask.downloadedBytes)} / ${formatAssetSize(audioBatchTask.totalBytes)}` : `已下载 ${formatAssetSize(audioBatchTask.downloadedBytes) || '0 B'}`}</span>
+              {audioBatchTask.currentFilename ? <span className="is-current">当前：{audioBatchTask.currentFilename}</span> : null}
+              <span>完成后保留 48 小时</span>
+            </div>
+            {audioBatchTask.status === 'completed' ? <div className="essay-audio-task-download">
+              <button type="button" onClick={() => void downloadCompletedAudioBatch()} disabled={audioDownloadLoading}>
+                {audioDownloadLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {audioDownloadLoading ? `${audioDownloadProgress?.percent ?? '—'}% 正在传输` : `下载 ZIP · ${formatAssetSize(audioBatchTask.archiveBytes)}`}
+              </button>
+              {audioDownloadProgress ? <div role="progressbar" aria-label="录音 ZIP 下载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={audioDownloadProgress.percent}><i style={{ width: `${audioDownloadProgress.percent ?? 20}%` }} /></div> : null}
+            </div> : null}
+            {audioBatchTask.status === 'failed' ? <p className="essay-audio-task-error">{audioBatchTask.error || '后台打包失败，请重新选择后提交。'}</p> : null}
+          </section> : null}
           {exportNotice ? <div className="essay-export-notice" role="status">{exportNotice}</div> : null}
           <section className="essay-panel essay-feed-panel">
             {feedMode === 'essays' ? <div className="essay-feed-list">{list?.items.map((item) => <SignalRow key={item.topicId} item={item} onOpen={setSelected} selectable selected={selectedEssays.has(item.topicId)} onToggle={toggleEssaySelection} />)}</div> : <div className="essay-audio-list">{audioList?.items.map((item) => <AudioFileRow key={item.assetId} item={item} selected={selectedAudio.has(item.assetId)} onToggle={() => toggleAudioSelection(item)} />)}</div>}

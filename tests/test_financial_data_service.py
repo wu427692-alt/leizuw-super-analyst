@@ -304,6 +304,43 @@ def test_selected_audio_files_are_downloaded_as_one_zip(research_service, monkey
         assert [item["file_id"] for item in manifest] == ["audio-1", "audio-2"]
 
 
+def test_selected_audio_background_task_api_returns_progress_and_completed_archive(tmp_path, monkeypatch) -> None:
+    archive_path = tmp_path / "selected.zip"
+    archive_path.write_bytes(b"zip-content")
+    task_service = MagicMock()
+    task_service.submit.return_value = {"task_id": "audio-task-1", "status": "queued", "progress": 0}
+    task_service.get.return_value = {"task_id": "audio-task-1", "status": "running", "progress": 52}
+    task_service.download.return_value = (archive_path, "已选录音.zip")
+    monkeypatch.setattr(
+        financial_data.ResearchNoteMediaTaskService,
+        "get_instance",
+        classmethod(lambda _cls: task_service),
+    )
+    app = FastAPI()
+    app.include_router(financial_data.router, prefix="/api/v1/financial-data")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/v1/financial-data/research-notes/audio-files/batch-download-tasks",
+        json={"items": [{"topic_id": "topic-1", "file_id": "audio-1"}]},
+    )
+    assert created.status_code == 202
+    assert created.json()["task_id"] == "audio-task-1"
+    task_service.submit.assert_called_once()
+
+    progress = client.get(
+        "/api/v1/financial-data/research-notes/audio-files/batch-download-tasks/audio-task-1"
+    )
+    assert progress.status_code == 200
+    assert progress.json()["progress"] == 52
+
+    downloaded = client.get(
+        "/api/v1/financial-data/research-notes/audio-files/batch-download-tasks/audio-task-1/download"
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"zip-content"
+
+
 def test_import_mcp_page_rejects_unsuccessful_source(research_service) -> None:
     with pytest.raises(FinancialDataUpstreamError, match="Skill 权限"):
         research_service.import_mcp_page({"success": False, "error": "该星球暂未开通 Skill 权限"})

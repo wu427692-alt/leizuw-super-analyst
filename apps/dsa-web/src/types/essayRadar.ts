@@ -196,6 +196,32 @@ export type EssayAudioFileList = {
   pageSize: number;
 };
 
+export type EssayAudioBatchTask = {
+  taskId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  phase: 'queued' | 'preparing' | 'downloading' | 'packaging' | 'completed' | 'failed' | 'interrupted';
+  progress: number;
+  message: string;
+  totalFiles: number;
+  completedFiles: number;
+  currentFilename?: string | null;
+  downloadedBytes: number;
+  totalBytes: number;
+  archiveBytes: number;
+  downloadUrl?: string | null;
+  downloadName?: string | null;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+};
+
+export type EssayAudioDownloadProgress = {
+  loaded: number;
+  total?: number;
+  percent?: number;
+};
+
 export type EssayWordCloud = {
   period: 'day' | 'week' | 'month'; kind: 'stocks' | 'tags' | 'themes'; stock?: string | null;
   startDate: string; endDate: string; sourceCount: number;

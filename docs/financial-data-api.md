@@ -167,9 +167,9 @@ JSONL 每行既可以是 MCP 原始响应，也可以是带星球信息的包装
 导入成功后，每篇新增或正文发生变化的纪要会按内容哈希自动进入 DeepSeek 分析队列。
 知识星球登录态和抓取能力仍由 MCP 持有；本服务不保存 Cookie，也不会绕过 MCP 直接抓取。
 
-## 小作文雷达与实时分析
+## 机构段子与录音的实时分析
 
-配置 `DEEPSEEK_API_KEY` 后，可通过 Web 左侧的“小作文雷达”查看近 30 天结果。生产或本机
+配置 `DEEPSEEK_API_KEY` 后，可通过 Web 左侧的“机构段子与录音”查看近 30 天结果。生产或本机
 常驻服务建议开启：
 
 ```dotenv
@@ -194,6 +194,10 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 - `GET /api/v1/essay-radar/word-cloud`：股票、标签、主题的日/周/月词云及前周期变化。
 - `GET /api/v1/essay-radar/daily-reports`：读取各模型独立生成的前一日小作文报告。
 - `POST /api/v1/essay-radar/daily-reports/run`：立即生成或补跑指定日期日报。
+- `GET /api/v1/financial-data/research-notes/audio-files`：严格按录音文件名检索，一个源文件一行。
+- `POST /api/v1/financial-data/research-notes/audio-files/batch-download-tasks`：将最多 100 个勾选录音提交到后台下载与 ZIP 打包，立即返回持久化任务编号。
+- `GET /api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}`：读取逐文件、源文件字节与压缩包进度；页面离开后任务继续运行。
+- `GET /api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}/download`：下载已完成 ZIP；任务与压缩包默认保留 48 小时。
 
 日报使用 Asia/Shanghai 自然日口径。`ESSAY_DAILY_REPORT_MODELS` 以逗号配置多个模型；每个
 日期与模型独立落入 `essay_daily_reports`，来源没有变化时不会重复消耗模型额度。日报 v3
@@ -211,19 +215,19 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 
 近实时链路为：常驻 worker 每 30 秒调用知识星球 MCP → 游标增量拉取 → SQLite 幂等入库
 → 图片/文件缓存与索引 → 自动进入 DeepSeek 队列 → 原始纪要立即进入统一监控事件流 →
-AI 结果完成后更新同一事件。小作文雷达会分别显示 MCP 拉取状态和 DeepSeek 分析状态，
+AI 结果完成后更新同一事件。“机构段子与录音”会分别显示 MCP 拉取状态和 DeepSeek 分析状态，
 不再把“只轮询本地数据库”描述成实时获取。
 
 ### 一年 / 两年历史纪要
 
-小作文雷达可选择回填近 1 年或近 2 年知识星球主题。历史任务从最新主题向前分页，达到目标日期
+“机构段子与录音”可选择回填近 1 年或近 2 年知识星球主题。历史任务从最新主题向前分页，达到目标日期
 后停止，并以 `topic_id` 和内容哈希幂等写入 `research_notes`；已经入库且内容未变化的主题只计为
 `unchanged`，不会重复写库。历史纪要默认不创建 DeepSeek 任务，只供原文检索、首次提及统计和
 量化事件研究使用；点赞等互动数变化仍不会触发数据库更新。
 
 - `POST /api/v1/financial-data/zsxq/history/backfill`：请求体为 `{"years":1}` 或 `{"years":2}`，后台按所选范围同步。
 - `GET /api/v1/financial-data/zsxq/sync/status`：返回同步进度、分页数、已获取、新增和跳过数量。
-- 需要分析历史内容时，在小作文雷达明确选择近 1 年或近 2 年并点击“按需 AI 分析”；系统先提示可能产生的模型消耗。
+- 需要分析历史内容时，在“机构段子与录音”明确选择近 1 年或近 2 年并点击“按需 AI 分析”；系统先提示可能产生的模型消耗。
 
 `ZSXQ_MCP_HISTORY_MAX_PAGES` 控制单次历史任务的分页安全上限，未配置时默认至少 500 页；达到上限但
 尚未覆盖目标日期时任务标记为 `incomplete`，再次执行仍会跳过已经入库且内容未变化的主题。

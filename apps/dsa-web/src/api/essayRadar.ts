@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { EssayAnalysis, EssayAnalysisList, EssayAudioFileList, EssayCountBackfillResponse, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayHistoricalBacklog, EssayInsights, EssayStatus, EssayWordCloud, EssayWorkerStatus, ResearchNoteDetail } from '../types/essayRadar';
+import type { EssayAnalysis, EssayAnalysisList, EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFileList, EssayCountBackfillResponse, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayHistoricalBacklog, EssayInsights, EssayStatus, EssayWordCloud, EssayWorkerStatus, ResearchNoteDetail } from '../types/essayRadar';
 
 export type EssayFilters = {
   days?: number;
@@ -129,6 +129,34 @@ export const essayRadarApi = {
     }, {
       responseType: 'blob',
       timeout: 600000,
+    });
+    return response.data as Blob;
+  },
+  startAudioBatchTask: async (items: Array<{ topicId: string; fileId: string }>): Promise<EssayAudioBatchTask> => {
+    const response = await apiClient.post('/api/v1/financial-data/research-notes/audio-files/batch-download-tasks', {
+      items: items.map((item) => ({ topic_id: item.topicId, file_id: item.fileId })),
+    });
+    return toCamelCase<EssayAudioBatchTask>(response.data);
+  },
+  audioBatchTask: async (taskId: string): Promise<EssayAudioBatchTask> => {
+    const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-files/batch-download-tasks/${encodeURIComponent(taskId)}`);
+    return toCamelCase<EssayAudioBatchTask>(response.data);
+  },
+  downloadAudioBatchTask: async (
+    taskId: string,
+    onProgress?: (progress: EssayAudioDownloadProgress) => void,
+  ): Promise<Blob> => {
+    const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-files/batch-download-tasks/${encodeURIComponent(taskId)}/download`, {
+      responseType: 'blob',
+      timeout: 600000,
+      onDownloadProgress: (event) => {
+        const total = event.total && event.total > 0 ? event.total : undefined;
+        onProgress?.({
+          loaded: event.loaded,
+          total,
+          percent: total ? Math.min(100, Math.round((event.loaded / total) * 100)) : undefined,
+        });
+      },
     });
     return response.data as Blob;
   },

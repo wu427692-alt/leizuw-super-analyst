@@ -76,7 +76,7 @@ describe('essayRadarApi', () => {
     expect(result).toBe(workbook);
   });
 
-  it('retrieves audio as file-level rows and batch downloads selected files', async () => {
+  it('retrieves audio as file-level rows and packages selected files in a persistent background task', async () => {
     const archive = new Blob(['zip']);
     vi.mocked(apiClient.get).mockResolvedValue({
       data: { items: [{ asset_id: 'topic-1:audio-1', topic_id: 'topic-1', file_id: 'audio-1', name: '交流.mp3' }], total: 1, page: 1, page_size: 20 },
@@ -87,11 +87,31 @@ describe('essayRadarApi', () => {
     });
     expect(files.items[0].assetId).toBe('topic-1:audio-1');
 
-    vi.mocked(apiClient.post).mockResolvedValue({ data: archive });
-    const downloaded = await essayRadarApi.downloadSelectedAudio([{ topicId: 'topic-1', fileId: 'audio-1' }]);
-    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/financial-data/research-notes/audio-files/batch-download', {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: {
+      task_id: 'audio-task-1', status: 'queued', phase: 'queued', progress: 0,
+      total_files: 1, completed_files: 0, downloaded_bytes: 0, total_bytes: 10,
+      archive_bytes: 0, message: '已提交', created_at: '2026-08-24', updated_at: '2026-08-24', expires_at: '2026-08-26',
+    } });
+    const submitted = await essayRadarApi.startAudioBatchTask([{ topicId: 'topic-1', fileId: 'audio-1' }]);
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/financial-data/research-notes/audio-files/batch-download-tasks', {
       items: [{ topic_id: 'topic-1', file_id: 'audio-1' }],
-    }, { responseType: 'blob', timeout: 600000 });
+    });
+    expect(submitted.taskId).toBe('audio-task-1');
+
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: {
+      task_id: 'audio-task-1', status: 'completed', phase: 'completed', progress: 100,
+      total_files: 1, completed_files: 1, downloaded_bytes: 10, total_bytes: 10,
+      archive_bytes: 10, message: '完成', created_at: '2026-08-24', updated_at: '2026-08-24', expires_at: '2026-08-26',
+    } });
+    expect((await essayRadarApi.audioBatchTask('audio-task-1')).completedFiles).toBe(1);
+
+    const progress = vi.fn();
+    vi.mocked(apiClient.get).mockImplementationOnce(async (_url, config) => {
+      config?.onDownloadProgress?.({ loaded: 10, total: 10 } as never);
+      return { data: archive };
+    });
+    const downloaded = await essayRadarApi.downloadAudioBatchTask('audio-task-1', progress);
+    expect(progress).toHaveBeenCalledWith({ loaded: 10, total: 10, percent: 100 });
     expect(downloaded).toBe(archive);
   });
 

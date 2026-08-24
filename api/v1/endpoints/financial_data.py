@@ -38,6 +38,10 @@ from src.services.financial_data_service import (
 )
 from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncError, ZsxqMcpSyncService, ZsxqMcpSyncWorker
 from src.services.data_storage_service import DataStorageMaintenanceWorker, DataStorageService
+from src.services.research_note_media_task_service import (
+    ResearchNoteMediaTaskError,
+    ResearchNoteMediaTaskService,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -272,6 +276,48 @@ def batch_download_research_note_audio(request: ResearchNoteAudioBatchDownloadRe
         media_type="application/zip",
         headers={"X-Selected-File-Count": str(len(manifest))},
         background=BackgroundTask(archive_path.unlink, missing_ok=True),
+    )
+
+
+@router.post(
+    "/research-notes/audio-files/batch-download-tasks",
+    status_code=202,
+    summary="提交录音源文件后台打包任务",
+)
+def create_research_note_audio_package_task(request: ResearchNoteAudioBatchDownloadRequest):
+    try:
+        return ResearchNoteMediaTaskService.get_instance().submit(
+            (item.topic_id, item.file_id) for item in request.items
+        )
+    except ResearchNoteMediaTaskError as exc:
+        raise _bad_request(exc)
+
+
+@router.get(
+    "/research-notes/audio-files/batch-download-tasks/{task_id}",
+    summary="读取录音源文件后台下载与打包进度",
+)
+def get_research_note_audio_package_task(task_id: str):
+    try:
+        return ResearchNoteMediaTaskService.get_instance().get(task_id)
+    except ResearchNoteMediaTaskError as exc:
+        raise _not_found(exc)
+
+
+@router.get(
+    "/research-notes/audio-files/batch-download-tasks/{task_id}/download",
+    summary="下载已完成的录音 ZIP",
+)
+def download_research_note_audio_package(task_id: str):
+    try:
+        archive_path, filename = ResearchNoteMediaTaskService.get_instance().download(task_id)
+    except ResearchNoteMediaTaskError as exc:
+        message = str(exc)
+        raise _not_found(exc) if "不存在" in message or "过期" in message else _bad_request(exc)
+    return FileResponse(
+        archive_path,
+        filename=filename,
+        media_type="application/zip",
     )
 
 
