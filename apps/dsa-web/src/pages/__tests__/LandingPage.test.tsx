@@ -7,14 +7,16 @@ describe('LandingPage', () => {
   it('introduces the real platform and enters the dashboard', () => {
     render(<MemoryRouter><LandingPage /></MemoryRouter>);
 
-    expect(screen.getByRole('heading', { name: /把复杂市场，\s*变成可验证的投资线索。/ })).toBeInTheDocument();
-    expect(screen.getByText('乐子乌超级价值')).toBeInTheDocument();
-    expect(screen.getByText('实时行情')).toBeInTheDocument();
-    expect(screen.getByText('全渠道情报')).toBeInTheDocument();
-    expect(screen.getByText('小作文洞察')).toBeInTheDocument();
-    expect(screen.getByText('量化研究')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /让市场信息，\s*成为可验证的研究优势。/ })).toBeInTheDocument();
+    expect(screen.getAllByText('乐子乌超级价值')).toHaveLength(2);
+    expect(screen.getByRole('heading', { name: '市场总览' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '自选股超级看板' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '机构段子与录音' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '投资情报台' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '量化回测与数据利用' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '数据一站式获取' })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /进入研究终端/ })[0]).toHaveAttribute('href', '/app');
-    expect(screen.getByRole('link', { name: '管理员' })).toHaveAttribute('href', '/admin');
+    expect(screen.getAllByRole('link', { name: '管理员' })[0]).toHaveAttribute('href', '/admin');
   });
 
   it('updates the visual field without blocking the CTA', () => {
@@ -26,7 +28,7 @@ describe('LandingPage', () => {
 
     fireEvent.pointerMove(page, { clientX: 750, clientY: 200 });
 
-    expect(page.style.getPropertyValue('--pointer-x')).toBe('3.5px');
+    expect(page.style.getPropertyValue('--pointer-x')).toBe('4.5px');
     expect(screen.getAllByRole('link', { name: /进入研究终端/ })[0]).toBeVisible();
   });
 });
