@@ -78,6 +78,7 @@ const UserAccessPage: React.FC = () => {
               </button>
             </form>
             <p className="user-access-note">注册只需要姓名和密码。我们不会在前台展示 API 密钥或系统配置。</p>
+            <Link className="user-access-admin-link" to="/admin"><LockKeyhole />管理员入口</Link>
           </>
         )}
       </section>

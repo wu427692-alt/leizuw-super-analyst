@@ -35,6 +35,9 @@
 .user-access-submit svg { width: 17px; }
 .user-access-error { margin: -4px 0 0; padding: 10px 12px; border: 1px solid rgba(255,104,104,.25); border-radius: 9px; color: #ffaaaa; background: rgba(151,28,38,.12); font-size: 12px; line-height: 1.5; }
 .user-access-note { margin: 20px 0 0; color: #526274; text-align: center; font-size: 10px; line-height: 1.6; }
+.user-access-admin-link { display: flex; align-items: center; justify-content: center; gap: 7px; width: fit-content; margin: 13px auto 0; color: #70859a; font-size: 11px; font-weight: 700; text-decoration: none; transition: color .2s; }
+.user-access-admin-link:hover { color: #65dcff; }
+.user-access-admin-link svg { width: 13px; }
 .user-access-pending { display: grid; justify-items: center; padding: 28px 8px 12px; text-align: center; }
 .user-access-pending strong { margin-top: 22px; font-size: 21px; }
 .user-access-pending p { color: #8395a8; line-height: 1.75; font-size: 12px; max-width: 330px; }

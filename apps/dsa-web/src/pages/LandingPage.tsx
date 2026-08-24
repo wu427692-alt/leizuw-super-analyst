@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, BarChart3, Building2, DatabaseZap, FileText, FlaskConical,
-  Landmark, MessageCircleMore, Network, Radar, ShieldCheck,
+  Landmark, LockKeyhole, MessageCircleMore, Network, Radar, ShieldCheck,
 } from 'lucide-react';
 import './LandingPage.css';
 
@@ -114,7 +114,10 @@ const LandingPage = () => {
       <header className="landing-header">
         <Link className="landing-brand" to="/" aria-label="乐子乌超级价值首页"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link>
         <nav aria-label="首页栏目"><a href="#data-map">全域数据</a><a href="#capabilities">研究工作台</a><a href="#evidence">决策证据</a></nav>
-        <Link className="landing-header-enter" to="/app">进入研究终端<ArrowRight aria-hidden="true" /></Link>
+        <div className="landing-header-actions">
+          <Link className="landing-admin-enter" to="/admin"><LockKeyhole aria-hidden="true" />管理员</Link>
+          <Link className="landing-header-enter" to="/app">进入研究终端<ArrowRight aria-hidden="true" /></Link>
+        </div>
       </header>
 
       <section className="landing-hero" aria-labelledby="landing-title">

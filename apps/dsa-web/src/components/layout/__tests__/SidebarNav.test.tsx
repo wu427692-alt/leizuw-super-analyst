@@ -171,6 +171,8 @@ describe('SidebarNav', () => {
     );
 
     expect(screen.getByRole('link', { name: '管理员' })).toHaveAttribute('href', '/admin');
+    expect(screen.getByRole('link', { name: '管理员' })).toHaveClass('shrink-0');
+    expect(screen.getByRole('navigation', { name: '主导航' })).toHaveClass('overflow-y-auto');
     expect(screen.queryByRole('button', { name: '退出' })).not.toBeInTheDocument();
   });
 });

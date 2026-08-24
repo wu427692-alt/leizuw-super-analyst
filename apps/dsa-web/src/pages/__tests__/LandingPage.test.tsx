@@ -14,6 +14,7 @@ describe('LandingPage', () => {
     expect(screen.getByText('小作文洞察')).toBeInTheDocument();
     expect(screen.getByText('量化研究')).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /进入研究终端/ })[0]).toHaveAttribute('href', '/app');
+    expect(screen.getByRole('link', { name: '管理员' })).toHaveAttribute('href', '/admin');
   });
 
   it('updates the visual field without blocking the CTA', () => {
