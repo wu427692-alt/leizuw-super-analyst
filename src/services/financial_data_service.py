@@ -239,9 +239,14 @@ class ResearchNoteService:
         page = max(1, int(filters.get("page") or 1))
         page_size = max(1, min(int(filters.get("page_size") or 20), 100))
         query = str(filters.get("query") or "").strip()
+        query_terms = [term.casefold() for term in query.split() if term]
         cutoff = utc_naive_now() - timedelta(days=days) if days else None
         items: List[Dict[str, Any]] = []
-        for row in self.repo.iter_notes_with_files(query=query or None, created_from=cutoff):
+        # The repository query is only a coarse JSON prefilter. A parent post can
+        # contain many unrelated recordings, so every attachment must pass its
+        # own filename match before it is returned.
+        prefilter = query_terms[0] if query_terms else None
+        for row in self.repo.iter_notes_with_files(query=prefilter, created_from=cutoff):
             note = self._note_to_dict(row)
             for asset in note["files"]:
                 if asset.get("asset_kind") != "audio":
@@ -249,11 +254,15 @@ class ResearchNoteService:
                 file_id = str(asset.get("file_id") or "").strip()
                 if not file_id:
                     continue
+                filename = str(asset.get("name") or f"录音-{file_id}")
+                filename_search = filename.casefold()
+                if query_terms and not all(term in filename_search for term in query_terms):
+                    continue
                 items.append({
                     "asset_id": f"{row.topic_id}:{file_id}",
                     "topic_id": row.topic_id,
                     "file_id": file_id,
-                    "name": str(asset.get("name") or f"录音-{file_id}"),
+                    "name": filename,
                     "size": asset.get("size"),
                     "duration_seconds": asset.get("duration_seconds") or asset.get("duration"),
                     "download_url": asset.get("download_url"),

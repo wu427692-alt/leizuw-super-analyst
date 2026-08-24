@@ -217,15 +217,24 @@ def test_audio_search_returns_one_row_per_file(research_service) -> None:
         files=[
             {"file_id": "audio-1", "name": "低空经济上半场.mp3", "size": 1024, "duration": 61},
             {"file_id": "audio-2", "name": "无人机供应链.m4a", "size": 2048, "duration": 125},
+            {"file_id": "audio-3", "name": "宏观策略周会.mp3", "size": 4096, "duration": 180},
         ],
     )], enqueue_analysis=False)
 
     result = research_service.list_audio_files(query="低空经济", page=1, page_size=20)
 
-    assert result["total"] == 2
-    assert [item["file_id"] for item in result["items"]] == ["audio-1", "audio-2"]
+    assert result["total"] == 1
+    assert [item["file_id"] for item in result["items"]] == ["audio-1"]
     assert result["items"][0]["name"] == "低空经济上半场.mp3"
-    assert result["items"][1]["duration_seconds"] == 125
+
+    drone_result = research_service.list_audio_files(query="无人机", page=1, page_size=20)
+    assert drone_result["total"] == 1
+    assert drone_result["items"][0]["file_id"] == "audio-2"
+    assert drone_result["items"][0]["duration_seconds"] == 125
+
+    multi_term_result = research_service.list_audio_files(query="低空 经济", page=1, page_size=20)
+    assert multi_term_result["total"] == 1
+    assert multi_term_result["items"][0]["file_id"] == "audio-1"
 
 
 def test_source_file_download_is_streamed_with_original_filename(research_service, monkeypatch) -> None:

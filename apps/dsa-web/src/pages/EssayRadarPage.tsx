@@ -966,14 +966,14 @@ const EssayRadarPage = () => {
             <button type="button" role="tab" aria-selected={feedMode === 'audio'} className={feedMode === 'audio' ? 'is-active' : ''} onClick={() => { setFeedMode('audio'); setPage(1); setFeedNotice(null); setExportNotice(null); }}><Headphones className="h-4 w-4" /><span>录音文件</span><small>一个文件一行</small></button>
           </div>
           <section className="essay-filter-panel">
-            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label={feedMode === 'audio' ? '搜索录音文件' : '搜索小作文'} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={feedMode === 'audio' ? '搜索录音文件名、所属主题、作者或知识星球' : '检索全库：正文、作者、股票或 AI 标签'} /></label>
+            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label={feedMode === 'audio' ? '搜索录音文件' : '搜索小作文'} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={feedMode === 'audio' ? '严格搜索每个录音文件名' : '检索全库：正文、作者、股票或 AI 标签'} /></label>
             <select aria-label="时间范围" value={days} onChange={(event) => { setDays(Number(event.target.value)); setPage(1); }}><option value={0}>全部入库</option><option value={1}>今日</option><option value={7}>近7日</option><option value={30}>近30日</option><option value={365}>近1年</option><option value={730}>近2年</option></select>
             {feedMode === 'essays' ? <>
               <select aria-label="AI状态筛选" value={analysisStatus} onChange={(event) => { setAnalysisStatus(event.target.value); setPage(1); }}><option value="">全部小作文</option><option value="completed">已分析</option><option value="uncompleted">未完成分析</option><option value="not_queued">未入队</option><option value="pending">排队中</option><option value="processing">分析中</option><option value="failed">分析失败</option></select>
               <select aria-label="情绪筛选" value={sentiment} onChange={(event) => { setSentiment(event.target.value); setPage(1); }}><option value="">全部情绪</option>{Object.entries(SENTIMENT_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
               <select aria-label="类型筛选" value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }}><option value="">全部类型</option>{Object.entries(CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
               <select aria-label="重要度筛选" value={minImportance} onChange={(event) => { setMinImportance(Number(event.target.value)); setPage(1); }}><option value={0}>全部重要度</option><option value={60}>≥ 60</option><option value={75}>≥ 75</option><option value={85}>≥ 85</option></select>
-            </> : <div className="essay-audio-filter-note"><Headphones className="h-4 w-4" />只检索录音源文件，不再按帖子或 AI 状态展示</div>}
+            </> : <div className="essay-audio-filter-note"><Headphones className="h-4 w-4" />严格按文件名召回，不会连带展示同帖其他录音</div>}
           </section>
           <div className="essay-feed-summary" aria-live="polite">
             <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{currentFeedTotal.toLocaleString()}</strong> {feedMode === 'audio' ? '个录音文件' : '篇小作文'} · {days ? `近 ${days} 日` : '全部已入库'}</>}</span>
