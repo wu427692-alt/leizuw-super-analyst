@@ -113,6 +113,31 @@ def test_dashboard_candidate_lookup_does_not_materialize_every_result(quant, mon
     assert all("result_json" not in statement.split("FROM", 1)[0] for statement in candidate_queries)
 
 
+def test_institution_dashboard_reuses_snapshot_until_latest_run_changes(quant, monkeypatch):
+    monkeypatch.setattr("src.services.essay_quant_service.utc_naive_now", lambda: datetime(2026, 8, 10))
+    baseline = quant.run(
+        {"name": "后台全量机构预计算", "source_query": "", "lookback_days": 30, "holding_periods": [5]},
+        refresh_prices=False,
+        persist=True,
+    )
+    assert quant.latest_institution_dashboard()["run_id"] == baseline["run_id"]
+
+    statements = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    event.listen(quant.db._engine, "before_cursor_execute", capture)
+    try:
+        assert quant.latest_institution_dashboard()["run_id"] == baseline["run_id"]
+    finally:
+        event.remove(quant.db._engine, "before_cursor_execute", capture)
+
+    assert any("max(essay_quant_runs.id)" in statement.lower() for statement in statements)
+    assert not any("rule_json" in statement for statement in statements)
+    assert not any("result_json" in statement for statement in statements)
+
+
 def test_unanalyzed_history_with_explicit_symbol_is_available_to_backtest(quant, monkeypatch):
     monkeypatch.setattr("src.services.essay_quant_service.utc_naive_now", lambda: datetime(2026, 8, 10))
     with quant.db.get_session() as session:

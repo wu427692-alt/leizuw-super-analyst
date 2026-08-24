@@ -14,6 +14,7 @@ import os
 import random
 import re
 import statistics
+import threading
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import desc, func, or_, select, text
@@ -33,6 +34,8 @@ from src.storage import (
 )
 
 _SH_TZ = timezone(timedelta(hours=8))
+_DASHBOARD_CACHE_LOCK = threading.RLock()
+_DASHBOARD_CACHE: Dict[str, Tuple[int, Dict[str, Any]]] = {}
 _HYPE_WORDS = ("强烈推荐", "重点推荐", "坚定看好", "目标价", "空间巨大", "翻倍", "买入", "增持", "重仓", "主升浪")
 _BROKER_NAMES = (
     "中信建投", "中信", "中金", "华泰", "国泰海通", "海通", "广发", "招商", "申万宏源", "申万",
@@ -255,7 +258,14 @@ class EssayQuantService:
                 "safeguards": ["时间顺序切分", "重复信号聚类", "交易成本", "置信区间", "参数敏感性", "样本外验证"]}
 
     def latest_dashboard(self) -> Dict[str, Any]:
-        with self.db.get_session() as session:
+        cache_key = self._dashboard_cache_key("user")
+        with _DASHBOARD_CACHE_LOCK, self.db.get_session() as session:
+            latest_run_id = int(session.execute(
+                select(func.max(EssayQuantRunRecord.id)).where(self._owner_clause(EssayQuantRunRecord))
+            ).scalar_one_or_none() or 0)
+            cached = _DASHBOARD_CACHE.get(cache_key)
+            if cached is not None and cached[0] == latest_run_id:
+                return cached[1]
             candidates = session.execute(
                 select(EssayQuantRunRecord)
                 .options(load_only(EssayQuantRunRecord.id, EssayQuantRunRecord.rule_json))
@@ -276,6 +286,8 @@ class EssayQuantService:
             result["run_id"] = row.id
             result["rule_id"] = row.rule_id
             result["snapshot_hash"] = (row.source_hash or "")[:16]
+            with _DASHBOARD_CACHE_LOCK:
+                _DASHBOARD_CACHE[cache_key] = (latest_run_id, result)
             return result
         return self.run(self._normalize_rule({}), refresh_prices=False, max_symbols=30, persist=False)
 
@@ -311,7 +323,14 @@ class EssayQuantService:
 
     def latest_institution_dashboard(self) -> Dict[str, Any]:
         """Return the durable all-institution baseline, never a user's custom rule."""
-        with self.db.get_session() as session:
+        cache_key = self._dashboard_cache_key("institution")
+        with _DASHBOARD_CACHE_LOCK, self.db.get_session() as session:
+            latest_run_id = int(session.execute(
+                select(func.max(EssayQuantRunRecord.id)).where(EssayQuantRunRecord.owner_id.is_(None))
+            ).scalar_one_or_none() or 0)
+            cached = _DASHBOARD_CACHE.get(cache_key)
+            if cached is not None and cached[0] == latest_run_id:
+                return cached[1]
             candidates = session.execute(
                 select(EssayQuantRunRecord)
                 .options(load_only(EssayQuantRunRecord.id, EssayQuantRunRecord.rule_json))
@@ -331,8 +350,16 @@ class EssayQuantService:
             result = _loads(row.result_json, {})
             result["run_id"] = row.id
             result["rule_id"] = row.rule_id
+            with _DASHBOARD_CACHE_LOCK:
+                _DASHBOARD_CACHE[cache_key] = (latest_run_id, result)
             return result
         return self.latest_dashboard()
+
+    def _dashboard_cache_key(self, kind: str) -> str:
+        """Keep dashboard snapshots isolated by database and authenticated owner."""
+        database = str(id(self.db._engine))
+        owner = str(self.owner_id or "__global__")
+        return f"{database}:{kind}:{owner}"
 
     def run(
         self,
