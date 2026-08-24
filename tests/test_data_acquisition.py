@@ -313,7 +313,7 @@ def test_research_report_request_enforces_topics_two_years_and_download(tmp_path
     assert params["end_date"] == today.strftime("%Y%m%d")
     assert params["keyword_mode"] == "any"
     assert params["depth_preference"] == "prefer"
-    assert params["ai_filter"] is True
+    assert params["ai_filter"] is False
 
 
 def test_research_report_pipeline_filters_before_export_and_never_sends_internal_keywords(

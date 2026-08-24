@@ -6,6 +6,10 @@ import type {
   AcquisitionJob,
   AcquisitionPlan,
   AcquisitionRunTask,
+  ResearchReportFacets,
+  ResearchReportLibraryStatus,
+  ResearchReportSearchFilters,
+  ResearchReportSearchResult,
 } from '../types/dataAcquisition';
 
 type RawPlan = Omit<AcquisitionPlan, 'outputFormats' | 'generatedAt' | 'scope'> & {
@@ -78,6 +82,40 @@ export const dataAcquisitionApi = {
           percent: total ? Math.min(100, Math.round((event.loaded / total) * 100)) : undefined,
         });
       },
+    });
+    return response.data as Blob;
+  },
+  researchReportStatus: async (): Promise<ResearchReportLibraryStatus> => {
+    const response = await apiClient.get('/api/v1/data-acquisition/research-reports/status');
+    return toCamelCase(response.data);
+  },
+  syncResearchReports: async (years = 2): Promise<ResearchReportLibraryStatus> => {
+    const response = await apiClient.post('/api/v1/data-acquisition/research-reports/sync', undefined, { params: { years } });
+    return toCamelCase(response.data);
+  },
+  researchReportFacets: async (): Promise<ResearchReportFacets> => {
+    const response = await apiClient.get('/api/v1/data-acquisition/research-reports/facets');
+    return toCamelCase(response.data);
+  },
+  searchResearchReports: async (
+    filters: ResearchReportSearchFilters,
+    page = 1,
+    pageSize = 30,
+  ): Promise<ResearchReportSearchResult> => {
+    const response = await apiClient.get('/api/v1/data-acquisition/research-reports/search', {
+      params: {
+        title_query: filters.titleQuery, content_query: filters.contentQuery,
+        broker: filters.broker, company: filters.company, ts_code: filters.tsCode,
+        report_type: filters.reportType, industry: filters.industry, author: filters.author,
+        tag: filters.tag, start_date: filters.startDate, end_date: filters.endDate,
+        has_pdf: filters.hasPdf, sort: filters.sort, page, page_size: pageSize,
+      },
+    });
+    return toCamelCase(response.data);
+  },
+  exportSelectedResearchReports: async (ids: number[]): Promise<Blob> => {
+    const response = await apiClient.post('/api/v1/data-acquisition/research-reports/export-selected', { ids }, {
+      responseType: 'blob', timeout: 120000,
     });
     return response.data as Blob;
   },

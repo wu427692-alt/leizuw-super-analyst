@@ -87,3 +87,74 @@ export type AcquisitionCapabilities = {
   }>;
   planner: { available: boolean; model: string; maxTasks: number; maxRowsPerDataset: number };
 };
+
+export type ResearchReportLibraryStatus = {
+  status: 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'interrupted';
+  progress: number;
+  message: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  totalWindows: number;
+  completedWindows: number;
+  scannedRows: number;
+  savedRows: number;
+  lastError?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  total: number;
+  pdfCount: number;
+  earliestTradeDate?: string | null;
+  latestTradeDate?: string | null;
+  source: string;
+  searchMode: 'local_sqlite_only';
+};
+
+export type ResearchReportFacet = { value: string; count: number };
+
+export type ResearchReportFacets = {
+  brokers: ResearchReportFacet[];
+  reportTypes: ResearchReportFacet[];
+  industries: ResearchReportFacet[];
+  companies: ResearchReportFacet[];
+  tags: ResearchReportFacet[];
+};
+
+export type ResearchReportItem = {
+  id: number;
+  tradeDate: string;
+  title: string;
+  abstract: string;
+  reportType?: string | null;
+  author?: string | null;
+  companyName?: string | null;
+  tsCode?: string | null;
+  broker?: string | null;
+  industry?: string | null;
+  pdfUrl?: string | null;
+  tags: string[];
+  syncedAt?: string | null;
+};
+
+export type ResearchReportSearchFilters = {
+  titleQuery: string;
+  contentQuery: string;
+  broker: string;
+  company: string;
+  tsCode: string;
+  reportType: string;
+  industry: string;
+  author: string;
+  tag: string;
+  startDate: string;
+  endDate: string;
+  hasPdf: boolean;
+  sort: 'latest' | 'oldest';
+};
+
+export type ResearchReportSearchResult = {
+  items: ResearchReportItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  source: 'local_sqlite';
+};

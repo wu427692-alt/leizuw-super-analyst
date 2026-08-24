@@ -479,6 +479,56 @@ class ResearchNote(Base):
     )
 
 
+class ResearchReportRecord(Base):
+    """Locally indexed Tushare broker report metadata and original PDF links."""
+
+    __tablename__ = "research_report_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_key = Column(String(64), nullable=False, unique=True, index=True)
+    trade_date = Column(Date, nullable=False, index=True)
+    title = Column(String(800), nullable=False)
+    abstract = Column(Text)
+    report_type = Column(String(80), index=True)
+    author = Column(String(300), index=True)
+    company_name = Column(String(160), index=True)
+    ts_code = Column(String(20), index=True)
+    broker = Column(String(160), index=True)
+    industry = Column(String(160), index=True)
+    pdf_url = Column(Text)
+    tags_json = Column(Text, nullable=False, default="[]")
+    source = Column(String(40), nullable=False, default="tushare.research_report")
+    synced_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("ix_research_report_date_broker", "trade_date", "broker"),
+        Index("ix_research_report_date_company", "trade_date", "company_name"),
+        Index("ix_research_report_type_date", "report_type", "trade_date"),
+        Index("ix_research_report_industry_date", "industry", "trade_date"),
+    )
+
+
+class ResearchReportSyncState(Base):
+    """Durable progress for the two-year Tushare research-report backfill."""
+
+    __tablename__ = "research_report_sync_states"
+
+    source_key = Column(String(64), primary_key=True)
+    status = Column(String(24), nullable=False, default="idle", index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    message = Column(String(500))
+    start_date = Column(Date)
+    end_date = Column(Date)
+    total_windows = Column(Integer, nullable=False, default=0)
+    completed_windows = Column(Integer, nullable=False, default=0)
+    scanned_rows = Column(Integer, nullable=False, default=0)
+    saved_rows = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text)
+    started_at = Column(DateTime, index=True)
+    completed_at = Column(DateTime, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+
 class ZsxqSyncState(Base):
     """Per-group cursor and health state for direct MCP incremental sync."""
 

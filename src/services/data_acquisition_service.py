@@ -120,8 +120,8 @@ PLANNER_SYSTEM = """你是财经数据产品的数据调度规划器。把用户
 只能使用 capability_catalog 中的数据源和资源。只获取用户明确要求的数据维度，不得因为目录中存在其他能力就一并添加；用户要求“只/仅/不要”时必须严格排除未要求渠道。多维综合请求再覆盖行情、财务、资金、公告、新闻、机构观点、知识星球和工商风险中真正相关的维度，避免重复。
 股票代码必须使用 Tushare 格式，如 603306.SH、300476.SZ。日期参数使用 YYYYMMDD；本地库日期使用 YYYY-MM-DD。
 公告必须使用 cninfo.announcements 现场调用巨潮接口重新检索，不得使用本地公告缓存。Tushare 数据必须按维度直接调用对应 api_name；研报 PDF 库使用 research_report，盈利预测使用 report_rc，新闻使用 news/major_news，不能用 monitor.events 代替。不要向新闻接口传 ts_code。
-研报主题请求必须把用户原话中的主题拆成 scope.keywords 和 research_report.params.topics；“或/或者”使用 keyword_mode=any。时间范围必须据 today 精确计算，不得用接口默认的20天代替“最近两年”。“最好是深度研究”设 depth_preference=prefer，“只要/必须是深度研究”设为strict，并设 ai_filter=true。
-例：“下载最近两年低空经济或无人机方向的深度研报” => scope.keywords=["低空经济","无人机"]，scope.start_date=当天向前两年，scope.end_date=today，task.params={"topics":["低空经济","无人机"],"keyword_mode":"any","depth_preference":"prefer","ai_filter":true,...}，include_files=true。
+研报主题请求必须把用户原话中的主题拆成 scope.keywords 和 research_report.params.topics；“或/或者”使用 keyword_mode=any。时间范围必须据 today 精确计算，不得用接口默认的20天代替“最近两年”。“最好是深度研究”设 depth_preference=prefer，“只要/必须是深度研究”设为strict。研报筛选只使用可解释字段和标签，ai_filter 必须为 false，最终由用户人工勾选。
+例：“下载最近两年低空经济或无人机方向的深度研报” => scope.keywords=["低空经济","无人机"]，scope.start_date=当天向前两年，scope.end_date=today，task.params={"topics":["低空经济","无人机"],"keyword_mode":"any","depth_preference":"prefer","ai_filter":false,...}，include_files=true。
 知识星球使用 created_from、created_to、query 或 symbol；天眼查的 company_name 可以是单个名称或名称数组。
 必须输出全局 scope：symbols、company_names、keywords、start_date、end_date、market_wide。除非用户明确要求全市场，market_wide 必须为 false。
 每个任务必须包含 source、resource、label、reason、params、fields。params 只能包含该渠道实际查询参数，不能用空参数拉全量。最多12个任务。
@@ -630,7 +630,7 @@ class DataAcquisitionService:
                 "topics": topics,
                 "keyword_mode": mode,
                 "depth_preference": "strict" if strict_depth else "prefer" if prefer_depth else "none",
-                "ai_filter": bool(params.get("ai_filter", True)) if topics else False,
+                "ai_filter": False,
                 "max_results": DataAcquisitionService._bounded_report_result_limit(params.get("max_results")),
             })
             task["params"] = params
@@ -839,7 +839,9 @@ class DataAcquisitionService:
         topics = list(dict.fromkeys(topics))
         mode = "all" if str(params.get("keyword_mode") or "any").lower() == "all" else "any"
         depth_preference = str(params.get("depth_preference") or "none").lower()
-        ai_filter = bool(params.get("ai_filter")) and bool(topics)
+        # Report retrieval is deterministic and auditable; AI is not allowed to
+        # silently discard reports before the user sees and selects them.
+        ai_filter = False
         max_results = self._bounded_report_result_limit(params.get("max_results"))
 
         start = self._as_date(params.get("start_date") or scope.get("start_date"), default_days=365)
@@ -1032,8 +1034,9 @@ class DataAcquisitionService:
             "深度评分": max(0, min(100, depth)),
             "深度判定": "高" if depth >= 60 else "中" if depth >= 35 else "普通",
             "深度判定依据": "、".join(dict.fromkeys(depth_reasons)) or "未出现深度研究特征",
-            "AI语义复核": "待复核",
-            "AI复核说明": "",
+            "筛选方式": "标题/摘要/行业确定性匹配，用户人工确认",
+            "AI语义复核": "未使用（人工确认）",
+            "AI复核说明": "研报不会被大模型静默剔除",
         })
         return enriched
 

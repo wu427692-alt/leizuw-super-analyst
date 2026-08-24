@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { Bot, CheckCircle2, CircleDashed, DatabaseZap, Download, FileArchive, PackageCheck, Play, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react';
 import { dataAcquisitionApi } from '../api/dataAcquisition';
 import { AppPage, Badge, Card, EmptyState, PageHeader, StatCard } from '../components/common';
+import ResearchReportLibrary from '../components/data-acquisition/ResearchReportLibrary';
 import type { AcquisitionCapabilities, AcquisitionDownloadProgress, AcquisitionJob, AcquisitionPlan, AcquisitionRunTask } from '../types/dataAcquisition';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 
 const EXAMPLES = [
-  '下载最近两年低空经济或无人机方向的研报，优先深度研究，用 AI 复核相关性后打包 PDF',
   '打包华懋科技和胜宏科技近90天行情、估值、资金、公告、研报、新闻和知识星球小作文，并补充工商与风险信息',
   '获取胜宏科技最近8个季度财务三表、财务指标、机构研报和股东增减持，按数据源分别导出',
   '整理华懋科技本月所有公告、新闻、小作文和机构观点，并下载公告PDF、研报及相关附件一起打包',
+  '获取最近30天低空经济相关公告、新闻和知识星球文件，按渠道分别打包并保留原文链接',
 ];
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -167,12 +168,14 @@ const DataAcquisitionPage = () => {
     <AppPage>
       <div className="space-y-5">
         <PageHeader eyebrow="AI ORCHESTRATION · MULTI-SOURCE EXPORT" title="数据一站式获取"
-          description="用自然语言描述数据需求，由大模型生成可审计计划，跨渠道取数并打包为 JSON、CSV、Excel 和 ZIP。"
+          description="研报先进入两年本地链接库供人工精确筛选；其他跨渠道需求仍可由大模型生成可审计取数计划。"
           actions={<button className="btn-secondary inline-flex items-center gap-2" onClick={() => void load()}>
             <RefreshCw className="h-4 w-4" />刷新任务
           </button>} />
 
         {error ? <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div> : null}
+
+        <ResearchReportLibrary />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,.7fr)]">
           <Card className="relative overflow-hidden" padding="lg">
@@ -224,11 +227,11 @@ const DataAcquisitionPage = () => {
               <h3 className="mt-3 font-semibold text-foreground">{task.label}</h3>
               <p className="mt-1 text-xs leading-5 text-secondary-text">{task.reason || '按用户需求获取该数据集'}</p>
               {task.resource === 'research_report' ? <div className="mt-3 space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-[11px] text-secondary-text">
-                <p className="font-medium text-foreground">主题召回 → 深度评分 → AI 语义复核 → 合格 PDF</p>
+                <p className="font-medium text-foreground">本地库条件召回 → 标签筛选 → 人工确认 → PDF链接/原文</p>
                 <div className="flex flex-wrap gap-1.5">
                   {(Array.isArray(task.params.topics) ? task.params.topics : []).map((topic) => <Badge key={String(topic)}>{String(topic)}</Badge>)}
                   <Badge>{String(task.params.keywordMode ?? task.params.keyword_mode ?? 'any').toLowerCase() === 'any' ? '任一主题命中' : '全部主题命中'}</Badge>
-                  <Badge variant="success">{task.params.aiFilter ?? task.params.ai_filter ? 'AI 复核开启' : '确定性筛选'}</Badge>
+                  <Badge variant="success">人工确认优先</Badge>
                 </div>
               </div> : null}
               <code className="mt-3 block truncate rounded-lg bg-card px-2 py-1.5 text-[11px] text-secondary-text">{task.source}.{task.resource}</code>

@@ -34,3 +34,7 @@ class DataAcquisitionPlan(BaseModel):
     caveats: List[str] = Field(default_factory=list)
     model: str
     generated_at: str
+
+
+class ResearchReportExportRequest(BaseModel):
+    ids: List[int] = Field(..., min_length=1, max_length=1000)

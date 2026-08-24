@@ -41,4 +41,30 @@ describe('dataAcquisitionApi', () => {
     expect(updates).toEqual([{ loaded: 50, total: 200, percent: 25 }]);
     expect(apiClient.get).toHaveBeenCalledWith('/api/v1/data-acquisition/jobs/job-one/download', expect.objectContaining({ responseType: 'blob' }));
   });
+
+  it('searches the local report library with explicit manual filters', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { items: [], total: 0, page: 1, page_size: 30, source: 'local_sqlite' } });
+
+    await dataAcquisitionApi.searchResearchReports({
+      titleQuery: '低空经济', contentQuery: '无人机', broker: '测试证券', company: '', tsCode: '',
+      reportType: '行业研报', industry: '航空装备', author: '', tag: '深度研究',
+      startDate: '2024-08-24', endDate: '2026-08-24', hasPdf: true, sort: 'latest',
+    });
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/v1/data-acquisition/research-reports/search', expect.objectContaining({
+      params: expect.objectContaining({ title_query: '低空经济', content_query: '无人机', broker: '测试证券', tag: '深度研究', has_pdf: true }),
+    }));
+  });
+
+  it('exports only manually selected report ids', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: new Blob(['xlsx']) });
+
+    await dataAcquisitionApi.exportSelectedResearchReports([3, 9]);
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/data-acquisition/research-reports/export-selected',
+      { ids: [3, 9] },
+      expect.objectContaining({ responseType: 'blob' }),
+    );
+  });
 });
