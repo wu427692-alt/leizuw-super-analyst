@@ -232,11 +232,19 @@ export type EssayDailyReport = {
   id: number; reportDate: string; model: string; status: string; sourceCount: number; totalTokens: number;
   errorMessage?: string | null; completedAt?: string | null;
   report?: {
-    executiveSummary?: string; marketRegime?: string;
-    keyThemes?: Array<{ name: string; count: number; direction: string; thesis: string }>;
-    stockFocus?: Array<{ tsCode: string; name: string; mentionCount: number; stance: string; thesis: string; catalysts: string[]; risks: string[] }>;
+    executiveSummary?: string; marketRegime?: string; marketNarrative?: string;
+    keyThemes?: Array<{
+      name: string; count: number; direction: string; thesis: string;
+      evidence?: string; counterEvidence?: string; evidenceTopicIds?: string[];
+    }>;
+    stockFocus?: Array<{
+      tsCode: string; name: string; mentionCount: number; stance: string; conviction?: string;
+      timeHorizon?: string; thesis: string; whyNow?: string; earningsPath?: string; valuationView?: string;
+      catalysts: string[]; risks: string[]; validationPoints?: string[]; evidenceTopicIds?: string[];
+    }>;
     consensus?: string[]; divergences?: string[]; novelSignals?: string[];
     earningsImplications?: string[]; valuationImplications?: string[]; riskWatch?: string[]; nextDayWatchlist?: string[];
+    dataQuality?: { coverage?: string | number; limitations?: string[]; recommendationRule?: string; [key: string]: unknown };
   } | null;
 };
 

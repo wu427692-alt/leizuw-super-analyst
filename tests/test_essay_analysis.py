@@ -211,6 +211,10 @@ def test_deep_insights_merges_raw_topics_and_expands_feed_search(essay_service) 
     assert max(point["concentration_score"] for point in optical["points"]) == 100.0
     assert essay_service.list_feed(query="光通信", page=1, page_size=20)["total"] == 3
 
+    long_window = essay_service.deep_insights(horizon="long", end_date="2026-08-20")
+    assert long_window["window_days"] == 180
+    assert long_window["period"]["horizon"] == "long"
+
 
 def test_large_topic_id_queries_are_split_below_sqlite_parameter_limit() -> None:
     session = MagicMock()
@@ -460,6 +464,20 @@ def test_feed_searches_raw_library_without_ai_analysis(essay_service) -> None:
     assert feed.json()["items"][0]["status"] == "not_queued"
     assert "全库独家关键词" in feed.json()["items"][0]["note"]["content"]
 
+    title_only_miss = client.get(
+        "/api/v1/essay-radar/feed?days=0&query=全库独家关键词&query_scope=title"
+    )
+    assert title_only_miss.status_code == 200
+    assert title_only_miss.json()["total"] == 0
+    title_only_hit = client.get(
+        "/api/v1/essay-radar/feed?days=0&query=尚未分析&query_scope=title"
+    )
+    assert title_only_hit.status_code == 200
+    assert title_only_hit.json()["total"] == 1
+    assert client.get(
+        "/api/v1/essay-radar/feed?days=0&query_scope=unsupported"
+    ).status_code == 422
+
     completed_only = client.get("/api/v1/essay-radar/feed?days=0&analysis_status=completed")
     assert completed_only.status_code == 200
     assert completed_only.json()["total"] == 0
@@ -610,6 +628,26 @@ def test_daily_context_keeps_low_frequency_watchlist_evidence(monkeypatch) -> No
     assert "watch-huamao" in topic_ids
     assert context["coverage"]["representative_watchlist_records"] == 1
     assert context["coverage"]["selection_strategy"].startswith("watchlist_priority")
+
+
+def test_daily_report_candidates_must_be_explicitly_mentioned() -> None:
+    rows = [{
+        "topic_id": "evidence-1",
+        "stock_mentions": [{"ts_code": "300308.SZ", "name": "中际旭创"}],
+    }]
+    report = {
+        "key_themes": [{"name": "光通信", "evidence_topic_ids": ["evidence-1", "invented"]}],
+        "stock_focus": [
+            {"ts_code": "300308.SZ", "name": "中际旭创", "evidence_topic_ids": ["invented"]},
+            {"ts_code": "600519.SH", "name": "贵州茅台", "evidence_topic_ids": ["invented"]},
+        ],
+    }
+
+    normalized = EssayDailyReportService._normalize_report(report, rows)
+
+    assert [item["name"] for item in normalized["stock_focus"]] == ["中际旭创"]
+    assert normalized["stock_focus"][0]["evidence_topic_ids"] == ["evidence-1"]
+    assert normalized["key_themes"][0]["evidence_topic_ids"] == ["evidence-1"]
 
 
 def test_cross_model_comparison_uses_structured_theme_and_stock_directions() -> None:

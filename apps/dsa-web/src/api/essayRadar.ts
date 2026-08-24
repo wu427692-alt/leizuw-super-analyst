@@ -5,6 +5,7 @@ import type { EssayAnalysis, EssayAnalysisList, EssayAudioBatchTask, EssayAudioD
 export type EssayFilters = {
   days?: number;
   query?: string;
+  queryScope?: 'title' | 'full';
   sentiment?: string;
   category?: string;
   tag?: string;
@@ -33,13 +34,16 @@ export const essayRadarApi = {
     days?: number; trendDays?: number; horizon?: 'short' | 'medium' | 'long' | 'custom';
     startDate?: string; endDate?: string;
   } = {}): Promise<EssayDeepInsights> => {
-    const response = await apiClient.get('/api/v1/essay-radar/deep-insights', { params: {
-      days: params.days ?? 30,
-      trend_days: params.trendDays ?? 14,
-      horizon: params.horizon,
-      start_date: params.startDate,
-      end_date: params.endDate,
-    } });
+    const response = await apiClient.get('/api/v1/essay-radar/deep-insights', {
+      params: {
+        days: params.days ?? 30,
+        trend_days: params.trendDays ?? 14,
+        horizon: params.horizon,
+        start_date: params.startDate,
+        end_date: params.endDate,
+      },
+      timeout: 120000,
+    });
     return toCamelCase<EssayDeepInsights>(response.data);
   },
   interpretMarketImpact: async (payload: {
@@ -73,6 +77,7 @@ export const essayRadarApi = {
       params: {
         days: filters.days ?? 0,
         query: filters.query || undefined,
+        query_scope: filters.queryScope ?? 'full',
         analysis_status: filters.analysisStatus || undefined,
         known_total: filters.knownTotal,
         sentiment: filters.sentiment || undefined,
@@ -91,6 +96,7 @@ export const essayRadarApi = {
       params: {
         days: filters.days ?? 0,
         query: filters.query || undefined,
+        query_scope: filters.queryScope ?? 'full',
         analysis_status: filters.analysisStatus || undefined,
         sentiment: filters.sentiment || undefined,
         category: filters.category || undefined,

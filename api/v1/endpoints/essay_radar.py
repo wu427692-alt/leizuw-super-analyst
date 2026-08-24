@@ -213,6 +213,7 @@ def list_analyses(
 def list_feed(
     days: int = Query(0, ge=0, le=3650),
     query: Optional[str] = Query(None, max_length=200),
+    query_scope: str = Query("full", pattern="^(title|full)$"),
     analysis_status: Optional[str] = Query(
         None,
         pattern="^(essay|completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
@@ -229,6 +230,7 @@ def list_feed(
     return EssayAnalysisService().list_feed(
         days=days,
         query=query,
+        query_scope=query_scope,
         analysis_status=analysis_status,
         sentiment=sentiment,
         category=category,
@@ -245,6 +247,7 @@ def list_feed(
 def export_feed(
     days: int = Query(0, ge=0, le=3650),
     query: Optional[str] = Query(None, max_length=200),
+    query_scope: str = Query("full", pattern="^(title|full)$"),
     analysis_status: Optional[str] = Query(
         None,
         pattern="^(essay|completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
@@ -259,6 +262,7 @@ def export_feed(
         exported = EssayAnalysisService().export_feed_excel(
             days=days,
             query=query,
+            query_scope=query_scope,
             analysis_status=analysis_status,
             sentiment=sentiment,
             category=category,

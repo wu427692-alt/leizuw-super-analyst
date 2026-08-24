@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 ESSAY_PROMPT_VERSION = "essay-radar-v3-quality-retry"
 DEFAULT_ESSAY_MODEL = "deepseek-v4-flash"
-DAILY_REPORT_PROMPT_VERSION = "essay-daily-v3-stratified-watchlist"
+DAILY_REPORT_PROMPT_VERSION = "essay-daily-v4-longform-stock-candidates"
 
 _CATEGORIES = {
     "company_research",
@@ -57,7 +57,7 @@ _TS_CODE_RE = re.compile(r"^(\d{6})(?:\.(SH|SS|SZ|BJ))?$", re.IGNORECASE)
 _DASHBOARD_ROWS_CACHE_TTL_SECONDS = 30.0
 _dashboard_rows_cache: Dict[Any, tuple[float, List[Dict[str, Any]]]] = {}
 _dashboard_rows_cache_lock = threading.Lock()
-_DEEP_INSIGHTS_CACHE_TTL_SECONDS = 60.0
+_DEEP_INSIGHTS_CACHE_TTL_SECONDS = 1800.0
 _deep_insights_cache: Dict[tuple[Any, ...], tuple[float, Dict[str, Any]]] = {}
 _deep_insights_cache_lock = threading.Lock()
 _ESSAY_SUMMARY_CACHE_TTL_SECONDS = 30.0
@@ -417,10 +417,21 @@ class DeepSeekEssayAnalyzer:
         return f"{digits}.{suffix}"
 
 
-_DAILY_SYSTEM_PROMPT = """你是中国资本市场晨会主笔。仅依据给定的前一日小作文结构化记录形成日报，
-区分事实、公司指引、机构观点和传闻，不得补造数据。识别共识、分歧、信息增量、跨来源印证、潜在盈利传导、
-估值影响、催化剂、风险和次日验证点。严格输出一个 JSON object，不得输出 Markdown。
-格式：{"executive_summary":"300字内", "market_regime":"市场叙事状态", "key_themes":[{"name":"主题","count":1,"direction":"bullish|bearish|mixed|neutral","thesis":"逻辑","evidence_topic_ids":["id"]}], "stock_focus":[{"ts_code":"","name":"","mention_count":1,"stance":"bullish|bearish|mixed|neutral","thesis":"逻辑","catalysts":[],"risks":[],"evidence_topic_ids":[]}], "consensus":[], "divergences":[], "novel_signals":[], "earnings_implications":[], "valuation_implications":[], "risk_watch":[], "next_day_watchlist":[], "data_quality":{"coverage":"","limitations":[]}}"""
+_DAILY_SYSTEM_PROMPT = """你是中国资本市场晨会主笔。仅依据给定的前一日机构段子结构化记录形成一份可审计的长篇日报。
+必须区分事实、公司指引、机构观点和传闻，不得补造数据、股票、代码、价格或来源。报告应说明市场主线如何形成、
+相互矛盾的证据、潜在盈利与估值传导、未来验证点。股票只能列为“重点研究候选”，不能写成确定收益或买卖指令；
+每只候选必须来自输入中的明确股票提及，并引用 evidence_topic_ids。证据不足时宁可少列或不列。
+严格输出一个 JSON object，不得输出 Markdown。所有长段落使用中文完整句子，可用两个换行分段。
+格式：{
+  "executive_summary":"800-1500字，至少4段：新增信息、主线结构、分歧风险、下一步观察",
+  "market_regime":"100-250字市场叙事状态",
+  "market_narrative":"600-1200字，解释主题之间的传导链和证据强弱",
+  "key_themes":[{"name":"主题","count":1,"direction":"bullish|bearish|mixed|neutral","thesis":"150-300字逻辑","evidence":"事实与观点分层","counter_evidence":"反面证据或空缺","evidence_topic_ids":["id"]}],
+  "stock_focus":[{"ts_code":"","name":"","mention_count":1,"stance":"bullish|bearish|mixed|neutral","conviction":"high|medium|low","time_horizon":"短期|中期|长期|不明确","thesis":"200-400字研究逻辑","why_now":"为何进入今日候选","earnings_path":"盈利传导与需要验证的数据","valuation_view":"估值影响与约束","catalysts":[],"risks":[],"validation_points":[],"evidence_topic_ids":[]}],
+  "consensus":[], "divergences":[], "novel_signals":[], "earnings_implications":[], "valuation_implications":[],
+  "risk_watch":[], "next_day_watchlist":[],
+  "data_quality":{"coverage":"","limitations":[],"recommendation_rule":"候选仅来自明确提及且有证据链的股票"}
+}"""
 
 
 class EssayDailyReportService:
@@ -485,6 +496,7 @@ class EssayDailyReportService:
         }
         response = analyzer._post_with_retry(payload)
         report = analyzer._parse_json(analyzer._extract_content(response))
+        report = self._normalize_report(report, rows)
         report["report_date"] = target.isoformat()
         report["source_count"] = len(rows)
         quality = report.get("data_quality") if isinstance(report.get("data_quality"), dict) else {}
@@ -492,6 +504,49 @@ class EssayDailyReportService:
         report["data_quality"] = quality
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         return report, {key: int(usage.get(key) or 0) for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+
+    @staticmethod
+    def _normalize_report(report: Dict[str, Any], rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        """Keep stock candidates tied to explicit source mentions and valid evidence ids."""
+        valid_topic_ids = {str(row.get("topic_id") or "").strip() for row in rows}
+        mentions_by_key: Dict[str, List[str]] = defaultdict(list)
+        for row in rows:
+            topic_id = str(row.get("topic_id") or "").strip()
+            for mention in row.get("stock_mentions") or []:
+                for value in (mention.get("ts_code"), mention.get("name")):
+                    key = str(value or "").strip().casefold()
+                    if key and topic_id and topic_id not in mentions_by_key[key]:
+                        mentions_by_key[key].append(topic_id)
+
+        normalized_stocks = []
+        for candidate in report.get("stock_focus") or []:
+            if not isinstance(candidate, dict):
+                continue
+            keys = {
+                str(candidate.get("ts_code") or "").strip().casefold(),
+                str(candidate.get("name") or "").strip().casefold(),
+            } - {""}
+            matched_topic_ids: List[str] = []
+            for key in keys:
+                matched_topic_ids.extend(mentions_by_key.get(key, []))
+            matched_topic_ids = list(dict.fromkeys(matched_topic_ids))
+            if not matched_topic_ids:
+                continue
+            cited = [
+                str(value).strip() for value in (candidate.get("evidence_topic_ids") or [])
+                if str(value).strip() in valid_topic_ids and str(value).strip() in matched_topic_ids
+            ]
+            candidate["evidence_topic_ids"] = list(dict.fromkeys(cited or matched_topic_ids[:8]))
+            normalized_stocks.append(candidate)
+        report["stock_focus"] = normalized_stocks[:12]
+
+        for theme in report.get("key_themes") or []:
+            if isinstance(theme, dict):
+                theme["evidence_topic_ids"] = list(dict.fromkeys(
+                    str(value).strip() for value in (theme.get("evidence_topic_ids") or [])
+                    if str(value).strip() in valid_topic_ids
+                ))[:12]
+        return report
 
     @classmethod
     def _daily_context(cls, rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
@@ -711,7 +766,7 @@ class EssayAnalysisService:
         export_filters = {
             key: filters.get(key)
             for key in (
-                "query", "analysis_status", "sentiment", "category", "tag", "stock", "min_importance",
+                "query", "query_scope", "analysis_status", "sentiment", "category", "tag", "stock", "min_importance",
             )
         }
         workbook = Workbook(write_only=True)
@@ -797,6 +852,7 @@ class EssayAnalysisService:
             ("原文分段数量", raw_chunk_count),
             ("时间范围", f"近 {days} 日" if days else "全部已入库"),
             ("关键词", export_filters.get("query") or ""),
+            ("检索范围", "仅标题" if export_filters.get("query_scope") == "title" else "全文与分析标签"),
             ("AI状态", export_filters.get("analysis_status") or "全部"),
             ("情绪", export_filters.get("sentiment") or "全部"),
             ("类型", export_filters.get("category") or "全部"),
@@ -889,9 +945,13 @@ class EssayAnalysisService:
             cached = _dashboard_rows_cache.get(safe_days)
             if cached and now - cached[0] < _DASHBOARD_ROWS_CACHE_TTL_SECONDS:
                 return cached[1]
-            rows = self.repo.completed_for_dashboard(cutoff=cutoff)
+        rows = self.repo.completed_for_dashboard(cutoff=cutoff)
+        with _dashboard_rows_cache_lock:
             _dashboard_rows_cache[safe_days] = (now, rows)
-            return rows
+            if len(_dashboard_rows_cache) > 16:
+                oldest = min(_dashboard_rows_cache, key=lambda item: _dashboard_rows_cache[item][0])
+                _dashboard_rows_cache.pop(oldest, None)
+        return rows
 
     def _completed_dashboard_rows_between(self, start_day: date, end_day: date) -> List[Dict[str, Any]]:
         """Read one exact Shanghai-calendar window and share the decoded snapshot."""
@@ -906,9 +966,13 @@ class EssayAnalysisService:
             cached = _dashboard_rows_cache.get(cache_key)
             if cached and now - cached[0] < _DASHBOARD_ROWS_CACHE_TTL_SECONDS:
                 return cached[1]
-            rows = self.repo.completed_between(start=start, end=end)
+        rows = self.repo.completed_between(start=start, end=end)
+        with _dashboard_rows_cache_lock:
             _dashboard_rows_cache[cache_key] = (now, rows)
-            return rows
+            if len(_dashboard_rows_cache) > 16:
+                oldest = min(_dashboard_rows_cache, key=lambda item: _dashboard_rows_cache[item][0])
+                _dashboard_rows_cache.pop(oldest, None)
+        return rows
 
     def dashboard(self, *, days: int = 30, top_n: int = 12) -> Dict[str, Any]:
         safe_days = max(1, min(int(days), 3650))
@@ -1140,7 +1204,7 @@ class EssayAnalysisService:
         """Build a date-bounded source → theme → stock → market-evidence atlas."""
         shanghai = timezone(timedelta(hours=8))
         today = datetime.now(shanghai).date()
-        preset_days = {"short": 14, "medium": 90, "long": 365}
+        preset_days = {"short": 14, "medium": 90, "long": 180}
         normalized_horizon = str(horizon or "").strip().lower()
         try:
             selected_end = date.fromisoformat(end_date) if end_date else today

@@ -11,7 +11,7 @@ import { essayRadarApi } from '../api/essayRadar';
 import { AppPage, Badge, Drawer, EmptyState } from '../components/common';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import type {
-  EssayAnalysis, EssayAnalysisList, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayInsights,
+  EssayAnalysis, EssayAnalysisList, EssayDailyReport, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayInsights,
   EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFile, EssayAudioFileList, EssayHistoricalBacklog, EssayStatus, EssayWordCloud,
 } from '../types/essayRadar';
 import './EssayRadarPage.css';
@@ -207,7 +207,7 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
       <section className="essay-period-rail" aria-label="洞察研究时间窗口">
         <div><span>研究窗口</span><strong>{data.period.startDate} — {data.period.endDate}</strong><small>{data.windowDays} 个自然日 · 按{periodLabel}聚合</small></div>
         <nav>{([
-          ['short', '短期', '14日'], ['medium', '中期', '90日'], ['long', '长期', '1年'],
+          ['short', '短期', '14日'], ['medium', '中期', '90日'], ['long', '长期', '180日'],
         ] as const).map(([value, label, note]) => <button key={value} type="button" className={horizon === value ? 'is-active' : ''} onClick={() => onPeriodChange(value)}><strong>{label}</strong><small>{note}</small></button>)}</nav>
         <div className={`essay-custom-period ${horizon === 'custom' ? 'is-active' : ''}`}>
           <label>开始<input type="date" value={draftStart} onChange={(event) => setDraftStart(event.target.value)} /></label>
@@ -303,6 +303,45 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
       </div>
     </div>
   );
+}
+
+function DailyReportArticle({ item }: { item: EssayDailyReport }) {
+  const report = item.report;
+  if (!report) return <p className="essay-error-inline">{item.errorMessage || '报告尚未完成。'}</p>;
+  const implications = [
+    { title: '盈利传导', values: report.earningsImplications ?? [] },
+    { title: '估值影响', values: report.valuationImplications ?? [] },
+  ];
+  return <div className="essay-report-body">
+    <section className="essay-report-lead">
+      <div className="essay-report-kicker"><span>{report.marketRegime || '市场叙事待识别'}</span><small>{item.sourceCount} 篇语料 · {item.totalTokens.toLocaleString()} tokens</small></div>
+      <h3>核心研判</h3>
+      <p>{report.executiveSummary || '—'}</p>
+    </section>
+    {report.marketNarrative ? <section className="essay-report-narrative"><h3>主线结构与证据传导</h3><p>{report.marketNarrative}</p></section> : null}
+    {report.keyThemes?.length ? <section><h3>主题拆解</h3><div className="essay-report-theme-grid">{report.keyThemes.map((theme) => <article key={theme.name}>
+      <header><strong>{theme.name}</strong><Badge variant={sentimentVariant(theme.direction)}>{SENTIMENT_LABELS[theme.direction] || theme.direction}</Badge><small>{theme.count || 0} 次</small></header>
+      <p>{theme.thesis}</p>
+      {theme.evidence ? <dl><dt>支持证据</dt><dd>{theme.evidence}</dd></dl> : null}
+      {theme.counterEvidence ? <dl className="is-risk"><dt>反面证据</dt><dd>{theme.counterEvidence}</dd></dl> : null}
+    </article>)}</div></section> : null}
+    {report.stockFocus?.length ? <section className="essay-report-stock-section">
+      <div className="essay-report-section-title"><div><h3>重点研究候选</h3><p>来自当日明确提及与证据链，不构成买卖建议。</p></div><strong>{report.stockFocus.length} 只</strong></div>
+      <div className="essay-report-stock-grid">{report.stockFocus.map((stock) => <article key={`${stock.tsCode}-${stock.name}`}>
+        <header><div><h4>{stock.name || stock.tsCode}</h4><span>{stock.tsCode || '代码未核验'}</span></div><Badge variant={sentimentVariant(stock.stance)}>{SENTIMENT_LABELS[stock.stance] || stock.stance}</Badge></header>
+        <div className="essay-report-stock-facts"><span>提及 {stock.mentionCount || 0}</span><span>置信 {stock.conviction || '未分级'}</span><span>{stock.timeHorizon || '周期未明确'}</span></div>
+        {stock.whyNow ? <p className="is-why"><strong>为何关注</strong>{stock.whyNow}</p> : null}
+        <p>{stock.thesis}</p>
+        {stock.earningsPath ? <p><strong>盈利路径</strong>{stock.earningsPath}</p> : null}
+        {stock.valuationView ? <p><strong>估值约束</strong>{stock.valuationView}</p> : null}
+        <div className="essay-report-stock-evidence"><div><strong>催化 / 验证</strong>{[...(stock.catalysts ?? []), ...(stock.validationPoints ?? [])].map((value) => <span key={value}>{value}</span>)}</div><div className="is-risk"><strong>风险</strong>{stock.risks?.map((value) => <span key={value}>{value}</span>)}</div></div>
+      </article>)}</div>
+    </section> : null}
+    <div className="essay-report-implications">{implications.map((group) => <section key={group.title}><h3>{group.title}</h3>{group.values.length ? group.values.map((value) => <p key={value}>{value}</p>) : <p>当日语料没有形成可验证结论。</p>}</section>)}</div>
+    <div className="essay-report-implications"><section><h3>新增信号</h3>{report.novelSignals?.length ? report.novelSignals.map((value) => <p key={value}>{value}</p>) : <p>暂无高置信新增信号。</p>}</section><section className="is-risk"><h3>风险与分歧</h3>{[...(report.riskWatch ?? []), ...(report.divergences ?? [])].length ? [...(report.riskWatch ?? []), ...(report.divergences ?? [])].map((value) => <p key={value}>{value}</p>) : <p>暂无新增风险条目。</p>}</section></div>
+    {report.nextDayWatchlist?.length ? <section className="essay-report-next"><h3>下一交易日验证清单</h3><ol>{report.nextDayWatchlist.map((value) => <li key={value}>{value}</li>)}</ol></section> : null}
+    {report.dataQuality?.limitations?.length ? <footer><strong>数据边界</strong>{report.dataQuality.limitations.join('；')}</footer> : null}
+  </div>;
 }
 
 function SignalRow({
@@ -482,6 +521,7 @@ const EssayRadarPage = () => {
   const [selectedEssays, setSelectedEssays] = useState<Set<string>>(() => new Set());
   const [selectedAudio, setSelectedAudio] = useState<Map<string, EssayAudioFile>>(() => new Map());
   const [query, setQuery] = useState(() => searchParams.get('query') || '');
+  const [queryScope, setQueryScope] = useState<'title' | 'full'>('full');
   const deferredQuery = useDebouncedValue(query, 350);
   const [sentiment, setSentiment] = useState('');
   const [category, setCategory] = useState('');
@@ -498,6 +538,9 @@ const EssayRadarPage = () => {
   const [analysisOrder, setAnalysisOrder] = useState<'newest' | 'oldest'>('newest');
   const [queueMessage, setQueueMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [atlasLoading, setAtlasLoading] = useState(false);
+  const [atlasNotice, setAtlasNotice] = useState<string | null>(null);
+  const [trendModuleState, setTrendModuleState] = useState({ trend: 'idle', cloud: 'idle', stocks: 'idle' } as Record<'trend' | 'cloud' | 'stocks', 'idle' | 'loading' | 'ready' | 'error'>);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
@@ -518,6 +561,7 @@ const EssayRadarPage = () => {
   const feedRequestVersionRef = useRef(0);
   const feedFilterSignatureRef = useRef('');
   const loadedViewsRef = useRef(new Set<RadarView>());
+  const atlasRequestVersionRef = useRef(0);
 
   useEffect(() => {
     const viewLabel = VIEW_META.find((item) => item.view === view)?.label ?? '机构段子与录音';
@@ -569,19 +613,30 @@ const EssayRadarPage = () => {
           partialError = '部分模块暂时不可用，已保留成功加载的真实数据。';
         }
       } else if (view === 'atlas') {
-        setDeepInsights(await essayRadarApi.deepInsights({
-          horizon: atlasHorizon,
-          startDate: atlasHorizon === 'custom' ? atlasStartDate : undefined,
-          endDate: atlasHorizon === 'custom' ? atlasEndDate : undefined,
-        }));
+        const atlasVersion = ++atlasRequestVersionRef.current;
+        setAtlasLoading(true);
+        setAtlasNotice(null);
+        const nextAtlas = await essayRadarApi.deepInsights({
+            horizon: atlasHorizon,
+            startDate: atlasHorizon === 'custom' ? atlasStartDate : undefined,
+            endDate: atlasHorizon === 'custom' ? atlasEndDate : undefined,
+          });
+        if (atlasVersion !== atlasRequestVersionRef.current) return;
+        setDeepInsights(nextAtlas);
         loaded = true;
       } else if (view === 'trends') {
+        setTrendModuleState({ trend: 'loading', cloud: 'loading', stocks: 'loading' });
         const [nextDashboard, nextInsights, nextCloud] = await Promise.allSettled([
           essayRadarApi.dashboard(30), essayRadarApi.insights(30, 14), essayRadarApi.wordCloud(cloudPeriod, cloudKind),
         ]);
         if (nextDashboard.status === 'fulfilled') { setDashboard(nextDashboard.value); loaded = true; }
         if (nextInsights.status === 'fulfilled') { setInsights(nextInsights.value); loaded = true; }
         if (nextCloud.status === 'fulfilled') { setCloud(nextCloud.value); loaded = true; }
+        setTrendModuleState({
+          trend: nextInsights.status === 'fulfilled' ? 'ready' : 'error',
+          cloud: nextCloud.status === 'fulfilled' ? 'ready' : 'error',
+          stocks: nextDashboard.status === 'fulfilled' ? 'ready' : 'error',
+        });
         const failures = [nextDashboard, nextInsights, nextCloud].filter(item => item.status === 'rejected');
         if (failures.length === 3) throw (failures[0] as PromiseRejectedResult).reason;
         if (failures.length) partialError = `部分模块暂时不可用（${failures.length}/3），其余数据仍可查看。`;
@@ -610,8 +665,10 @@ const EssayRadarPage = () => {
       }
       if (partialError && initialLoad) setError(partialError);
     } catch (caught) {
+      if (view === 'atlas') setAtlasNotice('长窗口仍在后台准备；已保留上一次结果，页面会自动重试。');
       if (initialLoad) setError(errorText(caught, '页面数据加载失败'));
     } finally {
+      if (view === 'atlas') setAtlasLoading(false);
       if (initialLoad) setLoading(false);
     }
   }, [atlasEndDate, atlasHorizon, atlasStartDate, cloudKind, cloudPeriod, view]);
@@ -640,7 +697,7 @@ const EssayRadarPage = () => {
       return;
     }
     const baseFilters = {
-      days, query: deferredQuery, analysisStatus: analysisStatus || 'essay', sentiment, category, minImportance, pageSize: 20,
+      days, query: deferredQuery, queryScope, analysisStatus: analysisStatus || 'essay', sentiment, category, minImportance, pageSize: 20,
     };
     const filterSignature = `${JSON.stringify(baseFilters)}:page:${page}`;
     const backgroundRefresh = Boolean(list) && feedFilterSignatureRef.current === filterSignature;
@@ -703,7 +760,7 @@ const EssayRadarPage = () => {
     } finally {
       if (!backgroundRefresh && requestVersion === feedRequestVersionRef.current) setLoading(false);
     }
-  }, [analysisStatus, category, days, deferredQuery, feedMode, list, minImportance, page, sentiment, view]);
+  }, [analysisStatus, category, days, deferredQuery, feedMode, list, minImportance, page, queryScope, sentiment, view]);
 
   useEffect(() => { void loadView(refreshKey); }, [loadView, refreshKey]);
   useEffect(() => { void loadFeed(refreshKey); }, [loadFeed, refreshKey]);
@@ -792,6 +849,7 @@ const EssayRadarPage = () => {
       const blob = await essayRadarApi.exportFeed({
         days,
         query: deferredQuery,
+        queryScope,
         analysisStatus,
         sentiment,
         category,
@@ -978,14 +1036,18 @@ const EssayRadarPage = () => {
         </div>
       ) : null}
 
-      {view === 'atlas' ? <DeepInsightsView
-        data={deepInsights}
-        horizon={atlasHorizon}
-        startDate={atlasStartDate || deepInsights?.period.startDate || ''}
-        endDate={atlasEndDate || deepInsights?.period.endDate || ''}
-        onPeriodChange={changeAtlasPeriod}
-        onFilter={openFeedFor}
-      /> : null}
+      {view === 'atlas' ? <>
+        {atlasLoading && deepInsights ? <div className="essay-module-loading" role="status"><RefreshCw className="h-4 w-4 animate-spin" /><div><strong>正在计算 {atlasHorizon === 'short' ? '14日' : atlasHorizon === 'medium' ? '90日' : atlasHorizon === 'long' ? '180日' : '自定义'}窗口</strong><span>保留当前图谱，完成后整体切换，不展示半成品。</span></div></div> : null}
+        {atlasNotice ? <div className="essay-module-notice">{atlasNotice}</div> : null}
+        <DeepInsightsView
+          data={deepInsights}
+          horizon={atlasHorizon}
+          startDate={atlasStartDate || deepInsights?.period.startDate || ''}
+          endDate={atlasEndDate || deepInsights?.period.endDate || ''}
+          onPeriodChange={changeAtlasPeriod}
+          onFilter={openFeedFor}
+        />
+      </> : null}
 
       {view === 'feed' ? (
         <div className="essay-view">
@@ -1016,7 +1078,8 @@ const EssayRadarPage = () => {
             <button type="button" role="tab" aria-selected={feedMode === 'audio'} className={feedMode === 'audio' ? 'is-active' : ''} onClick={() => { setFeedMode('audio'); setPage(1); setFeedNotice(null); setExportNotice(null); }}><Headphones className="h-4 w-4" /><span>录音文件</span><small>一个文件一行</small></button>
           </div>
           <section className="essay-filter-panel">
-            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label={feedMode === 'audio' ? '搜索录音文件' : '搜索小作文'} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={feedMode === 'audio' ? '严格搜索每个录音文件名' : '检索全库：正文、作者、股票或 AI 标签'} /></label>
+            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label={feedMode === 'audio' ? '搜索录音文件' : '搜索小作文'} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={feedMode === 'audio' ? '严格搜索每个录音文件名' : queryScope === 'title' ? '仅在标题中检索关键词' : '检索标题、正文、作者、股票与 AI 标签'} /></label>
+            {feedMode === 'essays' ? <select aria-label="关键词检索范围" value={queryScope} onChange={(event) => { setQueryScope(event.target.value as 'title' | 'full'); setPage(1); }}><option value="full">全文检索</option><option value="title">仅检索标题</option></select> : null}
             <select aria-label="时间范围" value={days} onChange={(event) => { setDays(Number(event.target.value)); setPage(1); }}><option value={0}>全部入库</option><option value={1}>今日</option><option value={7}>近7日</option><option value={30}>近30日</option><option value={365}>近1年</option><option value={730}>近2年</option></select>
             {feedMode === 'essays' ? <>
               <select aria-label="AI状态筛选" value={analysisStatus} onChange={(event) => { setAnalysisStatus(event.target.value); setPage(1); }}><option value="">全部小作文</option><option value="completed">已分析</option><option value="uncompleted">未完成分析</option><option value="not_queued">未入队</option><option value="pending">排队中</option><option value="processing">分析中</option><option value="failed">分析失败</option></select>
@@ -1026,7 +1089,7 @@ const EssayRadarPage = () => {
             </> : <div className="essay-audio-filter-note"><Headphones className="h-4 w-4" />严格按文件名召回，不会连带展示同帖其他录音</div>}
           </section>
           <div className="essay-feed-summary" aria-live="polite">
-            <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{currentFeedTotal.toLocaleString()}</strong> {feedMode === 'audio' ? '个录音文件' : '篇小作文'} · {days ? `近 ${days} 日` : '全部已入库'}</>}</span>
+            <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{currentFeedTotal.toLocaleString()}</strong> {feedMode === 'audio' ? '个录音文件' : '篇小作文'} · {feedMode === 'essays' ? queryScope === 'title' ? '仅标题' : '全文' : '文件名'} · {days ? `近 ${days} 日` : '全部已入库'}</>}</span>
             <div className="essay-feed-summary-actions">
               <button type="button" onClick={() => { setQuery(''); setAnalysisStatus(''); setSentiment(''); setCategory(''); setMinImportance(0); setDays(0); setPage(1); setExportNotice(null); }}>清除筛选</button>
               {feedMode === 'essays' ? <button
@@ -1089,14 +1152,14 @@ const EssayRadarPage = () => {
           <div className="essay-trend-grid">
             <section className="essay-panel essay-chart-panel">
               <div className="essay-panel-head"><div><span>近14天完成分析记录</span><h2>提及量与平均重要度</h2></div><strong>峰值 {trendMax}</strong></div>
-              <div className="essay-chart"><ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 900, height: 330 }}><ComposedChart data={insights?.trend ?? []}><CartesianGrid vertical={false} stroke="rgba(148,163,184,.14)" /><XAxis dataKey="date" tickFormatter={(value) => String(value).slice(5)} tick={{ fontSize: 11 }} /><YAxis yAxisId="count" tick={{ fontSize: 11 }} /><YAxis yAxisId="score" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} /><Tooltip /><Bar yAxisId="count" dataKey="total" fill="#22d3ee" opacity={0.62} /><Line yAxisId="score" type="monotone" dataKey="averageImportance" stroke="#c6ff4a" strokeWidth={2} dot={false} /></ComposedChart></ResponsiveContainer></div>
+              {trendModuleState.trend === 'error' && !insights ? <div className="essay-module-empty">趋势聚合暂未完成，后台将在下一轮自动重试。</div> : <div className="essay-chart"><ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 900, height: 330 }}><ComposedChart data={insights?.trend ?? []}><CartesianGrid vertical={false} stroke="rgba(148,163,184,.14)" /><XAxis dataKey="date" tickFormatter={(value) => String(value).slice(5)} tick={{ fontSize: 11 }} /><YAxis yAxisId="count" tick={{ fontSize: 11 }} /><YAxis yAxisId="score" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} /><Tooltip /><Bar yAxisId="count" dataKey="total" fill="#22d3ee" opacity={0.62} /><Line yAxisId="score" type="monotone" dataKey="averageImportance" stroke="#c6ff4a" strokeWidth={2} dot={false} /></ComposedChart></ResponsiveContainer></div>}
             </section>
             <section className="essay-panel essay-cloud-panel">
               <div className="essay-panel-head"><div><span>{cloud?.startDate} 至 {cloud?.endDate} · {cloud?.sourceCount ?? 0} 篇</span><h2>提及变化</h2></div></div>
               <div className="essay-cloud-controls"><div>{(['day', 'week', 'month'] as const).map((value) => <button key={value} className={cloudPeriod === value ? 'is-active' : ''} onClick={() => setCloudPeriod(value)}>{value === 'day' ? '日' : value === 'week' ? '周' : '月'}</button>)}</div><div>{(['stocks', 'tags', 'themes'] as const).map((value) => <button key={value} className={cloudKind === value ? 'is-active' : ''} onClick={() => setCloudKind(value)}>{value === 'stocks' ? '股票' : value === 'tags' ? '标签' : '主题'}</button>)}</div></div>
               <div className="essay-cloud">{cloud?.items.slice(0, 24).map((item, index) => (
                 <button key={item.name} style={{ fontSize: `${12 + Math.round((item.count / (cloud.items[0]?.count || 1)) * 18)}px`, opacity: Math.max(.5, 1 - index * .02) }} onClick={() => openFeedFor(item.name)}><span>{item.name}</span><small>{item.count}{item.change > 0 ? ' ↑' : item.change < 0 ? ' ↓' : ''}</small></button>
-              ))}</div>
+              ))}{trendModuleState.cloud === 'loading' && !cloud ? <div className="essay-module-empty">正在聚合词频…</div> : null}{trendModuleState.cloud === 'error' && !cloud ? <div className="essay-module-empty">词频模块正在自动重试。</div> : null}</div>
             </section>
           </div>
 
@@ -1107,13 +1170,13 @@ const EssayRadarPage = () => {
                 <button key={stock.symbol} onClick={() => openFeedFor(stock.name)}>
                   <div><strong>{stock.name}</strong><span>{stock.symbol}</span></div><span>{stock.dayMentions}</span><span>{stock.weekMentions}</span><span>{stock.monthMentions}</span><small>{stock.averageImportance.toFixed(1)}</small>
                 </button>
-              ))}<div className="essay-watch-table-head"><span>标的</span><span>日</span><span>周</span><span>月</span><span>重要度</span></div></div>
+              ))}<div className="essay-watch-table-head"><span>标的</span><span>日</span><span>周</span><span>月</span><span>重要度</span></div>{!insights?.watchlist.length ? <div className="essay-module-empty">当前用户自选股尚无可匹配语料。</div> : null}</div>
             </section>
             <section className="essay-panel">
               <div className="essay-panel-head"><div><span>近30天分析结果</span><h2>高频标的</h2></div></div>
               <div className="essay-stock-table">{dashboard?.topStocks.slice(0, 12).map((stock) => (
                 <div key={stock.key}><div><strong>{stock.name || stock.tsCode}</strong><span>{stock.tsCode}</span></div><strong>{stock.mentionCount}</strong><span className="is-bull">{stock.bullish}</span><span className="is-bear">{stock.bearish}</span><small>{stock.averageImportance.toFixed(1)}</small></div>
-              ))}</div>
+              ))}{trendModuleState.stocks === 'loading' && !dashboard ? <div className="essay-module-empty">正在统计高频标的…</div> : null}{trendModuleState.stocks === 'error' && !dashboard ? <div className="essay-module-empty">高频标的模块正在自动重试。</div> : null}</div>
             </section>
           </div>
         </div>
@@ -1130,7 +1193,7 @@ const EssayRadarPage = () => {
             <div className="essay-report-list">{reports?.items.map((item, index) => (
               <details key={`${item.reportDate}-${item.model}`} open={index === 0}>
                 <summary><div><strong>{item.reportDate}</strong><span>{item.model}</span></div><div><span>{item.sourceCount} 篇</span><Badge variant={item.status === 'completed' ? 'success' : item.status === 'failed' ? 'danger' : 'warning'}>{item.status}</Badge></div></summary>
-                {item.report ? <div className="essay-report-body"><section><h3>核心结论</h3><p>{item.report.executiveSummary || '—'}</p></section><div><section><h3>新增信号</h3>{item.report.novelSignals?.map((value) => <p key={value}>{value}</p>)}</section><section className="is-risk"><h3>风险与分歧</h3>{[...(item.report.riskWatch ?? []), ...(item.report.divergences ?? [])].map((value) => <p key={value}>{value}</p>)}</section></div></div> : <p className="essay-error-inline">{item.errorMessage || '报告尚未完成。'}</p>}
+                <DailyReportArticle item={item} />
               </details>
             ))}</div>
           </section>

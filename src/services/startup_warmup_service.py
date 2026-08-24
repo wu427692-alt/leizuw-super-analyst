@@ -33,6 +33,9 @@ class StartupWarmupService:
                 "essay-feed-first-page",
                 lambda: essays.list_feed(days=0, page=1, page_size=20),
             ),
+            ("essay-deep-insights-short", lambda: essays.deep_insights(horizon="short")),
+            ("essay-deep-insights-medium", lambda: essays.deep_insights(horizon="medium")),
+            ("essay-deep-insights-long", lambda: essays.deep_insights(horizon="long")),
             (
                 "investment-feed-first-page",
                 lambda: monitor.list_events(days=7, page=1, page_size=100),
@@ -46,7 +49,6 @@ class StartupWarmupService:
         return essential + (
             ("home-dashboard", lambda: home.dashboard(force=False)),
             ("essay-dashboard", lambda: essays.dashboard(days=30)),
-            ("essay-deep-insights-short", lambda: essays.deep_insights(horizon="short")),
             ("investment-dashboard", lambda: monitor.dashboard(days=7)),
             ("super-watchlist", lambda: monitor.super_watchlist(days=183)),
             ("watchlist-keyword-index", monitor.reindex_watchlist_keywords),

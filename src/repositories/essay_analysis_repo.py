@@ -633,6 +633,7 @@ class EssayAnalysisRepository:
         *,
         cutoff: Optional[datetime] = None,
         query: Optional[str] = None,
+        query_scope: str = "full",
         analysis_status: Optional[str] = None,
         sentiment: Optional[str] = None,
         category: Optional[str] = None,
@@ -652,6 +653,7 @@ class EssayAnalysisRepository:
         where_clause, count_cache_key = self._feed_where_clause(
             cutoff=cutoff,
             query=query,
+            query_scope=query_scope,
             analysis_status=analysis_status,
             sentiment=sentiment,
             category=category,
@@ -687,6 +689,7 @@ class EssayAnalysisRepository:
         *,
         cutoff: Optional[datetime] = None,
         query: Optional[str] = None,
+        query_scope: str = "full",
         analysis_status: Optional[str] = None,
         sentiment: Optional[str] = None,
         category: Optional[str] = None,
@@ -699,6 +702,7 @@ class EssayAnalysisRepository:
         where_clause, _cache_key = self._feed_where_clause(
             cutoff=cutoff,
             query=query,
+            query_scope=query_scope,
             analysis_status=analysis_status,
             sentiment=sentiment,
             category=category,
@@ -726,6 +730,7 @@ class EssayAnalysisRepository:
         *,
         cutoff: Optional[datetime],
         query: Optional[str],
+        query_scope: str = "full",
         analysis_status: Optional[str],
         sentiment: Optional[str],
         category: Optional[str],
@@ -736,24 +741,26 @@ class EssayAnalysisRepository:
         conditions = []
         if cutoff is not None:
             conditions.append(ResearchNote.created_at >= cutoff)
+        normalized_query_scope = "title" if str(query_scope or "").strip().lower() == "title" else "full"
         for keyword in str(query or "").split():
             equivalent_conditions = []
             for term in topic_search_terms(keyword):
                 escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 pattern = f"%{escaped}%"
-                equivalent_conditions.extend((
-                    ResearchNote.title.like(pattern, escape="\\"),
-                    ResearchNote.content.like(pattern, escape="\\"),
-                    ResearchNote.group_name.like(pattern, escape="\\"),
-                    ResearchNote.author_name.like(pattern, escape="\\"),
-                    ResearchNote.symbol_codes.like(pattern, escape="\\"),
-                    ResearchNote.files_json.like(pattern, escape="\\"),
-                    EssayAnalysisRecord.summary.like(pattern, escape="\\"),
-                    EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
-                    EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
-                    EssayAnalysisRecord.themes_json.like(pattern, escape="\\"),
-                    EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
-                ))
+                equivalent_conditions.append(ResearchNote.title.like(pattern, escape="\\"))
+                if normalized_query_scope == "full":
+                    equivalent_conditions.extend((
+                        ResearchNote.content.like(pattern, escape="\\"),
+                        ResearchNote.group_name.like(pattern, escape="\\"),
+                        ResearchNote.author_name.like(pattern, escape="\\"),
+                        ResearchNote.symbol_codes.like(pattern, escape="\\"),
+                        ResearchNote.files_json.like(pattern, escape="\\"),
+                        EssayAnalysisRecord.summary.like(pattern, escape="\\"),
+                        EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
+                        EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
+                        EssayAnalysisRecord.themes_json.like(pattern, escape="\\"),
+                        EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
+                    ))
             if equivalent_conditions:
                 conditions.append(or_(*equivalent_conditions))
         if analysis_status == "essay":
@@ -792,6 +799,7 @@ class EssayAnalysisRepository:
             id(self.db),
             cutoff.replace(second=0, microsecond=0).isoformat() if cutoff else None,
             " ".join(str(query or "").split()),
+            normalized_query_scope,
             analysis_status or "",
             sentiment or "",
             category or "",
