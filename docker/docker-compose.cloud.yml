@@ -59,10 +59,10 @@ services:
           # Preserve enough CPU for SSH, nginx and the kernel even when a
           # user starts a large quant/data task on the 2-vCPU instance.
           cpus: "1.75"
-          # The first catch-up pass can briefly exceed 1.1 GiB while a single
-          # upstream client materializes a full-market response.  Keep worker
-          # concurrency at one, but leave enough cgroup headroom to use the
-          # host's configured swap instead of entering a restart loop.
-          memory: 1400M
+          # The Hong Kong light server now provides 4 GB RAM (about 3.5 GiB
+          # usable by Linux).  Give the application enough headroom for the
+          # SQLite cache and large upstream payloads while reserving roughly
+          # 700 MB for the kernel, Docker, SSH and the tunnel process.
+          memory: 2800M
         reservations:
-          memory: 512M
+          memory: 1G
