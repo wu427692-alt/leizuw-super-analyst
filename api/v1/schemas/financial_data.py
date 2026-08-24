@@ -64,6 +64,15 @@ class ResearchNoteListResponse(BaseModel):
     page_size: int
 
 
+class ResearchNoteAudioDownloadItem(BaseModel):
+    topic_id: str = Field(..., min_length=1, max_length=64)
+    file_id: str = Field(..., min_length=1, max_length=128)
+
+
+class ResearchNoteAudioBatchDownloadRequest(BaseModel):
+    items: List[ResearchNoteAudioDownloadItem] = Field(..., min_length=1, max_length=100)
+
+
 class ResearchNoteImportResponse(BaseModel):
     received: int
     saved: int

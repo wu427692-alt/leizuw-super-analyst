@@ -233,6 +233,44 @@ class ResearchNoteService:
             raise ResearchNoteNotFoundError(f"research note not found: {normalized_id}")
         return self._note_to_dict(row, include_raw=True)
 
+    def list_audio_files(self, **filters: Any) -> Dict[str, Any]:
+        """Return one searchable row per audio attachment, never per parent post."""
+        days = max(0, min(int(filters.get("days") or 0), 3650))
+        page = max(1, int(filters.get("page") or 1))
+        page_size = max(1, min(int(filters.get("page_size") or 20), 100))
+        query = str(filters.get("query") or "").strip()
+        cutoff = utc_naive_now() - timedelta(days=days) if days else None
+        items: List[Dict[str, Any]] = []
+        for row in self.repo.iter_notes_with_files(query=query or None, created_from=cutoff):
+            note = self._note_to_dict(row)
+            for asset in note["files"]:
+                if asset.get("asset_kind") != "audio":
+                    continue
+                file_id = str(asset.get("file_id") or "").strip()
+                if not file_id:
+                    continue
+                items.append({
+                    "asset_id": f"{row.topic_id}:{file_id}",
+                    "topic_id": row.topic_id,
+                    "file_id": file_id,
+                    "name": str(asset.get("name") or f"录音-{file_id}"),
+                    "size": asset.get("size"),
+                    "duration_seconds": asset.get("duration_seconds") or asset.get("duration"),
+                    "download_url": asset.get("download_url"),
+                    "group_name": row.group_name,
+                    "author_name": row.author_name,
+                    "note_title": row.title,
+                    "created_at": note.get("created_at"),
+                })
+        total = len(items)
+        start = (page - 1) * page_size
+        return {
+            "items": items[start:start + page_size],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
     def source_summary(self) -> List[Dict[str, Any]]:
         return self.repo.source_summary()
 

@@ -175,6 +175,27 @@ export type EssayAnalysisList = {
   scope?: string;
 };
 
+export type EssayAudioFile = {
+  assetId: string;
+  topicId: string;
+  fileId: string;
+  name: string;
+  size?: number | null;
+  durationSeconds?: number | null;
+  downloadUrl?: string | null;
+  groupName: string;
+  authorName?: string | null;
+  noteTitle: string;
+  createdAt?: string | null;
+};
+
+export type EssayAudioFileList = {
+  items: EssayAudioFile[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
 export type EssayWordCloud = {
   period: 'day' | 'week' | 'month'; kind: 'stocks' | 'tags' | 'themes'; stock?: string | null;
   startDate: string; endDate: string; sourceCount: number;

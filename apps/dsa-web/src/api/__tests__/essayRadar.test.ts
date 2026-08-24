@@ -76,6 +76,37 @@ describe('essayRadarApi', () => {
     expect(result).toBe(workbook);
   });
 
+  it('retrieves audio as file-level rows and batch downloads selected files', async () => {
+    const archive = new Blob(['zip']);
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { items: [{ asset_id: 'topic-1:audio-1', topic_id: 'topic-1', file_id: 'audio-1', name: '交流.mp3' }], total: 1, page: 1, page_size: 20 },
+    });
+    const files = await essayRadarApi.audioFiles({ days: 30, query: '交流', page: 1, pageSize: 20 });
+    expect(apiClient.get).toHaveBeenCalledWith('/api/v1/financial-data/research-notes/audio-files', {
+      params: { days: 30, query: '交流', page: 1, page_size: 20 },
+    });
+    expect(files.items[0].assetId).toBe('topic-1:audio-1');
+
+    vi.mocked(apiClient.post).mockResolvedValue({ data: archive });
+    const downloaded = await essayRadarApi.downloadSelectedAudio([{ topicId: 'topic-1', fileId: 'audio-1' }]);
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/financial-data/research-notes/audio-files/batch-download', {
+      items: [{ topic_id: 'topic-1', file_id: 'audio-1' }],
+    }, { responseType: 'blob', timeout: 600000 });
+    expect(downloaded).toBe(archive);
+  });
+
+  it('downloads only checked essays as an Excel workbook', async () => {
+    const workbook = new Blob(['xlsx']);
+    vi.mocked(apiClient.post).mockResolvedValue({ data: workbook });
+
+    const result = await essayRadarApi.exportSelected(['topic-1', 'topic-2']);
+
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/essay-radar/feed/export-selected', {
+      topic_ids: ['topic-1', 'topic-2'],
+    }, { responseType: 'blob', timeout: 300000 });
+    expect(result).toBe(workbook);
+  });
+
   it('preserves recent-library activity counts when numeric snake-case keys are converted', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: {

@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { EssayAnalysis, EssayAnalysisList, EssayCountBackfillResponse, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayHistoricalBacklog, EssayInsights, EssayStatus, EssayWordCloud, EssayWorkerStatus, ResearchNoteDetail } from '../types/essayRadar';
+import type { EssayAnalysis, EssayAnalysisList, EssayAudioFileList, EssayCountBackfillResponse, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayHistoricalBacklog, EssayInsights, EssayStatus, EssayWordCloud, EssayWorkerStatus, ResearchNoteDetail } from '../types/essayRadar';
 
 export type EssayFilters = {
   days?: number;
@@ -100,6 +100,35 @@ export const essayRadarApi = {
       },
       responseType: 'blob',
       timeout: 300000,
+    });
+    return response.data as Blob;
+  },
+  exportSelected: async (topicIds: string[]): Promise<Blob> => {
+    const response = await apiClient.post('/api/v1/essay-radar/feed/export-selected', {
+      topic_ids: topicIds,
+    }, {
+      responseType: 'blob',
+      timeout: 300000,
+    });
+    return response.data as Blob;
+  },
+  audioFiles: async (filters: Pick<EssayFilters, 'days' | 'query' | 'page' | 'pageSize'>): Promise<EssayAudioFileList> => {
+    const response = await apiClient.get('/api/v1/financial-data/research-notes/audio-files', {
+      params: {
+        days: filters.days ?? 0,
+        query: filters.query || undefined,
+        page: filters.page ?? 1,
+        page_size: filters.pageSize ?? 20,
+      },
+    });
+    return toCamelCase<EssayAudioFileList>(response.data);
+  },
+  downloadSelectedAudio: async (items: Array<{ topicId: string; fileId: string }>): Promise<Blob> => {
+    const response = await apiClient.post('/api/v1/financial-data/research-notes/audio-files/batch-download', {
+      items: items.map((item) => ({ topic_id: item.topicId, file_id: item.fileId })),
+    }, {
+      responseType: 'blob',
+      timeout: 600000,
     });
     return response.data as Blob;
   },

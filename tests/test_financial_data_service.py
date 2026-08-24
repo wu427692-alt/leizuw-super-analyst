@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import os
+from io import BytesIO
+import json
 from unittest.mock import MagicMock
+from zipfile import ZipFile
 
 import pandas as pd
 import pytest
@@ -206,6 +209,25 @@ def test_audio_assets_are_searchable_downloadable_metadata_and_never_claimed_for
     assert repository.progress()["media_only"] == 2
 
 
+def test_audio_search_returns_one_row_per_file(research_service) -> None:
+    research_service.import_topics([_topic(
+        title="低空经济专家录音",
+        content="无人机产业链交流",
+        images=[],
+        files=[
+            {"file_id": "audio-1", "name": "低空经济上半场.mp3", "size": 1024, "duration": 61},
+            {"file_id": "audio-2", "name": "无人机供应链.m4a", "size": 2048, "duration": 125},
+        ],
+    )], enqueue_analysis=False)
+
+    result = research_service.list_audio_files(query="低空经济", page=1, page_size=20)
+
+    assert result["total"] == 2
+    assert [item["file_id"] for item in result["items"]] == ["audio-1", "audio-2"]
+    assert result["items"][0]["name"] == "低空经济上半场.mp3"
+    assert result["items"][1]["duration_seconds"] == 125
+
+
 def test_source_file_download_is_streamed_with_original_filename(research_service, monkeypatch) -> None:
     research_service.import_topics([_topic(images=[], files=[{
         "file_id": "audio-1", "name": "产业专家交流.mp3", "size": 4, "duration": 1,
@@ -232,6 +254,45 @@ def test_source_file_download_is_streamed_with_original_filename(research_servic
     assert response.headers["content-type"].startswith("audio/mpeg")
     assert "filename*=UTF-8''" in response.headers["content-disposition"]
     upstream.close.assert_called_once()
+
+
+def test_selected_audio_files_are_downloaded_as_one_zip(research_service, monkeypatch) -> None:
+    research_service.import_topics([_topic(images=[], files=[
+        {"file_id": "audio-1", "name": "产业交流.mp3", "size": 4, "duration": 1},
+        {"file_id": "audio-2", "name": "产业交流.mp3", "size": 5, "duration": 2},
+    ])], enqueue_analysis=False)
+
+    def fake_get(url, **_kwargs):
+        upstream = MagicMock()
+        upstream.headers = {"Content-Type": "audio/mpeg"}
+        upstream.iter_content.return_value = [b"first" if url.endswith("audio-1") else b"second"]
+        upstream.raise_for_status.return_value = None
+        return upstream
+
+    monkeypatch.setattr(
+        financial_data.ZsxqMcpSyncService,
+        "resolve_media_url_sync",
+        lambda _self, _topic_id, _kind, file_id: f"https://files.zsxq.com/{file_id}",
+    )
+    monkeypatch.setattr(financial_data.requests, "get", fake_get)
+    app = FastAPI()
+    app.include_router(financial_data.router, prefix="/api/v1/financial-data")
+
+    response = TestClient(app).post(
+        "/api/v1/financial-data/research-notes/audio-files/batch-download",
+        json={"items": [
+            {"topic_id": "14422821525422552", "file_id": "audio-1"},
+            {"topic_id": "14422821525422552", "file_id": "audio-2"},
+        ]},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-selected-file-count"] == "2"
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert "录音文件/产业交流.mp3" in archive.namelist()
+        assert "录音文件/产业交流_2.mp3" in archive.namelist()
+        manifest = json.loads(archive.read("下载清单.json"))
+        assert [item["file_id"] for item in manifest] == ["audio-1", "audio-2"]
 
 
 def test_import_mcp_page_rejects_unsuccessful_source(research_service) -> None:

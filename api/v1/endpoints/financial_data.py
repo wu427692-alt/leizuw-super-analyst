@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import logging
+import json
+from datetime import datetime
+from pathlib import Path
+import tempfile
 from typing import Optional
 from urllib.parse import quote
+import zipfile
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from api.v1.schemas.common import ErrorResponse
@@ -19,6 +24,7 @@ from api.v1.schemas.financial_data import (
     ResearchNoteImportResponse,
     ResearchNoteItem,
     ResearchNoteListResponse,
+    ResearchNoteAudioBatchDownloadRequest,
     TushareQueryRequest,
     ZsxqHistoryBackfillRequest,
 )
@@ -185,6 +191,88 @@ def list_research_notes(
         ))
     except FinancialDataValidationError as exc:
         raise _bad_request(exc)
+
+
+@router.get("/research-notes/audio-files", summary="按录音文件而非帖子检索知识星球附件")
+def list_research_note_audio_files(
+    days: int = Query(0, ge=0, le=3650),
+    query: Optional[str] = Query(None, max_length=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    return ResearchNoteService().list_audio_files(
+        days=days, query=query, page=page, page_size=page_size,
+    )
+
+
+@router.post("/research-notes/audio-files/batch-download", summary="将勾选录音源文件临时打包为 ZIP")
+def batch_download_research_note_audio(request: ResearchNoteAudioBatchDownloadRequest):
+    service = ResearchNoteService()
+    selected = list(dict.fromkeys((item.topic_id, item.file_id) for item in request.items))
+    handle = tempfile.NamedTemporaryFile(prefix="zsxq-audio-selected-", suffix=".zip", delete=False)
+    handle.close()
+    archive_path = Path(handle.name)
+    manifest = []
+    used_names: set[str] = set()
+    try:
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+            for topic_id, file_id in selected:
+                note = service.get_note(topic_id)
+                asset = next(
+                    (item for item in note.get("files", []) if str(item.get("file_id") or "") == file_id),
+                    None,
+                )
+                if asset is None or asset.get("asset_kind") != "audio":
+                    raise FinancialDataValidationError(f"录音附件不存在：{topic_id}/{file_id}")
+                source_url = ZsxqMcpSyncService().resolve_media_url_sync(topic_id, "files", file_id)
+                upstream = requests.get(source_url, stream=True, timeout=(10, 300))
+                try:
+                    upstream.raise_for_status()
+                    raw_name = Path(str(asset.get("name") or f"录音-{file_id}")).name
+                    safe_name = raw_name.replace("\r", "_").replace("\n", "_") or f"录音-{file_id}"
+                    candidate = safe_name
+                    suffix = Path(safe_name).suffix
+                    stem = Path(safe_name).stem
+                    counter = 2
+                    while candidate.lower() in used_names:
+                        candidate = f"{stem}_{counter}{suffix}"
+                        counter += 1
+                    used_names.add(candidate.lower())
+                    with archive.open(f"录音文件/{candidate}", "w") as target:
+                        for chunk in upstream.iter_content(chunk_size=256 * 1024):
+                            if chunk:
+                                target.write(chunk)
+                    manifest.append({
+                        "topic_id": topic_id,
+                        "file_id": file_id,
+                        "filename": candidate,
+                        "note_title": note.get("title"),
+                        "group_name": note.get("group_name"),
+                        "created_at": note.get("created_at"),
+                    })
+                finally:
+                    upstream.close()
+            archive.writestr(
+                "下载清单.json",
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+    except (FinancialDataValidationError, ResearchNoteNotFoundError) as exc:
+        archive_path.unlink(missing_ok=True)
+        raise _bad_request(exc)
+    except (ZsxqMcpSyncError, requests.RequestException) as exc:
+        archive_path.unlink(missing_ok=True)
+        raise _upstream_error(exc)
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
+    suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return FileResponse(
+        archive_path,
+        filename=f"知识星球录音_{suffix}.zip",
+        media_type="application/zip",
+        headers={"X-Selected-File-Count": str(len(manifest))},
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
+    )
 
 
 @router.get(

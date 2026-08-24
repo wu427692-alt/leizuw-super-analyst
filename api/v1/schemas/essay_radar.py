@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Request schemas for the DeepSeek essay-radar API."""
 
-from typing import Literal
+from typing import List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -29,3 +29,7 @@ class EssayMarketInterpretationRequest(BaseModel):
     horizon: Literal["short", "medium", "long", "custom"] = "short"
     start_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     end_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class EssaySelectedExportRequest(BaseModel):
+    topic_ids: List[str] = Field(..., min_length=1, max_length=500)

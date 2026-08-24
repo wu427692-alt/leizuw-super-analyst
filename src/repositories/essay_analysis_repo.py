@@ -693,6 +693,7 @@ class EssayAnalysisRepository:
         tag: Optional[str] = None,
         stock: Optional[str] = None,
         min_importance: Optional[int] = None,
+        topic_ids: Optional[Sequence[str]] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Iterate every matching note without offset pagination for exports."""
         where_clause, _cache_key = self._feed_where_clause(
@@ -705,6 +706,9 @@ class EssayAnalysisRepository:
             stock=stock,
             min_importance=min_importance,
         )
+        normalized_topic_ids = list(dict.fromkeys(str(value).strip() for value in (topic_ids or []) if str(value).strip()))
+        if topic_ids is not None:
+            where_clause = and_(where_clause, ResearchNote.topic_id.in_(normalized_topic_ids))
         with self.db.get_session() as session:
             rows = session.execute(
                 select(EssayAnalysisRecord, ResearchNote)
@@ -752,7 +756,12 @@ class EssayAnalysisRepository:
                 ))
             if equivalent_conditions:
                 conditions.append(or_(*equivalent_conditions))
-        if analysis_status == "completed":
+        if analysis_status == "essay":
+            conditions.append(or_(
+                EssayAnalysisRecord.id.is_(None),
+                EssayAnalysisRecord.status != "media_only",
+            ))
+        elif analysis_status == "completed":
             conditions.append(EssayAnalysisRecord.status == "completed")
         elif analysis_status == "uncompleted":
             conditions.append(or_(

@@ -16,6 +16,7 @@ from api.v1.schemas.essay_radar import (
     EssayDailyReportRunRequest,
     EssayMarketInterpretationRequest,
     EssayRetryRequest,
+    EssaySelectedExportRequest,
 )
 from src.services.essay_analysis_service import EssayAnalysisError, EssayAnalysisService, EssayDailyReportService
 from src.services.essay_daily_report_worker import EssayDailyReportWorker
@@ -214,7 +215,7 @@ def list_feed(
     query: Optional[str] = Query(None, max_length=200),
     analysis_status: Optional[str] = Query(
         None,
-        pattern="^(completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
+        pattern="^(essay|completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
     ),
     sentiment: Optional[str] = None,
     category: Optional[str] = None,
@@ -246,7 +247,7 @@ def export_feed(
     query: Optional[str] = Query(None, max_length=200),
     analysis_status: Optional[str] = Query(
         None,
-        pattern="^(completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
+        pattern="^(essay|completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
     ),
     sentiment: Optional[str] = None,
     category: Optional[str] = None,
@@ -265,6 +266,26 @@ def export_feed(
             stock=stock,
             min_importance=min_importance,
         )
+    except Exception as exc:  # noqa: BLE001 - endpoint returns a sanitized export failure.
+        raise _service_error(exc, 500)
+    path = Path(exported["path"])
+    return FileResponse(
+        path=path,
+        filename=exported["filename"],
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "X-Export-Row-Count": str(exported["row_count"]),
+            "X-Export-Raw-Chunk-Count": str(exported["raw_chunk_count"]),
+        },
+        background=BackgroundTask(path.unlink, missing_ok=True),
+    )
+
+
+@router.post("/feed/export-selected", summary="导出勾选小作文的分析标签与完整原文 Excel")
+def export_selected_feed(request: EssaySelectedExportRequest):
+    topic_ids = list(dict.fromkeys(value.strip() for value in request.topic_ids if value.strip()))
+    try:
+        exported = EssayAnalysisService().export_feed_excel(days=0, topic_ids=topic_ids)
     except Exception as exc:  # noqa: BLE001 - endpoint returns a sanitized export failure.
         raise _service_error(exc, 500)
     path = Path(exported["path"])

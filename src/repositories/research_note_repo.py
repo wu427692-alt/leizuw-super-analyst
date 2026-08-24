@@ -133,6 +133,39 @@ class ResearchNoteRepository:
             ).scalars().all()
             return list(rows), int(total)
 
+    def iter_notes_with_files(
+        self,
+        *,
+        query: Optional[str] = None,
+        created_from: Optional[datetime] = None,
+    ) -> Iterable[ResearchNote]:
+        """Iterate notes containing attachments for file-level search views."""
+        conditions = [
+            ResearchNote.files_json.is_not(None),
+            ResearchNote.files_json != "[]",
+        ]
+        if created_from is not None:
+            conditions.append(ResearchNote.created_at >= created_from)
+        for keyword in str(query or "").split():
+            escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            conditions.append(or_(
+                ResearchNote.title.like(pattern, escape="\\"),
+                ResearchNote.content.like(pattern, escape="\\"),
+                ResearchNote.group_name.like(pattern, escape="\\"),
+                ResearchNote.author_name.like(pattern, escape="\\"),
+                ResearchNote.files_json.like(pattern, escape="\\"),
+            ))
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(ResearchNote)
+                .where(and_(*conditions))
+                .order_by(desc(ResearchNote.created_at), desc(ResearchNote.id))
+                .execution_options(yield_per=250)
+            ).scalars()
+            for row in rows:
+                yield row
+
     def source_summary(self) -> List[Dict[str, Any]]:
         with self.db.get_session() as session:
             rows = session.execute(

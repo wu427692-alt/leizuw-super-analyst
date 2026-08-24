@@ -507,6 +507,38 @@ def test_feed_export_contains_analysis_columns_and_complete_long_original(essay_
     assert "".join(str(row[5] or "") for row in raw_rows) == long_content
 
 
+def test_feed_export_selected_only_contains_checked_topics(essay_service) -> None:
+    ResearchNoteService().import_topics([
+        {
+            "topic_id": "selected-topic",
+            "title": "需要下载的小作文",
+            "content": "勾选原文内容",
+            "create_time": "2026-08-20T09:00:00+0800",
+            "group": {"group_id": "g1", "name": "调研纪要"},
+        },
+        {
+            "topic_id": "not-selected-topic",
+            "title": "不应下载的小作文",
+            "content": "未勾选内容",
+            "create_time": "2026-08-20T08:00:00+0800",
+            "group": {"group_id": "g1", "name": "调研纪要"},
+        },
+    ], enqueue_analysis=False)
+    app = FastAPI()
+    app.include_router(essay_radar.router, prefix="/api/v1/essay-radar")
+
+    response = TestClient(app).post(
+        "/api/v1/essay-radar/feed/export-selected",
+        json={"topic_ids": ["selected-topic"]},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-export-row-count"] == "1"
+    workbook = load_workbook(BytesIO(response.content), read_only=True)
+    rows = list(workbook["搜索结果与分析标签"].iter_rows(min_row=2, values_only=True))
+    assert [row[1] for row in rows] == ["selected-topic"]
+
+
 def test_word_cloud_and_daily_report_are_periodic_and_idempotent(essay_service, monkeypatch) -> None:
     claimed = essay_service.repo.claim_batch(limit=10, max_attempts=4)
     essay_service.repo.save_successes([{

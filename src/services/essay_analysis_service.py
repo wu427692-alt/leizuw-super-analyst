@@ -704,6 +704,9 @@ class EssayAnalysisService:
     def export_feed_excel(self, **filters: Any) -> Dict[str, Any]:
         """Export every row matching the information-feed filters to one XLSX."""
         days = max(0, min(int(filters.pop("days", 0) or 0), 3650))
+        selected_topic_ids = list(dict.fromkeys(
+            str(value).strip() for value in (filters.pop("topic_ids", None) or []) if str(value).strip()
+        ))
         cutoff = utc_naive_now() - timedelta(days=days) if days else None
         export_filters = {
             key: filters.get(key)
@@ -732,7 +735,11 @@ class EssayAnalysisService:
         row_count = 0
         raw_chunk_count = 0
         for row_count, item in enumerate(
-            self.repo.iter_feed(cutoff=cutoff, **export_filters),
+            self.repo.iter_feed(
+                cutoff=cutoff,
+                topic_ids=selected_topic_ids if selected_topic_ids else None,
+                **export_filters,
+            ),
             start=1,
         ):
             note = item.get("note") or {}
@@ -796,6 +803,7 @@ class EssayAnalysisService:
             ("标签", export_filters.get("tag") or "全部"),
             ("股票", export_filters.get("stock") or "全部"),
             ("最低重要度", export_filters.get("min_importance") or 0),
+            ("勾选小作文", len(selected_topic_ids) if selected_topic_ids else "按当前筛选条件全量导出"),
             ("说明", "搜索结果工作表含分析标签和原文摘要；原文全文工作表按 Excel 单元格上限分段保存完整正文。"),
         ]
         self._append_excel_header(condition_sheet, ["项目", "值"])
@@ -814,7 +822,7 @@ class EssayAnalysisService:
         suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
         return {
             "path": str(path),
-            "filename": f"小作文检索结果_{suffix}.xlsx",
+            "filename": f"{'小作文已选原文' if selected_topic_ids else '小作文检索结果'}_{suffix}.xlsx",
             "row_count": row_count,
             "raw_chunk_count": raw_chunk_count,
         }

@@ -12,7 +12,7 @@ import { AppPage, Badge, Drawer, EmptyState } from '../components/common';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import type {
   EssayAnalysis, EssayAnalysisList, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayInsights,
-  EssayHistoricalBacklog, EssayStatus, EssayWordCloud,
+  EssayAudioFile, EssayAudioFileList, EssayHistoricalBacklog, EssayStatus, EssayWordCloud,
 } from '../types/essayRadar';
 import './EssayRadarPage.css';
 
@@ -304,12 +304,20 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
   );
 }
 
-function SignalRow({ item, onOpen }: { item: EssayAnalysis; onOpen: (item: EssayAnalysis) => void }) {
+function SignalRow({
+  item, onOpen, selectable = false, selected = false, onToggle,
+}: {
+  item: EssayAnalysis;
+  onOpen: (item: EssayAnalysis) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggle?: (topicId: string) => void;
+}) {
   const analyzed = item.status === 'completed';
   const audioFiles = item.note.files.filter(file => file.assetKind === 'audio');
   const ordinaryFiles = item.note.files.filter(file => file.assetKind !== 'audio');
   const assetNames = [...audioFiles, ...ordinaryFiles].map(file => file.name).filter(Boolean).slice(0, 3);
-  return (
+  const row = (
     <button type="button" className="essay-signal-row" onClick={() => onOpen(item)}>
       <div className="essay-score"><strong>{analyzed ? (item.noveltyScore ?? 0) : '—'}</strong><span>{analyzed ? '增量' : item.status === 'media_only' ? '资料' : '待研判'}</span></div>
       <div className="min-w-0">
@@ -327,6 +335,36 @@ function SignalRow({ item, onOpen }: { item: EssayAnalysis; onOpen: (item: Essay
       </div>
       <div className="essay-confidence"><strong>{analyzed ? `${Math.round((item.confidenceScore ?? 0) * 100)}%` : '原文'}</strong><span>{analyzed ? '置信' : '可检索'}</span></div>
     </button>
+  );
+  if (!selectable) return row;
+  return (
+    <div className={`essay-selectable-row ${selected ? 'is-selected' : ''}`}>
+      <label className="essay-row-check">
+        <input type="checkbox" checked={selected} onChange={() => onToggle?.(item.topicId)} aria-label={`选择小作文 ${item.note.title || item.topicId}`} />
+      </label>
+      {row}
+    </div>
+  );
+}
+
+function AudioFileRow({ item, selected, onToggle }: { item: EssayAudioFile; selected: boolean; onToggle: () => void }) {
+  return (
+    <article className={`essay-audio-row ${selected ? 'is-selected' : ''}`}>
+      <label className="essay-row-check">
+        <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`选择录音 ${item.name}`} />
+      </label>
+      <div className="essay-audio-icon"><Headphones className="h-5 w-5" /></div>
+      <div className="essay-audio-main">
+        <h3>{item.name}</h3>
+        <p>{item.noteTitle && item.noteTitle !== item.name ? item.noteTitle : '知识星球录音源文件'}</p>
+        <div><span>{item.groupName}</span><span>{item.authorName || '作者未标注'}</span><span>{formatTime(item.createdAt)}</span></div>
+      </div>
+      <div className="essay-audio-facts">
+        <strong>{formatDuration(item.durationSeconds ?? undefined) || '时长未知'}</strong>
+        <span>{formatAssetSize(item.size ?? undefined) || '大小未知'}</span>
+      </div>
+      {item.downloadUrl ? <a className="essay-audio-download" href={item.downloadUrl} aria-label={`下载录音 ${item.name}`}><Download className="h-4 w-4" />单个下载</a> : <span className="essay-audio-unavailable">链接待恢复</span>}
+    </article>
   );
 }
 
@@ -433,11 +471,15 @@ const EssayRadarPage = () => {
   const [insights, setInsights] = useState<EssayInsights | null>(null);
   const [status, setStatus] = useState<EssayStatus | null>(null);
   const [list, setList] = useState<EssayAnalysisList | null>(null);
+  const [audioList, setAudioList] = useState<EssayAudioFileList | null>(null);
   const [reports, setReports] = useState<EssayDailyReportList | null>(null);
   const [cloud, setCloud] = useState<EssayWordCloud | null>(null);
   const [historicalBacklog, setHistoricalBacklog] = useState<EssayHistoricalBacklog | null>(null);
   const [libraryStatsLoading, setLibraryStatsLoading] = useState(false);
   const [selected, setSelected] = useState<EssayAnalysis | null>(null);
+  const [feedMode, setFeedMode] = useState<'essays' | 'audio'>('essays');
+  const [selectedEssays, setSelectedEssays] = useState<Set<string>>(() => new Set());
+  const [selectedAudio, setSelectedAudio] = useState<Map<string, EssayAudioFile>>(() => new Map());
   const [query, setQuery] = useState(() => searchParams.get('query') || '');
   const deferredQuery = useDebouncedValue(query, 350);
   const [sentiment, setSentiment] = useState('');
@@ -460,9 +502,11 @@ const EssayRadarPage = () => {
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
   const [exportingFeed, setExportingFeed] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [batchActionLoading, setBatchActionLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<string | null>(null);
   const feedPageCacheRef = useRef(new Map<string, EssayAnalysisList>());
+  const audioListRef = useRef<EssayAudioFileList | null>(null);
   const feedInflightRef = useRef(new Map<string, Promise<EssayAnalysisList>>());
   const feedRequestVersionRef = useRef(0);
   const feedFilterSignatureRef = useRef('');
@@ -544,8 +588,29 @@ const EssayRadarPage = () => {
 
   const loadFeed = useCallback(async (refreshVersion: number) => {
     if (view !== 'feed') return;
+    if (feedMode === 'audio') {
+      const backgroundRefresh = Boolean(audioListRef.current);
+      if (!backgroundRefresh) setLoading(true);
+      try {
+        const result = await essayRadarApi.audioFiles({
+          days, query: deferredQuery, page, pageSize: 20,
+        });
+        audioListRef.current = result;
+        setAudioList(result);
+        loadedViewsRef.current.add('feed');
+        setLastAutoRefreshAt(new Date().toISOString());
+        setFeedNotice(null);
+      } catch {
+        setFeedNotice(backgroundRefresh
+          ? '录音文件索引暂时没有响应，当前保留上一次结果并自动重试。'
+          : '录音文件索引正在加载，请稍等，页面会自动继续。');
+      } finally {
+        if (!backgroundRefresh) setLoading(false);
+      }
+      return;
+    }
     const baseFilters = {
-      days, query: deferredQuery, analysisStatus, sentiment, category, minImportance, pageSize: 20,
+      days, query: deferredQuery, analysisStatus: analysisStatus || 'essay', sentiment, category, minImportance, pageSize: 20,
     };
     const filterSignature = `${JSON.stringify(baseFilters)}:page:${page}`;
     const backgroundRefresh = Boolean(list) && feedFilterSignatureRef.current === filterSignature;
@@ -608,7 +673,7 @@ const EssayRadarPage = () => {
     } finally {
       if (!backgroundRefresh && requestVersion === feedRequestVersionRef.current) setLoading(false);
     }
-  }, [analysisStatus, category, days, deferredQuery, list, minImportance, page, sentiment, view]);
+  }, [analysisStatus, category, days, deferredQuery, feedMode, list, minImportance, page, sentiment, view]);
 
   useEffect(() => { void loadView(refreshKey); }, [loadView, refreshKey]);
   useEffect(() => { void loadFeed(refreshKey); }, [loadFeed, refreshKey]);
@@ -712,8 +777,69 @@ const EssayRadarPage = () => {
     }
   };
 
+  const toggleEssaySelection = (topicId: string) => {
+    setSelectedEssays((current) => {
+      const next = new Set(current);
+      if (next.has(topicId)) next.delete(topicId); else next.add(topicId);
+      return next;
+    });
+  };
+
+  const toggleAudioSelection = (item: EssayAudioFile) => {
+    setSelectedAudio((current) => {
+      const next = new Map(current);
+      if (next.has(item.assetId)) next.delete(item.assetId); else next.set(item.assetId, item);
+      return next;
+    });
+  };
+
+  const toggleCurrentPageSelection = () => {
+    if (feedMode === 'audio') {
+      const items = audioList?.items ?? [];
+      const allSelected = items.length > 0 && items.every((item) => selectedAudio.has(item.assetId));
+      setSelectedAudio((current) => {
+        const next = new Map(current);
+        items.forEach((item) => { if (allSelected) next.delete(item.assetId); else next.set(item.assetId, item); });
+        return next;
+      });
+      return;
+    }
+    const items = list?.items ?? [];
+    const allSelected = items.length > 0 && items.every((item) => selectedEssays.has(item.topicId));
+    setSelectedEssays((current) => {
+      const next = new Set(current);
+      items.forEach((item) => { if (allSelected) next.delete(item.topicId); else next.add(item.topicId); });
+      return next;
+    });
+  };
+
+  const downloadSelected = async () => {
+    const selectedCount = feedMode === 'audio' ? selectedAudio.size : selectedEssays.size;
+    if (!selectedCount || batchActionLoading) return;
+    setBatchActionLoading(true);
+    setExportNotice(null);
+    try {
+      if (feedMode === 'audio') {
+        const blob = await essayRadarApi.downloadSelectedAudio([...selectedAudio.values()].map((item) => ({
+          topicId: item.topicId, fileId: item.fileId,
+        })));
+        downloadBlob(blob, `知识星球录音_已选${selectedCount}个_${new Date().toISOString().slice(0, 10)}.zip`);
+        setExportNotice(`已将 ${selectedCount} 个录音源文件打包下载。`);
+      } else {
+        const blob = await essayRadarApi.exportSelected([...selectedEssays]);
+        downloadBlob(blob, `小作文已选原文_${selectedCount}篇_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        setExportNotice(`已下载 ${selectedCount} 篇小作文的完整原文和分析标签。`);
+      }
+    } catch (caught) {
+      setExportNotice(errorText(caught, feedMode === 'audio' ? '录音批量下载失败，请稍后重试。' : '小作文批量下载失败，请稍后重试。'));
+    } finally {
+      setBatchActionLoading(false);
+    }
+  };
+
   const yesterday = insights?.yesterday;
-  const totalPages = Math.max(1, Math.ceil((list?.total ?? 0) / 20));
+  const currentFeedTotal = feedMode === 'audio' ? (audioList?.total ?? 0) : (list?.total ?? 0);
+  const totalPages = Math.max(1, Math.ceil(currentFeedTotal / 20));
   const modelComparison = insights?.modelComparison;
   const libraryTotal = historicalBacklog?.totalNotes ?? 0;
   const libraryCompleted = historicalBacklog?.completed ?? 0;
@@ -835,19 +961,25 @@ const EssayRadarPage = () => {
               <div>{activityWindows.map((item) => <div key={item.label}><span>{item.label}</span><i><b style={{ width: `${(item.value / activityMax) * 100}%` }} /></i><strong>{item.value.toLocaleString()}</strong></div>)}</div>
             </div>
           </section>
+          <div className="essay-content-switch" role="tablist" aria-label="信息流内容类型">
+            <button type="button" role="tab" aria-selected={feedMode === 'essays'} className={feedMode === 'essays' ? 'is-active' : ''} onClick={() => { setFeedMode('essays'); setPage(1); setFeedNotice(null); setExportNotice(null); }}><FileText className="h-4 w-4" /><span>小作文</span><small>原文与分析</small></button>
+            <button type="button" role="tab" aria-selected={feedMode === 'audio'} className={feedMode === 'audio' ? 'is-active' : ''} onClick={() => { setFeedMode('audio'); setPage(1); setFeedNotice(null); setExportNotice(null); }}><Headphones className="h-4 w-4" /><span>录音文件</span><small>一个文件一行</small></button>
+          </div>
           <section className="essay-filter-panel">
-            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label="搜索小作文" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="检索全库：正文、录音/文件名、作者、股票或 AI 标签" /></label>
+            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label={feedMode === 'audio' ? '搜索录音文件' : '搜索小作文'} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder={feedMode === 'audio' ? '搜索录音文件名、所属主题、作者或知识星球' : '检索全库：正文、作者、股票或 AI 标签'} /></label>
             <select aria-label="时间范围" value={days} onChange={(event) => { setDays(Number(event.target.value)); setPage(1); }}><option value={0}>全部入库</option><option value={1}>今日</option><option value={7}>近7日</option><option value={30}>近30日</option><option value={365}>近1年</option><option value={730}>近2年</option></select>
-            <select aria-label="AI状态筛选" value={analysisStatus} onChange={(event) => { setAnalysisStatus(event.target.value); setPage(1); }}><option value="">全部内容</option><option value="completed">已分析</option><option value="media_only">录音资料（不分析）</option><option value="uncompleted">未完成分析</option><option value="not_queued">未入队</option><option value="pending">排队中</option><option value="processing">分析中</option><option value="failed">分析失败</option></select>
-            <select aria-label="情绪筛选" value={sentiment} onChange={(event) => { setSentiment(event.target.value); setPage(1); }}><option value="">全部情绪</option>{Object.entries(SENTIMENT_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
-            <select aria-label="类型筛选" value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }}><option value="">全部类型</option>{Object.entries(CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
-            <select aria-label="重要度筛选" value={minImportance} onChange={(event) => { setMinImportance(Number(event.target.value)); setPage(1); }}><option value={0}>全部重要度</option><option value={60}>≥ 60</option><option value={75}>≥ 75</option><option value={85}>≥ 85</option></select>
+            {feedMode === 'essays' ? <>
+              <select aria-label="AI状态筛选" value={analysisStatus} onChange={(event) => { setAnalysisStatus(event.target.value); setPage(1); }}><option value="">全部小作文</option><option value="completed">已分析</option><option value="uncompleted">未完成分析</option><option value="not_queued">未入队</option><option value="pending">排队中</option><option value="processing">分析中</option><option value="failed">分析失败</option></select>
+              <select aria-label="情绪筛选" value={sentiment} onChange={(event) => { setSentiment(event.target.value); setPage(1); }}><option value="">全部情绪</option>{Object.entries(SENTIMENT_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+              <select aria-label="类型筛选" value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }}><option value="">全部类型</option>{Object.entries(CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+              <select aria-label="重要度筛选" value={minImportance} onChange={(event) => { setMinImportance(Number(event.target.value)); setPage(1); }}><option value={0}>全部重要度</option><option value={60}>≥ 60</option><option value={75}>≥ 75</option><option value={85}>≥ 85</option></select>
+            </> : <div className="essay-audio-filter-note"><Headphones className="h-4 w-4" />只检索录音源文件，不再按帖子或 AI 状态展示</div>}
           </section>
           <div className="essay-feed-summary" aria-live="polite">
-            <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{(list?.total ?? 0).toLocaleString()}</strong> 条 · {days ? `近 ${days} 日` : '全部已入库'} · 包含小作文、录音和文件</>}</span>
+            <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{currentFeedTotal.toLocaleString()}</strong> {feedMode === 'audio' ? '个录音文件' : '篇小作文'} · {days ? `近 ${days} 日` : '全部已入库'}</>}</span>
             <div className="essay-feed-summary-actions">
               <button type="button" onClick={() => { setQuery(''); setAnalysisStatus(''); setSentiment(''); setCategory(''); setMinImportance(0); setDays(0); setPage(1); setExportNotice(null); }}>清除筛选</button>
-              <button
+              {feedMode === 'essays' ? <button
                 type="button"
                 className="essay-feed-export"
                 onClick={() => void exportFeed()}
@@ -855,15 +987,26 @@ const EssayRadarPage = () => {
                 aria-label="导出当前搜索结果 Excel"
               >
                 {exportingFeed ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                {exportingFeed ? '正在生成' : '导出 Excel'}
+                {exportingFeed ? '正在生成' : '导出全部结果'}
+              </button> : null}
+            </div>
+          </div>
+          <div className="essay-batch-bar">
+            <span>已选 <strong>{feedMode === 'audio' ? selectedAudio.size : selectedEssays.size}</strong> {feedMode === 'audio' ? '个录音' : '篇小作文'}</span>
+            <div>
+              <button type="button" onClick={toggleCurrentPageSelection} disabled={!currentFeedTotal}>全选/取消本页</button>
+              <button type="button" onClick={() => feedMode === 'audio' ? setSelectedAudio(new Map()) : setSelectedEssays(new Set())} disabled={feedMode === 'audio' ? !selectedAudio.size : !selectedEssays.size}>清空已选</button>
+              <button type="button" className="is-primary" onClick={() => void downloadSelected()} disabled={batchActionLoading || (feedMode === 'audio' ? !selectedAudio.size : !selectedEssays.size)}>
+                {batchActionLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                {batchActionLoading ? '正在打包' : feedMode === 'audio' ? '批量下载录音 ZIP' : '下载已选原文 Excel'}
               </button>
             </div>
           </div>
           {exportNotice ? <div className="essay-export-notice" role="status">{exportNotice}</div> : null}
           <section className="essay-panel essay-feed-panel">
-            <div className="essay-feed-list">{list?.items.map((item) => <SignalRow key={item.topicId} item={item} onOpen={setSelected} />)}</div>
-            {!loading && !list?.items.length ? <EmptyState title="没有匹配的小作文" description="调整时间或筛选条件。" icon={<Database className="h-7 w-7" />} /> : null}
-            {list?.total ? <div className="essay-pagination"><span>第 {page} / {totalPages} 页</span><div><button disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><button disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>下一页</button></div></div> : null}
+            {feedMode === 'essays' ? <div className="essay-feed-list">{list?.items.map((item) => <SignalRow key={item.topicId} item={item} onOpen={setSelected} selectable selected={selectedEssays.has(item.topicId)} onToggle={toggleEssaySelection} />)}</div> : <div className="essay-audio-list">{audioList?.items.map((item) => <AudioFileRow key={item.assetId} item={item} selected={selectedAudio.has(item.assetId)} onToggle={() => toggleAudioSelection(item)} />)}</div>}
+            {!loading && !currentFeedTotal ? <EmptyState title={feedMode === 'audio' ? '没有匹配的录音文件' : '没有匹配的小作文'} description="调整关键词或时间范围。" icon={feedMode === 'audio' ? <Headphones className="h-7 w-7" /> : <Database className="h-7 w-7" />} /> : null}
+            {currentFeedTotal ? <div className="essay-pagination"><span>第 {page} / {totalPages} 页</span><div><button disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><button disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>下一页</button></div></div> : null}
           </section>
         </div>
       ) : null}
