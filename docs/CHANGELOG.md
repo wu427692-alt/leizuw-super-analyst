@@ -2107,3 +2107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [1.2.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v1.0.0
+# 2026-08-24
+
+- 修复“数据一站式获取”中知识星球小作文空包：组合关键词会自动拆成独立检索词，并合并任务作用域关键词。
+- 小作文筛选改为正文命中与股票代码命中取并集，避免旧 AI 股票标签误伤真实相关原文。
+- `created_to` 仅指定日期时按该日结束时间处理，不再遗漏结束日期当天的小作文。

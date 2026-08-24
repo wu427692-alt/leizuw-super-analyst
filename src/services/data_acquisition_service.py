@@ -472,10 +472,14 @@ class DataAcquisitionService:
             queries = keywords if isinstance(keywords, list) else [params.pop("query", "")]
             symbols = params.pop("symbols", None)
             if symbols:
-                queries = symbols if isinstance(symbols, list) else [symbols]
-            scoped_queries = list(scope.get("company_names") or []) + list(scope.get("symbols") or [])
-            if scoped_queries:
-                queries = list(dict.fromkeys([*queries, *scoped_queries]))
+                values = symbols if isinstance(symbols, list) else [symbols]
+                queries.extend(values)
+            scoped_queries = [
+                *(scope.get("company_names") or []),
+                *(scope.get("symbols") or []),
+                *(scope.get("keywords") or []),
+            ]
+            queries = self._expand_zsxq_queries([*queries, *scoped_queries])
             rows_by_id: Dict[str, Dict[str, Any]] = {}
             for value in queries or [""]:
                 current = {key: item for key, item in params.items() if key in {
@@ -891,17 +895,36 @@ class DataAcquisitionService:
             values = row.get("symbols")
             if isinstance(values, list):
                 row_codes.update(str(value).upper() for value in values)
-            if row_codes and symbols:
-                if not any(value in symbols or value.split(".")[0] in code_digits for value in row_codes):
-                    continue
+            code_match = bool(row_codes and symbols and any(
+                value in symbols or value.split(".")[0] in code_digits for value in row_codes
+            ))
+            if code_match:
                 filtered.append(row)
                 continue
             if resource in text_resources and (terms or code_digits):
                 haystack = json.dumps(row, ensure_ascii=False, default=str)
                 if not any(term in haystack for term in terms) and not any(code in haystack for code in code_digits):
                     continue
+            elif row_codes and symbols:
+                continue
             filtered.append(row)
         return filtered
+
+    @staticmethod
+    def _expand_zsxq_queries(values: List[Any]) -> List[str]:
+        """Expand delimiter-separated planner phrases for literal full-text search."""
+        expanded: List[str] = []
+        for value in values:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            expanded.append(text)
+            expanded.extend(
+                part.strip()
+                for part in re.split(r"[\s,，、;；|/]+", text)
+                if part.strip() and part.strip() != text
+            )
+        return list(dict.fromkeys(expanded))
 
     @staticmethod
     def _write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:

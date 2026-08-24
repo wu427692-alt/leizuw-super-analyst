@@ -51,12 +51,17 @@ def _parse_datetime(value: Any, *, field_name: str) -> Optional[datetime]:
         return datetime.combine(value, datetime.min.time())
     raw = str(value).strip()
     try:
+        date_only = bool(re.fullmatch(r"\d{8}|\d{4}-\d{2}-\d{2}", raw))
         if re.fullmatch(r"\d{8}", raw):
             parsed = datetime.strptime(raw, "%Y%m%d").replace(tzinfo=_SHANGHAI_TZ)
+            if field_name == "created_to":
+                parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
             return to_utc_naive_datetime(parsed)
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=_SHANGHAI_TZ)
+        if date_only and field_name == "created_to":
+            parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
         return to_utc_naive_datetime(parsed)
     except ValueError as exc:
         raise FinancialDataValidationError(f"invalid {field_name}: {value}") from exc

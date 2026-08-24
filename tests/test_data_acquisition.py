@@ -165,6 +165,49 @@ def test_market_wide_news_is_filtered_to_requested_company(tmp_path: Path):
     assert rows == [{"title": "华懋科技发布新产品", "content": "603306 相关进展"}]
 
 
+def test_zsxq_task_splits_planner_phrase_and_uses_scope_keywords(tmp_path: Path):
+    calls = []
+
+    class KeywordFinancial(FakeFinancial):
+        def query(self, *, source, resource, params, fields=None):
+            del source, resource, fields
+            calls.append(dict(params))
+            if params.get("query") == "无人机":
+                return {"rows": [{"topic_id": "drone-1", "title": "无人机产业纪要", "content": "低空经济需求"}]}
+            return {"rows": []}
+
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=KeywordFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    rows = service._execute_task(
+        {"source": "zsxq", "resource": "research_notes", "params": {"query": "低空经济 无人机"}},
+        {"symbols": [], "company_names": [], "keywords": ["低空经济", "无人机"],
+         "start_date": "", "end_date": "", "market_wide": False},
+    )
+
+    assert [item.get("query") for item in calls] == ["低空经济 无人机", "低空经济", "无人机"]
+    assert [row["topic_id"] for row in rows] == ["drone-1"]
+
+
+def test_zsxq_text_match_is_not_rejected_by_unrelated_legacy_symbol_tag(tmp_path: Path):
+    class LegacyTaggedFinancial(FakeFinancial):
+        def query(self, *, source, resource, params, fields=None):
+            del source, resource, params, fields
+            return {"rows": [{"topic_id": "1", "title": "华懋科技产业跟踪",
+                              "content": "正文明确讨论华懋", "symbols": ["000001.SZ"]}]}
+
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=LegacyTaggedFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    rows = service._execute_task(
+        {"source": "zsxq", "resource": "research_notes", "params": {}},
+        {"symbols": ["603306.SH"], "company_names": ["华懋科技"], "keywords": [],
+         "start_date": "", "end_date": "", "market_wide": False},
+    )
+
+    assert len(rows) == 1
+
+
 def test_cninfo_announcement_task_queries_official_source_directly(tmp_path: Path):
     class AnnouncementPlanner(FakePlanner):
         def plan(self, request_text):

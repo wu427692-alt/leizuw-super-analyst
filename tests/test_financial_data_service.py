@@ -118,6 +118,14 @@ def test_changed_topic_updates_existing_row(research_service) -> None:
     assert research_service.get_note("14422821525422552")["content"] == "更新后的调研正文"
 
 
+def test_created_to_date_includes_the_whole_calendar_day(research_service) -> None:
+    research_service.import_topics([_topic(create_time="2026-08-19T23:30:00+0800")])
+
+    result = research_service.list_notes(created_to="2026-08-19")
+
+    assert result["total"] == 1
+
+
 def test_interaction_count_changes_do_not_write_or_enqueue(research_service) -> None:
     research_service.import_topics([_topic()])
     before = research_service.get_note("14422821525422552")
