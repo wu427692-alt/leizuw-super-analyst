@@ -1168,7 +1168,9 @@ class DataAcquisitionService:
         if task["source"] == "cninfo":
             candidates.extend({"url": str(row.get("pdf_url") or ""), "name": str(row.get("title") or row.get("announcement_id") or "公告") + ".pdf"} for row in rows)
         elif task["source"] == "tushare" and task["resource"] == "research_report":
-            candidates.extend({"url": str(row.get("url") or ""), "name": str(row.get("title") or "研报") + ".pdf"} for row in rows)
+            for row in rows:
+                name = str(row.get("title") or "研报")
+                candidates.append({"url": str(row.get("url") or ""), "name": name if name.lower().endswith(".pdf") else f"{name}.pdf"})
         elif task["source"] == "zsxq":
             from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncService
             resolver = ZsxqMcpSyncService()
