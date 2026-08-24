@@ -12,6 +12,12 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tupl
 from sqlalchemy import and_, asc, case, desc, func, or_, select
 
 from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, utc_naive_now
+from src.research_note_assets import (
+    AUDIO_EXTENSIONS,
+    asset_summary as summarize_assets,
+    enrich_file_assets,
+    is_audio_only_note,
+)
 from src.utils.essay_analysis_quality import LOW_QUALITY_SUMMARY_MARKERS
 from src.utils.essay_topic_taxonomy import topic_search_terms
 
@@ -222,9 +228,35 @@ class EssayAnalysisRepository:
         created = 0
         reset = 0
         unchanged = 0
+        skipped_media = 0
         now = utc_naive_now()
         for note in notes:
             row = existing_by_topic.get(note.topic_id)
+            if EssayAnalysisRepository._is_audio_only(note):
+                if row is None:
+                    row = EssayAnalysisRecord(
+                        topic_id=note.topic_id,
+                        status="media_only",
+                        model=model,
+                        prompt_version=prompt_version,
+                        input_hash=note.content_hash,
+                        error_message="录音附件仅供检索和源文件下载，不进入AI分析",
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(row)
+                    existing_by_topic[note.topic_id] = row
+                else:
+                    row.status = "media_only"
+                    row.model = model
+                    row.prompt_version = prompt_version
+                    row.input_hash = note.content_hash
+                    row.error_message = "录音附件仅供检索和源文件下载，不进入AI分析"
+                    row.started_at = None
+                    row.next_retry_at = None
+                    row.updated_at = now
+                skipped_media += 1
+                continue
             if row is None:
                 session.add(EssayAnalysisRecord(
                     topic_id=note.topic_id,
@@ -241,6 +273,7 @@ class EssayAnalysisRepository:
                 row.input_hash == note.content_hash
                 and row.prompt_version == prompt_version
                 and row.model == model
+                and row.status != "media_only"
             ):
                 unchanged += 1
                 continue
@@ -256,7 +289,10 @@ class EssayAnalysisRepository:
             row.updated_at = now
             reset += 1
         session.commit()
-        return {"created": created, "reset": reset, "unchanged": unchanged}
+        result = {"created": created, "reset": reset, "unchanged": unchanged}
+        if skipped_media:
+            result["skipped_media"] = skipped_media
+        return result
 
     def recover_stale(self, *, stale_after_seconds: int = 600) -> int:
         cutoff = utc_naive_now() - timedelta(seconds=max(60, stale_after_seconds))
@@ -273,6 +309,64 @@ class EssayAnalysisRepository:
                 row.updated_at = utc_naive_now()
             session.commit()
             return len(rows)
+
+    def suppress_audio_only_analyses(
+        self,
+        *,
+        model: str = "media-only",
+        prompt_version: str = "media-only-v1",
+        limit: int = 50000,
+    ) -> int:
+        """Register all audio-only topics as terminal media records and suppress legacy AI rows."""
+        safe_limit = max(1, min(int(limit), 200000))
+        now = utc_naive_now()
+        with self.db.get_session() as session:
+            notes = session.execute(
+                select(ResearchNote)
+                .where(
+                    ResearchNote.files_json.is_not(None),
+                    or_(*[
+                        ResearchNote.files_json.like(f"%{extension}%")
+                        for extension in sorted(AUDIO_EXTENSIONS)
+                    ]),
+                )
+                .limit(safe_limit)
+            ).scalars().all()
+            existing_rows = _select_in_batches(
+                session,
+                EssayAnalysisRecord,
+                EssayAnalysisRecord.topic_id,
+                [note.topic_id for note in notes],
+            )
+            existing_by_topic = {row.topic_id: row for row in existing_rows}
+            changed = 0
+            for note in notes:
+                if not self._is_audio_only(note):
+                    continue
+                analysis = existing_by_topic.get(note.topic_id)
+                if analysis is None:
+                    session.add(EssayAnalysisRecord(
+                        topic_id=note.topic_id,
+                        status="media_only",
+                        model=model,
+                        prompt_version=prompt_version,
+                        input_hash=note.content_hash,
+                        error_message="录音附件仅供检索和源文件下载，不进入AI分析",
+                        created_at=now,
+                        updated_at=now,
+                    ))
+                    changed += 1
+                    continue
+                if analysis.status == "media_only":
+                    continue
+                analysis.status = "media_only"
+                analysis.error_message = "录音附件仅供检索和源文件下载，不进入AI分析"
+                analysis.started_at = None
+                analysis.next_retry_at = None
+                analysis.updated_at = now
+                changed += 1
+            session.commit()
+            return changed
 
     def requeue_low_quality_completed(
         self,
@@ -338,15 +432,24 @@ class EssayAnalysisRepository:
                     ),
                 )
                 .order_by(desc(ResearchNote.created_at), EssayAnalysisRecord.id)
-                .limit(safe_limit)
+                .limit(min(safe_limit * 3, 900))
             ).all()
             claimed = []
             for analysis, note in rows:
+                if self._is_audio_only(note):
+                    analysis.status = "media_only"
+                    analysis.error_message = "录音附件仅供检索和源文件下载，不进入AI分析"
+                    analysis.next_retry_at = None
+                    analysis.started_at = None
+                    analysis.updated_at = now
+                    continue
                 analysis.status = "processing"
                 analysis.started_at = now
                 analysis.updated_at = now
                 analysis.attempt_count = int(analysis.attempt_count or 0) + 1
                 claimed.append(self._work_item(analysis, note))
+                if len(claimed) >= safe_limit:
+                    break
             session.commit()
             return claimed
 
@@ -460,6 +563,8 @@ class EssayAnalysisRepository:
                 select(func.count(ResearchNote.id)).where(where_clause)
             ).scalar() or 0
         analyzed = status_counts.get("completed", 0)
+        media_only = status_counts.get("media_only", 0)
+        ai_eligible_notes = max(0, int(total_notes) - media_only)
         return {
             "total_notes": int(total_notes),
             "queued_notes": sum(status_counts.values()),
@@ -467,7 +572,9 @@ class EssayAnalysisRepository:
             "pending": status_counts.get("pending", 0),
             "processing": status_counts.get("processing", 0),
             "failed": status_counts.get("failed", 0),
-            "coverage_percent": round((analyzed / total_notes * 100), 2) if total_notes else 0.0,
+            "media_only": media_only,
+            "ai_eligible_notes": ai_eligible_notes,
+            "coverage_percent": round((analyzed / ai_eligible_notes * 100), 2) if ai_eligible_notes else 0.0,
         }
 
     def list_analyses(
@@ -636,6 +743,7 @@ class EssayAnalysisRepository:
                     ResearchNote.group_name.like(pattern, escape="\\"),
                     ResearchNote.author_name.like(pattern, escape="\\"),
                     ResearchNote.symbol_codes.like(pattern, escape="\\"),
+                    ResearchNote.files_json.like(pattern, escape="\\"),
                     EssayAnalysisRecord.summary.like(pattern, escape="\\"),
                     EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
                     EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
@@ -655,6 +763,8 @@ class EssayAnalysisRepository:
             conditions.append(EssayAnalysisRecord.id.is_(None))
         elif analysis_status in {"pending", "processing", "failed"}:
             conditions.append(EssayAnalysisRecord.status == analysis_status)
+        elif analysis_status == "media_only":
+            conditions.append(EssayAnalysisRecord.status == "media_only")
         if sentiment:
             conditions.append(EssayAnalysisRecord.sentiment == sentiment)
         if category:
@@ -705,7 +815,7 @@ class EssayAnalysisRepository:
                 )
                 .order_by(desc(ResearchNote.created_at), desc(EssayAnalysisRecord.id))
             ).all()
-        return [self._to_dict(analysis, note) for analysis, note in rows]
+        return [self._to_dict(analysis, note) for analysis, note in rows if not self._is_audio_only(note)]
 
     def completed_between(self, *, start: datetime, end: datetime) -> List[Dict[str, Any]]:
         with self.db.get_session() as session:
@@ -719,7 +829,7 @@ class EssayAnalysisRepository:
                 )
                 .order_by(ResearchNote.created_at, EssayAnalysisRecord.id)
             ).all()
-        return [self._to_dict(analysis, note) for analysis, note in rows]
+        return [self._to_dict(analysis, note) for analysis, note in rows if not self._is_audio_only(note)]
 
     @staticmethod
     def _work_item(analysis: EssayAnalysisRecord, note: ResearchNote) -> Dict[str, Any]:
@@ -734,14 +844,26 @@ class EssayAnalysisRepository:
         }
 
     @staticmethod
+    def _is_audio_only(note: ResearchNote) -> bool:
+        return is_audio_only_note(
+            title=note.title,
+            content=note.content,
+            files=_loads(note.files_json, []),
+            images=_loads(note.images_json, []),
+        )
+
+    @staticmethod
     def _to_dict(analysis: EssayAnalysisRecord, note: ResearchNote) -> Dict[str, Any]:
-        files = _loads(note.files_json, [])
+        if EssayAnalysisRepository._is_audio_only(note):
+            return EssayAnalysisRepository._media_only_dict(note)
+        files = enrich_file_assets(_loads(note.files_json, []))
         images = _loads(note.images_json, [])
         for asset in files:
             asset.pop("local_path", None)
             asset.pop("local_url", None)
             if asset.get("file_id"):
                 asset["view_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/files/{asset['file_id']}"
+                asset["download_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/files/{asset['file_id']}/download"
                 asset["download_status"] = "remote_on_demand"
         for asset in images:
             asset.pop("local_path", None)
@@ -796,6 +918,8 @@ class EssayAnalysisRepository:
                 "created_at": note.created_at.isoformat() + "Z" if note.created_at else None,
                 "files": files,
                 "images": images,
+                "asset_summary": summarize_assets(files, images),
+                "ai_eligible": True,
             },
         }
 
@@ -805,16 +929,19 @@ class EssayAnalysisRepository:
         analysis: Optional[EssayAnalysisRecord],
         note: ResearchNote,
     ) -> Dict[str, Any]:
+        if cls._is_audio_only(note):
+            return cls._media_only_dict(note)
         if analysis is not None:
             return cls._to_dict(analysis, note)
 
-        files = _loads(note.files_json, [])
+        files = enrich_file_assets(_loads(note.files_json, []))
         images = _loads(note.images_json, [])
         for asset in files:
             asset.pop("local_path", None)
             asset.pop("local_url", None)
             if asset.get("file_id"):
                 asset["view_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/files/{asset['file_id']}"
+                asset["download_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/files/{asset['file_id']}/download"
                 asset["download_status"] = "remote_on_demand"
         for asset in images:
             asset.pop("local_path", None)
@@ -862,5 +989,54 @@ class EssayAnalysisRepository:
                 "created_at": note.created_at.isoformat() + "Z" if note.created_at else None,
                 "files": files,
                 "images": images,
+                "asset_summary": summarize_assets(files, images),
+                "ai_eligible": True,
+            },
+        }
+
+    @staticmethod
+    def _media_only_dict(note: ResearchNote) -> Dict[str, Any]:
+        files = enrich_file_assets(_loads(note.files_json, []))
+        images = _loads(note.images_json, [])
+        for asset in files:
+            asset.pop("local_path", None)
+            asset.pop("local_url", None)
+            if asset.get("file_id"):
+                asset["view_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/files/{asset['file_id']}"
+                asset["download_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/files/{asset['file_id']}/download"
+                asset["download_status"] = "remote_on_demand"
+        for asset in images:
+            asset.pop("local_path", None)
+            asset.pop("local_url", None)
+            if asset.get("image_id"):
+                asset["view_url"] = f"/api/v1/financial-data/research-notes/{note.topic_id}/media/images/{asset['image_id']}"
+                asset["download_status"] = "remote_on_demand"
+        return {
+            "id": None,
+            "topic_id": note.topic_id,
+            "status": "media_only",
+            "model": None,
+            "prompt_version": None,
+            "summary": None,
+            "primary_category": "media",
+            "sentiment": None,
+            "time_horizon": None,
+            "importance_score": None,
+            "confidence_score": None,
+            "tags": [], "industries": [], "themes": [], "stock_mentions": [],
+            "key_points": [], "catalysts": [], "risks": [], "evidence": [],
+            "contradictions": [], "falsification_conditions": [], "monitoring_points": [],
+            "earnings_impact": "", "valuation_impact": "", "source_quality": "source_file",
+            "novelty_score": 0, "information_type": "media_only",
+            "error_message": "录音附件仅供检索和源文件下载，不进入AI分析",
+            "attempt_count": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            "started_at": None, "completed_at": None, "updated_at": None,
+            "note": {
+                "title": note.title, "content": note.content, "group_id": note.group_id,
+                "group_name": note.group_name, "author_name": note.author_name,
+                "digested": bool(note.digested),
+                "created_at": note.created_at.isoformat() + "Z" if note.created_at else None,
+                "files": files, "images": images,
+                "asset_summary": summarize_assets(files, images), "ai_eligible": False,
             },
         }

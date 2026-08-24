@@ -48,6 +48,8 @@ class ResearchNoteItem(BaseModel):
     symbols: List[str] = Field(default_factory=list)
     files: List[Dict[str, Any]] = Field(default_factory=list)
     images: List[Dict[str, Any]] = Field(default_factory=list)
+    asset_summary: Dict[str, Any] = Field(default_factory=dict)
+    ai_eligible: bool = True
     counts: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[str] = None
     modified_at: Optional[str] = None

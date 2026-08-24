@@ -20,6 +20,7 @@ from data_provider.tushare_fetcher import _TushareHttpClient
 from src.config import get_config
 from src.research_note_fingerprint import research_note_information_hash
 from src.repositories.research_note_repo import ResearchNoteRepository
+from src.research_note_assets import asset_summary, enrich_file_assets, is_audio_only_note
 from src.storage import ResearchNote, to_utc_naive_datetime, utc_naive_now
 
 _API_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -304,13 +305,14 @@ class ResearchNoteService:
 
     @staticmethod
     def _note_to_dict(row: ResearchNote, *, include_raw: bool = False) -> Dict[str, Any]:
-        files = _json_load(row.files_json, [])
+        files = enrich_file_assets(_json_load(row.files_json, []))
         images = _json_load(row.images_json, [])
         for asset in files:
             asset.pop("local_path", None)
             asset.pop("local_url", None)
             if asset.get("file_id"):
                 asset["view_url"] = f"/api/v1/financial-data/research-notes/{row.topic_id}/media/files/{asset['file_id']}"
+                asset["download_url"] = f"/api/v1/financial-data/research-notes/{row.topic_id}/media/files/{asset['file_id']}/download"
                 asset["download_status"] = "remote_on_demand"
         for asset in images:
             asset.pop("local_path", None)
@@ -333,6 +335,10 @@ class ResearchNoteService:
             "symbols": [value for value in (row.symbol_codes or "").split(",") if value],
             "files": files,
             "images": images,
+            "asset_summary": asset_summary(files, images),
+            "ai_eligible": not is_audio_only_note(
+                title=row.title, content=row.content, files=files, images=images,
+            ),
             "counts": _json_load(row.counts_json, {}),
             "created_at": f"{row.created_at.isoformat()}Z" if row.created_at else None,
             "modified_at": f"{row.modified_at.isoformat()}Z" if row.modified_at else None,

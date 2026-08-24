@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
+from urllib.parse import quote
 
+import requests
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.financial_data import (
@@ -241,4 +244,43 @@ def research_note_media(topic_id: str, kind: str, asset_id: str):
         url = ZsxqMcpSyncService().resolve_media_url_sync(topic_id, kind, asset_id)
         return RedirectResponse(url=url, status_code=307, headers={"Cache-Control": "no-store"})
     except (ZsxqMcpSyncError, ResearchNoteNotFoundError) as exc:
+        raise _upstream_error(exc)
+
+
+@router.get(
+    "/research-notes/{topic_id}/media/{kind}/{asset_id}/download",
+    summary="按需流式下载知识星球源文件（服务器不落盘）",
+)
+def download_research_note_media(topic_id: str, kind: str, asset_id: str):
+    if kind != "files":
+        raise _bad_request(ValueError("仅附件支持源文件下载"))
+    try:
+        note = ResearchNoteService().get_note(topic_id)
+        asset = next(
+            (item for item in note.get("files", []) if str(item.get("file_id") or "") == asset_id),
+            None,
+        )
+        if asset is None:
+            raise ResearchNoteNotFoundError("知识星球附件不存在")
+        source_url = ZsxqMcpSyncService().resolve_media_url_sync(topic_id, kind, asset_id)
+        upstream = requests.get(source_url, stream=True, timeout=(10, 120))
+        upstream.raise_for_status()
+        filename = str(asset.get("name") or f"zsxq-{asset_id}").replace("\r", "_").replace("\n", "_")
+        content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
+        headers = {
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+        }
+        content_length = upstream.headers.get("Content-Length")
+        if content_length and content_length.isdigit():
+            headers["Content-Length"] = content_length
+        return StreamingResponse(
+            upstream.iter_content(chunk_size=128 * 1024),
+            media_type=content_type,
+            headers=headers,
+            background=BackgroundTask(upstream.close),
+        )
+    except ResearchNoteNotFoundError as exc:
+        raise _not_found(exc)
+    except (ZsxqMcpSyncError, requests.RequestException) as exc:
         raise _upstream_error(exc)

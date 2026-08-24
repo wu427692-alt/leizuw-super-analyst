@@ -20,6 +20,7 @@ from src.services.financial_data_service import (
     ResearchNoteService,
     TushareGatewayService,
 )
+from src.repositories.essay_analysis_repo import EssayAnalysisRepository
 from src.storage import DatabaseManager, ResearchNote
 
 
@@ -165,6 +166,72 @@ def test_attachment_changes_are_substantive_and_requeued(research_service) -> No
     assert result["updated"] == 1
     assert result["analysis_queue"]["reset"] == 1
     assert research_service.get_note("14422821525422552")["files"][0]["file_id"] == "file-2"
+
+
+def test_audio_assets_are_searchable_downloadable_metadata_and_never_claimed_for_ai(research_service) -> None:
+    result = research_service.import_topics([_topic(
+        title="产业专家交流录音.mp3",
+        content="「文件」",
+        images=[],
+        files=[
+            {"file_id": "audio-1", "name": "产业专家交流录音.mp3", "size": 1736010, "duration": 433},
+            {"file_id": "audio-2", "name": "低空经济补充问答.mp3", "size": 900000, "duration": 180},
+        ],
+    )])
+
+    assert result["analysis_queue"] == {
+        "created": 0, "reset": 0, "unchanged": 0, "skipped_media": 1,
+    }
+    search = research_service.list_notes(query="低空经济补充问答")
+    assert search["total"] == 1
+    note = search["items"][0]
+    assert note["ai_eligible"] is False
+    assert note["asset_summary"]["audio_count"] == 2
+    assert note["files"][0]["asset_kind"] == "audio"
+    assert note["files"][0]["duration_seconds"] == 433
+    assert note["files"][0]["download_url"].endswith("/audio-1/download")
+
+    repository = EssayAnalysisRepository()
+    assert repository.claim_batch(limit=10, max_attempts=4) == []
+    assert repository.progress()["media_only"] == 1
+
+    research_service.import_topics([_topic(
+        topic_id="audio-history-2",
+        title="历史录音.m4a",
+        content="「文件」",
+        images=[],
+        files=[{"file_id": "audio-3", "name": "历史录音.m4a", "duration": 60}],
+    )], enqueue_analysis=False)
+    assert repository.suppress_audio_only_analyses() == 1
+    assert repository.progress()["media_only"] == 2
+
+
+def test_source_file_download_is_streamed_with_original_filename(research_service, monkeypatch) -> None:
+    research_service.import_topics([_topic(images=[], files=[{
+        "file_id": "audio-1", "name": "产业专家交流.mp3", "size": 4, "duration": 1,
+    }])], enqueue_analysis=False)
+    upstream = MagicMock()
+    upstream.headers = {"Content-Type": "audio/mpeg", "Content-Length": "4"}
+    upstream.iter_content.return_value = [b"test"]
+    upstream.raise_for_status.return_value = None
+    monkeypatch.setattr(
+        financial_data.ZsxqMcpSyncService,
+        "resolve_media_url_sync",
+        lambda *_args, **_kwargs: "https://files.zsxq.com/source.mp3",
+    )
+    monkeypatch.setattr(financial_data.requests, "get", lambda *_args, **_kwargs: upstream)
+    app = FastAPI()
+    app.include_router(financial_data.router, prefix="/api/v1/financial-data")
+
+    response = TestClient(app).get(
+        "/api/v1/financial-data/research-notes/14422821525422552/media/files/audio-1/download"
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"test"
+    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert "filename*=UTF-8''" in response.headers["content-disposition"]
+    upstream.close.assert_called_once()
 
 
 def test_import_mcp_page_rejects_unsuccessful_source(research_service) -> None:

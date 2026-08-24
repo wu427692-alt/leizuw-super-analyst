@@ -5,6 +5,8 @@ export type EssayProgress = {
   pending: number;
   processing: number;
   failed: number;
+  mediaOnly?: number;
+  aiEligibleNotes?: number;
   coveragePercent: number;
   model: string;
   deepseekConfigured: boolean;
@@ -23,8 +25,10 @@ export type ResearchNoteDetail = {
   content?: string | null; authorId?: string | null; authorName?: string | null;
   topicType: string; textType?: string | null; digested: boolean; sticky: boolean;
   symbols: string[];
-  files: Array<{ fileId?: string; name?: string; size?: number; viewUrl?: string; downloadStatus?: string }>;
+  files: Array<{ fileId?: string; name?: string; size?: number; duration?: number; durationSeconds?: number; assetKind?: 'audio' | 'file'; aiEligible?: boolean; viewUrl?: string; downloadUrl?: string; downloadStatus?: string }>;
   images: Array<{ imageId?: string; type?: string; viewUrl?: string; downloadStatus?: string; thumbnail?: { url?: string }; large?: { url?: string } }>;
+  assetSummary?: { audioCount?: number; fileCount?: number; imageCount?: number; hasAudio?: boolean; hasFiles?: boolean; hasImages?: boolean; audioNames?: string[]; fileNames?: string[] };
+  aiEligible?: boolean;
   counts: Record<string, unknown>; createdAt?: string | null; modifiedAt?: string | null; syncedAt?: string | null;
 };
 export type EssayHistoricalBacklog = {
@@ -34,6 +38,8 @@ export type EssayHistoricalBacklog = {
   pending: number;
   processing: number;
   failed: number;
+  mediaOnly?: number;
+  aiEligibleNotes?: number;
   coveragePercent: number;
   unqueued: number;
   earliestUnqueuedAt?: string | null;
@@ -125,8 +131,10 @@ export type EssayAnalysis = {
     groupName: string;
     authorName?: string | null;
     createdAt?: string | null;
-    files: Array<{ fileId?: string; name?: string; size?: number; viewUrl?: string; downloadStatus?: string }>;
+    files: Array<{ fileId?: string; name?: string; size?: number; duration?: number; durationSeconds?: number; assetKind?: 'audio' | 'file'; aiEligible?: boolean; viewUrl?: string; downloadUrl?: string; downloadStatus?: string }>;
     images: Array<{ imageId?: string; type?: string; viewUrl?: string; downloadStatus?: string; thumbnail?: { url?: string }; large?: { url?: string } }>;
+    assetSummary?: { audioCount?: number; fileCount?: number; imageCount?: number; hasAudio?: boolean; hasFiles?: boolean; hasImages?: boolean; audioNames?: string[]; fileNames?: string[] };
+    aiEligible?: boolean;
   };
 };
 

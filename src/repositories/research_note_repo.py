@@ -103,7 +103,11 @@ class ResearchNoteRepository:
             conditions.append(ResearchNote.group_id == group_id)
         if query:
             pattern = f"%{query.strip()}%"
-            conditions.append(or_(ResearchNote.title.like(pattern), ResearchNote.content.like(pattern)))
+            conditions.append(or_(
+                ResearchNote.title.like(pattern),
+                ResearchNote.content.like(pattern),
+                ResearchNote.files_json.like(pattern),
+            ))
         if symbol:
             conditions.append(ResearchNote.symbol_codes.like(f"%{symbol.strip().upper()}%"))
         if digested is not None:

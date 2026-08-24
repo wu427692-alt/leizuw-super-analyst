@@ -214,7 +214,7 @@ def list_feed(
     query: Optional[str] = Query(None, max_length=200),
     analysis_status: Optional[str] = Query(
         None,
-        pattern="^(completed|uncompleted|not_queued|pending|processing|failed)$",
+        pattern="^(completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
     ),
     sentiment: Optional[str] = None,
     category: Optional[str] = None,
@@ -246,7 +246,7 @@ def export_feed(
     query: Optional[str] = Query(None, max_length=200),
     analysis_status: Optional[str] = Query(
         None,
-        pattern="^(completed|uncompleted|not_queued|pending|processing|failed)$",
+        pattern="^(completed|uncompleted|not_queued|pending|processing|failed|media_only)$",
     ),
     sentiment: Optional[str] = None,
     category: Optional[str] = None,

@@ -104,6 +104,12 @@ class EssayAnalysisWorker:
             recovered = repository.recover_stale()
             if recovered:
                 logger.info("[essay-radar] recovered %s stale processing tasks", recovered)
+            media_suppressed = repository.suppress_audio_only_analyses(
+                model=DeepSeekEssayAnalyzer().model,
+                prompt_version=ESSAY_PROMPT_VERSION,
+            )
+            if media_suppressed:
+                logger.info("[essay-radar] registered/suppressed %s audio-only topics", media_suppressed)
             repaired = repository.requeue_low_quality_completed(
                 model=DeepSeekEssayAnalyzer().model,
                 prompt_version=ESSAY_PROMPT_VERSION,

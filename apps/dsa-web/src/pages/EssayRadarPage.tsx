@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Archive, ArrowRight, BarChart3, Brain, Database, Download, ExternalLink, FileText, GitBranch, Image,
+  Archive, ArrowRight, BarChart3, Brain, Database, Download, ExternalLink, FileText, GitBranch, Headphones, Image,
   ListFilter, RefreshCw, Search, Settings2, ShieldAlert, Sparkles, TrendingUp,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -38,6 +38,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 const ANALYSIS_STATUS_LABELS: Record<string, string> = {
   not_queued: '未分析', pending: '排队中', processing: '分析中', failed: '分析失败', completed: '已分析',
+  media_only: '录音资料',
 };
 const FEED_PAGE_CACHE_LIMIT = 80;
 
@@ -72,6 +73,19 @@ function formatClock(value?: string | null) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDuration(seconds?: number) {
+  if (!seconds || seconds <= 0) return '';
+  const minutes = Math.floor(seconds / 60);
+  const remain = Math.round(seconds % 60);
+  return `${minutes}:${String(remain).padStart(2, '0')}`;
+}
+
+function formatAssetSize(bytes?: number) {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.ceil(bytes / 1024)} KB`;
 }
 
 function errorText(value: unknown, fallback: string) {
@@ -292,19 +306,24 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
 
 function SignalRow({ item, onOpen }: { item: EssayAnalysis; onOpen: (item: EssayAnalysis) => void }) {
   const analyzed = item.status === 'completed';
+  const audioFiles = item.note.files.filter(file => file.assetKind === 'audio');
+  const ordinaryFiles = item.note.files.filter(file => file.assetKind !== 'audio');
+  const assetNames = [...audioFiles, ...ordinaryFiles].map(file => file.name).filter(Boolean).slice(0, 3);
   return (
     <button type="button" className="essay-signal-row" onClick={() => onOpen(item)}>
-      <div className="essay-score"><strong>{analyzed ? (item.noveltyScore ?? 0) : '—'}</strong><span>{analyzed ? '增量' : '待研判'}</span></div>
+      <div className="essay-score"><strong>{analyzed ? (item.noveltyScore ?? 0) : '—'}</strong><span>{analyzed ? '增量' : item.status === 'media_only' ? '资料' : '待研判'}</span></div>
       <div className="min-w-0">
         <div className="essay-row-meta">
           <Badge variant={analyzed ? sentimentVariant(item.sentiment) : item.status === 'failed' ? 'danger' : 'default'}>
             {analyzed ? (SENTIMENT_LABELS[item.sentiment ?? ''] ?? '待判断') : (ANALYSIS_STATUS_LABELS[item.status] ?? item.status)}
           </Badge>
+          {audioFiles.length ? <Badge variant="info"><Headphones className="h-3 w-3" />{audioFiles.length} 份录音</Badge> : null}
+          {ordinaryFiles.length ? <Badge><Archive className="h-3 w-3" />{ordinaryFiles.length} 份文件</Badge> : null}
           <span>{analyzed ? (CATEGORY_LABELS[item.primaryCategory ?? ''] ?? item.primaryCategory ?? '未分类') : item.note.groupName}</span>
           <span>{formatTime(item.note.createdAt)}</span>
         </div>
         <h3>{item.note.title || '无标题纪要'}</h3>
-        <p>{item.summary || item.errorMessage || item.note.content || '原文正文为空，点击查看图片或附件。'}</p>
+        <p>{item.summary || (item.status === 'media_only' ? assetNames.join(' · ') : '') || item.errorMessage || item.note.content || '原文正文为空，点击查看图片或附件。'}</p>
       </div>
       <div className="essay-confidence"><strong>{analyzed ? `${Math.round((item.confidenceScore ?? 0) * 100)}%` : '原文'}</strong><span>{analyzed ? '置信' : '可检索'}</span></div>
     </button>
@@ -314,6 +333,8 @@ function SignalRow({ item, onOpen }: { item: EssayAnalysis; onOpen: (item: Essay
 function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; onClose: () => void }) {
   const images = selected?.note.images ?? [];
   const files = selected?.note.files ?? [];
+  const audioFiles = files.filter(file => file.assetKind === 'audio');
+  const ordinaryFiles = files.filter(file => file.assetKind !== 'audio');
   const analyzed = selected?.status === 'completed';
   return (
     <Drawer isOpen={Boolean(selected)} onClose={onClose} title={selected?.note.title || '纪要详情'}>
@@ -321,7 +342,7 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
         <div className="essay-detail">
           <div className="essay-detail-meta">
             <Badge variant={analyzed ? sentimentVariant(selected.sentiment) : selected.status === 'failed' ? 'danger' : 'default'}>{analyzed ? (SENTIMENT_LABELS[selected.sentiment ?? ''] ?? '待判断') : (ANALYSIS_STATUS_LABELS[selected.status] ?? selected.status)}</Badge>
-            <Badge>{analyzed ? (CATEGORY_LABELS[selected.primaryCategory ?? ''] ?? selected.primaryCategory ?? '未分类') : '未分类'}</Badge>
+            <Badge>{analyzed ? (CATEGORY_LABELS[selected.primaryCategory ?? ''] ?? selected.primaryCategory ?? '未分类') : selected.status === 'media_only' ? '源文件' : '未分类'}</Badge>
             <span>{selected.note.groupName}</span>
             <span>{selected.note.authorName || '作者未标注'}</span>
             <span>{formatTime(selected.note.createdAt, true)}</span>
@@ -332,9 +353,17 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
             <p>{selected.note.content || '原文正文为空；如有图片或附件，请通过下方远端链接查看。'}</p>
           </section>
 
-          {images.length || files.length ? (
+          {audioFiles.length ? <section className="essay-detail-section">
+            <div className="essay-section-title"><Headphones className="h-4 w-4" />录音源文件</div>
+            <p className="essay-help">录音仅索引文件名和元数据，不做 AI 分析或语音转写；同步时不预下载到服务器，点击后按需下载知识星球源文件。</p>
+            <div className="essay-assets">{audioFiles.map((item, index) => (item.downloadUrl || item.viewUrl) ? <a key={item.fileId || index} href={item.downloadUrl || item.viewUrl}>
+              <Headphones className="h-4 w-4" /><span>{item.name || `录音 ${index + 1}`}{formatDuration(item.durationSeconds ?? item.duration) ? ` · ${formatDuration(item.durationSeconds ?? item.duration)}` : ''}{formatAssetSize(item.size) ? ` · ${formatAssetSize(item.size)}` : ''}</span><Download className="h-3.5 w-3.5" />
+            </a> : null)}</div>
+          </section> : null}
+
+          {images.length || ordinaryFiles.length ? (
             <section className="essay-detail-section">
-              <div className="essay-section-title"><Archive className="h-4 w-4" />图片与文件</div>
+              <div className="essay-section-title"><Archive className="h-4 w-4" />图片与普通文件</div>
               <p className="essay-help">同步时不下载到本机，仅在点击时打开知识星球远端地址。</p>
               <div className="essay-assets">
                 {images.map((item, index) => item.viewUrl ? (
@@ -342,9 +371,9 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
                     <Image className="h-4 w-4" />查看图片 {index + 1}<ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 ) : null)}
-                {files.map((item, index) => item.viewUrl ? (
-                  <a key={item.fileId || index} href={item.viewUrl} target="_blank" rel="noreferrer">
-                    <FileText className="h-4 w-4" />{item.name || `附件 ${index + 1}`}<ExternalLink className="h-3.5 w-3.5" />
+                {ordinaryFiles.map((item, index) => (item.downloadUrl || item.viewUrl) ? (
+                  <a key={item.fileId || index} href={item.downloadUrl || item.viewUrl}>
+                    <FileText className="h-4 w-4" />{item.name || `附件 ${index + 1}`}<Download className="h-3.5 w-3.5" />
                   </a>
                 ) : null)}
               </div>
@@ -353,7 +382,7 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
 
           <section className="essay-detail-section">
             <div className="essay-section-title"><Brain className="h-4 w-4" />AI 研判</div>
-            {analyzed ? <>
+            {selected.status === 'media_only' ? <p className="essay-summary">这是录音资料：已进入全库检索和信息流，只提供知识星球源文件下载，不进入 AI 分析。</p> : analyzed ? <>
               <div className="essay-detail-scoreline">
                 <span>重要度 <strong>{selected.importanceScore ?? '—'}</strong></span>
                 <span>信息增量 <strong>{selected.noveltyScore ?? '—'}</strong></span>
@@ -375,10 +404,10 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
             </section>
           ) : null}
 
-          <div className="essay-detail-grid">
+          {selected.status !== 'media_only' ? <div className="essay-detail-grid">
             <section><h4>催化剂</h4>{selected.catalysts.length ? selected.catalysts.map((item) => <p key={item}>{item}</p>) : <p>未识别</p>}</section>
             <section className="is-risk"><h4>风险与证伪</h4>{[...selected.risks, ...selected.contradictions, ...selected.falsificationConditions].length ? [...selected.risks, ...selected.contradictions, ...selected.falsificationConditions].map((item) => <p key={item}>{item}</p>) : <p>未识别</p>}</section>
-          </div>
+          </div> : null}
 
           {selected.stockMentions.length ? (
             <section className="essay-detail-section">
@@ -692,11 +721,13 @@ const EssayRadarPage = () => {
   const libraryProcessing = historicalBacklog?.processing ?? 0;
   const libraryFailed = historicalBacklog?.failed ?? 0;
   const libraryUnqueued = historicalBacklog?.unqueued ?? 0;
+  const libraryMediaOnly = historicalBacklog?.mediaOnly ?? 0;
   const librarySegments = [
     { key: 'completed', label: '已分析', value: libraryCompleted },
     { key: 'processing', label: '分析中', value: libraryProcessing },
     { key: 'pending', label: '排队中', value: libraryPending },
     { key: 'failed', label: '失败', value: libraryFailed },
+    { key: 'media', label: '录音资料', value: libraryMediaOnly },
     { key: 'unqueued', label: '未入队', value: libraryUnqueued },
   ];
   const activityWindows = [
@@ -784,7 +815,7 @@ const EssayRadarPage = () => {
         <div className="essay-view">
           <section className="essay-library-board" aria-label="小作文知识库总览">
             <div className="essay-library-identity">
-              <div><span>本地 SQLite 知识库</span><strong>{libraryStatsLoading && !historicalBacklog ? '读取中' : libraryTotal.toLocaleString()}</strong><small>篇小作文已入库</small></div>
+              <div><span>本地 SQLite 知识库</span><strong>{libraryStatsLoading && !historicalBacklog ? '读取中' : libraryTotal.toLocaleString()}</strong><small>条正文/录音/文件主题已入库</small></div>
               <div className="essay-library-timeline">
                 <span>{formatDate(historicalBacklog?.earliestNoteAt)}</span>
                 <i><b /></i>
@@ -805,15 +836,15 @@ const EssayRadarPage = () => {
             </div>
           </section>
           <section className="essay-filter-panel">
-            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label="搜索小作文" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="检索全库：标题、原文、作者、星球、股票或 AI 标签" /></label>
+            <label className="essay-search"><Search className="h-4 w-4" /><input aria-label="搜索小作文" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="检索全库：正文、录音/文件名、作者、股票或 AI 标签" /></label>
             <select aria-label="时间范围" value={days} onChange={(event) => { setDays(Number(event.target.value)); setPage(1); }}><option value={0}>全部入库</option><option value={1}>今日</option><option value={7}>近7日</option><option value={30}>近30日</option><option value={365}>近1年</option><option value={730}>近2年</option></select>
-            <select aria-label="AI状态筛选" value={analysisStatus} onChange={(event) => { setAnalysisStatus(event.target.value); setPage(1); }}><option value="">全部小作文</option><option value="completed">已分析</option><option value="uncompleted">未完成分析</option><option value="not_queued">未入队</option><option value="pending">排队中</option><option value="processing">分析中</option><option value="failed">分析失败</option></select>
+            <select aria-label="AI状态筛选" value={analysisStatus} onChange={(event) => { setAnalysisStatus(event.target.value); setPage(1); }}><option value="">全部内容</option><option value="completed">已分析</option><option value="media_only">录音资料（不分析）</option><option value="uncompleted">未完成分析</option><option value="not_queued">未入队</option><option value="pending">排队中</option><option value="processing">分析中</option><option value="failed">分析失败</option></select>
             <select aria-label="情绪筛选" value={sentiment} onChange={(event) => { setSentiment(event.target.value); setPage(1); }}><option value="">全部情绪</option>{Object.entries(SENTIMENT_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
             <select aria-label="类型筛选" value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }}><option value="">全部类型</option>{Object.entries(CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
             <select aria-label="重要度筛选" value={minImportance} onChange={(event) => { setMinImportance(Number(event.target.value)); setPage(1); }}><option value={0}>全部重要度</option><option value={60}>≥ 60</option><option value={75}>≥ 75</option><option value={85}>≥ 85</option></select>
           </section>
           <div className="essay-feed-summary" aria-live="polite">
-            <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{(list?.total ?? 0).toLocaleString()}</strong> 篇 · {days ? `近 ${days} 日` : '全部已入库'} · 包含未分析原文</>}</span>
+            <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{(list?.total ?? 0).toLocaleString()}</strong> 条 · {days ? `近 ${days} 日` : '全部已入库'} · 包含小作文、录音和文件</>}</span>
             <div className="essay-feed-summary-actions">
               <button type="button" onClick={() => { setQuery(''); setAnalysisStatus(''); setSentiment(''); setCategory(''); setMinImportance(0); setDays(0); setPage(1); setExportNotice(null); }}>清除筛选</button>
               <button

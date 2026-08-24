@@ -184,8 +184,9 @@
 .essay-library-segments .is-processing, .essay-library-legend .is-processing { background: var(--essay-cyan); }
 .essay-library-segments .is-pending, .essay-library-legend .is-pending { background: #fbbf24; }
 .essay-library-segments .is-failed, .essay-library-legend .is-failed { background: #f87171; }
+.essay-library-segments .is-media, .essay-library-legend .is-media { background: #a78bfa; }
 .essay-library-segments .is-unqueued, .essay-library-legend .is-unqueued { background: #475569; }
-.essay-library-legend { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 14px; }
+.essay-library-legend { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 14px; }
 .essay-library-legend > div { min-width: 0; border-left: 1px solid var(--essay-line); padding-left: 8px; }
 .essay-library-legend > div:first-child { border-left: 0; padding-left: 0; }
 .essay-library-legend > div > i { display: block; width: 12px; height: 2px; margin-bottom: 7px; }
