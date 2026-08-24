@@ -933,7 +933,7 @@ const EssayRadarPage = () => {
         <div>
           <div className="essay-live-line"><span className={workerActive ? 'is-live' : ''} />知识星球自动增量库 · 最近入库 {formatTime(insights?.latestDataAt || status?.mcpSync.lastSyncAt || historicalBacklog?.latestSyncedAt, true)}</div>
           <h1>{view === 'atlas' ? '机构段子洞察图谱' : '机构段子与录音'}</h1>
-          <p>{view === 'atlas' ? '按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。' : '新增小作文自动入库、自动分析、自动生成日报；页面静默更新，不需要手动刷新。'}</p>
+          <p>{view === 'atlas' ? '按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。' : '新增机构段子自动入库、自动分析，录音可检索获取；页面静默更新，不需要手动刷新。'}</p>
         </div>
         <div className="essay-auto-state" aria-label="自动更新状态"><strong>{workerActive ? '全自动运行中' : '自动恢复中'}</strong><span>MCP {status?.mcpSync.pollSeconds ?? 10} 秒 · 页面 15 秒</span><small>本页更新 {formatClock(lastAutoRefreshAt)}</small></div>
       </header>
@@ -989,7 +989,7 @@ const EssayRadarPage = () => {
 
       {view === 'feed' ? (
         <div className="essay-view">
-          <section className="essay-library-board" aria-label="小作文知识库总览">
+          <section className="essay-library-board" aria-label="机构段子与录音知识库总览">
             <div className="essay-library-identity">
               <div><span>本地 SQLite 知识库</span><strong>{libraryStatsLoading && !historicalBacklog ? '读取中' : libraryTotal.toLocaleString()}</strong><small>条正文/录音/文件主题已入库</small></div>
               <div className="essay-library-timeline">
@@ -1062,7 +1062,7 @@ const EssayRadarPage = () => {
             </div>
             <div className="essay-audio-task-facts">
               <span>已完成 {audioBatchTask.completedFiles}/{audioBatchTask.totalFiles} 个</span>
-              <span>{audioBatchTask.totalBytes ? `${formatAssetSize(audioBatchTask.downloadedBytes)} / ${formatAssetSize(audioBatchTask.totalBytes)}` : `已下载 ${formatAssetSize(audioBatchTask.downloadedBytes) || '0 B'}`}</span>
+              <span>{audioBatchTask.totalBytes ? `${formatAssetSize(audioBatchTask.downloadedBytes) || '0 B'} / ${formatAssetSize(audioBatchTask.totalBytes)}` : `已下载 ${formatAssetSize(audioBatchTask.downloadedBytes) || '0 B'}`}</span>
               {audioBatchTask.currentFilename ? <span className="is-current">当前：{audioBatchTask.currentFilename}</span> : null}
               <span>完成后保留 48 小时</span>
             </div>
