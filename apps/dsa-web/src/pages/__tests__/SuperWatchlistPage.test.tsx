@@ -153,6 +153,22 @@ describe('SuperWatchlistPage', () => {
     expect(screen.getByText(/最新行情/)).toBeInTheDocument();
   });
 
+  it('does not let a stale realtime row overwrite a newer dashboard fact', async () => {
+    const item = stock('300308.SZ', '中际旭创');
+    item.market = { price: 851.31, changePct: -9.72, updatedAt: '2026-08-24T13:51:33' };
+    mockQuotes.set('300308', {
+      stockCode: '300308', currentPrice: 943, changePercent: 4.29,
+      updateTime: '2026-08-21T15:00:00', isStale: true,
+    });
+    mockLoad.mockResolvedValue(dashboard([item]));
+
+    render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
+
+    expect((await screen.findAllByText('851.31')).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('943')).not.toBeInTheDocument();
+    expect(screen.getAllByText('-9.72%').length).toBeGreaterThanOrEqual(1);
+  });
+
   it('requires confirmation, removes one stock, and keeps the remaining stock visible', async () => {
     const initial = dashboard([stock('603306', '华懋科技'), stock('300476', '胜宏科技')]);
     mockLoad.mockResolvedValueOnce(initial).mockResolvedValue(dashboard([initial.stocks[1]]));

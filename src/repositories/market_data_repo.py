@@ -227,7 +227,8 @@ class MarketDataRepository:
                 "volume_delta": _number(row.get("volume_delta")),
                 "amount_delta": _number(row.get("amount_delta")),
                 "change": _number(row.get("change")),
-                "pct_chg": _number(row.get("change_percent")), "data_source": source,
+                "pct_chg": _number(row.get("change_percent")),
+                "data_source": str(row.get("source") or source),
                 "fetched_at": now, "created_at": now, "updated_at": now,
             })
         if not payload:

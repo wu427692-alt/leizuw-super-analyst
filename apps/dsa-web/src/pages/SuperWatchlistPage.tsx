@@ -11,6 +11,7 @@ import { MarketTimeframeChart } from '../components/market';
 import { StockAutocomplete } from '../components/StockAutocomplete/StockAutocomplete';
 import type { EssayConsensusAnalysis, MonitorEvent, SuperWatchlistDashboard, SuperWatchlistStock, WatchlistBackfillJob } from '../types/investmentMonitor';
 import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type { RealtimeQuote } from '../api/realtimeQuotes';
 import type { ResearchNoteDetail } from '../types/essayRadar';
 import './SuperWatchlistPage.css';
@@ -57,7 +58,10 @@ function money(value: unknown, tushareWan = false) {
 }
 
 function applyRealtimeQuote(stock: SuperWatchlistStock, live?: RealtimeQuote): SuperWatchlistStock {
-  if (!live || !Number.isFinite(live.currentPrice) || live.currentPrice <= 0) return stock;
+  if (!live || live.isStale || !Number.isFinite(live.currentPrice) || live.currentPrice <= 0) return stock;
+  const liveAt = Date.parse(String(live.updateTime ?? ''));
+  const storedAt = Date.parse(String(stock.market.updatedAt ?? ''));
+  if (Number.isFinite(liveAt) && Number.isFinite(storedAt) && liveAt < storedAt) return stock;
   return {
     ...stock,
     market: {
@@ -325,7 +329,7 @@ export default function SuperWatchlistPage() {
     catch (err) { setError(err instanceof Error ? err.message : '加载失败'); }
     finally { requestInFlight.current = false; setLoading(false); }
   }, []);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 60000); return () => window.clearInterval(timer); }, [load]);
+  usePageActivationRefresh(load, { intervalMs: 60_000, minIntervalMs: 5_000 });
   const symbols = useMemo(() => (data?.stocks ?? []).map(row => row.symbol), [data]);
   const { quotes: liveQuotes, keyFor: quoteKey } = useRealtimeQuotes(symbols);
   const stocks = useMemo(() => (data?.stocks ?? []).map(stock => (
@@ -337,7 +341,7 @@ export default function SuperWatchlistPage() {
     return { ...active, consensus: { ...active.consensus, essayAnalysis: consensusOverrides[active.symbol], essayExpectationCount: consensusOverrides[active.symbol].estimates.length, essayExpectations: consensusOverrides[active.symbol].estimates.map(item => ({ ...item, text: item.valueText })) } };
   }, [active, consensusOverrides]);
   const activeLiveQuote = active ? liveQuotes.get(quoteKey(active.symbol)) : undefined;
-  const hasActiveLiveQuote = Boolean(activeLiveQuote && activeLiveQuote.currentPrice > 0);
+  const hasActiveLiveQuote = Boolean(activeLiveQuote && !activeLiveQuote.isStale && activeLiveQuote.currentPrice > 0);
   const job = data?.backfillJobs.find(row => row.symbol === active?.symbol);
   const submitStock = async (rawSymbol: string) => {
     const symbol = rawSymbol.trim();

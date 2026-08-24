@@ -29,7 +29,7 @@ import os
 import random
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
@@ -1308,10 +1308,20 @@ class AkshareFetcher(BaseFetcher):
             # 44:流通市值(亿) 45:总市值(亿) 46:市净率 47:涨停价 48:跌停价 49:量比
             # 使用 realtime_types.py 中的统一转换函数
             amount = _parse_tencent_amount(fields)
+            provider_timestamp = None
+            raw_provider_timestamp = str(fields[30] or "").strip() if len(fields) > 30 else ""
+            if len(raw_provider_timestamp) >= 14:
+                try:
+                    provider_timestamp = datetime.strptime(
+                        raw_provider_timestamp[:14], "%Y%m%d%H%M%S",
+                    ).replace(tzinfo=timezone(timedelta(hours=8))).isoformat()
+                except ValueError:
+                    provider_timestamp = None
             quote = UnifiedRealtimeQuote(
                 code=stock_code,
                 name=fields[1] if len(fields) > 1 else "",
                 source=RealtimeSource.TENCENT,
+                provider_timestamp=provider_timestamp,
                 price=safe_float(fields[3]),
                 change_pct=safe_float(fields[32]),
                 change_amount=safe_float(fields[31]) if len(fields) > 31 else None,

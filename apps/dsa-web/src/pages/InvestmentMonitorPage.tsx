@@ -5,6 +5,7 @@ import { investmentMonitorApi } from '../api/investmentMonitor';
 import { AppPage, Badge, Drawer, EmptyState } from '../components/common';
 import { InvestmentMonitorNav } from '../components/investmentMonitor/InvestmentMonitorNav';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type { MonitorEvent, MonitorEventList, MonitorStatus } from '../types/investmentMonitor';
 
 type ChannelTab = { key: string; label: string; channel?: string; evidenceLevel?: string };
@@ -99,8 +100,14 @@ export default function InvestmentMonitorPage() {
     }
   }, [deferredQuery, sourceKey, symbol, tab.channel, tab.evidenceLevel]);
 
-  useEffect(() => { void loadStatus(); }, [loadStatus]);
-  useEffect(() => { void loadEvents(); }, [loadEvents]);
+  const refreshVisiblePage = useCallback(
+    () => Promise.allSettled([loadStatus(), loadEvents()]),
+    [loadEvents, loadStatus],
+  );
+  usePageActivationRefresh(refreshVisiblePage, {
+    intervalMs: status?.worker.running ? 10_000 : 30_000,
+    minIntervalMs: 2_000,
+  });
   useEffect(() => {
     const eventId = Number(searchParams.get('event'));
     if (!Number.isInteger(eventId) || eventId <= 0) return;
@@ -110,14 +117,6 @@ export default function InvestmentMonitorPage() {
       .catch(caught => { if (!cancelled) setError(caught instanceof Error ? caught.message : '原文加载失败'); });
     return () => { cancelled = true; };
   }, [searchParams]);
-  useEffect(() => {
-    if (!status?.worker.running) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void Promise.allSettled([loadStatus(), loadEvents()]);
-    }, 10_000);
-    return () => window.clearInterval(timer);
-  }, [loadEvents, loadStatus, status?.worker.running]);
-
   const act = async (action: () => Promise<unknown>) => {
     setActionLoading(true); setError('');
     try { await action(); await Promise.allSettled([loadStatus(), loadEvents()]); }

@@ -7,6 +7,7 @@ import { RefreshCw } from 'lucide-react';
 import { getMarketSeries } from '../../api/marketSeries';
 import type { MarketBar, MarketPeriod, MarketRange, MarketSeries } from '../../types/marketSeries';
 import { adaptivePercentDomain, resolveIntradayBasePrice, tooltipChangePercent } from './marketChartDomain';
+import { usePageActivationRefresh } from '../../hooks/usePageActivationRefresh';
 
 const PERIODS: Array<{ value: MarketPeriod; label: string }> = [
   { value: 'intraday', label: '分时' }, { value: 'daily', label: '日K' },
@@ -172,21 +173,12 @@ export function MarketTimeframeChart({
     }, delay);
     return () => window.clearTimeout(timer);
   }, [error, load, recoveryAttempt]);
-  useEffect(() => {
-    if (period !== 'intraday') return;
-    const refreshVisibleChart = () => {
-      if (document.visibilityState === 'visible') void load(false, true);
-    };
-    // The chart stores minute bars. Polling every second only repeats the same
-    // payload and can starve unrelated page requests; 15s still keeps the
-    // currently forming minute visibly fresh without overloading the server.
-    const timer = window.setInterval(refreshVisibleChart, 15_000);
-    document.addEventListener('visibilitychange', refreshVisibleChart);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', refreshVisibleChart);
-    };
-  }, [load, period]);
+  const refreshVisibleChart = useCallback(() => load(false, true), [load]);
+  // The chart stores minute bars. Refresh on activation and every 15 seconds
+  // while visible; focus/visibility events are coalesced by the shared hook.
+  usePageActivationRefresh(refreshVisibleChart, {
+    enabled: period === 'intraday', intervalMs: 15_000, minIntervalMs: 2_000, runOnMount: false,
+  });
 
   const stageBase = useMemo(() => {
     if (period !== 'intraday') return null;

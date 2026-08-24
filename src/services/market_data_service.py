@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import logging
 import os
 from types import SimpleNamespace
@@ -128,16 +128,34 @@ class MarketDataService:
         ))
         if not codes:
             return 0
+        rows: List[Dict[str, Any]] = []
         try:
-            rows = (
+            rows = list(
                 self.realtime_batch_fetcher(codes)
                 if self.realtime_batch_fetcher is not None
-                else _legacy_realtime_snapshots(codes)
+                else _tencent_realtime_stock_snapshots(codes)
             )
-            return self.repo.upsert_ticks(rows, source="tushare.legacy_snapshot")
         except Exception as exc:  # noqa: BLE001 - high-frequency worker must degrade cleanly.
-            logger.info("One-second quote batch unavailable: %s", type(exc).__name__)
-            return 0
+            logger.info("Tencent realtime quote batch unavailable: %s", type(exc).__name__)
+        now = datetime.now().replace(microsecond=0)
+        current_codes = {
+            normalize_stock_code(str(row.get("code") or ""))
+            for row in rows
+            if _snapshot_is_current(row.get("timestamp"), now)
+        }
+        fallback_codes = [code for code in codes if code not in current_codes]
+        if fallback_codes:
+            manager = self.fetcher or DataFetcherManager()
+            for code in fallback_codes:
+                try:
+                    quote = manager.get_realtime_quote(code, log_final_failure=False)
+                except Exception as exc:  # noqa: BLE001 - one failed symbol must not block the batch.
+                    logger.info("Realtime quote fallback unavailable code=%s: %s", code, type(exc).__name__)
+                    continue
+                fallback = _unified_quote_tick(code, quote, now)
+                if fallback is not None:
+                    rows.append(fallback)
+        return self.repo.upsert_ticks(rows, source="tushare.legacy_snapshot")
 
     def latest_quotes(self, stock_codes: Iterable[str], *, refresh_missing: bool = False) -> List[Dict[str, Any]]:
         """Read the shared one-second quote cache; optionally seed missing symbols once."""
@@ -147,11 +165,14 @@ class MarketDataService:
         if not codes:
             return []
         rows = self.repo.latest_ticks(codes)
-        missing = [code for code in codes if code not in rows]
-        if refresh_missing and missing:
-            self.refresh_ticks(missing)
-            rows = self.repo.latest_ticks(codes)
         now = datetime.now()
+        refresh_codes = [
+            code for code in codes
+            if code not in rows or _tick_needs_refresh(rows.get(code), now)
+        ]
+        if refresh_missing and refresh_codes:
+            self.refresh_ticks(refresh_codes)
+            rows = self.repo.latest_ticks(codes)
         daily_rows = self.repo.latest_daily(codes)
         completed_session = _latest_completed_a_share_session(now)
         result: List[Dict[str, Any]] = []
@@ -213,19 +234,20 @@ class MarketDataService:
                 "update_time": row.timestamp.isoformat(timespec="seconds"),
                 "source": row.data_source or "local.sqlite",
                 "stale_seconds": round(age, 1),
-                "is_stale": age > 5,
+                "is_stale": _tick_is_stale(row.timestamp, now),
             })
         return result
 
     def refresh_index_ticks(self, symbols: Optional[Iterable[str]] = None) -> int:
         requested = list(symbols or configured_index_symbols())
         legacy = [f"{'sh' if symbol.endswith('.SH') else 'sz'}{symbol.split('.')[0]}" for symbol in requested]
+        saved_symbols: set[str] = set()
+        saved = 0
         try:
             import tushare as ts
             frame = ts.get_realtime_quotes(legacy)
             if frame is None or frame.empty:
-                return 0
-            saved = 0
+                raise ValueError("empty realtime index snapshot")
             collected_at = datetime.now().replace(microsecond=0)
             exchange_fallback = _latest_a_share_close_timestamp(collected_at)
             rows_by_code = {str(row.get("code") or "").zfill(6): row for _, row in frame.iterrows()}
@@ -235,23 +257,40 @@ class MarketDataService:
                     continue
                 price = _float_or_none(row.get("price")); pre_close = _float_or_none(row.get("pre_close"))
                 change_pct = (price - pre_close) / pre_close * 100 if price is not None and pre_close else None
+                timestamp = _legacy_snapshot_timestamp(row, exchange_fallback)
                 saved += self.repo.upsert_index(symbol, [{
-                    "timestamp": _legacy_snapshot_timestamp(row, exchange_fallback),
+                    "timestamp": timestamp,
                     "open": row.get("open"), "high": row.get("high"),
                     "low": row.get("low"), "close": price, "volume": row.get("volume"),
                     "amount": row.get("amount"), "change_percent": change_pct,
                 }], frequency="1SEC", source="tushare.legacy_snapshot")
-            return saved
+                if _snapshot_is_current(timestamp, collected_at):
+                    saved_symbols.add(symbol)
         except Exception as exc:  # noqa: BLE001
             logger.info("One-second index batch unavailable: %s", type(exc).__name__)
-            return 0
+        fallback_symbols = [symbol for symbol in requested if symbol not in saved_symbols]
+        if fallback_symbols:
+            try:
+                fallback_rows = _tencent_realtime_index_snapshots(fallback_symbols)
+                for symbol, row in fallback_rows.items():
+                    saved += self.repo.upsert_index(
+                        symbol, [row], frequency="1SEC", source="tencent.snapshot",
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.info("Tencent realtime index fallback unavailable: %s", type(exc).__name__)
+        return saved
 
     def latest_index_quotes(self, symbols: Optional[Iterable[str]] = None, *, refresh_missing: bool = False) -> List[Dict[str, Any]]:
         requested = [str(symbol).upper().replace(".SS", ".SH") for symbol in (symbols or configured_index_symbols())]
         rows = self.repo.latest_index_bars(requested)
-        if refresh_missing and any(symbol not in rows for symbol in requested):
-            self.refresh_index_ticks(requested); rows = self.repo.latest_index_bars(requested)
-        now = datetime.now(); result = []
+        now = datetime.now()
+        refresh_symbols = [
+            symbol for symbol in requested
+            if symbol not in rows or _tick_needs_refresh(rows.get(symbol), now)
+        ]
+        if refresh_missing and refresh_symbols:
+            self.refresh_index_ticks(refresh_symbols); rows = self.repo.latest_index_bars(requested)
+        result = []
         for symbol in requested:
             row = rows.get(symbol)
             if row is None: continue
@@ -261,7 +300,8 @@ class MarketDataService:
                            "volume": row.volume, "amount": row.amount,
                            "second_volume": row.volume_delta, "second_amount": row.amount_delta,
                            "update_time": row.timestamp.isoformat(timespec="seconds"),
-                           "stale_seconds": round(age, 1), "is_stale": age > 5, "source": row.data_source})
+                           "stale_seconds": round(age, 1),
+                           "is_stale": _tick_is_stale(row.timestamp, now), "source": row.data_source})
         return result
 
     def refresh_intraday(self, stock_codes: Iterable[str]) -> int:
@@ -715,6 +755,78 @@ def _is_a_share_intraday_timestamp(value: datetime) -> bool:
     return 9 * 60 + 15 <= minutes <= 11 * 60 + 30 or 13 * 60 <= minutes <= 15 * 60 + 5
 
 
+def _a_share_refresh_window(now: datetime) -> bool:
+    """Whether a weekday can have a newer same-day exchange snapshot."""
+    local = now.replace(tzinfo=None)
+    opening = datetime.strptime("09:15", "%H:%M").time()
+    closing = datetime.strptime("15:05", "%H:%M").time()
+    return local.weekday() < 5 and opening <= local.time() <= closing
+
+
+def _snapshot_is_current(timestamp: Any, now: datetime) -> bool:
+    if not isinstance(timestamp, datetime):
+        return False
+    local_timestamp = timestamp.astimezone().replace(tzinfo=None) if timestamp.tzinfo else timestamp
+    if _a_share_refresh_window(now):
+        return local_timestamp.date() == now.date() and max(0.0, (now - local_timestamp).total_seconds()) <= 90
+    return local_timestamp >= _latest_a_share_close_timestamp(now)
+
+
+def _tick_needs_refresh(row: Any, now: datetime) -> bool:
+    if row is None:
+        return True
+    timestamp = getattr(row, "timestamp", None)
+    if not isinstance(timestamp, datetime):
+        return True
+    if not _a_share_refresh_window(now):
+        return False
+    age = max(0.0, (now - timestamp).total_seconds())
+    return timestamp.date() != now.date() or age > 15
+
+
+def _tick_is_stale(timestamp: datetime, now: datetime) -> bool:
+    """A 15-second polling UI may safely display the current minute for 90 seconds."""
+    if _a_share_refresh_window(now):
+        return timestamp.date() != now.date() or max(0.0, (now - timestamp).total_seconds()) > 90
+    return timestamp < _latest_a_share_close_timestamp(now)
+
+
+def _provider_timestamp(value: Any) -> Optional[datetime]:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
+    return parsed.replace(microsecond=0)
+
+
+def _unified_quote_tick(code: str, quote: Any, now: datetime) -> Optional[Dict[str, Any]]:
+    price = _float_or_none(getattr(quote, "price", None)) if quote is not None else None
+    if price is None or price <= 0:
+        return None
+    timestamp = _provider_timestamp(getattr(quote, "provider_timestamp", None))
+    if timestamp is None:
+        timestamp = now if _a_share_refresh_window(now) else _latest_a_share_close_timestamp(now)
+    source = getattr(getattr(quote, "source", None), "value", None) or "realtime"
+    return {
+        "code": code,
+        "timestamp": timestamp,
+        "price": price,
+        "open": getattr(quote, "open_price", None),
+        "high": getattr(quote, "high", None),
+        "low": getattr(quote, "low", None),
+        "pre_close": getattr(quote, "pre_close", None),
+        "volume": getattr(quote, "volume", None),
+        "amount": getattr(quote, "amount", None),
+        "change": getattr(quote, "change_amount", None),
+        "change_percent": getattr(quote, "change_pct", None),
+        "source": f"{source}.snapshot",
+    }
+
+
 def _float_or_none(value: Any) -> Optional[float]:
     try:
         if pd.isna(value):
@@ -880,6 +992,112 @@ def _minute_snapshot_from_seconds(rows: List[Any], *, live: bool) -> Any:
     if live:
         common["price"] = latest_price
     return SimpleNamespace(**common)
+
+
+def _tencent_quote_payload(legacy_symbols: Iterable[str]) -> Dict[str, List[str]]:
+    import requests
+
+    symbols = list(dict.fromkeys(str(value).strip().lower() for value in legacy_symbols if str(value).strip()))
+    if not symbols:
+        return {}
+    response = requests.get(
+        "https://qt.gtimg.cn/q=" + ",".join(symbols),
+        timeout=8,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.qq.com/"},
+    )
+    response.raise_for_status()
+    response.encoding = "gbk"
+    result: Dict[str, List[str]] = {}
+    for line in response.text.splitlines():
+        prefix, separator, quoted = line.partition("=")
+        if not separator:
+            continue
+        legacy = prefix.removeprefix("v_").strip().lower()
+        body = quoted.strip().strip(";\r\n").strip('"')
+        fields = body.split("~")
+        if len(fields) >= 35:
+            result[legacy] = fields
+    return result
+
+
+def _tencent_exchange_timestamp(fields: List[str]) -> Optional[datetime]:
+    raw_timestamp = str(fields[30] or "").strip() if len(fields) > 30 else ""
+    if len(raw_timestamp) < 14:
+        return None
+    try:
+        return datetime.strptime(raw_timestamp[:14], "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+def _tencent_realtime_stock_snapshots(codes: Iterable[str]) -> List[Dict[str, Any]]:
+    """Fetch the whole watchlist in one low-latency Tencent request."""
+    from data_provider.akshare_fetcher import _normalize_tencent_volume, _parse_tencent_amount
+
+    normalized = [normalize_stock_code(value) for value in codes if str(value or "").strip()]
+    legacy_by_code = {
+        code: f"{'sh' if code.startswith('6') else 'bj' if code.startswith(('4', '8', '9')) else 'sz'}{code}"
+        for code in normalized
+    }
+    payload = _tencent_quote_payload(legacy_by_code.values())
+    result: List[Dict[str, Any]] = []
+    for code, legacy in legacy_by_code.items():
+        fields = payload.get(legacy)
+        if not fields:
+            continue
+        price = _float_or_none(fields[3])
+        if price is None or price <= 0:
+            continue
+        result.append({
+            "code": code,
+            "timestamp": _tencent_exchange_timestamp(fields) or _latest_a_share_close_timestamp(),
+            "price": price,
+            "open": _float_or_none(fields[5]),
+            "high": _float_or_none(fields[33]),
+            "low": _float_or_none(fields[34]),
+            "pre_close": _float_or_none(fields[4]),
+            "volume": _normalize_tencent_volume(fields),
+            "amount": _parse_tencent_amount(fields),
+            "change": _float_or_none(fields[31]),
+            "change_percent": _float_or_none(fields[32]),
+            "source": "tencent.snapshot",
+        })
+    return result
+
+
+def _tencent_realtime_index_snapshots(symbols: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch one factual Tencent snapshot for each configured A-share index."""
+    requested = [str(symbol).upper().replace(".SS", ".SH") for symbol in symbols]
+    legacy_by_symbol = {
+        symbol: f"{'sh' if symbol.endswith('.SH') else 'sz'}{symbol.split('.')[0]}"
+        for symbol in requested
+    }
+    if not legacy_by_symbol:
+        return {}
+    payload_by_legacy = _tencent_quote_payload(legacy_by_symbol.values())
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for symbol, legacy in legacy_by_symbol.items():
+        fields = payload_by_legacy.get(legacy)
+        if not fields:
+            continue
+        price = _float_or_none(fields[3])
+        if price is None or price <= 0:
+            continue
+        timestamp = _tencent_exchange_timestamp(fields)
+        raw_amount = _float_or_none(fields[37]) if len(fields) > 37 else None
+        result[symbol] = {
+            "timestamp": timestamp or _latest_a_share_close_timestamp(),
+            "open": _float_or_none(fields[5]),
+            "high": _float_or_none(fields[33]),
+            "low": _float_or_none(fields[34]),
+            "close": price,
+            "volume": _float_or_none(fields[36]) if len(fields) > 36 else None,
+            # Tencent field 37 is CNY ten-thousands.
+            "amount": raw_amount * 10_000 if raw_amount is not None else None,
+            "change_percent": _float_or_none(fields[32]),
+        }
+    return result
 
 
 def _tencent_five_day_minutes(symbol: str) -> List[Dict[str, Any]]:

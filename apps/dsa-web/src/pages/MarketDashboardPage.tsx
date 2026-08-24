@@ -12,6 +12,7 @@ import { getMarketSeries } from '../api/marketSeries';
 import type { HomeDashboard, HomeWatchlistCard, MarketIndexCard, MarketPoint } from '../types/homeDashboard';
 import type { MonitorEvent } from '../types/investmentMonitor';
 import { useRealtimeIndices, useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import { marketQuoteSession } from '../utils/marketQuoteDate';
 import './MarketDashboardPage.css';
 
@@ -28,6 +29,7 @@ const DATA_SOURCE_LABELS: Record<string, string> = {
   'tushare.moneyflow_hsgt': 'Tushare 沪深港通',
   'akshare.sina_a_spot': '新浪全A股实时行情',
   'akshare.sina_sector_spot': '新浪行业板块实时行情',
+  'tencent.snapshot': '腾讯实时行情',
 };
 
 const HOME_CACHE_KEY = 'dsa:home-dashboard:last-good:v2';
@@ -179,11 +181,12 @@ const MarketDashboardPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const [selectedIndexCode, setSelectedIndexCode] = useState('000001.SH');
-  const load = useCallback(async (force = false) => {
+  const refreshProbeTimers = useRef<number[]>([]);
+  const load = useCallback(async (force = false, refresh = false) => {
     const hasExistingData = dataRef.current != null;
     if (force) setRefreshing(true); else if (!hasExistingData) setLoading(true);
     try {
-      const next = await homeDashboardApi.get(force);
+      const next = await homeDashboardApi.get(force, refresh);
       dataRef.current = next;
       setData(next);
       rememberDashboard(next);
@@ -196,7 +199,18 @@ const MarketDashboardPage = () => {
     }
     finally { setLoading(false); setRefreshing(false); }
   }, []);
-  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 300_000); return () => window.clearInterval(timer); }, [load]);
+  const refreshVisiblePage = useCallback(async () => {
+    await load(false, true);
+    refreshProbeTimers.current.forEach(timer => window.clearTimeout(timer));
+    refreshProbeTimers.current = [5_000, 15_000, 30_000].map(delay => window.setTimeout(() => {
+      void load(false, false);
+    }, delay));
+  }, [load]);
+  usePageActivationRefresh(refreshVisiblePage, { intervalMs: 60_000, minIntervalMs: 10_000 });
+  useEffect(() => () => {
+    refreshProbeTimers.current.forEach(timer => window.clearTimeout(timer));
+    refreshProbeTimers.current = [];
+  }, []);
   useEffect(() => {
     if (!error) return undefined;
     const timer = window.setTimeout(() => void load(), 8_000);

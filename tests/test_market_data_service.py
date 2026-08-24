@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,7 @@ from src.services.market_data_service import (
     _latest_a_share_close_timestamp,
     _latest_completed_a_share_session,
     _parse_tencent_day_minutes,
+    _tencent_realtime_stock_snapshots,
 )
 from src.storage import DatabaseManager, StockDaily
 
@@ -165,6 +167,47 @@ def test_latest_quotes_prefers_completed_daily_close_over_partial_same_day_tick(
     assert quote["source"] == "test.daily"
 
 
+def test_latest_quotes_replaces_present_but_stale_tick_with_fallback_snapshot(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_ticks([{
+        "code": "300308", "timestamp": datetime(2026, 8, 21, 15, 0),
+        "price": 943.0, "pre_close": 904.2, "change_percent": 4.29,
+    }], source="tushare.daily:cross_section")
+
+    class RealtimeFetcher(_NoNetworkFetcher):
+        def get_realtime_quote(self, code, log_final_failure=False):
+            assert code == "300308"
+            return SimpleNamespace(
+                price=851.31, change_pct=-9.72, change_amount=-91.69,
+                open_price=945.0, high=949.73, low=850.0, pre_close=943.0,
+                volume=32_059_700, amount=28_571_083_346,
+                provider_timestamp="2026-08-24T13:51:33+08:00",
+                source=SimpleNamespace(value="tencent"),
+            )
+
+    monkeypatch.setattr(
+        "src.services.market_data_service.datetime",
+        type("FixedDateTime", (datetime,), {
+            "now": classmethod(lambda cls: datetime(2026, 8, 24, 13, 51, 35)),
+            "strptime": datetime.strptime,
+            "fromisoformat": datetime.fromisoformat,
+            "combine": datetime.combine,
+        }),
+    )
+    service = MarketDataService(
+        repository=repo, fetcher=RealtimeFetcher(), tushare=_UnavailableGateway(),
+        realtime_batch_fetcher=lambda _codes: [],
+    )
+
+    quote = service.latest_quotes(["300308"], refresh_missing=True)[0]
+
+    assert quote["current_price"] == 851.31
+    assert quote["change_percent"] == -9.72
+    assert quote["update_time"] == "2026-08-24T13:51:33"
+    assert quote["source"] == "tencent.snapshot"
+    assert quote["is_stale"] is False
+
+
 def test_intraday_series_ignores_impossible_overnight_a_share_tick(market_db):
     repo = MarketDataRepository(market_db)
     repo.upsert_ticks([{
@@ -258,6 +301,28 @@ def test_tencent_minute_cumulative_totals_become_interval_deltas() -> None:
     assert [row["volume"] for row in rows] == [1200, 750, 0]
     assert [row["amount"] for row in rows] == [120000, 75150, 0]
     assert rows[1]["close"] == 100.20
+
+
+def test_tencent_batch_snapshot_keeps_exchange_time_price_and_volume(monkeypatch) -> None:
+    fields = [""] * 50
+    fields[1] = "中际旭创"; fields[2] = "300308"; fields[3] = "851.31"
+    fields[4] = "943.00"; fields[5] = "945.00"; fields[6] = "320597"
+    fields[30] = "20260824135133"; fields[31] = "-91.69"; fields[32] = "-9.72"
+    fields[33] = "949.73"; fields[34] = "850.00"
+    fields[35] = "851.31/320597/28571083346"; fields[36] = "320597"; fields[37] = "2857108.3346"
+    monkeypatch.setattr(
+        "src.services.market_data_service._tencent_quote_payload",
+        lambda _symbols: {"sz300308": fields},
+    )
+
+    row = _tencent_realtime_stock_snapshots(["300308"])[0]
+
+    assert row["timestamp"] == datetime(2026, 8, 24, 13, 51, 33)
+    assert row["price"] == 851.31
+    assert row["change_percent"] == -9.72
+    assert row["volume"] == 32_059_700
+    assert row["amount"] == 28_571_083_346
+    assert row["source"] == "tencent.snapshot"
 
 
 def test_index_second_volume_uses_same_delta_contract(market_db):

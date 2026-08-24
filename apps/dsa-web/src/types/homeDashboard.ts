@@ -92,5 +92,5 @@ export type HomeDashboard = {
     eventCount?: number; highPriorityCount?: number; bullishCount?: number; bearishCount?: number; activeSourceCount?: number;
   };
   warnings: string[];
-  cache: { hit: boolean; ttlSeconds: number; ageSeconds: number };
+  cache: { hit: boolean; ttlSeconds: number; ageSeconds: number | null; refreshing?: boolean; persistent?: boolean; localSnapshot?: boolean };
 };

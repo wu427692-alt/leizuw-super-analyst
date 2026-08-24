@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { essayQuantApi } from '../api/essayQuant';
 import { AppPage, EmptyState } from '../components/common';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type {
   EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan,
   EssayQuantMethod, EssayQuantRule, EssayQuantRunHistory, EssayQuantTaskList, QuantMetric,
@@ -154,15 +155,10 @@ export default function EssayQuantPage() {
   useEffect(() => {
     void load(); document.title = '量化回测与数据利用 - 乐子乌超级价值';
   }, [load]);
-  useEffect(() => {
-    const hasActiveTasks = taskList.items.some(item => item.status === 'queued' || item.status === 'running');
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshLive();
-    }, hasActiveTasks ? 3_000 : 30_000);
-    const onVisibility = () => { if (document.visibilityState === 'visible') void refreshLive(); };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility); };
-  }, [refreshLive, taskList.items]);
+  const hasActiveTasks = taskList.items.some(item => item.status === 'queued' || item.status === 'running');
+  usePageActivationRefresh(refreshLive, {
+    intervalMs: hasActiveTasks ? 3_000 : 30_000, minIntervalMs: 1_500, runOnMount: false,
+  });
   useEffect(() => {
     if (!catalog || !requestedMethodKey) return;
     const method = catalog.methods.find(item => item.key === requestedMethodKey);

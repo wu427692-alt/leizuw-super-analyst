@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Activity, Boxes, CircleAlert, Database, RefreshCw, Search, ServerCog } from 'lucide-react';
 import { investmentMonitorApi } from '../api/investmentMonitor';
 import { AppPage, EmptyState } from '../components/common';
 import { InvestmentMonitorNav } from '../components/investmentMonitor/InvestmentMonitorNav';
 import type { SourceBI } from '../types/investmentMonitor';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 
 const GREEN = '#00E676';
 const YELLOW = '#FFB800';
@@ -71,11 +72,7 @@ export default function InvestmentMonitorBIPage() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 10_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
+  usePageActivationRefresh(load, { intervalMs: 10_000, minIntervalMs: 2_000 });
 
   const visible = useMemo(() => (data?.sources ?? []).filter(source => {
     const matched = `${source.name} ${source.sourceKey} ${source.provider} ${source.category} ${source.directUse.originApis.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase());

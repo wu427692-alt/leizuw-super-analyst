@@ -5,6 +5,7 @@ import { investmentMonitorApi } from '../api/investmentMonitor';
 import { AppPage, EmptyState } from '../components/common';
 import { InvestmentMonitorNav } from '../components/investmentMonitor/InvestmentMonitorNav';
 import type { DragonTigerDaily, DragonTigerHistory, DragonTigerRecord } from '../types/investmentMonitor';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './DragonTigerPage.css';
 
 const localDate = (daysAgo = 0) => {
@@ -95,6 +96,13 @@ export default function DragonTigerPage() {
     didInitialLoad.current = true;
     void Promise.all([loadDaily(), loadHistory()]);
   }, [loadDaily, loadHistory]);
+  const refreshVisiblePage = useCallback(
+    () => Promise.allSettled([loadDaily(), loadHistory()]),
+    [loadDaily, loadHistory],
+  );
+  usePageActivationRefresh(refreshVisiblePage, {
+    intervalMs: 60_000, minIntervalMs: 5_000, runOnMount: false,
+  });
 
   const syncHistory = async () => {
     setSyncing(true); setStatus('正在按交易日增量补齐，已入库日期不会重复新增…');

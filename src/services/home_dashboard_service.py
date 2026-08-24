@@ -50,13 +50,19 @@ class HomeDashboardService:
             not injected_dependencies if background_refresh is None else bool(background_refresh)
         )
 
-    def dashboard(self, *, force: bool = False) -> Dict[str, Any]:
+    def dashboard(self, *, force: bool = False, refresh: bool = False) -> Dict[str, Any]:
         now = time.monotonic()
+        cached_response: Optional[Dict[str, Any]] = None
         with self._cache_lock:
             cached = self._cache_payload
             if not force and cached is not None and now - self._cache_at < self.cache_seconds:
-                return {**cached, "cache": {"hit": True, "ttl_seconds": self.cache_seconds,
-                                             "age_seconds": round(now - self._cache_at, 1)}}
+                cached_response = {**cached, "cache": {"hit": True, "refreshing": refresh,
+                                                        "ttl_seconds": self.cache_seconds,
+                                                        "age_seconds": round(now - self._cache_at, 1)}}
+        if cached_response is not None:
+            if refresh:
+                self._schedule_refresh()
+            return cached_response
         if not force and self.background_refresh:
             persisted = self._load_persistent_cache()
             if persisted is not None:

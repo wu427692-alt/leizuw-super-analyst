@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Activity, ArrowUpRight, CheckCircle2, CircleAlert, Database, RadioTower, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { investmentMonitorApi } from '../api/investmentMonitor';
 import { AppPage } from '../components/common';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type { ResearchCenterOverview, ResearchDecisionPacket } from '../types/investmentMonitor';
 import './ResearchCenterPage.css';
 import './ResearchCenterExtensions.css';
@@ -83,11 +84,7 @@ export default function ResearchCenterPage() {
     } finally { setInitialLoading(false); }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
+  usePageActivationRefresh(load, { intervalMs: 30_000, minIntervalMs: 2_000 });
 
   const packet = useMemo(() => data?.decisionPackets.find(item => item.symbol === selected) || data?.decisionPackets[0], [data, selected]);
   const attention = useMemo(() => (data?.dataSources ?? []).filter(source => source.monitoringStatus !== 'live' || source.freshnessStatus === 'stale').slice(0, 8), [data]);

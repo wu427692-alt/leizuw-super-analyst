@@ -54,6 +54,7 @@ import { areStockCodesEquivalent, normalizeStockCode } from '../utils/stockCode'
 import { parseDecisionSignalDate } from '../utils/decisionSignalTime';
 import { buildDecisionActionLabelMap, getDecisionActionLabel } from '../utils/decisionAction';
 import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 
 const PIE_COLORS = ['#00d4ff', '#00ff88', '#ffaa00', '#ff7a45', '#7f8cff', '#ff4466'];
 const DEFAULT_PAGE_SIZE = 20;
@@ -432,6 +433,9 @@ const PortfolioPage: React.FC = () => {
   const refreshPortfolioData = useCallback(async (page = eventPage) => {
     await Promise.all([loadSnapshotAndRisk(), loadEventsPage(page)]);
   }, [eventPage, loadEventsPage, loadSnapshotAndRisk]);
+  usePageActivationRefresh(() => refreshPortfolioData(), {
+    intervalMs: 30_000, minIntervalMs: 3_000, runOnMount: false,
+  });
 
   useEffect(() => {
     void loadAccounts();

@@ -140,6 +140,26 @@ def test_cold_start_returns_local_snapshot_before_remote_refresh(tmp_path, monke
     assert scheduled == [True]
 
 
+def test_page_activation_can_wake_background_refresh_while_cache_is_fresh(monkeypatch):
+    HomeDashboardService._cache_payload = {
+        "generated_at": "2026-08-24T13:00:00+08:00", "cn_indices": [],
+        "global_indices": [], "watchlist": [], "latest_events": [], "warnings": [],
+    }
+    HomeDashboardService._cache_at = __import__("time").monotonic()
+    service = HomeDashboardService(
+        tushare=FakeTushare(), monitor=FakeMonitor(), cache_seconds=300,
+        background_refresh=True,
+    )
+    scheduled = []
+    monkeypatch.setattr(service, "_schedule_refresh", lambda: scheduled.append(True))
+
+    result = service.dashboard(refresh=True)
+
+    assert result["cache"]["hit"] is True
+    assert result["cache"]["refreshing"] is True
+    assert scheduled == [True]
+
+
 def test_current_day_breadth_rejects_previous_session_rows():
     class StaleTushare(FakeTushare):
         def query(self, api_name, *, params=None, fields=None):

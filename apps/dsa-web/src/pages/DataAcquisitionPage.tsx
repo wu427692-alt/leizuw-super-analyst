@@ -3,6 +3,7 @@ import { Bot, CheckCircle2, CircleDashed, DatabaseZap, Download, FileArchive, Pa
 import { dataAcquisitionApi } from '../api/dataAcquisition';
 import { AppPage, Badge, Card, EmptyState, PageHeader, StatCard } from '../components/common';
 import type { AcquisitionCapabilities, AcquisitionDownloadProgress, AcquisitionJob, AcquisitionPlan, AcquisitionRunTask } from '../types/dataAcquisition';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 
 const EXAMPLES = [
   '下载最近两年低空经济或无人机方向的研报，优先深度研究，用 AI 复核相关性后打包 PDF',
@@ -94,7 +95,7 @@ const DataAcquisitionPage = () => {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  usePageActivationRefresh(load, { intervalMs: 30_000, minIntervalMs: 2_000 });
 
   useEffect(() => {
     if (!activeTaskId) return undefined;

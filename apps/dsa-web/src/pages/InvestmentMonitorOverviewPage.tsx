@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { DatabaseZap, ExternalLink, FileText, RefreshCw, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { investmentMonitorApi } from '../api/investmentMonitor';
 import { AppPage, EmptyState } from '../components/common';
 import { InvestmentMonitorNav } from '../components/investmentMonitor/InvestmentMonitorNav';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type { MonitorEvent, MonitorEventList, MonitoringSource, MonitorStatus } from '../types/investmentMonitor';
 
 const GREEN = '#00E676';
@@ -109,14 +110,11 @@ export default function InvestmentMonitorOverviewPage() {
     }
   }, [deferredQuery, selectedSourceKey]);
 
-  useEffect(() => { void loadStatus(); }, [loadStatus]);
-  useEffect(() => { void loadEvents(); }, [loadEvents]);
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void Promise.allSettled([loadStatus(), loadEvents()]);
-    }, 10_000);
-    return () => window.clearInterval(timer);
-  }, [loadEvents, loadStatus]);
+  const refreshVisiblePage = useCallback(
+    () => Promise.allSettled([loadStatus(), loadEvents()]),
+    [loadEvents, loadStatus],
+  );
+  usePageActivationRefresh(refreshVisiblePage, { intervalMs: 10_000, minIntervalMs: 2_000 });
 
   const groups = useMemo(() => SOURCE_GROUPS.map(group => ({ ...group,
     items: (status?.sources.items ?? []).filter(source => sourceLevel(source) === group.key),

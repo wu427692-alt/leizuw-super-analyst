@@ -9,8 +9,12 @@ router = APIRouter()
 
 
 @router.get("", summary="聚合A股、海外市场、自选股和投资情报首页大看板")
-def dashboard(request: Request, force: bool = Query(False, description="忽略五分钟缓存并立即刷新")):
-    payload = HomeDashboardService().dashboard(force=force)
+def dashboard(
+    request: Request,
+    force: bool = Query(False, description="忽略缓存并同步刷新"),
+    refresh: bool = Query(False, description="返回已有数据并在后台静默刷新"),
+):
+    payload = HomeDashboardService().dashboard(force=force, refresh=refresh)
     user_id = int(getattr(request.state, "user_id", 0) or 0)
     if user_id <= 0:
         return payload
