@@ -356,7 +356,7 @@ function AudioFileRow({ item, selected, onToggle }: { item: EssayAudioFile; sele
       <div className="essay-audio-icon"><Headphones className="h-5 w-5" /></div>
       <div className="essay-audio-main">
         <h3>{item.name}</h3>
-        <p>{item.noteTitle && item.noteTitle !== item.name ? item.noteTitle : '知识星球录音源文件'}</p>
+        <p>{item.noteTitle && item.noteTitle !== item.name ? `所属帖子：${item.noteTitle}` : '知识星球录音源文件'}</p>
         <div><span>{item.groupName}</span><span>{item.authorName || '作者未标注'}</span><span>{formatTime(item.createdAt)}</span></div>
       </div>
       <div className="essay-audio-facts">
