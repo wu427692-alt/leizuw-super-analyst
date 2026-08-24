@@ -120,7 +120,15 @@ class MarketDataWorker:
             else:
                 self._consecutive_empty_runs += 1
                 self._last_error = "行情源本轮未返回有效快照，采集器将在下一秒自动重试"
-        return {"symbols": symbols, "saved": saved, "index_saved": index_saved, "minute_scheduled": minute_scheduled, "storage": service.status()}
+        # Storage totals require several full-table COUNT queries.  Keep those
+        # diagnostics behind the explicit admin status endpoint instead of
+        # running them after every live quote collection cycle.
+        return {
+            "symbols": symbols,
+            "saved": saved,
+            "index_saved": index_saved,
+            "minute_scheduled": minute_scheduled,
+        }
 
     def register_symbol(self, symbol: str) -> int:
         """Start collecting a newly added symbol immediately."""
