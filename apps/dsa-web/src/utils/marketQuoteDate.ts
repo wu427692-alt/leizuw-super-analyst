@@ -33,6 +33,31 @@ export type MarketQuoteSession = {
   isClose: boolean;
 };
 
+function explicitClock(value?: string | null): string | null {
+  if (!value) return null;
+  const match = String(value).trim().match(/[T\s](\d{2}):(\d{2})(?::\d{2})?/);
+  return match ? `${match[1]}:${match[2]}` : null;
+}
+
+/**
+ * Prefer a candidate quote when it belongs to a newer trading day.  On the
+ * same trading day a stale candidate must not overwrite an official/current
+ * value, but a newer-day partial snapshot is still more truthful than showing
+ * yesterday's close as though it were today's market.
+ */
+export function shouldPreferQuote(
+  candidateAt?: string | null,
+  currentAt?: string | null,
+  candidateIsStale = false,
+): boolean {
+  const candidateDate = quoteDateKey(candidateAt);
+  const currentDate = quoteDateKey(currentAt);
+  if (!candidateDate) return false;
+  if (!currentDate) return true;
+  if (candidateDate !== currentDate) return candidateDate > currentDate;
+  return !candidateIsStale;
+}
+
 function shanghaiClock(now: Date): { weekday: number; minutes: number } {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Shanghai',
@@ -81,11 +106,18 @@ export function marketQuoteSession(
   const dailyCloseSource = normalizedSource.includes('index_daily')
     || normalizedSource.includes('index_global')
     || normalizedSource.endsWith('.daily');
-  const isClose = dailyCloseSource || !isCurrentDay || !isIntradayWindow;
+  const clock = explicitClock(value);
+  const clockMinutes = clock ? Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5)) : null;
+  const snapshotReachedClose = clockMinutes != null && clockMinutes >= 15 * 60;
+  const partialSnapshot = !dailyCloseSource && clockMinutes != null && !snapshotReachedClose;
+  const isClose = dailyCloseSource || snapshotReachedClose || (!isCurrentDay && !partialSnapshot);
+  const label = partialSnapshot && !isIntradayWindow
+    ? `${dateKey} ${clock} 最新`
+    : `${dateKey} ${isClose ? '收盘' : '实时'}`;
 
   return {
     dateKey,
-    label: `${dateKey} ${isClose ? '收盘' : '实时'}`,
+    label,
     canShowChange: true,
     isCurrentDay,
     isClose,

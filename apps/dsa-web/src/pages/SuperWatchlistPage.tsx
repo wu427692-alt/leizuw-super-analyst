@@ -14,6 +14,7 @@ import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type { RealtimeQuote } from '../api/realtimeQuotes';
 import type { ResearchNoteDetail } from '../types/essayRadar';
+import { shouldPreferQuote } from '../utils/marketQuoteDate';
 import './SuperWatchlistPage.css';
 
 type Section = 'overview' | 'fundamental' | 'capital' | 'institution' | 'essay' | 'consensus' | 'messages' | 'comments' | 'evidence';
@@ -58,10 +59,8 @@ function money(value: unknown, tushareWan = false) {
 }
 
 function applyRealtimeQuote(stock: SuperWatchlistStock, live?: RealtimeQuote): SuperWatchlistStock {
-  if (!live || live.isStale || !Number.isFinite(live.currentPrice) || live.currentPrice <= 0) return stock;
-  const liveAt = Date.parse(String(live.updateTime ?? ''));
-  const storedAt = Date.parse(String(stock.market.updatedAt ?? ''));
-  if (Number.isFinite(liveAt) && Number.isFinite(storedAt) && liveAt < storedAt) return stock;
+  if (!live || !Number.isFinite(live.currentPrice) || live.currentPrice <= 0
+    || !shouldPreferQuote(live.updateTime, stock.market.updatedAt, Boolean(live.isStale))) return stock;
   return {
     ...stock,
     market: {
@@ -73,6 +72,9 @@ function applyRealtimeQuote(stock: SuperWatchlistStock, live?: RealtimeQuote): S
       low: live.low ?? stock.market.low,
       amount: live.amount ?? stock.market.amount,
       updatedAt: live.updateTime ?? stock.market.updatedAt,
+      source: live.source ?? stock.market.source,
+      isStale: live.isStale ?? stock.market.isStale,
+      staleSeconds: live.staleSeconds ?? stock.market.staleSeconds,
     },
   };
 }
@@ -342,7 +344,8 @@ export default function SuperWatchlistPage() {
     return { ...active, consensus: { ...active.consensus, essayAnalysis: consensusOverrides[active.symbol], essayExpectationCount: consensusOverrides[active.symbol].estimates.length, essayExpectations: consensusOverrides[active.symbol].estimates.map(item => ({ ...item, text: item.valueText })) } };
   }, [active, consensusOverrides]);
   const activeLiveQuote = active ? liveQuotes.get(quoteKey(active.symbol)) : undefined;
-  const hasActiveLiveQuote = Boolean(activeLiveQuote && !activeLiveQuote.isStale && activeLiveQuote.currentPrice > 0);
+  const hasActiveLiveQuote = Boolean(active && activeLiveQuote && activeLiveQuote.currentPrice > 0
+    && shouldPreferQuote(activeLiveQuote.updateTime, data?.stocks.find(row => row.symbol === active.symbol)?.market.updatedAt, Boolean(activeLiveQuote.isStale)));
   const job = data?.backfillJobs.find(row => row.symbol === active?.symbol);
   const submitStock = async (rawSymbol: string) => {
     const symbol = rawSymbol.trim();

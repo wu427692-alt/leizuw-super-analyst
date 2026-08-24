@@ -96,6 +96,11 @@ class MarketDataService:
                 refreshed = self.refresh_ticks([code]) > 0 or refreshed
                 tick_rows = self._regular_session_rows(self._tick_rows(code, storage_days), code)
             rows = _merge_second_and_minute_rows(tick_rows, minute_rows, sessions=session_count)
+            rows = _append_completed_stock_close(
+                rows,
+                self.repo.latest_daily([code]).get(code),
+                _latest_completed_a_share_session(),
+            )
             pre_close = _intraday_pre_close(
                 rows,
                 fallback=lambda session_date: self.repo.previous_daily_close(code, session_date),
@@ -500,6 +505,18 @@ class MarketDataService:
                     self.repo.index_range(qualified, broad_start, end, frequency="1MIN"), qualified,
                 )
             rows = _merge_second_and_minute_rows(second_rows, minute_rows, sessions=session_count)
+            completed_session = _latest_completed_a_share_session()
+            daily_tail = self.repo.index_range(
+                qualified,
+                datetime.combine(completed_session, datetime.min.time()),
+                datetime.combine(completed_session, datetime.max.time()),
+                frequency="1D",
+            )
+            rows = _append_completed_index_close(
+                rows,
+                daily_tail[-1] if daily_tail else None,
+                completed_session,
+            )
             pre_close = _intraday_pre_close(
                 rows,
                 fallback=lambda session_date: self.repo.previous_index_close(
@@ -713,6 +730,61 @@ def _parse_minute_time(value: Any) -> Optional[datetime]:
         return None
 
 
+def _append_completed_close(
+    rows: List[Any],
+    daily: Any,
+    completed_session: date,
+    *,
+    daily_date: Optional[date],
+) -> List[Any]:
+    """End a partial intraday line at the official same-day daily close."""
+    if not rows or daily is None or daily_date != completed_session:
+        return rows
+    session_rows = [
+        row for row in rows
+        if callable(getattr(getattr(row, "timestamp", None), "date", None))
+        and row.timestamp.date() == completed_session
+    ]
+    if not session_rows:
+        return rows
+    latest = max(session_rows, key=lambda row: row.timestamp)
+    if latest.timestamp.time() >= datetime.strptime("15:00", "%H:%M").time():
+        return rows
+    close = _float_or_none(getattr(daily, "close", None))
+    if close is None or close <= 0:
+        return rows
+    # A daily volume is cumulative, not a factual 15:00 minute volume.  Keep
+    # the closing point at zero volume instead of drawing a false final spike.
+    closing_row = SimpleNamespace(
+        timestamp=datetime.combine(completed_session, datetime.min.time()).replace(hour=15),
+        open=close, high=close, low=close, close=close,
+        volume=0.0, amount=0.0, volume_delta=0.0, amount_delta=0.0,
+        pct_chg=_float_or_none(getattr(daily, "pct_chg", None)),
+        frequency="1MIN",
+        data_source=f"{getattr(daily, 'data_source', None) or 'local.daily'}:official_close",
+    )
+    return sorted([*rows, closing_row], key=lambda row: row.timestamp)
+
+
+def _append_completed_stock_close(rows: List[Any], daily: Any, completed_session: date) -> List[Any]:
+    return _append_completed_close(
+        rows,
+        daily,
+        completed_session,
+        daily_date=getattr(daily, "date", None),
+    )
+
+
+def _append_completed_index_close(rows: List[Any], daily: Any, completed_session: date) -> List[Any]:
+    timestamp = getattr(daily, "timestamp", None)
+    return _append_completed_close(
+        rows,
+        daily,
+        completed_session,
+        daily_date=timestamp.date() if callable(getattr(timestamp, "date", None)) else None,
+    )
+
+
 def _latest_completed_a_share_session(now: Optional[datetime] = None) -> date:
     """Return the newest weekday whose A-share close should be available."""
     current = now or datetime.now()
@@ -779,7 +851,11 @@ def _tick_needs_refresh(row: Any, now: datetime) -> bool:
     if not isinstance(timestamp, datetime):
         return True
     if not _a_share_refresh_window(now):
-        return False
+        # A worker may miss the closing minutes (for example during a deploy or
+        # upstream timeout).  Do not freeze that partial intraday quote for the
+        # rest of the day merely because the polling window has ended.  One
+        # post-close refresh can still obtain the exchange's final snapshot.
+        return timestamp < _latest_a_share_close_timestamp(now)
     age = max(0.0, (now - timestamp).total_seconds())
     return timestamp.date() != now.date() or age > 15
 

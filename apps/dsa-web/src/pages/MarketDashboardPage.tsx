@@ -13,7 +13,7 @@ import type { HomeDashboard, HomeWatchlistCard, MarketIndexCard, MarketPoint } f
 import type { MonitorEvent } from '../types/investmentMonitor';
 import { useRealtimeIndices, useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
-import { marketQuoteSession } from '../utils/marketQuoteDate';
+import { marketQuoteSession, shouldPreferQuote } from '../utils/marketQuoteDate';
 import './MarketDashboardPage.css';
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -245,7 +245,10 @@ const MarketDashboardPage = () => {
   const { quotes: liveQuotes, keyFor: quoteKey } = useRealtimeQuotes(watchlistSymbols);
   const liveWatchlist = useMemo(() => (data?.watchlist ?? []).map(card => {
     const live = liveQuotes.get(quoteKey(card.symbol));
-    return live && !live.isStale ? { ...card, latestQuote: {
+    const preferLive = live
+      && Number.isFinite(live.currentPrice) && live.currentPrice > 0
+      && shouldPreferQuote(live.updateTime, card.latestQuote?.updateTime, Boolean(live.isStale));
+    return preferLive ? { ...card, latestQuote: {
       ...card.latestQuote, currentPrice: live.currentPrice, change: live.change ?? undefined,
       changePercent: live.changePercent ?? undefined, open: live.open ?? undefined,
       high: live.high ?? undefined, low: live.low ?? undefined, prevClose: live.prevClose ?? undefined,
@@ -260,7 +263,8 @@ const MarketDashboardPage = () => {
   const liveIndices = useRealtimeIndices((data?.cnIndices ?? []).map(item => item.code));
   const cnIndices = useMemo(() => (data?.cnIndices ?? []).map(item => {
     const live = liveIndices.get(item.code.toUpperCase());
-    if (!live || live.isStale) return item;
+    if (!live || !Number.isFinite(live.close) || (live.close ?? 0) <= 0
+      || !shouldPreferQuote(live.updateTime, item.updateTime ?? item.tradeDate, Boolean(live.isStale))) return item;
     const history = live.close == null
       ? item.history
       : [...item.history, { date: live.updateTime, value: live.close }].slice(-12);

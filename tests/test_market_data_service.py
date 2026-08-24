@@ -12,6 +12,7 @@ from src.services.market_data_service import (
     _latest_a_share_close_timestamp,
     _latest_completed_a_share_session,
     _parse_tencent_day_minutes,
+    _tick_needs_refresh,
     _tencent_realtime_stock_snapshots,
 )
 from src.storage import DatabaseManager, StockDaily
@@ -135,6 +136,15 @@ def test_latest_completed_a_share_session_handles_after_close_and_weekend():
 
 def test_missing_legacy_exchange_time_falls_back_to_latest_session_close():
     assert _latest_a_share_close_timestamp(datetime(2026, 8, 22, 0, 23, 57)) == datetime(2026, 8, 21, 15, 0)
+
+
+def test_post_close_refresh_retries_an_incomplete_same_day_snapshot():
+    partial = SimpleNamespace(timestamp=datetime(2026, 8, 24, 14, 53, 27))
+    completed = SimpleNamespace(timestamp=datetime(2026, 8, 24, 15, 0, 0))
+    now = datetime(2026, 8, 24, 15, 12, 50)
+
+    assert _tick_needs_refresh(partial, now) is True
+    assert _tick_needs_refresh(completed, now) is False
 
 
 def test_latest_quotes_prefers_completed_daily_close_over_partial_same_day_tick(market_db, monkeypatch):
@@ -470,6 +480,40 @@ def test_index_five_day_intraday_prefers_local_seconds_and_keeps_minute_fallback
     assert result["data"][-1]["date"] == "2026-08-18T10:00:01"
     assert result["source"] == "tencent.5day_minute+test.index.1sec"
     assert service.status()["index_tick_symbols"] == 1
+
+
+def test_index_intraday_ends_on_official_close_when_snapshot_missed_1500(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_index("000001.SH", [{
+        "timestamp": datetime(2026, 8, 24), "open": 3902.70, "high": 3907.65,
+        "low": 3867.47, "close": 3882.01, "change_percent": -0.59,
+    }], frequency="1D", source="tushare.index_daily")
+    repo.upsert_index("000001.SH", [{
+        "timestamp": datetime(2026, 8, 24, 14, 53, 27), "close": 3881.20,
+        "volume": 1_000_000, "change_percent": -0.61,
+    }], frequency="1SEC", source="tencent.snapshot")
+    monkeypatch.setattr(
+        "src.services.market_data_service.datetime",
+        type("FixedDateTime", (datetime,), {
+            "now": classmethod(lambda cls: datetime(2026, 8, 24, 16, 0)),
+            "strptime": datetime.strptime,
+        }),
+    )
+    service = MarketDataService(
+        repository=repo, fetcher=_NoNetworkFetcher(), tushare=_UnavailableGateway(),
+        minute_history_fetcher=lambda _symbol: [],
+    )
+    assert _latest_completed_a_share_session() == date(2026, 8, 24)
+    assert len(repo.index_range(
+        "000001.SH", datetime(2026, 8, 24), datetime(2026, 8, 24, 23, 59, 59), frequency="1D",
+    )) == 1
+
+    result = service.get_index_series("000001.SH", period="intraday", range_key="1d")
+
+    assert result["latest_at"] == "2026-08-24T15:00:00"
+    assert result["data"][-1]["close"] == 3882.01
+    assert result["data"][-1]["volume"] == 0.0
+    assert "official_close" in result["source"]
 
 
 def test_large_index_history_is_batched_below_sqlite_variable_limit(market_db):
