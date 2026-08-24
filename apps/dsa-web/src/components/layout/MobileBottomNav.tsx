@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Home, Menu, MessageSquareQuote, RadioTower, Star } from 'lucide-react';
+import { AudioLines, Download, Home, Menu, Star } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { cn } from '../../utils/cn';
@@ -10,9 +10,9 @@ type MobileBottomNavProps = {
 
 const PRIMARY_ITEMS = [
   { to: '/app', labelKey: 'layout.nav.home' as const, shortLabel: '首页', icon: Home, exact: true },
-  { to: '/chat', labelKey: 'layout.nav.chat' as const, shortLabel: '问股', icon: MessageSquareQuote },
-  { to: '/investment-monitor', labelKey: 'layout.nav.investmentMonitor' as const, shortLabel: '情报', icon: RadioTower },
   { to: '/super-watchlist', labelKey: 'layout.nav.superWatchlist' as const, shortLabel: '自选', icon: Star },
+  { to: '/essay-radar', labelKey: 'layout.nav.essayRadar' as const, shortLabel: '机构段子', icon: AudioLines },
+  { to: '/data-acquisition', labelKey: 'layout.nav.dataAcquisition' as const, shortLabel: '数据下载', icon: Download },
 ];
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ onOpenMore }) => {
