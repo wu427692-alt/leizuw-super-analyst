@@ -425,7 +425,21 @@ class DataAcquisitionService:
                     current_source=task["source"],
                 )
                 try:
-                    rows = self._execute_task(task, normalized_plan["scope"])
+                    def task_progress(update: Dict[str, Any]) -> None:
+                        fraction = max(0.0, min(float(update.get("fraction") or 0), 0.99))
+                        self._emit_progress(
+                            progress_callback,
+                            progress=5 + round(((task_index + fraction) / max(total_tasks, 1)) * 65),
+                            phase="fetching",
+                            message=str(update.get("message") or f"正在获取：{task['label']}"),
+                            completed_tasks=task_index,
+                            total_tasks=total_tasks,
+                            current_task_id=task["id"],
+                            current_source=task["source"],
+                            scanned_rows=int(update.get("scanned_rows") or 0),
+                        )
+
+                    rows = self._execute_task(task, normalized_plan["scope"], progress_callback=task_progress)
                     datasets.append({"task": task, "status": "success", "rows": rows[:MAX_ROWS_PER_DATASET],
                                      "row_count": len(rows[:MAX_ROWS_PER_DATASET]), "error": None,
                                      "applied_scope": normalized_plan["scope"]})
@@ -628,10 +642,13 @@ class DataAcquisitionService:
         except (TypeError, ValueError):
             return MAX_RESEARCH_REPORT_RESULTS
 
-    def _execute_task(self, task: Dict[str, Any], scope: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_task(
+        self, task: Dict[str, Any], scope: Dict[str, Any], *,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> List[Dict[str, Any]]:
         source, resource, params = task["source"], task["resource"], dict(task["params"])
         if source == "tushare":
-            return self._execute_tushare(task, scope)
+            return self._execute_tushare(task, scope, progress_callback=progress_callback)
         if source == "zsxq":
             created_from = params.pop("start_date", params.get("created_from", None))
             created_to = params.pop("end_date", params.get("created_to", None))
@@ -746,10 +763,13 @@ class DataAcquisitionService:
             return rows
         raise DataAcquisitionError(f"不支持的数据源：{source}")
 
-    def _execute_tushare(self, task: Dict[str, Any], scope: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_tushare(
+        self, task: Dict[str, Any], scope: Dict[str, Any], *,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> List[Dict[str, Any]]:
         resource = task["resource"]
         if resource == "research_report":
-            return self._execute_research_reports(task, scope)
+            return self._execute_research_reports(task, scope, progress_callback=progress_callback)
         query_params = dict(task["params"])
         raw_codes = query_params.pop("ts_codes", query_params.get("ts_code", ""))
         codes = raw_codes if isinstance(raw_codes, list) else [value.strip() for value in str(raw_codes).split(",") if value.strip()]
@@ -806,7 +826,10 @@ class DataAcquisitionService:
             unique[identity] = row
         return list(unique.values())
 
-    def _execute_research_reports(self, task: Dict[str, Any], scope: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_research_reports(
+        self, task: Dict[str, Any], scope: Dict[str, Any], *,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> List[Dict[str, Any]]:
         """Recall the full requested period, then rank/filter before exporting anything."""
         params = dict(task.get("params") or {})
         topics: List[str] = []
@@ -847,8 +870,11 @@ class DataAcquisitionService:
         rows_by_identity: Dict[str, Dict[str, Any]] = {}
         scanned = 0
         recall_truncated = False
+        date_windows = self._report_date_windows(start, end)
+        total_windows = max(1, len(selectors) * len(date_windows))
+        completed_windows = 0
         for selector in selectors:
-            for window_start, window_end in self._report_date_windows(start, end):
+            for window_start, window_end in date_windows:
                 for offset in range(0, MAX_RESEARCH_REPORT_RECALL_ROWS, 1000):
                     current = {
                         **upstream_base,
@@ -881,6 +907,13 @@ class DataAcquisitionService:
                         break
                     if len(page) < 1000:
                         break
+                completed_windows += 1
+                if progress_callback:
+                    progress_callback({
+                        "fraction": min(0.88, completed_windows / total_windows * 0.88),
+                        "message": f"研报元数据扫描 {completed_windows}/{total_windows} 个时间窗口 · 已检查 {scanned:,} 条",
+                        "scanned_rows": scanned,
+                    })
                 if recall_truncated:
                     break
             if recall_truncated:
@@ -899,6 +932,12 @@ class DataAcquisitionService:
         )
         review_pool = candidates[:max(max_results * 3, max_results)]
         if ai_filter and review_pool:
+            if progress_callback:
+                progress_callback({
+                    "fraction": 0.90,
+                    "message": f"关键词召回 {len(candidates):,} 篇，正在进行 AI 语义复核",
+                    "scanned_rows": scanned,
+                })
             review_pool = self._ai_review_research_reports(review_pool, topics, depth_preference)
         selected = review_pool[:max_results]
         for row in selected:
@@ -906,6 +945,12 @@ class DataAcquisitionService:
             row["检索结束日期"] = end.isoformat()
             row["候选扫描数"] = scanned
             row["召回是否截断"] = recall_truncated
+        if progress_callback:
+            progress_callback({
+                "fraction": 0.98,
+                "message": f"研报筛选完成：扫描 {scanned:,} 条，选中 {len(selected):,} 篇",
+                "scanned_rows": scanned,
+            })
         return selected
 
     @staticmethod
