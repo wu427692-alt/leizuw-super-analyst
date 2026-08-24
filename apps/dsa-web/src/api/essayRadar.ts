@@ -86,6 +86,23 @@ export const essayRadarApi = {
     });
     return toCamelCase<EssayAnalysisList>(response.data);
   },
+  exportFeed: async (filters: EssayFilters): Promise<Blob> => {
+    const response = await apiClient.get('/api/v1/essay-radar/feed/export', {
+      params: {
+        days: filters.days ?? 0,
+        query: filters.query || undefined,
+        analysis_status: filters.analysisStatus || undefined,
+        sentiment: filters.sentiment || undefined,
+        category: filters.category || undefined,
+        tag: filters.tag || undefined,
+        stock: filters.stock || undefined,
+        min_importance: filters.minImportance ? filters.minImportance : undefined,
+      },
+      responseType: 'blob',
+      timeout: 300000,
+    });
+    return response.data as Blob;
+  },
   detail: async (topicId: string): Promise<EssayAnalysis> => {
     const response = await apiClient.get(`/api/v1/essay-radar/analyses/${encodeURIComponent(topicId)}`);
     return toCamelCase<EssayAnalysis>(response.data);

@@ -50,6 +50,32 @@ describe('essayRadarApi', () => {
     );
   });
 
+  it('exports every feed match with the active search filters', async () => {
+    const workbook = new Blob(['xlsx']);
+    vi.mocked(apiClient.get).mockResolvedValue({ data: workbook });
+
+    const result = await essayRadarApi.exportFeed({
+      days: 30,
+      query: '华懋 科技',
+      analysisStatus: 'completed',
+      sentiment: 'bullish',
+      minImportance: 75,
+    });
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/v1/essay-radar/feed/export', {
+      params: expect.objectContaining({
+        days: 30,
+        query: '华懋 科技',
+        analysis_status: 'completed',
+        sentiment: 'bullish',
+        min_importance: 75,
+      }),
+      responseType: 'blob',
+      timeout: 300000,
+    });
+    expect(result).toBe(workbook);
+  });
+
   it('preserves recent-library activity counts when numeric snake-case keys are converted', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: {

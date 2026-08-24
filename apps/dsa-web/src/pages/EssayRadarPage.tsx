@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Archive, ArrowRight, BarChart3, Brain, Database, ExternalLink, FileText, GitBranch, Image,
+  Archive, ArrowRight, BarChart3, Brain, Database, Download, ExternalLink, FileText, GitBranch, Image,
   ListFilter, RefreshCw, Search, Settings2, ShieldAlert, Sparkles, TrendingUp,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -76,6 +76,15 @@ function formatClock(value?: string | null) {
 
 function errorText(value: unknown, fallback: string) {
   return value instanceof Error ? value.message : fallback;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function sentimentVariant(value?: string | null) {
@@ -420,6 +429,8 @@ const EssayRadarPage = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
+  const [exportingFeed, setExportingFeed] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<string | null>(null);
   const feedPageCacheRef = useRef(new Map<string, EssayAnalysisList>());
@@ -649,6 +660,29 @@ const EssayRadarPage = () => {
     }
   };
 
+  const exportFeed = async () => {
+    if (exportingFeed || query !== deferredQuery || !(list?.total ?? 0)) return;
+    setExportingFeed(true);
+    setExportNotice(null);
+    try {
+      const blob = await essayRadarApi.exportFeed({
+        days,
+        query: deferredQuery,
+        analysisStatus,
+        sentiment,
+        category,
+        minImportance,
+      });
+      const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      downloadBlob(blob, `小作文检索结果_${timestamp}.xlsx`);
+      setExportNotice(`已导出当前条件命中的 ${(list?.total ?? 0).toLocaleString()} 篇小作文。`);
+    } catch (caught) {
+      setExportNotice(errorText(caught, 'Excel 导出失败，请稍后重试。'));
+    } finally {
+      setExportingFeed(false);
+    }
+  };
+
   const yesterday = insights?.yesterday;
   const totalPages = Math.max(1, Math.ceil((list?.total ?? 0) / 20));
   const modelComparison = insights?.modelComparison;
@@ -778,7 +812,23 @@ const EssayRadarPage = () => {
             <select aria-label="类型筛选" value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }}><option value="">全部类型</option>{Object.entries(CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
             <select aria-label="重要度筛选" value={minImportance} onChange={(event) => { setMinImportance(Number(event.target.value)); setPage(1); }}><option value={0}>全部重要度</option><option value={60}>≥ 60</option><option value={75}>≥ 75</option><option value={85}>≥ 85</option></select>
           </section>
-          <div className="essay-feed-summary" aria-live="polite"><span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{(list?.total ?? 0).toLocaleString()}</strong> 篇 · {days ? `近 ${days} 日` : '全部已入库'} · 包含未分析原文</>}</span><button type="button" onClick={() => { setQuery(''); setAnalysisStatus(''); setSentiment(''); setCategory(''); setMinImportance(0); setDays(0); setPage(1); }}>清除筛选</button></div>
+          <div className="essay-feed-summary" aria-live="polite">
+            <span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在检索整个本地库，当前结果继续保留…' : feedNotice || <>当前条件命中 <strong>{(list?.total ?? 0).toLocaleString()}</strong> 篇 · {days ? `近 ${days} 日` : '全部已入库'} · 包含未分析原文</>}</span>
+            <div className="essay-feed-summary-actions">
+              <button type="button" onClick={() => { setQuery(''); setAnalysisStatus(''); setSentiment(''); setCategory(''); setMinImportance(0); setDays(0); setPage(1); setExportNotice(null); }}>清除筛选</button>
+              <button
+                type="button"
+                className="essay-feed-export"
+                onClick={() => void exportFeed()}
+                disabled={exportingFeed || query !== deferredQuery || loading || !(list?.total ?? 0)}
+                aria-label="导出当前搜索结果 Excel"
+              >
+                {exportingFeed ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                {exportingFeed ? '正在生成' : '导出 Excel'}
+              </button>
+            </div>
+          </div>
+          {exportNotice ? <div className="essay-export-notice" role="status">{exportNotice}</div> : null}
           <section className="essay-panel essay-feed-panel">
             <div className="essay-feed-list">{list?.items.map((item) => <SignalRow key={item.topicId} item={item} onOpen={setSelected} />)}</div>
             {!loading && !list?.items.length ? <EmptyState title="没有匹配的小作文" description="调整时间或筛选条件。" icon={<Database className="h-7 w-7" />} /> : null}

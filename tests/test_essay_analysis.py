@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 import os
 from datetime import date
 from unittest.mock import MagicMock
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from api.v1.endpoints import essay_radar
@@ -471,6 +473,38 @@ def test_feed_searches_raw_library_without_ai_analysis(essay_service) -> None:
     )
     assert reused_total.status_code == 200
     assert reused_total.json()["total"] == 123
+
+
+def test_feed_export_contains_analysis_columns_and_complete_long_original(essay_service) -> None:
+    long_content = "超长导出原文" * 6000
+    ResearchNoteService().import_topics([{
+        "topic_id": "topic-export-long",
+        "title": "Excel 导出完整性验收",
+        "content": long_content,
+        "create_time": "2026-08-20T09:00:00+0800",
+        "group": {"group_id": "g1", "name": "调研纪要"},
+        "owner": {"name": "导出作者"},
+    }], enqueue_analysis=False)
+    app = FastAPI()
+    app.include_router(essay_radar.router, prefix="/api/v1/essay-radar")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/essay-radar/feed/export?days=0&query=Excel%20导出完整性验收")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert response.headers["x-export-row-count"] == "1"
+    workbook = load_workbook(BytesIO(response.content), read_only=True)
+    assert workbook.sheetnames == ["搜索结果与分析标签", "原文全文", "导出条件"]
+    result_rows = list(workbook["搜索结果与分析标签"].iter_rows(values_only=True))
+    assert "标签" in result_rows[0]
+    assert "AI摘要" in result_rows[0]
+    assert result_rows[1][1] == "topic-export-long"
+    raw_rows = list(workbook["原文全文"].iter_rows(min_row=2, values_only=True))
+    assert len(raw_rows) > 1
+    assert "".join(str(row[5] or "") for row in raw_rows) == long_content
 
 
 def test_word_cloud_and_daily_report_are_periodic_and_idempotent(essay_service, monkeypatch) -> None:

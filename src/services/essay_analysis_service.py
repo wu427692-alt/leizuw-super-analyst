@@ -9,11 +9,17 @@ import hashlib
 import json
 import logging
 import os
+from pathlib import Path
 import re
+import tempfile
 import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from openpyxl.styles import Alignment, Font, PatternFill
 import requests
 from json_repair import repair_json
 
@@ -694,6 +700,153 @@ class EssayAnalysisService:
             "page_size": page_size,
             "scope": "all_stored_notes" if cutoff is None else f"last_{days}_days",
         }
+
+    def export_feed_excel(self, **filters: Any) -> Dict[str, Any]:
+        """Export every row matching the information-feed filters to one XLSX."""
+        days = max(0, min(int(filters.pop("days", 0) or 0), 3650))
+        cutoff = utc_naive_now() - timedelta(days=days) if days else None
+        export_filters = {
+            key: filters.get(key)
+            for key in (
+                "query", "analysis_status", "sentiment", "category", "tag", "stock", "min_importance",
+            )
+        }
+        workbook = Workbook(write_only=True)
+        result_sheet = workbook.create_sheet("搜索结果与分析标签")
+        raw_sheet = workbook.create_sheet("原文全文")
+        condition_sheet = workbook.create_sheet("导出条件")
+
+        result_headers = [
+            "序号", "小作文ID", "发布时间", "知识星球", "作者", "标题", "原文摘要",
+            "AI状态", "模型", "AI摘要", "类型", "情绪", "时间周期", "重要度", "置信度",
+            "标签", "行业", "主题", "股票提及", "核心要点", "催化", "风险", "证据",
+            "矛盾点", "证伪条件", "跟踪点", "盈利影响", "估值影响", "来源质量", "新颖度",
+            "信息类型", "附件", "图片",
+        ]
+        raw_headers = ["小作文ID", "标题", "发布时间", "分段", "总分段", "原文"]
+        self._append_excel_header(result_sheet, result_headers)
+        self._append_excel_header(raw_sheet, raw_headers)
+        result_sheet.freeze_panes = "A2"
+        raw_sheet.freeze_panes = "A2"
+
+        row_count = 0
+        raw_chunk_count = 0
+        for row_count, item in enumerate(
+            self.repo.iter_feed(cutoff=cutoff, **export_filters),
+            start=1,
+        ):
+            note = item.get("note") or {}
+            content = str(note.get("content") or "")
+            chunks = self._excel_chunks(content)
+            result_sheet.append([
+                row_count,
+                self._excel_cell(item.get("topic_id")),
+                self._excel_cell(note.get("created_at")),
+                self._excel_cell(note.get("group_name")),
+                self._excel_cell(note.get("author_name")),
+                self._excel_cell(note.get("title")),
+                self._excel_cell(content[:500]),
+                self._excel_cell(item.get("status")),
+                self._excel_cell(item.get("model")),
+                self._excel_cell(item.get("summary")),
+                self._excel_cell(item.get("primary_category")),
+                self._excel_cell(item.get("sentiment")),
+                self._excel_cell(item.get("time_horizon")),
+                item.get("importance_score"),
+                item.get("confidence_score"),
+                self._excel_cell(item.get("tags")),
+                self._excel_cell(item.get("industries")),
+                self._excel_cell(item.get("themes")),
+                self._excel_cell(item.get("stock_mentions")),
+                self._excel_cell(item.get("key_points")),
+                self._excel_cell(item.get("catalysts")),
+                self._excel_cell(item.get("risks")),
+                self._excel_cell(item.get("evidence")),
+                self._excel_cell(item.get("contradictions")),
+                self._excel_cell(item.get("falsification_conditions")),
+                self._excel_cell(item.get("monitoring_points")),
+                self._excel_cell(item.get("earnings_impact")),
+                self._excel_cell(item.get("valuation_impact")),
+                self._excel_cell(item.get("source_quality")),
+                item.get("novelty_score"),
+                self._excel_cell(item.get("information_type")),
+                self._excel_cell(note.get("files")),
+                self._excel_cell(note.get("images")),
+            ])
+            for chunk_index, chunk in enumerate(chunks, start=1):
+                raw_sheet.append([
+                    self._excel_cell(item.get("topic_id")),
+                    self._excel_cell(note.get("title")),
+                    self._excel_cell(note.get("created_at")),
+                    chunk_index,
+                    len(chunks),
+                    self._excel_cell(chunk),
+                ])
+                raw_chunk_count += 1
+
+        condition_rows = [
+            ("导出时间", datetime.now().astimezone().isoformat(timespec="seconds")),
+            ("匹配数量", row_count),
+            ("原文分段数量", raw_chunk_count),
+            ("时间范围", f"近 {days} 日" if days else "全部已入库"),
+            ("关键词", export_filters.get("query") or ""),
+            ("AI状态", export_filters.get("analysis_status") or "全部"),
+            ("情绪", export_filters.get("sentiment") or "全部"),
+            ("类型", export_filters.get("category") or "全部"),
+            ("标签", export_filters.get("tag") or "全部"),
+            ("股票", export_filters.get("stock") or "全部"),
+            ("最低重要度", export_filters.get("min_importance") or 0),
+            ("说明", "搜索结果工作表含分析标签和原文摘要；原文全文工作表按 Excel 单元格上限分段保存完整正文。"),
+        ]
+        self._append_excel_header(condition_sheet, ["项目", "值"])
+        for key, value in condition_rows:
+            condition_sheet.append([self._excel_cell(key), self._excel_cell(value)])
+        condition_sheet.freeze_panes = "A2"
+
+        handle = tempfile.NamedTemporaryFile(prefix="essay-feed-export-", suffix=".xlsx", delete=False)
+        handle.close()
+        path = Path(handle.name)
+        try:
+            workbook.save(path)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return {
+            "path": str(path),
+            "filename": f"小作文检索结果_{suffix}.xlsx",
+            "row_count": row_count,
+            "raw_chunk_count": raw_chunk_count,
+        }
+
+    @staticmethod
+    def _append_excel_header(sheet: Any, labels: Sequence[str]) -> None:
+        cells = []
+        for label in labels:
+            cell = WriteOnlyCell(sheet, value=label)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="155E75")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cells.append(cell)
+        sheet.append(cells)
+
+    @staticmethod
+    def _excel_chunks(value: str, size: int = 30000) -> List[str]:
+        cleaned = ILLEGAL_CHARACTERS_RE.sub("", str(value or ""))
+        return [cleaned[index:index + size] for index in range(0, len(cleaned), size)] or [""]
+
+    @staticmethod
+    def _excel_cell(value: Any) -> Any:
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list, tuple, set)):
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        else:
+            text = str(value)
+        text = ILLEGAL_CHARACTERS_RE.sub("", text)
+        if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+            text = "'" + text
+        return text[:32760]
 
     def get_analysis(self, topic_id: str) -> Dict[str, Any]:
         row = self.repo.get_analysis(str(topic_id or "").strip())

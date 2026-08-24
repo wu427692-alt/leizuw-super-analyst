@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import json
 import threading
 import time
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from sqlalchemy import and_, asc, case, desc, func, or_, select
 
@@ -542,6 +542,86 @@ class EssayAnalysisRepository:
         be searchable or visible. AI-only filters naturally narrow the result to
         rows that have matching analysis data.
         """
+        where_clause, count_cache_key = self._feed_where_clause(
+            cutoff=cutoff,
+            query=query,
+            analysis_status=analysis_status,
+            sentiment=sentiment,
+            category=category,
+            tag=tag,
+            stock=stock,
+            min_importance=min_importance,
+        )
+        safe_page = max(1, int(page))
+        safe_size = max(1, min(int(page_size), 100))
+        with self.db.get_session() as session:
+            total = max(0, int(known_total)) if known_total is not None else _cached_feed_count(
+                count_cache_key,
+                lambda: session.execute(
+                    select(func.count(ResearchNote.id))
+                    .select_from(ResearchNote)
+                    .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                    .where(where_clause)
+                ).scalar(),
+            )
+            rows = session.execute(
+                select(EssayAnalysisRecord, ResearchNote)
+                .select_from(ResearchNote)
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(where_clause)
+                .order_by(desc(ResearchNote.created_at), desc(ResearchNote.id))
+                .offset((safe_page - 1) * safe_size)
+                .limit(safe_size)
+            ).all()
+        return [self._to_feed_dict(analysis, note) for analysis, note in rows], int(total)
+
+    def iter_feed(
+        self,
+        *,
+        cutoff: Optional[datetime] = None,
+        query: Optional[str] = None,
+        analysis_status: Optional[str] = None,
+        sentiment: Optional[str] = None,
+        category: Optional[str] = None,
+        tag: Optional[str] = None,
+        stock: Optional[str] = None,
+        min_importance: Optional[int] = None,
+    ) -> Iterator[Dict[str, Any]]:
+        """Iterate every matching note without offset pagination for exports."""
+        where_clause, _cache_key = self._feed_where_clause(
+            cutoff=cutoff,
+            query=query,
+            analysis_status=analysis_status,
+            sentiment=sentiment,
+            category=category,
+            tag=tag,
+            stock=stock,
+            min_importance=min_importance,
+        )
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(EssayAnalysisRecord, ResearchNote)
+                .select_from(ResearchNote)
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(where_clause)
+                .order_by(desc(ResearchNote.created_at), desc(ResearchNote.id))
+                .execution_options(yield_per=250)
+            )
+            for analysis, note in rows:
+                yield self._to_feed_dict(analysis, note)
+
+    def _feed_where_clause(
+        self,
+        *,
+        cutoff: Optional[datetime],
+        query: Optional[str],
+        analysis_status: Optional[str],
+        sentiment: Optional[str],
+        category: Optional[str],
+        tag: Optional[str],
+        stock: Optional[str],
+        min_importance: Optional[int],
+    ) -> Tuple[Any, Tuple[Any, ...]]:
         conditions = []
         if cutoff is not None:
             conditions.append(ResearchNote.created_at >= cutoff)
@@ -589,8 +669,6 @@ class EssayAnalysisRepository:
         if min_importance is not None and int(min_importance) > 0:
             conditions.append(EssayAnalysisRecord.importance_score >= int(min_importance))
         where_clause = and_(*conditions) if conditions else True
-        safe_page = max(1, int(page))
-        safe_size = max(1, min(int(page_size), 100))
         count_cache_key = (
             id(self.db),
             cutoff.replace(second=0, microsecond=0).isoformat() if cutoff else None,
@@ -602,26 +680,7 @@ class EssayAnalysisRepository:
             stock or "",
             int(min_importance or 0),
         )
-        with self.db.get_session() as session:
-            total = max(0, int(known_total)) if known_total is not None else _cached_feed_count(
-                count_cache_key,
-                lambda: session.execute(
-                    select(func.count(ResearchNote.id))
-                    .select_from(ResearchNote)
-                    .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
-                    .where(where_clause)
-                ).scalar(),
-            )
-            rows = session.execute(
-                select(EssayAnalysisRecord, ResearchNote)
-                .select_from(ResearchNote)
-                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
-                .where(where_clause)
-                .order_by(desc(ResearchNote.created_at), desc(ResearchNote.id))
-                .offset((safe_page - 1) * safe_size)
-                .limit(safe_size)
-            ).all()
-        return [self._to_feed_dict(analysis, note) for analysis, note in rows], int(total)
+        return where_clause, count_cache_key
 
     def get_analysis(self, topic_id: str) -> Optional[Dict[str, Any]]:
         with self.db.get_session() as session:

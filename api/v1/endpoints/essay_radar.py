@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from api.v1.schemas.essay_radar import (
     EssayBackfillRequest,
@@ -234,6 +237,46 @@ def list_feed(
         known_total=known_total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get("/feed/export", summary="按当前信息流筛选条件导出分析标签与完整原文 Excel")
+def export_feed(
+    days: int = Query(0, ge=0, le=3650),
+    query: Optional[str] = Query(None, max_length=200),
+    analysis_status: Optional[str] = Query(
+        None,
+        pattern="^(completed|uncompleted|not_queued|pending|processing|failed)$",
+    ),
+    sentiment: Optional[str] = None,
+    category: Optional[str] = None,
+    tag: Optional[str] = None,
+    stock: Optional[str] = None,
+    min_importance: Optional[int] = Query(None, ge=0, le=100),
+):
+    try:
+        exported = EssayAnalysisService().export_feed_excel(
+            days=days,
+            query=query,
+            analysis_status=analysis_status,
+            sentiment=sentiment,
+            category=category,
+            tag=tag,
+            stock=stock,
+            min_importance=min_importance,
+        )
+    except Exception as exc:  # noqa: BLE001 - endpoint returns a sanitized export failure.
+        raise _service_error(exc, 500)
+    path = Path(exported["path"])
+    return FileResponse(
+        path=path,
+        filename=exported["filename"],
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "X-Export-Row-Count": str(exported["row_count"]),
+            "X-Export-Raw-Chunk-Count": str(exported["raw_chunk_count"]),
+        },
+        background=BackgroundTask(path.unlink, missing_ok=True),
     )
 
 
