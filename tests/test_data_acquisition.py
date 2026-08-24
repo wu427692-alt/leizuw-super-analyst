@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import time
 import zipfile
 
 from src.services.data_acquisition_service import DataAcquisitionService
+from src.services.data_acquisition_task_service import DataAcquisitionTaskService
 
 
 class FakePlanner:
@@ -72,6 +74,45 @@ def test_acquisition_generates_auditable_multi_format_package(tmp_path: Path):
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["datasets"][0]["source"] == "tushare"
         assert manifest["datasets"][1]["source"] == "zsxq"
+
+
+def test_acquisition_reports_real_task_and_packaging_progress(tmp_path: Path):
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=FakeFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    updates = []
+
+    result = service.run("获取华懋科技数据", progress_callback=updates.append)
+
+    progress = [item["progress"] for item in updates]
+    assert progress == sorted(progress)
+    assert progress[-1] == 100
+    assert {item["phase"] for item in updates} >= {"validating", "fetching", "exporting", "packaging", "completed"}
+    assert any(item.get("completed_tasks") == 2 for item in updates)
+    assert result["summary"]["task_count"] == 2
+
+
+def test_background_acquisition_task_persists_progress_and_result(tmp_path: Path):
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=FakeFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    manager = DataAcquisitionTaskService(service_factory=lambda: service, task_root=tmp_path / ".tasks")
+
+    submitted = manager.submit("获取华懋科技数据", FakePlanner().plan("获取华懋科技数据"))
+    assert submitted["status"] == "queued"
+    assert submitted["progress"] == 0
+    assert len(submitted["tasks"]) == 2
+
+    deadline = time.monotonic() + 5
+    current = submitted
+    while current["status"] in {"queued", "running"} and time.monotonic() < deadline:
+        time.sleep(0.02)
+        current = manager.get(submitted["task_id"])
+
+    assert current["status"] == "completed"
+    assert current["progress"] == 100
+    assert current["result"]["summary"]["row_count"] == 2
+    assert service.package_path(current["job_id"]).is_file()
 
 
 def test_acquisition_keeps_package_when_one_source_fails(tmp_path: Path):

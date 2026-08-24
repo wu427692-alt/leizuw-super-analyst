@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, CheckCircle2, DatabaseZap, Download, FileArchive, PackageCheck, Play, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react';
+import { Bot, CheckCircle2, CircleDashed, DatabaseZap, Download, FileArchive, PackageCheck, Play, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react';
 import { dataAcquisitionApi } from '../api/dataAcquisition';
 import { AppPage, Badge, Card, EmptyState, PageHeader, StatCard } from '../components/common';
-import type { AcquisitionCapabilities, AcquisitionJob, AcquisitionPlan } from '../types/dataAcquisition';
+import type { AcquisitionCapabilities, AcquisitionDownloadProgress, AcquisitionJob, AcquisitionPlan, AcquisitionRunTask } from '../types/dataAcquisition';
 
 const EXAMPLES = [
   '打包华懋科技和胜宏科技近90天行情、估值、资金、公告、研报、新闻和知识星球小作文，并补充工商与风险信息',
@@ -12,6 +12,18 @@ const EXAMPLES = [
 
 const SOURCE_LABELS: Record<string, string> = {
   tushare: 'Tushare Pro', zsxq: '知识星球', cninfo: '巨潮资讯', monitor: '其他情报', tianyancha: '天眼查',
+};
+
+const PHASE_LABELS: Record<AcquisitionRunTask['phase'], string> = {
+  queued: '排队中', starting: '启动任务', validating: '校验范围', fetching: '跨渠道获取',
+  exporting: '生成数据文件', packaging: '压缩 ZIP', finalizing: '完成校验', completed: '已完成',
+  failed: '执行失败', interrupted: '任务中断',
+};
+const ACTIVE_TASK_STORAGE_KEY = 'dsa:data-acquisition:active-task';
+
+type DownloadState = AcquisitionDownloadProgress & {
+  jobId: string;
+  status: 'downloading' | 'completed';
 };
 
 function saveBlob(blob: Blob, filename: string) {
@@ -26,15 +38,41 @@ function formatTime(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
 }
 
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function DownloadProgress({ state }: { state: DownloadState }) {
+  const label = state.total
+    ? `${formatBytes(state.loaded)} / ${formatBytes(state.total)}`
+    : `已接收 ${formatBytes(state.loaded)}`;
+  return <div className="mt-3" aria-live="polite">
+    <div className="flex items-center justify-between gap-3 text-[11px] text-secondary-text">
+      <span>{state.status === 'completed' ? '下载完成' : '正在传输真实文件字节'}</span>
+      <span className="font-mono">{state.percent !== undefined ? `${state.percent}% · ` : ''}{label}</span>
+    </div>
+    <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-border/70" role="progressbar" aria-label="数据包下载进度"
+      aria-valuemin={0} aria-valuemax={100} aria-valuenow={state.percent}>
+      <div className={`h-full rounded-full bg-primary transition-[width] duration-200 ${state.percent === undefined ? 'w-1/3 animate-pulse' : ''}`}
+        style={state.percent === undefined ? undefined : { width: `${state.percent}%` }} />
+    </div>
+  </div>;
+}
+
 const DataAcquisitionPage = () => {
   const [request, setRequest] = useState(EXAMPLES[0]);
   const [capabilities, setCapabilities] = useState<AcquisitionCapabilities | null>(null);
   const [plan, setPlan] = useState<AcquisitionPlan | null>(null);
   const [jobs, setJobs] = useState<AcquisitionJob[]>([]);
   const [activeJob, setActiveJob] = useState<AcquisitionJob | null>(null);
+  const [runTask, setRunTask] = useState<AcquisitionRunTask | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState(() => window.localStorage.getItem(ACTIVE_TASK_STORAGE_KEY) ?? '');
   const [planning, setPlanning] = useState(false);
   const [running, setRunning] = useState(false);
   const [downloading, setDownloading] = useState('');
+  const [downloadProgress, setDownloadProgress] = useState<DownloadState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -57,6 +95,36 @@ const DataAcquisitionPage = () => {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (!activeTaskId) return undefined;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const next = await dataAcquisitionApi.task(activeTaskId);
+        if (cancelled) return;
+        setRunTask(next);
+        if (next.status === 'completed' && next.result) {
+          setActiveJob(next.result);
+          setJobs((current) => [next.result!, ...current.filter((item) => item.jobId !== next.result!.jobId)]);
+          window.localStorage.removeItem(ACTIVE_TASK_STORAGE_KEY);
+          setActiveTaskId('');
+          return;
+        }
+        if (next.status === 'failed') {
+          window.localStorage.removeItem(ACTIVE_TASK_STORAGE_KEY);
+          setActiveTaskId('');
+          return;
+        }
+      } catch {
+        // A transient poll failure must not discard a still-running server task.
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 1000);
+    };
+    void poll();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeTaskId]);
+
   const createPlan = async () => {
     if (request.trim().length < 2) return;
     setPlanning(true); setError(null); setPlan(null); setActiveJob(null);
@@ -67,20 +135,31 @@ const DataAcquisitionPage = () => {
 
   const runPlan = async () => {
     if (!plan) return;
-    setRunning(true); setError(null);
+    setRunning(true); setError(null); setActiveJob(null); setRunTask(null);
     try {
-      const job = await dataAcquisitionApi.run(request.trim(), plan);
-      setActiveJob(job); setJobs((current) => [job, ...current.filter((item) => item.jobId !== job.jobId)]);
+      const task = await dataAcquisitionApi.runAsync(request.trim(), plan);
+      setRunTask(task);
+      setActiveTaskId(task.taskId);
+      window.localStorage.setItem(ACTIVE_TASK_STORAGE_KEY, task.taskId);
     } catch (caught) { setError(caught instanceof Error ? caught.message : '执行取数任务失败'); }
     finally { setRunning(false); }
   };
 
   const download = async (job: AcquisitionJob) => {
     setDownloading(job.jobId); setError(null);
-    try { saveBlob(await dataAcquisitionApi.download(job.jobId), `财经数据包_${job.jobId}.zip`); }
+    setDownloadProgress({ jobId: job.jobId, loaded: 0, status: 'downloading' });
+    try {
+      const blob = await dataAcquisitionApi.download(job.jobId, (progress) => {
+        setDownloadProgress({ jobId: job.jobId, status: 'downloading', ...progress });
+      });
+      setDownloadProgress({ jobId: job.jobId, loaded: blob.size, total: blob.size, percent: 100, status: 'completed' });
+      saveBlob(blob, `财经数据包_${job.jobId}.zip`);
+    }
     catch (caught) { setError(caught instanceof Error ? caught.message : '下载数据包失败'); }
     finally { setDownloading(''); }
   };
+
+  const runActive = running || runTask?.status === 'queued' || runTask?.status === 'running';
 
   return (
     <AppPage>
@@ -109,7 +188,7 @@ const DataAcquisitionPage = () => {
               </div>
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs text-secondary-text"><ShieldCheck className="h-4 w-4 text-success" />先审计划，再执行；密钥不会写入数据包</div>
-                <button className="btn-primary inline-flex items-center gap-2" disabled={planning || running || request.trim().length < 2} onClick={() => void createPlan()}>
+                <button className="btn-primary inline-flex items-center gap-2" disabled={planning || runActive || request.trim().length < 2} onClick={() => void createPlan()}>
                   <Send className={`h-4 w-4 ${planning ? 'animate-pulse' : ''}`} />{planning ? 'AI 正在规划…' : '生成取数计划'}
                 </button>
               </div>
@@ -146,9 +225,43 @@ const DataAcquisitionPage = () => {
             </div>)}
           </div>
           {plan.caveats.length ? <div className="mt-4 rounded-xl border border-warning/25 bg-warning/10 px-4 py-3 text-xs text-secondary-text">{plan.caveats.join('；')}</div> : null}
-          <div className="mt-5 flex justify-end"><button className="btn-primary inline-flex items-center gap-2" disabled={running} onClick={() => void runPlan()}>
-            <Play className={`h-4 w-4 ${running ? 'animate-pulse' : ''}`} />{running ? '正在跨渠道取数并打包…' : `确认执行 ${plan.tasks.length} 个任务`}
+          <div className="mt-5 flex justify-end"><button className="btn-primary inline-flex items-center gap-2" disabled={runActive} onClick={() => void runPlan()}>
+            <Play className={`h-4 w-4 ${runActive ? 'animate-pulse' : ''}`} />{runActive ? '后台任务执行中…' : `确认执行 ${plan.tasks.length} 个任务`}
           </button></div>
+        </Card> : null}
+
+        {runTask ? <Card title="真实任务进度" subtitle={runTask.taskId} padding="lg">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                {runTask.status === 'failed' ? <XCircle className="h-5 w-5 text-danger" /> :
+                  runTask.status === 'completed' ? <CheckCircle2 className="h-5 w-5 text-success" /> :
+                    <CircleDashed className="h-5 w-5 animate-spin text-primary" />}
+                <span className="font-semibold text-foreground">{PHASE_LABELS[runTask.phase] ?? runTask.phase}</span>
+              </div>
+              <p className={`mt-1 text-sm ${runTask.status === 'failed' ? 'text-danger' : 'text-secondary-text'}`}>{runTask.message}</p>
+            </div>
+            <div className="text-right font-mono text-2xl font-semibold text-foreground">{runTask.progress}%</div>
+          </div>
+          <div className="mt-4 h-3 overflow-hidden rounded-full bg-border/70" role="progressbar" aria-label="跨渠道取数与打包进度"
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={runTask.progress}>
+            <div className={`h-full rounded-full transition-[width] duration-300 ${runTask.status === 'failed' ? 'bg-danger' : 'bg-primary'}`}
+              style={{ width: `${runTask.progress}%` }} />
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {((runTask.tasks?.length ? runTask.tasks : plan?.tasks) ?? []).map((task, index) => {
+              const completed = index < runTask.completedTasks;
+              const current = task.id === runTask.currentTaskId && runTask.status === 'running';
+              return <div key={task.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${completed ? 'border-success/25 bg-success/5' : current ? 'border-primary/35 bg-primary/5' : 'border-border/70 bg-background/40'}`}>
+                {completed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : current ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border text-[9px] text-secondary-text">{index + 1}</span>}
+                <div className="min-w-0"><p className="truncate text-xs font-medium text-foreground">{task.label}</p><p className="truncate text-[10px] text-secondary-text">{SOURCE_LABELS[task.source] ?? task.source}</p></div>
+              </div>;
+            })}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-secondary-text">
+            <span>已完成 {runTask.completedTasks}/{runTask.totalTasks || plan?.tasks.length || 0} 个渠道任务</span>
+            <span>最后更新 {formatTime(runTask.updatedAt)}</span>
+          </div>
         </Card> : null}
 
         {activeJob ? <div className="space-y-4">
@@ -162,18 +275,22 @@ const DataAcquisitionPage = () => {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div><p className="text-sm text-foreground">按渠道分目录，分别包含 JSON、CSV、Excel，并附任务范围与来源清单。</p><p className="mt-1 text-xs text-secondary-text">状态：{activeJob.status} · {formatTime(activeJob.generatedAt)}{activeJob.summary.includeFiles ? ` · 原始文件 ${activeJob.summary.downloadedFileCount ?? 0} 个` : ''}</p></div>
               <button className="btn-primary inline-flex items-center gap-2" disabled={downloading === activeJob.jobId} onClick={() => void download(activeJob)}>
-                <Download className="h-4 w-4" />{downloading === activeJob.jobId ? '下载中…' : '下载完整 ZIP'}
+                <Download className="h-4 w-4" />{downloading === activeJob.jobId ? `${downloadProgress?.percent ?? '—'}% 下载中` : '下载完整 ZIP'}
               </button>
             </div>
+            {downloadProgress?.jobId === activeJob.jobId ? <DownloadProgress state={downloadProgress} /> : null}
           </Card>
         </div> : null}
 
         <Card title="最近数据包" subtitle="LOCAL PACKAGE HISTORY">
           {!jobs.length ? <EmptyState icon={<FileArchive className="h-6 w-6" />} title="还没有数据包" description="描述需求并执行计划后，生成记录会出现在这里。" /> :
-            <div className="divide-y divide-border/60">{jobs.map((job) => <div key={job.jobId} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 md:flex-row md:items-center md:justify-between">
-              <div className="min-w-0"><div className="flex items-center gap-2"><p className="truncate text-sm font-medium text-foreground">{job.title}</p><Badge variant={job.status === 'success' ? 'success' : job.status === 'partial' ? 'warning' : 'danger'}>{job.status}</Badge>{!job.contractVersion?.startsWith('channel-scoped-v') ? <Badge variant="warning">旧版未分渠道</Badge> : <Badge variant="info">渠道独立包</Badge>}</div>
-                <p className="mt-1 truncate text-xs text-secondary-text">{job.summary.rowCount} 行 · {job.summary.successCount}/{job.summary.taskCount} 数据集 · {formatTime(job.generatedAt)}</p></div>
-              <button className="btn-secondary inline-flex shrink-0 items-center gap-2" disabled={downloading === job.jobId} onClick={() => void download(job)}><Download className="h-4 w-4" />下载</button>
+            <div className="divide-y divide-border/60">{jobs.map((job) => <div key={job.jobId} className="py-4 first:pt-0 last:pb-0">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0"><div className="flex items-center gap-2"><p className="truncate text-sm font-medium text-foreground">{job.title}</p><Badge variant={job.status === 'success' ? 'success' : job.status === 'partial' ? 'warning' : 'danger'}>{job.status}</Badge>{!job.contractVersion?.startsWith('channel-scoped-v') ? <Badge variant="warning">旧版未分渠道</Badge> : <Badge variant="info">渠道独立包</Badge>}</div>
+                  <p className="mt-1 truncate text-xs text-secondary-text">{job.summary.rowCount} 行 · {job.summary.successCount}/{job.summary.taskCount} 数据集 · {formatTime(job.generatedAt)}</p></div>
+                <button className="btn-secondary inline-flex shrink-0 items-center gap-2" disabled={downloading === job.jobId} onClick={() => void download(job)}><Download className="h-4 w-4" />{downloading === job.jobId ? `${downloadProgress?.percent ?? '—'}%` : '下载'}</button>
+              </div>
+              {downloadProgress?.jobId === job.jobId ? <DownloadProgress state={downloadProgress} /> : null}
             </div>)}</div>}
         </Card>
       </div>

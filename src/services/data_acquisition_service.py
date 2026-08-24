@@ -15,7 +15,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 import zipfile
 
@@ -279,8 +279,22 @@ class DataAcquisitionService:
     def plan(self, request_text: str) -> Dict[str, Any]:
         return self.planner.plan(str(request_text or "").strip())
 
-    def run(self, request_text: str, plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def run(
+        self,
+        request_text: str,
+        plan: Optional[Dict[str, Any]] = None,
+        *,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
         normalized_plan = self._validate_plan(plan or self.plan(request_text), request_text)
+        self._emit_progress(
+            progress_callback,
+            progress=3,
+            phase="validating",
+            message="取数范围与渠道计划已校验",
+            completed_tasks=0,
+            total_tasks=len(normalized_plan["tasks"]),
+        )
         now = datetime.now(timezone.utc)
         digest = hashlib.sha256(f"{now.isoformat()}:{request_text}".encode()).hexdigest()[:10]
         job_id = f"{now.strftime('%Y%m%dT%H%M%SZ')}-{digest}"
@@ -290,7 +304,18 @@ class DataAcquisitionService:
         temp_dir = Path(tempfile.mkdtemp(prefix=f".{job_id}-", dir=self.output_root))
         datasets: List[Dict[str, Any]] = []
         try:
-            for task in normalized_plan["tasks"]:
+            total_tasks = len(normalized_plan["tasks"])
+            for task_index, task in enumerate(normalized_plan["tasks"]):
+                self._emit_progress(
+                    progress_callback,
+                    progress=5 + round((task_index / max(total_tasks, 1)) * 65),
+                    phase="fetching",
+                    message=f"正在获取：{task['label']}",
+                    completed_tasks=task_index,
+                    total_tasks=total_tasks,
+                    current_task_id=task["id"],
+                    current_source=task["source"],
+                )
                 try:
                     rows = self._execute_task(task, normalized_plan["scope"])
                     datasets.append({"task": task, "status": "success", "rows": rows[:MAX_ROWS_PER_DATASET],
@@ -301,8 +326,34 @@ class DataAcquisitionService:
                                    task["source"], task["resource"], type(exc).__name__)
                     datasets.append({"task": task, "status": "failed", "rows": [], "row_count": 0,
                                      "error": self._safe_error(exc), "applied_scope": normalized_plan["scope"]})
-            manifest = self._write_artifacts(temp_dir, job_id, request_text, normalized_plan, datasets)
+                self._emit_progress(
+                    progress_callback,
+                    progress=5 + round(((task_index + 1) / max(total_tasks, 1)) * 65),
+                    phase="fetching",
+                    message=f"已完成 {task_index + 1}/{total_tasks} 个渠道任务",
+                    completed_tasks=task_index + 1,
+                    total_tasks=total_tasks,
+                    current_task_id=task["id"],
+                    current_source=task["source"],
+                )
+            manifest = self._write_artifacts(
+                temp_dir,
+                job_id,
+                request_text,
+                normalized_plan,
+                datasets,
+                progress_callback=progress_callback,
+            )
             temp_dir.rename(final_dir)
+            self._emit_progress(
+                progress_callback,
+                progress=100,
+                phase="completed",
+                message="数据包已生成，可以下载",
+                completed_tasks=total_tasks,
+                total_tasks=total_tasks,
+                job_id=job_id,
+            )
             return manifest
         except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -720,10 +771,19 @@ class DataAcquisitionService:
             temporary.unlink(missing_ok=True)
 
     def _write_artifacts(self, directory: Path, job_id: str, request_text: str,
-                         plan: Dict[str, Any], datasets: List[Dict[str, Any]]) -> Dict[str, Any]:
+                         plan: Dict[str, Any], datasets: List[Dict[str, Any]], *,
+                         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         generated_at = datetime.now(timezone.utc).isoformat()
         dataset_manifest = []
         workbooks: Dict[str, Workbook] = {}
+        self._emit_progress(
+            progress_callback,
+            progress=72,
+            phase="exporting",
+            message="正在按渠道生成 JSON、CSV 与 Excel",
+            completed_tasks=len(datasets),
+            total_tasks=len(datasets),
+        )
         for index, dataset in enumerate(datasets, start=1):
             task, rows = dataset["task"], dataset["rows"]
             stem = f"{index:02d}_{self._safe_filename(task['label'])}"
@@ -742,6 +802,16 @@ class DataAcquisitionService:
                                      "row_count": dataset["row_count"], "error": dataset["error"],
                                      "applied_scope": dataset["applied_scope"], "files": [json_name, csv_name],
                                      "attachments": attachments})
+            self._emit_progress(
+                progress_callback,
+                progress=72 + round((index / max(len(datasets), 1)) * 20),
+                phase="exporting",
+                message=f"已导出 {index}/{len(datasets)} 个数据集",
+                completed_tasks=len(datasets),
+                total_tasks=len(datasets),
+                current_task_id=task["id"],
+                current_source=task["source"],
+            )
         for source, workbook in workbooks.items():
             workbook.save(directory / source / f"{source}.xlsx")
         success_count = sum(item["status"] == "success" for item in dataset_manifest)
@@ -766,11 +836,39 @@ class DataAcquisitionService:
                   "失败的数据源不会阻断其他任务，具体原因请查看 manifest.json。"]
         (directory / "README.md").write_text("\n".join(readme), encoding="utf-8")
         zip_name = f"{job_id}.zip"
+        self._emit_progress(
+            progress_callback,
+            progress=96,
+            phase="packaging",
+            message="正在压缩最终 ZIP 数据包",
+            completed_tasks=len(datasets),
+            total_tasks=len(datasets),
+        )
         with zipfile.ZipFile(directory / zip_name, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(directory.rglob("*")):
                 if path.is_file() and path.name != zip_name:
                     archive.write(path, path.relative_to(directory))
+        self._emit_progress(
+            progress_callback,
+            progress=99,
+            phase="finalizing",
+            message="正在写入来源清单并完成校验",
+            completed_tasks=len(datasets),
+            total_tasks=len(datasets),
+        )
         return manifest
+
+    @staticmethod
+    def _emit_progress(
+        callback: Optional[Callable[[Dict[str, Any]], None]],
+        **update: Any,
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            callback(update)
+        except Exception:  # Progress reporting must never invalidate a useful package.
+            logger.debug("Data acquisition progress callback failed", exc_info=True)
 
     @staticmethod
     def _filter_rows(rows: List[Dict[str, Any]], source: str, resource: str,

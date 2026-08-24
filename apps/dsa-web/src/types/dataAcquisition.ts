@@ -52,6 +52,30 @@ export type AcquisitionJob = {
   formats: string[];
 };
 
+export type AcquisitionRunTask = {
+  taskId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  phase: 'queued' | 'starting' | 'validating' | 'fetching' | 'exporting' | 'packaging' | 'finalizing' | 'completed' | 'failed' | 'interrupted';
+  message: string;
+  completedTasks: number;
+  totalTasks: number;
+  tasks: Array<{ id: string; label: string; source: string }>;
+  currentTaskId?: string | null;
+  currentSource?: string | null;
+  jobId?: string | null;
+  result?: AcquisitionJob | null;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AcquisitionDownloadProgress = {
+  loaded: number;
+  total?: number;
+  percent?: number;
+};
+
 export type AcquisitionCapabilities = {
   sources: Array<{
     key: string;

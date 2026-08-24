@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 
 from api.v1.schemas.data_acquisition import DataAcquisitionPlanRequest, DataAcquisitionRunRequest
 from src.services.data_acquisition_service import DataAcquisitionError, DataAcquisitionService
+from src.services.data_acquisition_task_service import DataAcquisitionTaskService
 
 router = APIRouter()
 
@@ -33,6 +34,22 @@ def run(request: DataAcquisitionRunRequest):
         return DataAcquisitionService().run(request.request, request.plan)
     except DataAcquisitionError as exc:
         raise _error(exc)
+
+
+@router.post("/run-async", status_code=202, summary="提交后台取数任务并返回真实进度编号")
+def run_async(request: DataAcquisitionRunRequest):
+    try:
+        return DataAcquisitionTaskService.get_instance().submit(request.request, request.plan)
+    except DataAcquisitionError as exc:
+        raise _error(exc)
+
+
+@router.get("/tasks/{task_id}", summary="读取后台取数任务的真实渠道与打包进度")
+def task(task_id: str):
+    try:
+        return DataAcquisitionTaskService.get_instance().get(task_id)
+    except DataAcquisitionError as exc:
+        raise _error(exc, 404)
 
 
 @router.get("/jobs", summary="列出最近生成的数据包")

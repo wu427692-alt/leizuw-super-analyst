@@ -32,8 +32,12 @@
 - `GET /api/v1/data-acquisition/capabilities`：数据源、资源和规划器状态。
 - `POST /api/v1/data-acquisition/plan`：请求体 `{"request":"..."}`，生成取数计划。
 - `POST /api/v1/data-acquisition/run`：传入自然语言需求和已确认计划，执行并生成数据包。
+- `POST /api/v1/data-acquisition/run-async`：提交后台取数任务，立即返回 `task_id`、真实阶段和初始进度；Web 工作台默认使用此接口。
+- `GET /api/v1/data-acquisition/tasks/{task_id}`：读取已完成渠道数、当前渠道、导出/压缩阶段和最终数据包结果。任务状态持久化，切换页面后可以继续查看；服务重启中断的任务会明确标记失败，不会永久停在“运行中”。
 - `GET /api/v1/data-acquisition/jobs`：最近数据包。
 - `GET /api/v1/data-acquisition/jobs/{job_id}/download`：下载 ZIP。
+
+Web 端的取数进度来自服务端已完成任务数和实际导出/压缩阶段，不使用计时器模拟。ZIP 下载进度来自浏览器收到的真实字节数与响应 `Content-Length`；若上游代理未提供总大小，则展示已接收字节数而不伪造百分比。
 
 所有文件默认保存在主数据库同级的 `data_acquisition/` 目录。数据包不写入 API Token、OAuth 凭证或天眼查本地认证配置。
 

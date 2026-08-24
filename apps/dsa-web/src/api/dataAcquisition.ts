@@ -1,6 +1,12 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { AcquisitionCapabilities, AcquisitionJob, AcquisitionPlan } from '../types/dataAcquisition';
+import type {
+  AcquisitionCapabilities,
+  AcquisitionDownloadProgress,
+  AcquisitionJob,
+  AcquisitionPlan,
+  AcquisitionRunTask,
+} from '../types/dataAcquisition';
 
 type RawPlan = Omit<AcquisitionPlan, 'outputFormats' | 'generatedAt' | 'scope'> & {
   output_formats?: string[];
@@ -44,19 +50,34 @@ export const dataAcquisitionApi = {
     const response = await apiClient.post('/api/v1/data-acquisition/plan', { request }, { timeout: 150000 });
     return readPlan(response.data as RawPlan);
   },
-  run: async (request: string, plan: AcquisitionPlan): Promise<AcquisitionJob> => {
-    const response = await apiClient.post('/api/v1/data-acquisition/run', { request, plan: writePlan(plan) }, { timeout: 900000 });
-    const job = toCamelCase<AcquisitionJob>(response.data);
-    job.plan = readPlan((response.data as { plan: RawPlan }).plan);
-    return job;
+  runAsync: async (request: string, plan: AcquisitionPlan): Promise<AcquisitionRunTask> => {
+    const response = await apiClient.post('/api/v1/data-acquisition/run-async', { request, plan: writePlan(plan) });
+    return toCamelCase<AcquisitionRunTask>(response.data);
+  },
+  task: async (taskId: string): Promise<AcquisitionRunTask> => {
+    const response = await apiClient.get(`/api/v1/data-acquisition/tasks/${encodeURIComponent(taskId)}`);
+    const task = toCamelCase<AcquisitionRunTask>(response.data);
+    if (task.result) task.result.plan = readPlan((response.data as { result: { plan: RawPlan } }).result.plan);
+    return task;
   },
   jobs: async (): Promise<{ items: AcquisitionJob[]; total: number }> => {
     const response = await apiClient.get('/api/v1/data-acquisition/jobs');
     return toCamelCase(response.data);
   },
-  download: async (jobId: string): Promise<Blob> => {
+  download: async (
+    jobId: string,
+    onProgress?: (progress: AcquisitionDownloadProgress) => void,
+  ): Promise<Blob> => {
     const response = await apiClient.get(`/api/v1/data-acquisition/jobs/${encodeURIComponent(jobId)}/download`, {
       responseType: 'blob', timeout: 120000,
+      onDownloadProgress: (event) => {
+        const total = event.total && event.total > 0 ? event.total : undefined;
+        onProgress?.({
+          loaded: event.loaded,
+          total,
+          percent: total ? Math.min(100, Math.round((event.loaded / total) * 100)) : undefined,
+        });
+      },
     });
     return response.data as Blob;
   },
