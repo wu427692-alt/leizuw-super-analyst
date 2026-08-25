@@ -22,10 +22,12 @@ class StartupWarmupService:
     def _default_tasks(self) -> tuple[WarmupTask, ...]:
         # Import and construct lazily: merely importing api.app must remain fast.
         from src.services.essay_analysis_service import EssayAnalysisService
+        from src.services.industry_research_service import IndustryResearchService
         from src.services.investment_monitor_service import InvestmentMonitorService
 
         essays = EssayAnalysisService()
         monitor = InvestmentMonitorService()
+        industry_research = IndustryResearchService()
         essential: tuple[WarmupTask, ...] = (
             ("essay-library-stats", essays.historical_backlog),
             ("essay-status", lambda: essays.progress(days=30)),
@@ -39,6 +41,10 @@ class StartupWarmupService:
             (
                 "investment-feed-first-page",
                 lambda: monitor.list_events(days=7, page=1, page_size=100),
+            ),
+            (
+                "industry-research-optical-module",
+                lambda: industry_research.blueprint("光模块", lookback_days=730),
             ),
         )
         if os.getenv("APP_STARTUP_WARMUP_PROFILE", "essential").strip().lower() != "full":

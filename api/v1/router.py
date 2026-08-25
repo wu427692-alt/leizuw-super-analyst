@@ -26,6 +26,7 @@ from api.v1.endpoints import (
     health,
     home_dashboard,
     history,
+    industry_research,
     intelligence,
     investment_monitor,
     portfolio,
@@ -157,6 +158,12 @@ router.include_router(
     investment_monitor.router,
     prefix="/investment-monitor",
     tags=["InvestmentMonitor"]
+)
+
+router.include_router(
+    industry_research.router,
+    prefix="/industry-research",
+    tags=["IndustryResearch"],
 )
 
 router.include_router(

@@ -717,6 +717,38 @@ class EssayQuantTaskRecord(Base):
     )
 
 
+class IndustryResearchProjectRecord(Base):
+    """Durable, owner-scoped rapid industry/company research project."""
+
+    __tablename__ = 'industry_research_projects'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String(64), nullable=False, unique=True, index=True)
+    owner_id = Column(String(64), index=True)
+    topic = Column(String(200), nullable=False, index=True)
+    research_type = Column(String(20), nullable=False, default='industry', index=True)
+    objective = Column(Text, nullable=False)
+    lookback_days = Column(Integer, nullable=False, default=730)
+    status = Column(String(20), nullable=False, default='queued', index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    stage = Column(String(40), nullable=False, default='boundary')
+    message = Column(String(300), nullable=False, default='课题已进入后台队列')
+    query_json = Column(Text, nullable=False, default='{}')
+    evidence_snapshot_json = Column(Text, nullable=False, default='{}')
+    report_json = Column(Text)
+    source_hash = Column(String(64), index=True)
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+    started_at = Column(DateTime, index=True)
+    completed_at = Column(DateTime, index=True)
+
+    __table_args__ = (
+        Index('ix_industry_research_owner_status', 'owner_id', 'status'),
+        Index('ix_industry_research_owner_created', 'owner_id', 'created_at'),
+    )
+
+
 class MonitoringSourceRecord(Base):
     """可插拔投资情报源及其健康状态。"""
 

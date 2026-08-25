@@ -77,6 +77,7 @@ const InvestmentMonitorBIPage = lazyRoute(() => import('./pages/InvestmentMonito
 const SuperWatchlistPage = lazyRoute(() => import('./pages/SuperWatchlistPage'), 'super-watchlist');
 const DataAcquisitionPage = lazyRoute(() => import('./pages/DataAcquisitionPage'), 'data-acquisition');
 const ResearchCenterPage = lazyRoute(() => import('./pages/ResearchCenterPage'), 'research-center');
+const IndustryResearchPage = lazyRoute(() => import('./pages/IndustryResearchPage'), 'industry-research');
 const DragonTigerPage = lazyRoute(() => import('./pages/DragonTigerPage'), 'dragon-tiger');
 const AdminConsolePage = lazyRoute(() => import('./pages/AdminConsolePage'), 'admin-console');
 
@@ -91,6 +92,7 @@ const APP_ROUTE_PRELOADERS = [
   () => import('./pages/EssayQuantPage'),
   () => import('./pages/ChatPage'),
   () => import('./pages/ResearchCenterPage'),
+  () => import('./pages/IndustryResearchPage'),
 ];
 
 type NetworkInformationLike = {
@@ -222,6 +224,7 @@ const AppContent: React.FC = () => {
         <Route path="/dashboard" element={<Navigate to="/app" replace />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/research-center" element={<ResearchCenterPage />} />
+        <Route path="/industry-research" element={<IndustryResearchPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/decision-signals" element={<DecisionSignalsPage />} />
         <Route path="/screening" element={<StockScreeningPage />} />
