@@ -21,10 +21,7 @@ const TITLES: Record<string, { title: UiTextKey; description: UiTextKey }> = {
   '/investment-monitor': { title: 'layout.route.investmentMonitor.title', description: 'layout.route.investmentMonitor.description' },
   '/super-watchlist': { title: 'layout.route.superWatchlist.title', description: 'layout.route.superWatchlist.description' },
   '/data-acquisition': { title: 'layout.route.dataAcquisition.title', description: 'layout.route.dataAcquisition.description' },
-  '/portfolio': { title: 'layout.route.portfolio.title', description: 'layout.route.portfolio.description' },
   '/screening': { title: 'layout.route.screening.title', description: 'layout.route.screening.description' },
-  '/backtest': { title: 'layout.route.backtest.title', description: 'layout.route.backtest.description' },
-  '/alerts': { title: 'layout.route.alerts.title', description: 'layout.route.alerts.description' },
   '/usage': { title: 'layout.route.usage.title', description: 'layout.route.usage.description' },
   '/settings': { title: 'layout.route.settings.title', description: 'layout.route.settings.description' },
 };

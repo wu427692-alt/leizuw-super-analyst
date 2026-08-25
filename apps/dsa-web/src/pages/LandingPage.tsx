@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowDown, ArrowRight, BarChart3, BellRing, Building2, DatabaseZap, Download,
+  ArrowDown, ArrowRight, BarChart3, Building2, DatabaseZap, Download,
   FileText, FlaskConical, Landmark, LineChart, LockKeyhole, MessageCircleMore,
   Radio, Radar, ShieldCheck, Sparkles, Star, Waves,
 } from 'lucide-react';
@@ -22,7 +22,7 @@ const researchFlow = [
   { number: '01', title: '事实汇聚', note: '实时行情 · 市场广度', detail: '行情、公告、研报、新闻、企业事实与机构语料持续增量进入统一事实库。', icon: Radio },
   { number: '02', title: '证据整理', note: '原文 · 时间 · 来源', detail: '保留原始链接、附件、发布时间与股票关联，观点和事实不再混在一起。', icon: ShieldCheck },
   { number: '03', title: '研究验证', note: 'AI 提取 · 多周期洞察', detail: '从非结构化语料提取主题、预期与分歧，并与真实行情和公司数据交叉验证。', icon: Sparkles },
-  { number: '04', title: '持续跟踪', note: '事件研究 · 回测 · 告警', detail: '把研究假设放入任务、回测和自选股监控，在新证据出现时继续更新。', icon: BellRing },
+  { number: '04', title: '持续跟踪', note: '事件研究 · 自选股监控', detail: '把研究假设放入后台任务和自选股监控，在新证据出现时持续更新。', icon: Radar },
 ];
 
 const platformFeatures = [

@@ -58,15 +58,11 @@ function lazyRoute(
 }
 
 const HomePage = lazyRoute(() => import('./pages/MarketDashboardPage'), 'home');
-const BacktestPage = lazyRoute(() => import('./pages/BacktestPage'), 'backtest');
 const SettingsPage = lazyRoute(() => import('./pages/SettingsPage'), 'settings');
 const LoginPage = lazyRoute(() => import('./pages/LoginPage'), 'login');
 const UserAccessPage = lazyRoute(() => import('./pages/UserAccessPage'), 'user-access');
 const NotFoundPage = lazyRoute(() => import('./pages/NotFoundPage'), 'not-found');
 const ChatPage = lazyRoute(() => import('./pages/ChatPage'), 'chat');
-const PortfolioPage = lazyRoute(() => import('./pages/PortfolioPage'), 'portfolio');
-const DecisionSignalsPage = lazyRoute(() => import('./pages/DecisionSignalsPage'), 'signals');
-const AlertsPage = lazyRoute(() => import('./pages/AlertsPage'), 'alerts');
 const TokenUsagePage = lazyRoute(() => import('./pages/TokenUsagePage'), 'usage');
 const StockScreeningPage = lazyRoute(() => import('./pages/StockScreeningPage'), 'screening');
 const EssayRadarPage = lazyRoute(() => import('./pages/EssayRadarPage'), 'essay-radar');
@@ -225,8 +221,8 @@ const AppContent: React.FC = () => {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/research-center" element={<ResearchCenterPage />} />
         <Route path="/industry-research" element={<IndustryResearchPage />} />
-        <Route path="/portfolio" element={<PortfolioPage />} />
-        <Route path="/decision-signals" element={<DecisionSignalsPage />} />
+        <Route path="/portfolio" element={<Navigate to="/app" replace />} />
+        <Route path="/decision-signals" element={<Navigate to="/app" replace />} />
         <Route path="/screening" element={<StockScreeningPage />} />
         <Route path="/essay-radar" element={<EssayRadarPage />} />
         <Route path="/essay-radar/insights" element={<EssayRadarPage />} />
@@ -245,8 +241,8 @@ const AppContent: React.FC = () => {
         <Route path="/investment-monitor/company" element={<Navigate to="/investment-monitor" replace />} />
         <Route path="/investment-monitor/analysis" element={<Navigate to="/investment-monitor" replace />} />
         <Route path="/data-acquisition" element={<DataAcquisitionPage />} />
-        <Route path="/backtest" element={<BacktestPage />} />
-        <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/backtest" element={<Navigate to="/app" replace />} />
+        <Route path="/alerts" element={<Navigate to="/app" replace />} />
         <Route path="/usage" element={<Navigate to="/admin/usage" replace />} />
         <Route path="/settings" element={<Navigate to="/admin/settings" replace />} />
         <Route path="*" element={<NotFoundPage />} />

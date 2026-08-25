@@ -148,7 +148,7 @@ const AdminConsolePage: React.FC = () => {
             <article className="admin-panel admin-security-card">
               <p className="admin-panel-kicker">ACCESS MATRIX</p><h2>访问权限矩阵</h2>
               <div className="admin-access-row"><span>行情、公告、新闻、小作文</span><b className="is-public">批准用户</b></div>
-              <div className="admin-access-row"><span>自选股、问股、持仓与个人任务</span><b className="is-public">账号隔离</b></div>
+              <div className="admin-access-row"><span>自选股、问股与个人任务</span><b className="is-public">账号隔离</b></div>
               <div className="admin-access-row"><span>API 密钥、模型和系统参数</span><b className="is-admin">仅管理员</b></div>
               <div className="admin-access-row"><span>用户审批、同步启停、用量审计</span><b className="is-admin">仅管理员</b></div>
             </article>
@@ -185,7 +185,7 @@ const AdminConsolePage: React.FC = () => {
             </article>
             <article className="admin-panel admin-boundary-panel">
               <p className="admin-panel-kicker">PUBLIC / ADMIN</p><h2>权限边界</h2>
-              <div><span className="is-public">USER</span><p><strong>批准用户访问</strong><small>查看共享数据；自选股、问股、持仓与任务按账号隔离</small></p></div>
+              <div><span className="is-public">USER</span><p><strong>批准用户访问</strong><small>查看共享数据；自选股、问股与任务按账号隔离</small></p></div>
               <div><span className="is-admin">ADMIN</span><p><strong>控制面登录</strong><small>密钥、同步控制、用量、配置与访问策略</small></p></div>
               <Link to="/admin/access">查看完整权限矩阵</Link>
             </article>

@@ -71,7 +71,7 @@ describe('SidebarNav', () => {
 
     await screen.findByRole('link', { name: '选股' });
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs.slice(0, 12)).toEqual([
+    expect(hrefs.slice(0, 10)).toEqual([
       '/app',
       '/research-center',
       '/industry-research',
@@ -82,8 +82,6 @@ describe('SidebarNav', () => {
       '/super-watchlist',
       '/data-acquisition',
       '/screening',
-      '/portfolio',
-      '/decision-signals',
     ]);
   });
 
@@ -140,28 +138,17 @@ describe('SidebarNav', () => {
     expect(screen.getByRole('button', { name: '切换主题(折叠)' })).toBeInTheDocument();
   });
 
-  it('renders the alerts navigation item and marks it active', () => {
+  it('does not expose retired portfolio, AI suggestion, backtest, or alert routes', () => {
     render(
-      <MemoryRouter initialEntries={['/alerts']}>
+      <MemoryRouter initialEntries={['/app']}>
         <SidebarNav />
       </MemoryRouter>,
     );
 
-    const alertsLink = screen.getByRole('link', { name: '告警' });
-    expect(alertsLink).toHaveAttribute('href', '/alerts');
-    expect(alertsLink).toHaveClass('font-medium');
-  });
-
-  it('renders the AI signals navigation item and marks it active', () => {
-    render(
-      <MemoryRouter initialEntries={['/decision-signals']}>
-        <SidebarNav />
-      </MemoryRouter>,
-    );
-
-    const signalsLink = screen.getByRole('link', { name: 'AI 建议' });
-    expect(signalsLink).toHaveAttribute('href', '/decision-signals');
-    expect(signalsLink).toHaveClass('font-medium');
+    expect(screen.queryByRole('link', { name: '持仓' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'AI 建议' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '回测' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '告警' })).not.toBeInTheDocument();
   });
 
   it('keeps logout out of the public navigation and links administration', () => {

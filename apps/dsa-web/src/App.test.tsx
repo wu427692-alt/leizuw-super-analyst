@@ -55,22 +55,6 @@ vi.mock('./pages/ChatPage', () => ({
   },
 }));
 
-vi.mock('./pages/PortfolioPage', () => ({
-  default: () => <div data-testid="portfolio-page">Portfolio</div>,
-}));
-
-vi.mock('./pages/DecisionSignalsPage', () => ({
-  default: () => <div data-testid="decision-signals-page">Decision signals</div>,
-}));
-
-vi.mock('./pages/BacktestPage', () => ({
-  default: () => <div data-testid="backtest-page">Backtest</div>,
-}));
-
-vi.mock('./pages/AlertsPage', () => ({
-  default: () => <div data-testid="alerts-page">Alerts</div>,
-}));
-
 vi.mock('./pages/TokenUsagePage', () => ({
   default: () => <div data-testid="token-usage-page">Usage</div>,
 }));
@@ -162,20 +146,23 @@ describe('App routing behavior', () => {
     expect(screen.getByRole('progressbar', { name: '页面加载进度' })).toBeInTheDocument();
   });
 
-  it('keeps public routes available when admin auth is enabled but user is not logged in', async () => {
+  it.each(['/portfolio', '/decision-signals', '/backtest', '/alerts'])(
+    'redirects the retired public route %s to the dashboard',
+    async (retiredRoute) => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({
       authEnabled: true,
       loggedIn: false,
       setupState: 'enabled',
     }));
-    window.history.pushState({}, '', '/portfolio');
+    window.history.pushState({}, '', retiredRoute);
 
     render(<App />);
 
-    expect(await screen.findByTestId('portfolio-page')).toBeInTheDocument();
-    expect(window.location.pathname).toBe('/portfolio');
+    expect(await screen.findByTestId('home-page')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/app');
     expect(screen.queryByTestId('login-page')).not.toBeInTheDocument();
-  });
+    },
+  );
 
   it('redirects protected admin routes to the dedicated admin login', async () => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({
@@ -214,16 +201,6 @@ describe('App routing behavior', () => {
     expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
   });
 
-  it('routes /decision-signals to the AI signals page after auth is ready', async () => {
-    window.history.pushState({}, '', '/decision-signals');
-
-    render(<App />);
-
-    expect(await screen.findByTestId('decision-signals-page')).toBeInTheDocument();
-    expect(setCurrentRoute).toHaveBeenCalledWith('/decision-signals');
-    expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
-  });
-
   it('redirects authenticated admin login visits to the admin console', async () => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({
       authEnabled: true,
@@ -252,9 +229,9 @@ describe('App routing behavior', () => {
       expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument();
 
       chatPageShouldThrow.value = false;
-      fireEvent.click(screen.getByRole('link', { name: '持仓' }));
+      fireEvent.click(screen.getAllByRole('link', { name: '首页' })[0]);
 
-      expect(await screen.findByTestId('portfolio-page')).toBeInTheDocument();
+      expect(await screen.findByTestId('home-page')).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: '模块暂未完成加载' })).not.toBeInTheDocument();
     } finally {
       consoleError.mockRestore();

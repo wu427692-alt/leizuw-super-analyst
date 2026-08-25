@@ -40,7 +40,7 @@ const UserAccessPage: React.FC = () => {
         <div className="user-access-copy">
           <p className="user-access-kicker"><RadioTower /> PRIVATE DATA WORKSPACE</p>
           <h1>一套共享事实库，<br /><em>每个人拥有独立工作台。</em></h1>
-          <p>行情、公告、研报和知识星球由后台统一更新；自选股、问股会话、持仓与个人任务只属于当前账号。</p>
+          <p>行情、公告、研报和知识星球由后台统一更新；自选股、问股会话与个人任务只属于当前账号。</p>
           <div className="user-access-features">
             <article><ShieldCheck /><div><strong>管理员审批</strong><span>注册后先审核，再开放数据和 AI 能力</span></div></article>
             <article><LockKeyhole /><div><strong>用户数据隔离</strong><span>服务端按账号分区，不依赖浏览器自报身份</span></div></article>

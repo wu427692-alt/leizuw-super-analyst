@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, BarChart3, Bell, BriefcaseBusiness, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
+import { BarChart3, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
 import { useAgentChatStore } from '../../stores/agentChatStore';
@@ -36,10 +36,6 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'super-watchlist', labelKey: 'layout.nav.superWatchlist', to: '/super-watchlist', icon: Star },
   { key: 'data-acquisition', labelKey: 'layout.nav.dataAcquisition', to: '/data-acquisition', icon: DatabaseZap },
   { key: 'screening', labelKey: 'layout.nav.screening', to: '/screening', icon: Search },
-  { key: 'portfolio', labelKey: 'layout.nav.portfolio', to: '/portfolio', icon: BriefcaseBusiness },
-  { key: 'decision-signals', labelKey: 'layout.nav.decisionSignals', to: '/decision-signals', icon: Activity },
-  { key: 'backtest', labelKey: 'layout.nav.backtest', to: '/backtest', icon: BarChart3 },
-  { key: 'alerts', labelKey: 'layout.nav.alerts', to: '/alerts', icon: Bell },
 ];
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate, variant = 'default' }) => {
