@@ -78,6 +78,27 @@ export type IndustryResearchReport = Record<string, unknown> & {
   interviewQuestions?: string[];
   openQuestions?: string[];
   caveats?: string[];
+  chapters?: Array<{
+    chapterId: string;
+    title: string;
+    summary?: string;
+    bodyMarkdown: string;
+    evidenceIds: string[];
+    openQuestions: string[];
+    charCount: number;
+  }>;
+  longFormReport?: string;
+  longFormCharCount?: number;
+  narrativeCharCount?: number;
+  generation?: {
+    targetChars: number;
+    actualChars: number;
+    narrativeChars: number;
+    chapterCount: number;
+    model?: string;
+    status: string;
+    completedAt?: string;
+  };
 };
 
 export type IndustryResearchProject = {
@@ -99,4 +120,3 @@ export type IndustryResearchProject = {
   updatedAt: string;
   completedAt?: string;
 };
-

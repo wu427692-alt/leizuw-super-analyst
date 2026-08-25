@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""48-hour industry/company research workspace API."""
+"""Rapid background industry/company research workspace API."""
 
 from fastapi import APIRouter, HTTPException, Query
 

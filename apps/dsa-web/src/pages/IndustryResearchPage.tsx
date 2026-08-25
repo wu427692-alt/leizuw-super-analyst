@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight, BookOpenCheck, Boxes, Building2, CheckCircle2, ChevronRight, CircleAlert,
@@ -11,11 +13,12 @@ import { industryResearchApi } from '../api/industryResearch';
 import { AppPage } from '../components/common';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type {
-  IndustryEvidence, IndustryResearchBlueprint, IndustryResearchProject, IndustryResearchReport,
+  IndustryEvidence, IndustryResearchBlueprint, IndustryResearchProject, IndustryResearchReport, IndustryResearchSnapshot,
 } from '../types/industryResearch';
 import './IndustryResearchPage.css';
 
 type WorkspaceTab = 'map' | 'companies' | 'evidence' | 'questions' | 'report';
+type ProjectFilter = 'all' | 'running' | 'completed' | 'failed';
 
 const compact = (value: number) => new Intl.NumberFormat('zh-CN', {
   notation: value >= 10_000 ? 'compact' : 'standard', maximumFractionDigits: 1,
@@ -37,6 +40,20 @@ const evidenceHref = (item: IndustryEvidence) => {
 
 const statusLabel: Record<string, string> = {
   queued: '排队中', collecting: '收集证据', analyzing: '交叉分析', completed: '已完成', failed: '需要重试',
+};
+
+const runningStatuses = new Set(['queued', 'collecting', 'analyzing']);
+
+const isCompleteSnapshot = (value?: IndustryResearchSnapshot): value is IndustryResearchSnapshot => Boolean(
+  value?.totals && Array.isArray(value.coverage) && Array.isArray(value.evidence),
+);
+
+const revealWorkbench = () => {
+  window.requestAnimationFrame(() => {
+    const workbench = document.getElementById('industry-research-workbench');
+    workbench?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    workbench?.focus({ preventScroll: true });
+  });
 };
 
 function ProgressRing({ value }: { value: number }) {
@@ -134,10 +151,37 @@ function QuestionsView({ blueprint, report }: { blueprint: IndustryResearchBluep
   </div>;
 }
 
+function ResearchAnswerBrief({ project, onOpen }: { project: IndustryResearchProject; onOpen: () => void }) {
+  const report = project.report;
+  if (!report) return <section className="ir-answer-loading" aria-live="polite">
+    <ProgressRing value={project.progress} />
+    <div><span>AI RESEARCH IN PROGRESS</span><h2>{project.message}</h2><p>证据召回完成后会先显示可用结论，不必等待八章长报告全部写完。</p></div>
+  </section>;
+  const leaders = (report.leaders ?? []).slice(0, 4);
+  const trends = (report.trends ?? []).slice(0, 3);
+  const bottlenecks = (report.bottlenecks ?? []).slice(0, 3);
+  const indicators = (report.monitoringIndicators ?? []).slice(0, 4);
+  const isDraft = project.status !== 'completed';
+  return <section className={`ir-answer-brief ${isDraft ? 'is-draft' : ''}`} aria-label={`${project.topic}研究结论`}>
+    <header>
+      <div><span>{isDraft ? 'AI FIRST-PASS ANSWER' : 'RESEARCH ANSWER'}</span><h2>{project.topic} · 研究结论先行</h2></div>
+      <div className="ir-answer-status"><i />{isDraft ? `首轮结论可读 · 长报告 ${project.progress}%` : '完整报告已完成'}</div>
+    </header>
+    <div className="ir-answer-thesis"><strong>{report.oneSentence || '首轮研究结论正在形成'}</strong><p>{report.executiveSummary || '已固定证据快照，正在生成可核验的产业链、趋势、公司与风险判断。'}</p></div>
+    <div className="ir-answer-grid">
+      <article><span><Telescope />趋势判断</span>{trends.length ? trends.map(item => <p key={`${item.horizon}-${item.claim}`}><strong>{item.horizon || '待验证'}</strong>{item.claim}</p>) : <p>正在从证据中提取短中长期趋势。</p>}</article>
+      <article><span><Building2 />龙头与关键公司</span>{leaders.length ? leaders.map(item => <p key={`${item.symbol}-${item.name}`}><strong>{item.name || '待识别'} {item.symbol || ''}</strong>{item.rationale}</p>) : <p>当前证据不足以确认龙头，报告会明确保留为待验证。</p>}</article>
+      <article><span><CircleAlert />核心瓶颈</span>{bottlenecks.length ? bottlenecks.map(item => <p key={item.issue}><strong>{item.issue || '待验证'}</strong>{item.whyItMatters}</p>) : <p>正在核对成本、技术、产能、客户验证与商业化瓶颈。</p>}</article>
+      <article><span><Gauge />持续跟踪指标</span>{indicators.length ? indicators.map(item => <p key={`${item.indicator}-${item.frequency}`}><strong>{item.indicator || '待验证'}</strong>{item.frequency ? `${item.frequency} · ${item.source || '待确认来源'}` : item.source}</p>) : <p>正在生成可用于后续更新的验证指标。</p>}</article>
+    </div>
+    <footer><span>{project.message}</span><button type="button" onClick={onOpen}>{isDraft ? '查看当前研究底稿' : '打开完整 8 章报告'}<ChevronRight /></button></footer>
+  </section>;
+}
+
 function ReportView({ project }: { project?: IndustryResearchProject }) {
   const report = project?.report;
   if (!project) return <div className="ir-report-placeholder"><BookOpenCheck /><h2>启动课题后生成研究报告</h2><p>后台会先固定证据快照，再分析产业链、趋势、企业、瓶颈、应用与证伪条件。</p></div>;
-  if (project.status !== 'completed' || !report) return <div className="ir-report-placeholder"><LoaderCircle className="is-spinning" /><h2>{project.message}</h2><p>任务在后台运行，可以离开本页；完成后会保留在你的课题列表。</p><ProgressRing value={project.progress} /></div>;
+  if (!report) return <div className="ir-report-placeholder"><LoaderCircle className="is-spinning" /><h2>{project.message}</h2><p>任务在后台运行，可以离开本页；首轮结论生成后会直接在这里出现。</p><ProgressRing value={project.progress} /></div>;
   const blocks = [
     { title: '产业链节点', items: report.chainNodes, get: (item: Record<string, unknown>) => `${item.stage || ''} · ${item.role || ''}`, sub: (item: Record<string, unknown>) => String(item.economics || '待验证') },
     { title: '趋势与拐点', items: report.trends, get: (item: Record<string, unknown>) => `${item.horizon || ''} · ${item.claim || ''}`, sub: (item: Record<string, unknown>) => Array.isArray(item.drivers) ? item.drivers.join('；') : '待验证' },
@@ -145,8 +189,27 @@ function ReportView({ project }: { project?: IndustryResearchProject }) {
     { title: '核心瓶颈', items: report.bottlenecks, get: (item: Record<string, unknown>) => String(item.issue || '待验证'), sub: (item: Record<string, unknown>) => String(item.whyItMatters || '') },
     { title: '应用场景', items: report.applications, get: (item: Record<string, unknown>) => String(item.scenario || '待验证'), sub: (item: Record<string, unknown>) => String(item.demandLogic || '') },
   ];
+  const chapters = report.chapters ?? [];
+  const reportChars = report.longFormCharCount ?? chapters.reduce((sum, chapter) => sum + (chapter.charCount || 0), 0);
   return <div className="ir-report">
+    {project.status !== 'completed' ? <section className="ir-report-live"><LoaderCircle className="is-spinning" /><div><strong>首轮研究结论已经可读</strong><p>{project.message}；下方结论会保留，完整章节生成后自动补入。</p></div><ProgressRing value={project.progress} /></section> : null}
     <section className="ir-report-hero"><span>EXECUTIVE VIEW</span><h2>{report.oneSentence || '研究结论待验证'}</h2><p>{report.executiveSummary}</p></section>
+    {chapters.length ? <>
+      <section className="ir-long-report-head">
+        <div><span>AI LONG-FORM REPORT</span><h2>完整行业深度报告</h2><p>固定证据快照后分章并行撰写；正文中的方括号编号可回到证据库核验。</p></div>
+        <div className="ir-long-report-metrics"><strong>{reportChars.toLocaleString('zh-CN')}</strong><span>报告字符</span><strong>{chapters.length}</strong><span>完整章节</span><strong>{project.snapshot?.totals.evidence?.toLocaleString('zh-CN') ?? '—'}</strong><span>参考证据</span></div>
+      </section>
+      <nav className="ir-report-toc" aria-label="长篇报告章节目录">
+        {chapters.map((chapter, index) => <a href={`#ir-chapter-${chapter.chapterId}`} key={chapter.chapterId}><span>{String(index + 1).padStart(2, '0')}</span>{chapter.title}<em>{chapter.charCount.toLocaleString('zh-CN')}字</em></a>)}
+      </nav>
+      <section className="ir-long-report-body">
+        {chapters.map((chapter, index) => <article id={`ir-chapter-${chapter.chapterId}`} key={chapter.chapterId}>
+          <header><span>CHAPTER {String(index + 1).padStart(2, '0')}</span><h2>{chapter.title}</h2><p>{chapter.summary}</p><small>{chapter.charCount.toLocaleString('zh-CN')} 字 · {chapter.evidenceIds.length} 条直接引用</small></header>
+          <div className="ir-markdown"><Markdown remarkPlugins={[remarkGfm]}>{chapter.bodyMarkdown}</Markdown></div>
+          {chapter.openQuestions.length ? <footer><strong>仍需验证</strong>{chapter.openQuestions.map(question => <p key={question}>{question}</p>)}</footer> : null}
+        </article>)}
+      </section>
+    </> : null}
     <div className="ir-report-blocks">{blocks.map(block => <section key={block.title}><h3>{block.title}</h3>{(block.items ?? []).map((raw, index) => {
       const item = raw as Record<string, unknown>;
       return <article key={`${block.title}-${index}`}><span>{String(index + 1).padStart(2, '0')}</span><div><strong>{block.get(item)}</strong><p>{block.sub(item)}</p></div></article>;
@@ -161,33 +224,56 @@ export default function IndustryResearchPage() {
   const [blueprint, setBlueprint] = useState<IndustryResearchBlueprint | null>(null);
   const [projects, setProjects] = useState<IndustryResearchProject[]>([]);
   const [activeProject, setActiveProject] = useState<IndustryResearchProject>();
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter>('all');
   const [tab, setTab] = useState<WorkspaceTab>('map');
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
+  const blueprintRequestRef = useRef(0);
 
   useEffect(() => { document.title = '行业调研 - 乐子乌超级价值'; }, []);
 
   const loadProjects = useCallback(async () => {
     const next = await industryResearchApi.projects();
     setProjects(next.items);
-    setActiveProject(current => current ? next.items.find(item => item.projectId === current.projectId) ?? current : next.items[0]);
+    setActiveProject(current => {
+      if (!current) return undefined;
+      const summary = next.items.find(item => item.projectId === current.projectId);
+      return summary ? {
+        ...current, ...summary,
+        snapshot: isCompleteSnapshot(current.snapshot) ? current.snapshot : summary.snapshot,
+        report: current.report?.oneSentence ? current.report : summary.report,
+      } : current;
+    });
   }, []);
 
   const loadBlueprint = useCallback(async (requestedTopic = topic, requestedDays = lookbackDays) => {
     const trimmed = requestedTopic.trim();
     if (trimmed.length < 2) { setError('请输入至少两个字的行业或公司名称'); return; }
+    const requestId = ++blueprintRequestRef.current;
     setLoading(true);
+    setActiveProject(undefined);
     try {
       const next = await industryResearchApi.blueprint(trimmed, requestedDays);
+      if (requestId !== blueprintRequestRef.current) return;
       setBlueprint(next); setError('');
     } catch (caught) {
+      if (requestId !== blueprintRequestRef.current) return;
       setError(caught instanceof Error ? caught.message : '行业证据蓝图暂时无法读取，页面会保留当前内容');
-    } finally { setLoading(false); }
+    } finally {
+      if (requestId === blueprintRequestRef.current) setLoading(false);
+    }
   }, [lookbackDays, topic]);
 
   useEffect(() => { void Promise.allSettled([loadBlueprint('光模块', 730), loadProjects()]); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   usePageActivationRefresh(loadProjects, { intervalMs: 20_000, minIntervalMs: 3_000, runOnMount: false });
+
+  const hasRunningProjects = projects.some(project => runningStatuses.has(project.status));
+  useEffect(() => {
+    if (!hasRunningProjects) return undefined;
+    const timer = window.setInterval(() => { void loadProjects(); }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [hasRunningProjects, loadProjects]);
 
   const pollingProjectId = activeProject?.projectId;
   const pollingProjectStatus = activeProject?.status;
@@ -198,32 +284,99 @@ export default function IndustryResearchPage() {
         const next = await industryResearchApi.project(pollingProjectId);
         setActiveProject(next);
         setProjects(current => current.map(item => item.projectId === next.projectId ? next : item));
-        if (next.status === 'completed' && next.snapshot) {
+        if (next.status === 'completed' && isCompleteSnapshot(next.snapshot)) {
           const completedSnapshot = next.snapshot;
-          setBlueprint(current => current ? { ...current, topic: next.topic, queryTerms: completedSnapshot.queryTerms, snapshot: completedSnapshot } : current);
+          setBlueprint(current => current && current.topic === next.topic && current.lookbackDays === next.lookbackDays
+            ? { ...current, queryTerms: completedSnapshot.queryTerms, snapshot: completedSnapshot }
+            : current);
         }
       } catch { /* background polling remains silent and retries */ }
     }, 3_000);
     return () => window.clearInterval(timer);
   }, [pollingProjectId, pollingProjectStatus]);
 
-  const startProject = async () => {
-    if (!blueprint || starting) return;
+  const startProject = async (topicOverride = topic) => {
+    const requestedTopic = topicOverride.trim();
+    if (requestedTopic.length < 2 || starting) return;
+    const requestId = ++blueprintRequestRef.current;
     setStarting(true);
+    setLoading(true);
+    setActiveProject(undefined);
     try {
+      const sourceBlueprint = blueprint?.topic === requestedTopic && blueprint.lookbackDays === lookbackDays
+        ? blueprint
+        : await industryResearchApi.blueprint(requestedTopic, lookbackDays);
+      if (requestId !== blueprintRequestRef.current) return;
+      setBlueprint(sourceBlueprint);
       const project = await industryResearchApi.createProject({
-        topic: blueprint.topic, researchType: 'industry', lookbackDays,
-        objective: `尽快搞明白${blueprint.topic}的产业脉络、发展趋势、龙头企业、最大痛点和应用场景`,
-        queryTerms: blueprint.queryTerms,
+        topic: sourceBlueprint.topic, researchType: 'industry', lookbackDays,
+        objective: `尽快搞明白${sourceBlueprint.topic}的产业脉络、发展趋势、龙头企业、最大痛点和应用场景，并形成不少于2万字的可追溯深度报告`,
+        queryTerms: sourceBlueprint.queryTerms,
       });
-      setActiveProject(project); setProjects(current => [project, ...current.filter(item => item.projectId !== project.projectId)]); setTab('report'); setError('');
+      setActiveProject(project); setProjects(current => [project, ...current.filter(item => item.projectId !== project.projectId)]); setProjectFilter('running'); setTab('report'); setError(''); revealWorkbench();
     } catch (caught) {
+      if (requestId !== blueprintRequestRef.current) return;
       setError(caught instanceof Error ? caught.message : '课题创建失败');
-    } finally { setStarting(false); }
+    } finally {
+      if (requestId === blueprintRequestRef.current) {
+        setStarting(false);
+        setLoading(false);
+      }
+    }
   };
 
-  const activeSnapshot = activeProject?.snapshot ?? blueprint?.snapshot;
-  const activeReport = activeProject?.report;
+  const openProject = useCallback(async (projectId: string, shouldReveal = true) => {
+    const requestId = ++blueprintRequestRef.current;
+    setLoading(false);
+    try {
+      const detail = await industryResearchApi.project(projectId);
+      if (requestId !== blueprintRequestRef.current) return;
+      setTopic(detail.topic);
+      setLookbackDays(detail.lookbackDays);
+      setActiveProject(detail);
+      setProjects(current => current.map(item => item.projectId === detail.projectId ? { ...item, ...detail } : item));
+      if (isCompleteSnapshot(detail.snapshot)) {
+        const snapshot = detail.snapshot;
+        setBlueprint(current => current ? {
+          ...current, topic: detail.topic, lookbackDays: detail.lookbackDays, snapshot, queryTerms: snapshot.queryTerms,
+        } : current);
+      }
+      setTab('report');
+      setError('');
+      if (shouldReveal) revealWorkbench();
+    } catch (caught) {
+      if (requestId !== blueprintRequestRef.current) return;
+      setError(caught instanceof Error ? caught.message : '任务详情暂时无法读取');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!blueprint || loading || activeProject || topic.trim() !== blueprint.topic.trim()) return;
+    const matching = projects.find(project => project.status === 'completed'
+      && project.topic.trim() === blueprint.topic.trim()
+      && project.lookbackDays === blueprint.lookbackDays);
+    if (matching) void openProject(matching.projectId, false);
+  }, [activeProject, blueprint, loading, openProject, projects, topic]);
+
+  const projectCounts = useMemo(() => ({
+    all: projects.length,
+    running: projects.filter(project => runningStatuses.has(project.status)).length,
+    completed: projects.filter(project => project.status === 'completed').length,
+    failed: projects.filter(project => project.status === 'failed').length,
+  }), [projects]);
+  const visibleProjects = useMemo(() => projects.filter(project => {
+    if (projectFilter === 'running') return runningStatuses.has(project.status);
+    if (projectFilter === 'completed') return project.status === 'completed';
+    if (projectFilter === 'failed') return project.status === 'failed';
+    return true;
+  }).slice(0, 12), [projectFilter, projects]);
+
+  const activeProjectMatchesBlueprint = Boolean(activeProject && blueprint
+    && activeProject.topic.trim() === blueprint.topic.trim()
+    && activeProject.lookbackDays === blueprint.lookbackDays);
+  const contextualProject = activeProjectMatchesBlueprint ? activeProject : undefined;
+  const activeSnapshot = isCompleteSnapshot(contextualProject?.snapshot) ? contextualProject.snapshot : blueprint?.snapshot;
+  const activeReport = contextualProject?.report;
   const tabs: Array<{ key: WorkspaceTab; label: string; icon: typeof Network }> = [
     { key: 'map', label: '研究地图', icon: Network }, { key: 'companies', label: '公司对比', icon: Building2 },
     { key: 'evidence', label: '证据库', icon: LibraryBig }, { key: 'questions', label: '访谈问题', icon: MessageSquareText },
@@ -236,18 +389,42 @@ export default function IndustryResearchPage() {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <p className="ir-kicker"><Sparkles /> RAPID RESEARCH · EVIDENCE FIRST</p>
           <h1>行业调研</h1>
-          <p>立即生成行业或公司的首版研究底稿，后台持续补强产业链、趋势、龙头、痛点、应用、证据与反证。</p>
+          <p>先给结论，再展开证据：快速回答产业链、趋势、龙头、痛点、应用和关键验证指标，八章深度报告在后台继续补强。</p>
         </motion.div>
         <div className="ir-live"><i /><span>六类本地数据统一召回</span><strong>后台任务可离开页面</strong></div>
       </header>
 
       <section className="ir-command">
-        <div className="ir-query"><Search /><label><span>我现在想搞明白</span><input value={topic} onChange={event => setTopic(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void loadBlueprint(); }} placeholder="输入行业或公司，例如：光模块" /></label></div>
-        <select value={lookbackDays} onChange={event => setLookbackDays(Number(event.target.value))} aria-label="资料时间范围">
+        <div className="ir-query"><Search /><label><span>我现在想搞明白</span><input value={topic} onChange={event => { setTopic(event.target.value); if (event.target.value.trim() !== blueprint?.topic.trim()) setActiveProject(undefined); }} onKeyDown={event => { if (event.key === 'Enter') void startProject(event.currentTarget.value); }} placeholder="输入行业或公司，例如：光模块" /></label></div>
+        <select value={lookbackDays} onChange={event => { setLookbackDays(Number(event.target.value)); setActiveProject(undefined); }} aria-label="资料时间范围">
           <option value={365}>最近 1 年</option><option value={730}>最近 2 年</option><option value={1095}>最近 3 年</option><option value={1825}>最近 5 年</option>
         </select>
-        <button type="button" className="ir-secondary" onClick={() => void loadBlueprint()} disabled={loading}>{loading ? <LoaderCircle className="is-spinning" /> : <FileSearch />}生成证据蓝图</button>
-        <button type="button" className="ir-primary" onClick={() => void startProject()} disabled={!blueprint || starting}>{starting ? <LoaderCircle className="is-spinning" /> : <Play />}立即启动深度调研</button>
+        <button type="button" className="ir-secondary" onClick={() => void loadBlueprint()} disabled={topic.trim().length < 2}>{loading ? <LoaderCircle className="is-spinning" /> : <FileSearch />}仅查看资料覆盖</button>
+        <button type="button" className="ir-primary" onClick={() => void startProject()} disabled={topic.trim().length < 2 || starting}>{starting ? <LoaderCircle className="is-spinning" /> : <Play />}开始行业研究</button>
+      </section>
+
+      {contextualProject ? <ResearchAnswerBrief project={contextualProject} onOpen={() => { setTab('report'); revealWorkbench(); }} /> : null}
+
+      <section className="ir-task-center" aria-label="行业调研任务中心">
+        <div className="ir-task-center-head">
+          <div><span>RESEARCH HISTORY</span><h2>研究任务与历史报告</h2><p>这里负责进度和历史管理；真正的研究答案优先显示在上方。</p></div>
+          <button type="button" onClick={() => void loadProjects()}><Clock3 />刷新任务</button>
+        </div>
+        <div className="ir-task-filters" role="group" aria-label="任务状态筛选">
+          {([
+            ['all', '全部'], ['running', '运行中'], ['completed', '已完成'], ['failed', '失败'],
+          ] as Array<[ProjectFilter, string]>).map(([key, label]) => <button type="button" aria-pressed={projectFilter === key} className={projectFilter === key ? 'is-active' : ''} onClick={() => setProjectFilter(key)} key={key}>
+            {label}<strong>{projectCounts[key]}</strong>
+          </button>)}
+        </div>
+        {visibleProjects.length ? <div className="ir-task-list">
+          {visibleProjects.map(project => <button type="button" className={`ir-task-row is-${project.status} ${project.projectId === activeProject?.projectId ? 'is-selected' : ''}`} key={project.projectId} onClick={() => void openProject(project.projectId)}>
+            <span className="ir-task-icon">{project.status === 'completed' ? <CheckCircle2 /> : project.status === 'failed' ? <CircleAlert /> : <LoaderCircle className="is-spinning" />}</span>
+            <span className="ir-task-copy"><strong>{project.topic}</strong><small>{project.message}</small><em>{timestamp(project.updatedAt || project.createdAt)} · {project.lookbackDays} 天资料范围</em></span>
+            <span className="ir-task-meter"><i><b style={{ width: `${Math.max(0, Math.min(100, project.progress))}%` }} /></i><strong>{project.progress}%</strong></span>
+            <span className="ir-task-action">{project.status === 'completed' ? '打开报告' : project.status === 'failed' ? '查看原因' : statusLabel[project.status]}<ChevronRight /></span>
+          </button>)}
+        </div> : <div className="ir-task-empty"><Clock3 /><strong>{projects.length ? '当前筛选没有任务' : '还没有行业调研任务'}</strong><span>{projects.length ? '切换其他状态查看历史任务。' : '输入行业名称后可直接启动 AI 深度报告。'}</span></div>}
       </section>
 
       {error ? <div className="ir-inline-error" role="status"><CircleAlert />{error}</div> : null}
@@ -256,8 +433,8 @@ export default function IndustryResearchPage() {
       {blueprint ? <>
         <section className="ir-mission-strip">
           {blueprint.methodology.stages.map((stage, index) => {
-            const active = activeProject?.stage === stage.stage;
-            const done = activeProject?.status === 'completed' || (activeProject && blueprint.methodology.stages.findIndex(item => item.stage === activeProject.stage) > index);
+            const active = contextualProject?.stage === stage.stage;
+            const done = contextualProject?.status === 'completed' || (contextualProject && blueprint.methodology.stages.findIndex(item => item.stage === contextualProject.stage) > index);
             return <article className={active ? 'is-active' : done ? 'is-done' : ''} key={stage.stage}>
               <span>{done ? <CheckCircle2 /> : `0${index + 1}`}</span><div><small>{stage.hours}</small><h2>{stage.title}</h2><p>{stage.goal}</p></div>
             </article>;
@@ -270,7 +447,7 @@ export default function IndustryResearchPage() {
           <div className="ir-stat"><RadioTower /><span>数据渠道</span><strong>{activeSnapshot?.coverage.filter(item => item.count > 0).length ?? 0}/6</strong><small>空缺会明确显示</small></div>
           <div className="ir-stat"><ShieldCheck /><span>原文证据</span><strong>{activeSnapshot?.evidence.filter(item => item.originalAvailable).length ?? 0}</strong><small>保留来源、日期与入口</small></div>
           <div className="ir-task-state">
-            {activeProject ? <><ProgressRing value={activeProject.progress} /><div><span>{statusLabel[activeProject.status]}</span><strong>{activeProject.topic}</strong><p>{activeProject.message}</p></div></> : <><Gauge /><div><span>证据蓝图就绪</span><strong>{blueprint.topic}</strong><p>启动课题后后台生成结论报告</p></div></>}
+            {contextualProject ? <><ProgressRing value={contextualProject.progress} /><div><span>{statusLabel[contextualProject.status]}</span><strong>{contextualProject.topic}</strong><p>{contextualProject.message}</p></div></> : <><Gauge /><div><span>证据蓝图就绪</span><strong>{blueprint.topic}</strong><p>启动课题后后台生成结论报告</p></div></>}
           </div>
         </section>
 
@@ -281,20 +458,14 @@ export default function IndustryResearchPage() {
           </article>)}</div>
         </section>
 
-        <nav className="ir-tabs" aria-label="行业调研工作台栏目">{tabs.map(({ key, label, icon: Icon }) => <button type="button" className={tab === key ? 'is-active' : ''} onClick={() => setTab(key)} key={key}><Icon />{label}</button>)}</nav>
+        <nav className="ir-tabs" id="industry-research-workbench" tabIndex={-1} aria-label="行业调研工作台栏目">{tabs.map(({ key, label, icon: Icon }) => <button type="button" className={tab === key ? 'is-active' : ''} onClick={() => setTab(key)} key={key}><Icon />{label}</button>)}</nav>
 
         {tab === 'map' ? <ResearchMap blueprint={blueprint} /> : null}
         {tab === 'companies' ? <CompanyMatrix blueprint={blueprint} /> : null}
         {tab === 'evidence' ? <EvidenceLibrary blueprint={blueprint} /> : null}
         {tab === 'questions' ? <QuestionsView blueprint={blueprint} report={activeReport} /> : null}
-        {tab === 'report' ? <ReportView project={activeProject} /> : null}
+        {tab === 'report' ? <ReportView project={contextualProject} /> : null}
 
-        {projects.length ? <section className="ir-projects">
-          <div className="ir-section-heading"><div><span>MY RESEARCH MISSIONS</span><h2>我的课题</h2></div><small>每个用户的课题、进度和报告独立保存</small></div>
-          <div>{projects.slice(0, 8).map(project => <button type="button" className={project.projectId === activeProject?.projectId ? 'is-active' : ''} key={project.projectId} onClick={async () => { const detail = await industryResearchApi.project(project.projectId); setActiveProject(detail); if (detail.snapshot) setBlueprint(current => current ? { ...current, topic: detail.topic, snapshot: detail.snapshot!, queryTerms: detail.snapshot!.queryTerms } : current); setTab('report'); }}>
-            <span className={`is-${project.status}`}><Clock3 /></span><div><strong>{project.topic}</strong><p>{project.message}</p><small>{timestamp(project.createdAt)}</small></div><em>{project.progress}%</em>
-          </button>)}</div>
-        </section> : null}
       </> : null}
     </main>
   </AppPage>;

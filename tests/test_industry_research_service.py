@@ -1,4 +1,5 @@
 from datetime import date
+from threading import Event
 import time
 from unittest.mock import patch
 
@@ -72,6 +73,7 @@ def test_project_listing_and_detail_are_owner_scoped(tmp_path):
             IndustryResearchProjectRecord(
                 project_id="mine", owner_id="user:1", topic="光模块", objective="理解产业链",
                 query_json='{"terms":["光模块"]}', evidence_snapshot_json='{"totals":{"evidence":7}}',
+                report_json='{"one_sentence":"摘要","long_form_char_count":21000,"chapters":[{"body_markdown":"很长的正文"}]}',
             ),
             IndustryResearchProjectRecord(
                 project_id="other", owner_id="user:2", topic="机器人", objective="理解产业链",
@@ -87,7 +89,9 @@ def test_project_listing_and_detail_are_owner_scoped(tmp_path):
 
     assert listed["total"] == 1
     assert listed["items"][0]["project_id"] == "mine"
+    assert listed["items"][0]["report"] == {"one_sentence": "摘要", "long_form_char_count": 21000}
     assert mine is not None and mine["snapshot"]["totals"]["evidence"] == 7
+    assert mine["report"]["chapters"][0]["body_markdown"] == "很长的正文"
     assert hidden is None
 
 
@@ -99,6 +103,34 @@ def test_evidence_only_report_is_explicit_about_unknowns(tmp_path):
     assert "12" in report["executive_summary"]
     assert report["leaders"] == []
     assert report["industry_boundary"]["definition"] == "待验证"
+
+
+def test_long_form_assembly_counts_narrative_and_keeps_evidence_appendix(tmp_path):
+    db = _db(tmp_path)
+    service = IndustryResearchService(db)
+    chapters = [{
+        "chapter_id": "scope", "title": "研究边界", "body_markdown": "事实与推断 [event:7]",
+        "summary": "摘要", "evidence_ids": ["event:7"], "open_questions": [], "char_count": 16,
+    }]
+    markdown = service._assemble_long_form_report("光模块", {"one_sentence": "一句话"}, chapters)
+    appendix = service._build_evidence_appendix({"evidence": [{
+        "evidence_id": "event:7", "title": "公告事实", "source": "巨潮公告", "date": "2026-08-25",
+        "evidence_level": "factual", "summary": "可回到原文核验",
+    }]})
+
+    assert "第1章 研究边界" in markdown
+    assert service._count_report_chars(markdown) > 10
+    assert "[event:7]" in appendix
+    assert "收录不等于认可其结论" in appendix
+
+
+def test_queued_project_does_not_expose_empty_snapshot_object(tmp_path):
+    _db(tmp_path)
+    row = IndustryResearchProjectRecord(project_id="queued", topic="光模块", objective="长篇研究")
+
+    serialized = IndustryResearchService._serialize_project(row, include_snapshot=True)
+
+    assert serialized["snapshot"] is None
 
 
 def test_background_project_completes_and_persists_report(tmp_path):
@@ -125,3 +157,43 @@ def test_background_project_completes_and_persists_report(tmp_path):
     assert completed["progress"] == 100
     assert completed["report"]["one_sentence"] == "证据约束下的测试结论"
     assert completed["snapshot"]["source_hash"]
+
+
+def test_background_project_publishes_answer_first_draft_before_long_report(tmp_path):
+    db = _db(tmp_path)
+    service = IndustryResearchService(db)
+    manager = IndustryResearchTaskManager(db=db, worker_count=1)
+    IndustryResearchTaskManager._instance = manager
+    release = Event()
+
+    def fake_analyze(_self, _topic, _objective, _snapshot, progress_callback=None, draft_callback=None):
+        assert draft_callback is not None
+        draft_callback({
+            "one_sentence": "先给用户可用结论",
+            "executive_summary": "长篇报告仍在后台生成。",
+            "leaders": [{"name": "测试龙头"}],
+        })
+        release.wait(timeout=3)
+        return {"one_sentence": "最终结论", "chapters": [], "leaders": []}
+
+    try:
+        with (
+            patch("src.services.industry_research_service.current_owner_id", return_value="user:8"),
+            patch.object(IndustryResearchService, "analyze_snapshot", new=fake_analyze),
+        ):
+            project = service.create_project({"topic": "机器人", "lookback_days": 365})
+            deadline = time.monotonic() + 5
+            draft = None
+            while time.monotonic() < deadline:
+                draft = service.get_project(project["project_id"])
+                if draft and (draft.get("report") or {}).get("one_sentence") == "先给用户可用结论":
+                    break
+                time.sleep(0.05)
+
+            assert draft is not None
+            assert draft["status"] == "analyzing"
+            assert draft["progress"] >= 64
+            assert draft["report"]["leaders"][0]["name"] == "测试龙头"
+            assert "可先阅读" in draft["message"]
+    finally:
+        release.set()
