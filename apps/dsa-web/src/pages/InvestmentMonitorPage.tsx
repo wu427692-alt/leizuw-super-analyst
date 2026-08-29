@@ -140,7 +140,7 @@ export default function InvestmentMonitorPage() {
   };
 
   return <AppPage className="intelligence-feed-page max-w-[1760px]">
-    <main className="overflow-hidden border border-[#242A31] bg-[#050605] font-mono text-[#D7DCE2]">
+    <main className="intelligence-terminal overflow-hidden border border-[#242A31] bg-[#050605] text-[#D7DCE2]">
       <header className="flex flex-col gap-4 border-b border-[#242A31] bg-[#090B09] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
         <div><p className="text-[9px] uppercase tracking-[0.22em] text-[#00E676]">本地统一事件库 · 10 秒刷新</p><h1 className="mt-2 text-2xl font-black tracking-[-0.05em] text-white">实时流水</h1><p className="mt-1 text-[10px] text-[#717A84]">只展示按时间进入本地库的原始消息；渠道全景与同步状态已拆到“全渠道情报”。</p></div>
         <div className="flex flex-wrap gap-2">

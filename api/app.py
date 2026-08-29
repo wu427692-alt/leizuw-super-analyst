@@ -537,8 +537,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             "- 历史记录：查询历史分析报告\n"
             "- 股票数据：获取行情数据\n\n"
             "## 认证方式\n"
-            "USER_ACCESS_ENABLED=true 时，前台接口要求已批准用户的会话或唯一可信 IP；"
-            "自选股、问股、持仓、告警和分析任务按账号隔离。ADMIN_AUTH_ENABLED=true 时，"
+            "USER_ACCESS_ENABLED=true 时，前台接口要求已批准用户的有效登录会话，"
+            "IP 不能单独作为登录凭证；自选股、问股和分析任务按账号隔离。ADMIN_AUTH_ENABLED=true 时，"
             "系统配置、API 密钥、同步控制、用量审计和用户审批接口另需有效管理员会话 Cookie。"
         ),
         version="1.0.0",

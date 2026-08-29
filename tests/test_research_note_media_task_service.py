@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 from zipfile import ZipFile, ZIP_STORED
 
-from src.services.research_note_media_task_service import ResearchNoteMediaTaskService
+import pytest
+
+from src.services.research_note_media_task_service import (
+    ResearchNoteMediaTaskError,
+    ResearchNoteMediaTaskService,
+)
 
 
 class _FakeResearchNoteService:
@@ -86,3 +91,22 @@ def test_missing_audio_becomes_visible_failed_task(tmp_path: Path) -> None:
     assert failed["status"] == "failed"
     assert failed["phase"] == "failed"
     assert "录音附件不存在" in failed["message"]
+
+
+def test_audio_package_task_is_owner_scoped(tmp_path: Path) -> None:
+    owner = {"value": "user:1"}
+    service = ResearchNoteMediaTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic_id, file_id: f"https://example.test/{file_id}",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(b"audio"),
+        task_root=tmp_path,
+        workers=1,
+        owner_getter=lambda: owner["value"],
+    )
+    submitted = service.submit([("topic-1", "audio-1")])
+    assert "owner_id" not in submitted
+
+    owner["value"] = "user:2"
+    with pytest.raises(ResearchNoteMediaTaskError, match="无权访问"):
+        service.get(submitted["task_id"])
+    service._executor.shutdown(wait=True)

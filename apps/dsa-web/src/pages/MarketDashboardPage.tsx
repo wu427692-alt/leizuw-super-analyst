@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { homeDashboardApi } from '../api/homeDashboard';
-import { AppPage, Badge, Card, EmptyState } from '../components/common';
+import { AppPage, Badge, Card, EmptyState, EvidenceRail } from '../components/common';
 import { MarketTimeframeChart } from '../components/market';
 import { getMarketSeries } from '../api/marketSeries';
 import type { HomeDashboard, HomeWatchlistCard, MarketIndexCard, MarketPoint } from '../types/homeDashboard';
@@ -296,6 +296,13 @@ const MarketDashboardPage = () => {
         <div className="market-index-rail flex overflow-x-auto">{cnIndices.map((item) => <IndexTicker key={item.code} item={item} selected={item.code === leadIndex?.code} onSelect={() => setSelectedIndexCode(item.code)} />)}
           <div className="min-w-[188px] flex-1 px-3 py-2.5"><p className="text-[11px] text-secondary-text">北向资金</p><p className={`mt-0.5 text-lg font-semibold tabular-nums ${tone(data?.northbound.northMoneyYi)}`}>{formatNumber(data?.northbound.northMoneyYi)}亿</p><p className="text-[9px] text-secondary-text">{shortTime(data?.northbound.tradeDate)} · {sourceLabel(data?.northbound.source)}</p></div></div>
       </section>
+
+      <EvidenceRail items={[
+        { label: '行情基准', value: leadIndexSession.label, note: sourceLabel(leadIndex?.source), tone: 'verified' },
+        { label: '最新数据时间', value: shortTime(data?.marketTime), note: '切回本页自动刷新', tone: 'live' },
+        { label: '市场广度', value: breadthAvailable ? `${data?.breadth.total ?? 0} 只股票` : '等待数据', note: sourceLabel(data?.breadth.source), tone: breadthAvailable ? 'verified' : 'warning' },
+        { label: '自选股覆盖', value: `${liveWatchlist.length} 只`, note: '行情与情报使用同一标的', tone: liveWatchlist.length ? 'verified' : 'warning' },
+      ]} />
 
       {error ? <div role="status" className="border border-warning/25 bg-warning/5 px-3 py-2 text-xs text-secondary-text">{error}</div> : null}
       <section className="market-panel border border-border/70 bg-card/90 p-3">

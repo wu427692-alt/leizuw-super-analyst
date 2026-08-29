@@ -23,6 +23,7 @@ class InvestmentMonitorWorker:
     def __init__(self):
         self.poll_seconds = max(5.0, min(float(os.getenv("INVESTMENT_MONITOR_POLL_SEC", "10")), 300.0))
         self.max_workers = max(1, min(int(os.getenv("INVESTMENT_MONITOR_MAX_WORKERS", "16")), 24))
+        self.execution_mode = str(os.getenv("INVESTMENT_MONITOR_RUN_MODE", "embedded")).strip().lower()
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
@@ -44,6 +45,11 @@ class InvestmentMonitorWorker:
             return cls._instance
 
     def start(self) -> Dict[str, Any]:
+        if self.execution_mode == "external":
+            # Cloud web nodes delegate the memory-heavy source loop to a
+            # dedicated worker container.  Page refreshes must not silently
+            # start a second copy inside the request-serving process.
+            return self.status()
         with self._state_lock:
             if self._thread is None or not self._thread.is_alive():
                 self._stop_event.clear()
@@ -79,6 +85,8 @@ class InvestmentMonitorWorker:
             thread = self._thread
             return {
                 "running": bool(thread and thread.is_alive()),
+                "execution_mode": self.execution_mode,
+                "externally_managed": self.execution_mode == "external",
                 "poll_seconds": self.poll_seconds,
                 "max_workers": self.max_workers,
                 "started_at": self._iso_time(self._started_at),

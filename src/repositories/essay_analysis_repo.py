@@ -820,24 +820,25 @@ class EssayAnalysisRepository:
         return self._to_dict(*row) if row else None
 
     def completed_for_dashboard(self, *, cutoff: datetime) -> List[Dict[str, Any]]:
-        # Dashboard aggregation needs the complete window. One joined scan is
-        # substantially faster than issuing a count plus one query per 100 rows.
+        # Aggregate views intentionally avoid loading note bodies and media
+        # metadata. Those are the largest columns in the knowledge base and are
+        # only needed when a user opens an individual source item.
         with self.db.get_session() as session:
             rows = session.execute(
-                select(EssayAnalysisRecord, ResearchNote)
+                self._dashboard_select()
                 .join(ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
                 .where(
                     ResearchNote.created_at >= cutoff,
                     EssayAnalysisRecord.status == "completed",
                 )
                 .order_by(desc(ResearchNote.created_at), desc(EssayAnalysisRecord.id))
-            ).all()
-        return [self._to_dict(analysis, note) for analysis, note in rows if not self._is_audio_only(note)]
+            ).mappings().all()
+        return [self._dashboard_dict(row) for row in rows]
 
     def completed_between(self, *, start: datetime, end: datetime) -> List[Dict[str, Any]]:
         with self.db.get_session() as session:
             rows = session.execute(
-                select(EssayAnalysisRecord, ResearchNote)
+                self._dashboard_select()
                 .join(ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
                 .where(
                     ResearchNote.created_at >= start,
@@ -845,8 +846,90 @@ class EssayAnalysisRepository:
                     EssayAnalysisRecord.status == "completed",
                 )
                 .order_by(ResearchNote.created_at, EssayAnalysisRecord.id)
-            ).all()
-        return [self._to_dict(analysis, note) for analysis, note in rows if not self._is_audio_only(note)]
+            ).mappings().all()
+        return [self._dashboard_dict(row) for row in rows]
+
+    @staticmethod
+    def _dashboard_select():
+        return select(
+            EssayAnalysisRecord.id.label("analysis_id"),
+            EssayAnalysisRecord.topic_id,
+            EssayAnalysisRecord.status,
+            EssayAnalysisRecord.model,
+            EssayAnalysisRecord.prompt_version,
+            EssayAnalysisRecord.summary,
+            EssayAnalysisRecord.primary_category,
+            EssayAnalysisRecord.sentiment,
+            EssayAnalysisRecord.time_horizon,
+            EssayAnalysisRecord.importance_score,
+            EssayAnalysisRecord.confidence_score,
+            EssayAnalysisRecord.tags_json,
+            EssayAnalysisRecord.industries_json,
+            EssayAnalysisRecord.themes_json,
+            EssayAnalysisRecord.stock_mentions_json,
+            EssayAnalysisRecord.key_points_json,
+            EssayAnalysisRecord.catalysts_json,
+            EssayAnalysisRecord.risks_json,
+            EssayAnalysisRecord.raw_response,
+            EssayAnalysisRecord.total_tokens,
+            EssayAnalysisRecord.updated_at,
+            ResearchNote.title.label("note_title"),
+            ResearchNote.group_id.label("note_group_id"),
+            ResearchNote.group_name.label("note_group_name"),
+            ResearchNote.author_name.label("note_author_name"),
+            ResearchNote.digested.label("note_digested"),
+            ResearchNote.created_at.label("note_created_at"),
+        )
+
+    @staticmethod
+    def _dashboard_dict(row: Any) -> Dict[str, Any]:
+        raw = _loads(row.get("raw_response"), {})
+        updated_at = row.get("updated_at")
+        note_created_at = row.get("note_created_at")
+        return {
+            "id": row.get("analysis_id"),
+            "topic_id": row.get("topic_id"),
+            "status": row.get("status"),
+            "model": row.get("model"),
+            "prompt_version": row.get("prompt_version"),
+            "summary": row.get("summary"),
+            "primary_category": row.get("primary_category"),
+            "sentiment": row.get("sentiment"),
+            "time_horizon": row.get("time_horizon"),
+            "importance_score": row.get("importance_score"),
+            "confidence_score": row.get("confidence_score"),
+            "tags": _loads(row.get("tags_json"), []),
+            "industries": _loads(row.get("industries_json"), []),
+            "themes": _loads(row.get("themes_json"), []),
+            "stock_mentions": _loads(row.get("stock_mentions_json"), []),
+            "key_points": _loads(row.get("key_points_json"), []),
+            "catalysts": _loads(row.get("catalysts_json"), []),
+            "risks": _loads(row.get("risks_json"), []),
+            "evidence": raw.get("evidence", []),
+            "contradictions": raw.get("contradictions", []),
+            "falsification_conditions": raw.get("falsification_conditions", []),
+            "monitoring_points": raw.get("monitoring_points", []),
+            "earnings_impact": raw.get("earnings_impact", ""),
+            "valuation_impact": raw.get("valuation_impact", ""),
+            "source_quality": raw.get("source_quality", "unknown"),
+            "novelty_score": raw.get("novelty_score", 0),
+            "information_type": raw.get("information_type", "unknown"),
+            "total_tokens": int(row.get("total_tokens") or 0),
+            "updated_at": updated_at.isoformat() + "Z" if updated_at else None,
+            "note": {
+                "title": row.get("note_title"),
+                "content": None,
+                "group_id": row.get("note_group_id"),
+                "group_name": row.get("note_group_name"),
+                "author_name": row.get("note_author_name"),
+                "digested": bool(row.get("note_digested")),
+                "created_at": note_created_at.isoformat() + "Z" if note_created_at else None,
+                "files": [],
+                "images": [],
+                "asset_summary": summarize_assets([], []),
+                "ai_eligible": True,
+            },
+        }
 
     @staticmethod
     def _work_item(analysis: EssayAnalysisRecord, note: ResearchNote) -> Dict[str, Any]:

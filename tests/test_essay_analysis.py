@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import os
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,6 +23,8 @@ from src.services.essay_analysis_service import (
     EssayDailyReportService,
     _dashboard_rows_cache,
     _deep_insights_cache,
+    _essay_summary_cache,
+    _prune_ttl_cache,
 )
 from src.services.essay_analysis_worker import EssayAnalysisWorker
 import src.services.essay_analysis_worker as essay_worker_module
@@ -39,6 +41,7 @@ def essay_service(tmp_path):
     DatabaseManager.reset_instance()
     _dashboard_rows_cache.clear()
     _deep_insights_cache.clear()
+    _essay_summary_cache.clear()
     notes = ResearchNoteService()
     notes.import_topics([{
         "topic_id": "topic-1",
@@ -53,6 +56,7 @@ def essay_service(tmp_path):
     finally:
         _dashboard_rows_cache.clear()
         _deep_insights_cache.clear()
+        _essay_summary_cache.clear()
         DatabaseManager.reset_instance()
         Config.reset_instance()
         if old_database_path is None:
@@ -683,3 +687,53 @@ def test_dashboard_and_insights_share_decoded_row_snapshot(essay_service, monkey
     assert essay_service._completed_dashboard_rows(30) is rows
     assert calls == 1
     _dashboard_rows_cache.clear()
+
+
+def test_ttl_cache_pruning_releases_expired_and_oldest_values() -> None:
+    cache = {
+        "expired": (1.0, object()),
+        "old": (95.0, object()),
+        "new": (99.0, object()),
+    }
+
+    _prune_ttl_cache(cache, now=100.0, ttl=10.0, max_entries=1)
+
+    assert list(cache) == ["new"]
+
+
+def test_dashboard_projection_omits_large_note_body_but_keeps_insight_fields() -> None:
+    row = EssayAnalysisRepository._dashboard_dict({
+        "analysis_id": 7,
+        "topic_id": "topic-7",
+        "status": "completed",
+        "model": "deepseek-v4-flash",
+        "prompt_version": "v3",
+        "summary": "光模块需求增长",
+        "primary_category": "industry_chain",
+        "sentiment": "bullish",
+        "time_horizon": "medium",
+        "importance_score": 80,
+        "confidence_score": 0.8,
+        "tags_json": '["光模块"]',
+        "industries_json": '["通信"]',
+        "themes_json": '["光通信"]',
+        "stock_mentions_json": '[{"ts_code":"300308.SZ","name":"中际旭创"}]',
+        "key_points_json": '["需求增长"]',
+        "catalysts_json": "[]",
+        "risks_json": "[]",
+        "raw_response": '{"evidence":[{"claim":"需求增长"}],"novelty_score":75}',
+        "total_tokens": 321,
+        "updated_at": datetime(2026, 8, 30, 1, 2, 3),
+        "note_title": "光模块产业更新",
+        "note_group_id": "g1",
+        "note_group_name": "调研纪要",
+        "note_author_name": "研究员",
+        "note_digested": False,
+        "note_created_at": datetime(2026, 8, 29, 10, 0, 0),
+    })
+
+    assert row["themes"] == ["光通信"]
+    assert row["evidence"] == [{"claim": "需求增长"}]
+    assert row["note"]["title"] == "光模块产业更新"
+    assert row["note"]["content"] is None
+    assert row["note"]["files"] == []

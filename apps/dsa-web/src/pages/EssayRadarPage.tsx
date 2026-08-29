@@ -12,7 +12,7 @@ import { AppPage, Badge, Drawer, EmptyState } from '../components/common';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import type {
   EssayAnalysis, EssayAnalysisList, EssayDailyReport, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayInsights,
-  EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFile, EssayAudioFileList, EssayHistoricalBacklog, EssayStatus, EssayWordCloud,
+  EssayAudioAnalysisCapability, EssayAudioAnalysisTask, EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFile, EssayAudioFileList, EssayAudioTranscript, EssayHistoricalBacklog, EssayStatus, EssayWordCloud,
 } from '../types/essayRadar';
 import './EssayRadarPage.css';
 
@@ -40,8 +40,11 @@ const ANALYSIS_STATUS_LABELS: Record<string, string> = {
   not_queued: '未分析', pending: '排队中', processing: '分析中', failed: '分析失败', completed: '已分析',
   media_only: '录音资料',
 };
-const FEED_PAGE_CACHE_LIMIT = 80;
+// Each feed page contains original text and media metadata. Keeping dozens of
+// pages alive made long research sessions consume hundreds of MB in the tab.
+const FEED_PAGE_CACHE_LIMIT = 16;
 const AUDIO_BATCH_TASK_STORAGE_KEY = 'dsa:essay-radar:audio-batch-task';
+const AUDIO_ANALYSIS_TASK_STORAGE_KEY = 'dsa:essay-radar:audio-analysis-task';
 
 function radarView(pathname: string): RadarView {
   if (pathname.endsWith('/insights')) return 'atlas';
@@ -408,6 +411,71 @@ function AudioFileRow({ item, selected, onToggle }: { item: EssayAudioFile; sele
   );
 }
 
+function AudioMemoDrawer({ task, onClose, onDownload }: {
+  task: EssayAudioAnalysisTask | null;
+  onClose: () => void;
+  onDownload: (format: 'zip' | 'md' | 'docx' | 'json') => void;
+}) {
+  const result = task?.result;
+  const [tab, setTab] = useState<'memo' | 'evidence' | 'transcript'>('memo');
+  const [activeFileId, setActiveFileId] = useState('');
+  const [transcript, setTranscript] = useState<EssayAudioTranscript | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const artifacts = useMemo(() => task?.transcriptArtifacts ?? [], [task?.transcriptArtifacts]);
+  const selectedFileId = activeFileId || artifacts[0]?.fileId || '';
+  useEffect(() => {
+    if (!task?.taskId || tab !== 'transcript') return;
+    const fileId = selectedFileId;
+    if (!fileId) return;
+    let cancelled = false;
+    const loadTranscript = async () => {
+      setTranscriptLoading(true);
+      setTranscriptError(null);
+      try {
+        const next = await essayRadarApi.audioAnalysisTranscript(task.taskId, fileId);
+        if (!cancelled) setTranscript(next);
+      } catch (caught) {
+        if (!cancelled) setTranscriptError(errorText(caught, '逐字稿暂时无法读取。'));
+      } finally {
+        if (!cancelled) setTranscriptLoading(false);
+      }
+    };
+    void loadTranscript();
+    return () => { cancelled = true; };
+  }, [selectedFileId, tab, task?.taskId]);
+  return (
+    <Drawer isOpen={Boolean(result)} onClose={onClose} title={result?.title || '录音小作文'} width="max-w-6xl">
+      {result ? <article className="essay-audio-memo">
+        <header><div><span>AI 录音纪要</span><h2>{result.title}</h2></div><small>{formatTime(result.generatedAt, true)} · {result.model || '当前分析模型'}</small></header>
+        <nav className="essay-audio-workbench-tabs" aria-label="录音纪要工作台">
+          <button type="button" className={tab === 'memo' ? 'is-active' : ''} onClick={() => setTab('memo')}>研判结论</button>
+          <button type="button" className={tab === 'evidence' ? 'is-active' : ''} onClick={() => setTab('evidence')}>证据链 <span>{result.evidenceIndex?.length || 0}</span></button>
+          <button type="button" className={tab === 'transcript' ? 'is-active' : ''} onClick={() => setTab('transcript')}>带时间戳逐字稿 <span>{artifacts.length}</span></button>
+        </nav>
+        {tab === 'memo' ? <>
+        <section className="essay-audio-memo-lead"><h3>核心摘要</h3><p>{result.executiveSummary || '摘要正在完善。'}</p></section>
+        {result.keyConclusions?.length ? <section><h3>核心结论</h3><ol>{result.keyConclusions.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ol></section> : null}
+        {result.companyMentions?.length ? <section><h3>公司与标的</h3><div className="essay-audio-company-grid">{result.companyMentions.map((item, index) => <article key={`${item.name}-${index}`}><strong>{item.name || '未命名标的'}</strong><p>{item.view || '未形成明确方向'}</p><small>原音依据：{item.evidence || '待回听核验'}</small></article>)}</div></section> : null}
+        {result.financialForecasts?.length ? <section><h3>业绩 / 市值 / 数字预测</h3><div className="essay-audio-forecast-list">{result.financialForecasts.map((item, index) => <div key={`${item.subject}-${index}`}><strong>{item.subject || '预测项'}</strong><span>{[item.period, item.metric, item.value].filter(Boolean).join(' · ')}</span><small>{item.evidence || '口径需回听核验'}</small></div>)}</div></section> : null}
+        <div className="essay-audio-memo-columns">
+          {result.industryChain?.length ? <section><h3>产业链脉络</h3><ul>{result.industryChain.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}
+          {result.risks?.length ? <section className="is-risk"><h3>风险与反例</h3><ul>{result.risks.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}
+          {result.followUps?.length ? <section><h3>后续跟踪</h3><ul>{result.followUps.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}
+          {result.disagreements?.length ? <section className="is-risk"><h3>观点分歧</h3><ul>{result.disagreements.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}
+        </div>
+        {result.monitoringItems?.length ? <section><h3>可执行跟踪清单</h3><div className="essay-audio-monitor-grid">{result.monitoringItems.map((item, index) => <article key={`${item.item}-${index}`}><strong>{item.item || '跟踪项'}</strong><span>{[item.metric, item.timeWindow].filter(Boolean).join(' · ') || '口径待明确'}</span><p>触发：{item.trigger || '待定义'}</p><small>依据：{item.evidence || '待回听'}</small></article>)}</div></section> : null}
+        {result.speakerViews?.length ? <section><h3>发言者观点</h3><div className="essay-audio-speaker-grid">{result.speakerViews.map((item, index) => <article key={`${item.speaker}-${index}`}><strong>{item.speaker || `发言者 ${index + 1}`}</strong><p>{item.summary || '未形成摘要'}</p><small>{item.keyPoints?.join(' / ')}</small></article>)}</div></section> : null}
+        </> : null}
+        {tab === 'evidence' ? <section className="essay-audio-evidence-workbench"><header><div><span>TRACEABLE CLAIMS</span><h3>结论—原音证据索引</h3></div><small>数字与专有名词仍需回听核验</small></header><div>{result.evidenceIndex?.length ? result.evidenceIndex.map((item, index) => <button type="button" key={`${item.claim}-${index}`} onClick={() => { const matched = artifacts.find((source) => source.filename === item.sourceFile); if (matched) setActiveFileId(matched.fileId); setTab('transcript'); }}><b>{String(index + 1).padStart(2, '0')}</b><div><strong>{item.claim || '未命名结论'}</strong><p>{item.sourceFile || '来源未标注'} · {item.timestamp || '时间未定位'} · {item.speaker || '说话人未标注'}</p></div><span>{item.category || '证据'}<small>{typeof item.confidence === 'number' ? `${Math.round(item.confidence * 100)}%` : '—'}</small></span></button>) : <p>当前模型未返回证据索引，可从逐字稿回听核验。</p>}</div></section> : null}
+        {tab === 'transcript' ? <section className="essay-audio-transcript-workbench"><header><div>{artifacts.map((item) => <button type="button" className={selectedFileId === item.fileId ? 'is-active' : ''} key={item.fileId} onClick={() => setActiveFileId(item.fileId)}>{item.filename || item.fileId}<small>{item.lineCount || 0} 行</small></button>)}</div></header>{transcriptLoading ? <div className="essay-audio-transcript-state"><RefreshCw className="h-4 w-4 animate-spin" />正在读取带时间戳逐字稿…</div> : transcriptError ? <div className="essay-audio-transcript-state is-error">{transcriptError}</div> : <div className="essay-audio-transcript-lines">{transcript?.lines.map((line, index) => <article key={`${line.timestamp}-${index}`}><time>{line.timestamp || '--:--:--'}</time><strong>{line.speaker}</strong><p>{line.text}</p></article>)}</div>}</section> : null}
+        <footer><p>转写质量：{result.transcriptQuality || '未标注；关键数字和专有名词请回听原录音。'}</p><span>来源 {result.sourceFiles?.length || 0} 个录音 · {result.indexed ? '已写入统一检索与情报库' : '报告不构成投资建议'}</span></footer>
+        <div className="essay-audio-memo-actions"><button type="button" onClick={() => onDownload('docx')}><Download className="h-4 w-4" />Word</button><button type="button" onClick={() => onDownload('md')}><Download className="h-4 w-4" />Markdown</button><button type="button" onClick={() => onDownload('json')}><Download className="h-4 w-4" />结构化 JSON</button><button type="button" className="is-primary" onClick={() => onDownload('zip')}><Archive className="h-4 w-4" />完整资料包</button></div>
+      </article> : null}
+    </Drawer>
+  );
+}
+
 function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; onClose: () => void }) {
   const images = selected?.note.images ?? [];
   const files = selected?.note.files ?? [];
@@ -433,7 +501,7 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
 
           {audioFiles.length ? <section className="essay-detail-section">
             <div className="essay-section-title"><Headphones className="h-4 w-4" />录音源文件</div>
-            <p className="essay-help">录音仅索引文件名和元数据，不做 AI 分析或语音转写；同步时不预下载到服务器，点击后按需下载知识星球源文件。</p>
+            <p className="essay-help">录音默认只索引文件名和元数据；在“检索与获取 → 录音文件”勾选后，可按需提交后台转写并生成 AI 录音纪要。同步时不会预下载源音频。</p>
             <div className="essay-assets">{audioFiles.map((item, index) => (item.downloadUrl || item.viewUrl) ? <a key={item.fileId || index} href={item.downloadUrl || item.viewUrl}>
               <Headphones className="h-4 w-4" /><span>{item.name || `录音 ${index + 1}`}{formatDuration(item.durationSeconds ?? item.duration) ? ` · ${formatDuration(item.durationSeconds ?? item.duration)}` : ''}{formatAssetSize(item.size) ? ` · ${formatAssetSize(item.size)}` : ''}</span><Download className="h-3.5 w-3.5" />
             </a> : null)}</div>
@@ -460,7 +528,7 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
 
           <section className="essay-detail-section">
             <div className="essay-section-title"><Brain className="h-4 w-4" />AI 研判</div>
-            {selected.status === 'media_only' ? <p className="essay-summary">这是录音资料：已进入全库检索和信息流，只提供知识星球源文件下载，不进入 AI 分析。</p> : analyzed ? <>
+            {selected.status === 'media_only' ? <p className="essay-summary">这是录音资料：系统不会自动分析；需要时可在录音检索页勾选源文件，后台转写并生成可下载的录音小作文。</p> : analyzed ? <>
               <div className="essay-detail-scoreline">
                 <span>重要度 <strong>{selected.importanceScore ?? '—'}</strong></span>
                 <span>信息增量 <strong>{selected.noveltyScore ?? '—'}</strong></span>
@@ -553,6 +621,18 @@ const EssayRadarPage = () => {
   );
   const [audioDownloadProgress, setAudioDownloadProgress] = useState<EssayAudioDownloadProgress | null>(null);
   const [audioDownloadLoading, setAudioDownloadLoading] = useState(false);
+  const [audioAnalysisCapability, setAudioAnalysisCapability] = useState<EssayAudioAnalysisCapability | null>(null);
+  const [audioAnalysisTask, setAudioAnalysisTask] = useState<EssayAudioAnalysisTask | null>(null);
+  const [audioAnalysisTasks, setAudioAnalysisTasks] = useState<EssayAudioAnalysisTask[]>([]);
+  const [audioAnalysisLoading, setAudioAnalysisLoading] = useState(false);
+  const [audioMemoTitle, setAudioMemoTitle] = useState('');
+  const [audioMemoFocus, setAudioMemoFocus] = useState('');
+  const [audioMemoHotwords, setAudioMemoHotwords] = useState('');
+  const [audioMemoSpeakerCount, setAudioMemoSpeakerCount] = useState('');
+  const [audioMemoOpen, setAudioMemoOpen] = useState(false);
+  const [activeAudioAnalysisTaskId, setActiveAudioAnalysisTaskId] = useState(
+    () => window.localStorage.getItem(AUDIO_ANALYSIS_TASK_STORAGE_KEY) ?? '',
+  );
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<string | null>(null);
   const feedPageCacheRef = useRef(new Map<string, EssayAnalysisList>());
@@ -573,6 +653,10 @@ const EssayRadarPage = () => {
     let cancelled = false;
     let timer = 0;
     const poll = async () => {
+      if (document.visibilityState === 'hidden') {
+        timer = window.setTimeout(() => void poll(), 5000);
+        return;
+      }
       try {
         const next = await essayRadarApi.audioBatchTask(activeAudioBatchTaskId);
         if (cancelled) return;
@@ -590,6 +674,50 @@ const EssayRadarPage = () => {
     void poll();
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [activeAudioBatchTaskId]);
+
+  useEffect(() => {
+    if (view !== 'feed' || feedMode !== 'audio') return;
+    void essayRadarApi.audioAnalysisCapability().then(setAudioAnalysisCapability).catch(() => undefined);
+  }, [feedMode, view]);
+
+  useEffect(() => {
+    if (view !== 'feed' || feedMode !== 'audio') return undefined;
+    let cancelled = false;
+    const loadTasks = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const next = await essayRadarApi.audioAnalysisTasks();
+        if (!cancelled) setAudioAnalysisTasks(next.items);
+      } catch { /* Task history is auxiliary; keep the current report visible. */ }
+    };
+    void loadTasks();
+    const timer = window.setInterval(() => void loadTasks(), 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [feedMode, view]);
+
+  useEffect(() => {
+    if (!activeAudioAnalysisTaskId) return undefined;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      if (document.visibilityState === 'hidden') {
+        timer = window.setTimeout(() => void poll(), 5000);
+        return;
+      }
+      try {
+        const next = await essayRadarApi.audioAnalysisTask(activeAudioAnalysisTaskId);
+        if (cancelled) return;
+        setAudioAnalysisTask(next);
+        if (next.status === 'queued' || next.status === 'running') timer = window.setTimeout(() => void poll(), 1500);
+      } catch {
+        if (cancelled) return;
+        window.localStorage.removeItem(AUDIO_ANALYSIS_TASK_STORAGE_KEY);
+        setActiveAudioAnalysisTaskId('');
+      }
+    };
+    void poll();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeAudioAnalysisTaskId]);
 
   const loadView = useCallback(async (_requestVersion: number) => {
     void _requestVersion;
@@ -806,16 +934,21 @@ const EssayRadarPage = () => {
     return () => window.clearTimeout(timer);
   }, [view]);
   useEffect(() => {
-    if (view !== 'feed') return;
+    if (view !== 'feed') return undefined;
     let active = true;
-    const initialLoad = !loadedViewsRef.current.has('feed');
-    if (initialLoad) setLibraryStatsLoading(true);
-    essayRadarApi.historicalBacklog()
-      .then((result) => { if (active) setHistoricalBacklog(result); })
-      .catch(() => { /* Keep search usable while knowledge-base statistics warm up. */ })
-      .finally(() => { if (active && initialLoad) setLibraryStatsLoading(false); });
-    return () => { active = false; };
-  }, [refreshKey, view]);
+    const loadBacklog = () => {
+      if (document.visibilityState === 'hidden') return;
+      const initialLoad = !loadedViewsRef.current.has('feed');
+      if (initialLoad) setLibraryStatsLoading(true);
+      void essayRadarApi.historicalBacklog()
+        .then((result) => { if (active) setHistoricalBacklog(result); })
+        .catch(() => { /* Keep search usable while knowledge-base statistics warm up. */ })
+        .finally(() => { if (active && initialLoad) setLibraryStatsLoading(false); });
+    };
+    loadBacklog();
+    const timer = window.setInterval(loadBacklog, 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [view]);
 
   const workerActive = Boolean(status?.worker.running && status?.mcpSync.running);
 
@@ -942,6 +1075,67 @@ const EssayRadarPage = () => {
       setExportNotice(errorText(caught, '录音 ZIP 下载失败，后台压缩包仍会保留 48 小时，可以稍后重试。'));
     } finally {
       setAudioDownloadLoading(false);
+    }
+  };
+
+  const analyzeSelectedAudio = async () => {
+    if (!selectedAudio.size || audioAnalysisLoading) return;
+    setAudioAnalysisLoading(true);
+    setExportNotice(null);
+    try {
+      const task = await essayRadarApi.startAudioAnalysisTask([...selectedAudio.values()].map((item) => ({
+        topicId: item.topicId, fileId: item.fileId,
+      })), {
+        title: audioMemoTitle.trim() || undefined,
+        focus: audioMemoFocus.trim() || undefined,
+        hotwords: audioMemoHotwords.split(/[，,、\n]/).map((item) => item.trim()).filter(Boolean),
+        speakerCount: audioMemoSpeakerCount ? Number(audioMemoSpeakerCount) : undefined,
+      });
+      setAudioAnalysisTask(task);
+      setAudioAnalysisTasks((current) => [task, ...current.filter((item) => item.taskId !== task.taskId)]);
+      setActiveAudioAnalysisTaskId(task.taskId);
+      window.localStorage.setItem(AUDIO_ANALYSIS_TASK_STORAGE_KEY, task.taskId);
+      setExportNotice(`已提交 ${selectedAudio.size} 个录音进行后台转写与 AI 纪要，离开页面后任务会继续。`);
+    } catch (caught) {
+      setExportNotice(errorText(caught, '录音 AI 纪要任务提交失败，请检查语音转写服务配置。'));
+    } finally {
+      setAudioAnalysisLoading(false);
+    }
+  };
+
+  const openAudioAnalysisTask = async (taskId: string) => {
+    try {
+      const task = await essayRadarApi.audioAnalysisTask(taskId);
+      setAudioAnalysisTask(task);
+      setActiveAudioAnalysisTaskId(task.taskId);
+      window.localStorage.setItem(AUDIO_ANALYSIS_TASK_STORAGE_KEY, task.taskId);
+      if (task.status === 'completed') setAudioMemoOpen(true);
+    } catch (caught) {
+      setExportNotice(errorText(caught, '任务详情暂时无法读取。'));
+    }
+  };
+
+  const retryAudioAnalysisTask = async (taskId: string) => {
+    try {
+      const task = await essayRadarApi.retryAudioAnalysisTask(taskId);
+      setAudioAnalysisTask(task);
+      setActiveAudioAnalysisTaskId(task.taskId);
+      window.localStorage.setItem(AUDIO_ANALYSIS_TASK_STORAGE_KEY, task.taskId);
+      setExportNotice('任务已恢复到后台队列，服务重启后也会继续执行。');
+    } catch (caught) {
+      setExportNotice(errorText(caught, '任务重试失败，请重新选择录音提交。'));
+    }
+  };
+
+  const downloadAudioMemo = async (format: 'zip' | 'md' | 'docx' | 'json') => {
+    if (!audioAnalysisTask || audioAnalysisTask.status !== 'completed') return;
+    try {
+      const blob = await essayRadarApi.downloadAudioAnalysis(audioAnalysisTask.taskId, format);
+      const extension = format;
+      const title = (audioAnalysisTask.result?.title || '录音纪要').replace(/[\\/:*?"<>|]/g, '_');
+      downloadBlob(blob, `${title}.${extension}`);
+    } catch (caught) {
+      setExportNotice(errorText(caught, '录音纪要下载失败，任务结果仍会保留，可以稍后重试。'));
     }
   };
 
@@ -1109,12 +1303,32 @@ const EssayRadarPage = () => {
             <div>
               <button type="button" onClick={toggleCurrentPageSelection} disabled={!currentFeedTotal}>全选/取消本页</button>
               <button type="button" onClick={() => feedMode === 'audio' ? setSelectedAudio(new Map()) : setSelectedEssays(new Set())} disabled={feedMode === 'audio' ? !selectedAudio.size : !selectedEssays.size}>清空已选</button>
+              {feedMode === 'audio' ? <button type="button" className="is-ai" onClick={() => void analyzeSelectedAudio()} disabled={audioAnalysisLoading || !selectedAudio.size || !audioAnalysisCapability?.configured || audioAnalysisTask?.status === 'queued' || audioAnalysisTask?.status === 'running'} title={audioAnalysisCapability?.message}>
+                {audioAnalysisLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Brain className="h-3.5 w-3.5" />}
+                {audioAnalysisLoading ? '正在提交' : 'AI 生成录音纪要'}
+              </button> : null}
               <button type="button" className="is-primary" onClick={() => void downloadSelected()} disabled={batchActionLoading || (feedMode === 'audio' ? !selectedAudio.size || audioBatchTask?.status === 'queued' || audioBatchTask?.status === 'running' : !selectedEssays.size)}>
                 {batchActionLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                 {batchActionLoading ? '正在提交' : feedMode === 'audio' ? '提交后台打包' : '下载已选原文 Excel'}
               </button>
             </div>
           </div>
+          {feedMode === 'audio' && audioAnalysisCapability ? <div className={`essay-audio-capability ${audioAnalysisCapability.configured ? 'is-ready' : 'is-missing'}`}><Brain className="h-4 w-4" /><span>{audioAnalysisCapability.configured ? `阿里云转写 + DeepSeek 研判已就绪 · 单次最多 ${audioAnalysisCapability.maxFiles} 个 · 单文件 ${audioAnalysisCapability.maxFileMb}MB` : audioAnalysisCapability.message}</span><small>源音频仅在任务期间临时缓存，转写后立即删除</small></div> : null}
+          {feedMode === 'audio' ? <section className="essay-audio-brief-builder">
+            <header><div><span>ANALYSIS BRIEF</span><h2>录音研究任务参数</h2></div><small>先定义关注问题和专业词，转写与纪要会更准确</small></header>
+            <div><label><span>纪要标题（可选）</span><input value={audioMemoTitle} onChange={(event) => setAudioMemoTitle(event.target.value)} placeholder="例如：光模块产业链专家交流纪要" /></label><label><span>重点问题</span><input value={audioMemoFocus} onChange={(event) => setAudioMemoFocus(event.target.value)} placeholder="例如：2027年需求、产能瓶颈、利润弹性" /></label><label><span>金融 / 公司热词</span><input value={audioMemoHotwords} onChange={(event) => setAudioMemoHotwords(event.target.value)} placeholder="CPO，中际旭创，硅光，800G" /></label><label><span>预计说话人数</span><select value={audioMemoSpeakerCount} onChange={(event) => setAudioMemoSpeakerCount(event.target.value)}><option value="">自动识别</option><option value="2">2 人</option><option value="3">3 人</option><option value="4">4 人</option><option value="5">5 人</option><option value="6">6 人</option></select></label></div>
+          </section> : null}
+          {feedMode === 'audio' && audioAnalysisTask ? <section className={`essay-audio-task essay-audio-analysis-task is-${audioAnalysisTask.status}`} aria-live="polite">
+            <div className="essay-audio-task-head"><div><span>录音转写 → AI 纪要 → 录音小作文</span><strong>{audioAnalysisTask.message}</strong></div><b>{audioAnalysisTask.progress}%</b></div>
+            <div className="essay-audio-task-track" role="progressbar" aria-label="录音 AI 纪要生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={audioAnalysisTask.progress}><i style={{ width: `${audioAnalysisTask.progress}%` }} /></div>
+            <div className="essay-audio-task-facts"><span>{audioAnalysisTask.phase === 'transcribing' ? '语音转写中' : audioAnalysisTask.phase === 'analyzing' ? 'AI 结构化分析中' : audioAnalysisTask.phase === 'completed' ? '报告已完成' : '后台任务'}</span><span>已处理 {audioAnalysisTask.completedFiles}/{audioAnalysisTask.totalFiles} 个</span>{audioAnalysisTask.currentFilename ? <span className="is-current">当前：{audioAnalysisTask.currentFilename}</span> : null}<span>结果保留 7 天</span></div>
+            {audioAnalysisTask.status === 'completed' ? <div className="essay-audio-analysis-actions"><button type="button" className="is-primary" onClick={() => setAudioMemoOpen(true)}><FileText className="h-4 w-4" />页面内查看纪要</button><button type="button" onClick={() => void downloadAudioMemo('docx')}><Download className="h-4 w-4" />下载 Word</button><button type="button" onClick={() => void downloadAudioMemo('zip')}><Archive className="h-4 w-4" />完整资料包</button></div> : null}
+            {audioAnalysisTask.status === 'failed' ? <div className="essay-audio-task-retry"><p className="essay-audio-task-error">{audioAnalysisTask.error || '录音纪要生成失败，请核对上游配置后重试。'}</p><button type="button" onClick={() => void retryAudioAnalysisTask(audioAnalysisTask.taskId)}><RefreshCw className="h-4 w-4" />从后台重试</button></div> : null}
+          </section> : null}
+          {feedMode === 'audio' && audioAnalysisTasks.length ? <section className="essay-audio-task-history">
+            <header><div><span>TASK LEDGER</span><h2>录音研究任务</h2></div><small>进行中与已完成任务均保留，可离开页面</small></header>
+            <div>{audioAnalysisTasks.slice(0, 10).map((task) => <article key={task.taskId} className={`is-${task.status}`}><button type="button" onClick={() => void openAudioAnalysisTask(task.taskId)}><span>{task.status === 'completed' ? '已完成' : task.status === 'failed' ? '失败' : task.phase === 'resuming' ? '恢复中' : '执行中'}</span><strong>{task.title || `录音纪要 · ${task.totalFiles} 个文件`}</strong><small>{formatTime(task.updatedAt, true)} · {task.progress}% · {task.message}</small></button><i><b style={{ width: `${task.progress}%` }} /></i>{task.status === 'failed' ? <button type="button" className="is-retry" onClick={() => void retryAudioAnalysisTask(task.taskId)}>重试</button> : null}</article>)}</div>
+          </section> : null}
           {feedMode === 'audio' && audioBatchTask ? <section className={`essay-audio-task is-${audioBatchTask.status}`} aria-live="polite">
             <div className="essay-audio-task-head">
               <div><span>后台录音打包</span><strong>{audioBatchTask.message}</strong></div>
@@ -1235,6 +1449,7 @@ const EssayRadarPage = () => {
       ) : null}
 
       <EssayDetail selected={selected} onClose={() => setSelected(null)} />
+      <AudioMemoDrawer task={audioMemoOpen ? audioAnalysisTask : null} onClose={() => setAudioMemoOpen(false)} onDownload={(format) => void downloadAudioMemo(format)} />
     </AppPage>
   );
 };

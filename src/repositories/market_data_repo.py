@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import and_, delete, func, select
@@ -82,6 +82,34 @@ class MarketDataRepository:
                 .order_by(StockIntraday.timestamp)
             ).scalars().all())
 
+    def recent_intraday(self, code: str, lookback_days: int, *, frequency: str = "1MIN") -> List[StockIntraday]:
+        """Return a bounded window relative to the newest stored bar.
+
+        This keeps charts usable across long market holidays or temporary
+        upstream outages without turning the query into an unbounded scan.
+        """
+        storage_code = normalize_daily_storage_code(code)
+        with self.db.get_session() as session:
+            latest = session.execute(
+                select(func.max(StockIntraday.timestamp)).where(and_(
+                    StockIntraday.code == storage_code,
+                    StockIntraday.frequency == frequency,
+                ))
+            ).scalar_one_or_none()
+            if latest is None:
+                return []
+            start = latest - timedelta(days=max(1, int(lookback_days)))
+            return list(session.execute(
+                select(StockIntraday)
+                .where(and_(
+                    StockIntraday.code == storage_code,
+                    StockIntraday.frequency == frequency,
+                    StockIntraday.timestamp >= start,
+                    StockIntraday.timestamp <= latest,
+                ))
+                .order_by(StockIntraday.timestamp)
+            ).scalars().all())
+
     def upsert_intraday(
         self,
         code: str,
@@ -141,6 +169,26 @@ class MarketDataRepository:
             return list(session.execute(
                 select(StockTick)
                 .where(and_(StockTick.code == storage_code, StockTick.timestamp >= start, StockTick.timestamp <= end))
+                .order_by(StockTick.timestamp)
+            ).scalars().all())
+
+    def recent_ticks(self, code: str, lookback_days: int) -> List[StockTick]:
+        """Return recent ticks relative to the newest stored observation."""
+        storage_code = normalize_daily_storage_code(code)
+        with self.db.get_session() as session:
+            latest = session.execute(
+                select(func.max(StockTick.timestamp)).where(StockTick.code == storage_code)
+            ).scalar_one_or_none()
+            if latest is None:
+                return []
+            start = latest - timedelta(days=max(1, int(lookback_days)))
+            return list(session.execute(
+                select(StockTick)
+                .where(and_(
+                    StockTick.code == storage_code,
+                    StockTick.timestamp >= start,
+                    StockTick.timestamp <= latest,
+                ))
                 .order_by(StockTick.timestamp)
             ).scalars().all())
 

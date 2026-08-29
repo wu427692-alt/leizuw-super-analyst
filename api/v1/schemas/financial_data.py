@@ -73,6 +73,14 @@ class ResearchNoteAudioBatchDownloadRequest(BaseModel):
     items: List[ResearchNoteAudioDownloadItem] = Field(..., min_length=1, max_length=100)
 
 
+class ResearchNoteAudioAnalysisRequest(BaseModel):
+    items: List[ResearchNoteAudioDownloadItem] = Field(..., min_length=1, max_length=20)
+    title: Optional[str] = Field(None, max_length=160)
+    focus: Optional[str] = Field(None, max_length=500)
+    hotwords: List[str] = Field(default_factory=list, max_length=100)
+    speaker_count: Optional[int] = Field(None, ge=2, le=20)
+
+
 class ResearchNoteImportResponse(BaseModel):
     received: int
     saved: int

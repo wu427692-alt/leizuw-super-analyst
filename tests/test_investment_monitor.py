@@ -6,13 +6,19 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from src.config import Config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.repositories.market_data_repo import MarketDataRepository
-from src.services.investment_monitor_service import BUILTIN_MONITORING_SOURCES, InvestmentMonitorService
+from src.services.investment_monitor_service import (
+    BUILTIN_MONITORING_SOURCES,
+    InvestmentMonitorService,
+    MonitoringSourceNotConfigured,
+)
+from src.services.investment_monitor_worker import InvestmentMonitorWorker
 from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, utc_naive_now
 
 
@@ -99,6 +105,21 @@ class FakeGuba:
         }]
 
 
+def test_tianyancha_missing_authorization_is_treated_as_not_configured(monitor, monkeypatch):
+    monkeypatch.setattr("src.services.investment_monitor_service.shutil.which", lambda _name: "/usr/local/bin/tyc")
+    monkeypatch.setattr(
+        "src.services.investment_monitor_service.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="未配置 Authorization。请先运行：tyc init --authorization YOUR_API_KEY",
+        ),
+    )
+
+    with pytest.raises(MonitoringSourceNotConfigured):
+        monitor._tianyancha_events({"source_key": "tianyancha.enterprise"})
+
+
 @pytest.fixture()
 def monitor(tmp_path):
     previous = os.environ.get("DATABASE_PATH")
@@ -174,6 +195,26 @@ def test_external_api_ingestion_is_idempotent_and_updates_scorecard(monitor):
     assert first["created"] == 1
     assert second["created"] == 0
     card = monitor.dashboard(days=7)["watchlist"][0]
+    assert card["event_count"] == 1
+    assert card["perspectives"]["institution"] == 1
+    assert card["opportunity_score"] > 50
+
+
+def test_dashboard_uses_aggregate_symbol_stats_without_loading_full_documents(monitor, monkeypatch):
+    monitor.create_external_source({"source_key": "api.aggregate", "name": "聚合测试"})
+    monitor.ingest_external_events("api.aggregate", [{
+        "external_id": "aggregate-1", "title": "贵州茅台盈利预测上调",
+        "symbols": ["600519"], "perspective": "institution",
+        "sentiment": "bullish", "importance_score": 88,
+    }])
+    monkeypatch.setattr(
+        monitor.repo,
+        "all_symbol_events",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("dashboard hydrated full documents")),
+    )
+
+    card = monitor.dashboard(days=7)["watchlist"][0]
+
     assert card["event_count"] == 1
     assert card["perspectives"]["institution"] == 1
     assert card["opportunity_score"] > 50
@@ -290,7 +331,7 @@ def test_historical_news_paginates_and_keeps_only_requested_watchlist_symbol(mon
         if offset == 0:
             return {"rows": [{
                 "datetime": "2026-08-18 09:00:00", "title": "000001 银行消息", "content": "平安银行事项",
-            }] * 1500}
+            }] * 300}
         return {"rows": [{
             "datetime": "2026-08-17 09:00:00", "title": "贵州茅台渠道更新", "content": "公司经营稳定",
         }]}
@@ -302,7 +343,7 @@ def test_historical_news_paginates_and_keeps_only_requested_watchlist_symbol(mon
     finally:
         monitor._backfill_days = None
 
-    assert offsets == [0, 1500]
+    assert offsets == [0, 300]
     assert len(events) == 1
     assert events[0]["symbols"] == ["600519.SH"]
 
@@ -621,6 +662,7 @@ def test_builtin_sources_use_continuous_monitoring_cadences():
     assert by_key["tushare.news.cls"]["poll_interval_seconds"] == 15
     assert by_key["cninfo.announcements"]["poll_interval_seconds"] == 60
     assert by_key["eastmoney.guba_posts"]["poll_interval_seconds"] == 30
+    assert by_key["akshare.stock_comments"]["enabled"] is False
     assert max(item["poll_interval_seconds"] for item in BUILTIN_MONITORING_SOURCES) <= 600
 
 
@@ -634,3 +676,16 @@ def test_zsxq_mirror_cursor_keeps_utc_database_clock():
     converted = InvestmentMonitorService._utc_iso_to_utc_naive("2026-08-21T12:21:44Z")
 
     assert converted == datetime(2026, 8, 21, 12, 21, 44)
+
+
+def test_external_investment_monitor_worker_cannot_start_inside_web_process(monkeypatch):
+    monkeypatch.setenv("INVESTMENT_MONITOR_RUN_MODE", "external")
+    worker = InvestmentMonitorWorker()
+
+    started = worker.start()
+    triggered = worker.trigger()
+
+    assert started["running"] is False
+    assert started["externally_managed"] is True
+    assert triggered["running"] is False
+    assert worker._thread is None

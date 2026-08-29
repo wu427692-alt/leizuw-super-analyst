@@ -110,10 +110,16 @@
 .landing-header nav a:hover { color: #fff; }
 .landing-header nav a:hover::after { transform: scaleX(1); }
 .landing-header-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
+.landing-register-enter,
 .landing-admin-enter,
 .landing-header-enter,
 .landing-enter,
 .landing-final-enter { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.landing-register-enter { position: relative; gap: 7px; min-height: 42px; padding: 0 15px; overflow: hidden; border: 1px solid rgb(74 222 255 / .52); color: #dff8ff; background: linear-gradient(110deg, rgb(14 116 215 / .2), rgb(124 58 237 / .18)); box-shadow: 0 0 24px rgb(34 211 238 / .1), inset 0 0 16px rgb(59 130 246 / .08); font-size: .73rem; font-weight: 720; transition: border-color .25s, background .25s, box-shadow .25s, transform .25s; }
+.landing-register-enter::before { position: absolute; inset: 0; content: ""; pointer-events: none; background: linear-gradient(105deg, transparent 28%, rgb(255 255 255 / .13), transparent 68%); transform: translateX(-120%); transition: transform .45s ease; }
+.landing-register-enter:hover { border-color: rgb(115 235 255 / .86); background: linear-gradient(110deg, rgb(14 116 215 / .34), rgb(124 58 237 / .28)); box-shadow: 0 0 30px rgb(34 211 238 / .2), inset 0 0 18px rgb(59 130 246 / .12); transform: translateY(-1px); }
+.landing-register-enter:hover::before { transform: translateX(120%); }
+.landing-register-enter svg { width: 14px; }
 .landing-admin-enter { gap: 7px; min-height: 42px; padding: 0 13px; color: #a9bed9; font-size: .71rem; font-weight: 650; }
 .landing-admin-enter:hover { color: #fff; }
 .landing-admin-enter svg { width: 13px; }
@@ -348,8 +354,9 @@
   .landing-brand > span { width: 31px; height: 31px; }
   .landing-header-enter { min-height: 38px; padding: 0 11px; font-size: .65rem; }
   .landing-header-enter svg { display: none; }
-  .landing-admin-enter { min-height: 38px; padding: 0 7px; font-size: 0; }
-  .landing-admin-enter svg { width: 15px; }
+  .landing-register-enter { min-height: 38px; padding: 0 10px; font-size: .68rem; }
+  .landing-register-enter svg { display: none; }
+  .landing-admin-enter { display: none; }
   .landing-hero { width: 100%; min-height: 900px; padding-top: 68px; }
   .landing-hero-backdrop { top: 330px; right: -73vw; left: -55vw; background-position: center, 68% center; opacity: .82; }
   .landing-hero-copy { top: 128px; left: 20px; width: calc(100% - 40px); }

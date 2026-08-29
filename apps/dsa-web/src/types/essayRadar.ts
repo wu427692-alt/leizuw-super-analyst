@@ -222,6 +222,71 @@ export type EssayAudioDownloadProgress = {
   percent?: number;
 };
 
+export type EssayAudioAnalysisCapability = {
+  configured: boolean;
+  transcriptionConfigured: boolean;
+  analysisConfigured: boolean;
+  transcriptionProvider?: string;
+  maxFiles: number;
+  maxFileMb: number;
+  message: string;
+};
+
+export type EssayAudioMemoResult = {
+  title: string;
+  executiveSummary?: string;
+  meetingContext?: string | string[];
+  keyConclusions?: string[];
+  industryChain?: string[];
+  companyMentions?: Array<{ name?: string; tsCode?: string; evidence?: string; view?: string }>;
+  financialForecasts?: Array<{ subject?: string; period?: string; metric?: string; value?: string; evidence?: string }>;
+  catalysts?: string[];
+  risks?: string[];
+  disagreements?: string[];
+  followUps?: string[];
+  transcriptQuality?: string;
+  evidenceIndex?: Array<{ claim?: string; sourceFile?: string; timestamp?: string; speaker?: string; category?: string; confidence?: number }>;
+  speakerViews?: Array<{ speaker?: string; summary?: string; keyPoints?: string[] }>;
+  monitoringItems?: Array<{ item?: string; metric?: string; timeWindow?: string; trigger?: string; evidence?: string }>;
+  generatedAt?: string;
+  model?: string;
+  sourceFiles?: Array<{ filename?: string; topicId?: string; fileId?: string; noteTitle?: string; createdAt?: string }>;
+  libraryTopicId?: string | null;
+  indexed?: boolean;
+};
+
+export type EssayAudioTranscript = {
+  fileId: string;
+  filename?: string;
+  text: string;
+  lines: Array<{ timestamp: string; speaker: string; text: string }>;
+};
+
+export type EssayAudioAnalysisTask = {
+  taskId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  phase: 'queued' | 'resuming' | 'downloading' | 'transcribing' | 'analyzing' | 'completed' | 'failed' | 'interrupted';
+  progress: number;
+  message: string;
+  title?: string;
+  focus?: string;
+  hotwords?: string[];
+  speakerCount?: number | null;
+  retryCount?: number;
+  totalFiles: number;
+  completedFiles: number;
+  currentFilename?: string | null;
+  transcriptArtifacts?: Array<{ fileId: string; topicId?: string; filename?: string; lineCount?: number }>;
+  indexed?: boolean;
+  libraryTopicId?: string | null;
+  result?: EssayAudioMemoResult | null;
+  downloadUrls?: Partial<Record<'zip' | 'md' | 'docx' | 'json', string>>;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+};
+
 export type EssayWordCloud = {
   period: 'day' | 'week' | 'month'; kind: 'stocks' | 'tags' | 'themes'; stock?: string | null;
   startDate: string; endDate: string; sourceCount: number;

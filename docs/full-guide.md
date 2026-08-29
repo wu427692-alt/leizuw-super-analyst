@@ -444,7 +444,7 @@ daily_stock_analysis/
 |--------|------|--------|
 | `STOCK_LIST` | 自选股代码（逗号分隔） | - |
 | `ADMIN_AUTH_ENABLED` | Web 登录：设为 `true` 启用密码保护；首次访问在网页设置初始密码，可在「系统设置 > 修改密码」修改；忘记密码执行 `python -m src.auth reset_password`。Web 的 `.env` 备份导入导出仅在开启该开关后可用（桌面端不受此限制）。 | `false` |
-| `USER_ACCESS_ENABLED` | 前台用户访问控制：姓名和密码注册后等待管理员在 `/admin/access` 审批；批准时信任注册 IP，成功密码登录会绑定新 IP。同一 IP 对应多个账号时要求密码登录。自选股、问股会话、分析历史与任务、持仓、告警、AI 建议信号、量化规则/运行记录和传统回测按账号隔离。 | `false` |
+| `USER_ACCESS_ENABLED` | 前台用户访问控制：姓名和密码注册后等待管理员在 `/admin/access` 审批；批准后仍须使用姓名和密码建立有效会话，IP 仅用于脱敏审计，不能单独作为登录凭证。自选股、问股会话、分析历史与任务、量化规则/运行记录按账号隔离。 | `false` |
 | `TRUST_X_FORWARDED_FOR` | 单层可信反向代理部署时设为 `true`，取 `X-Forwarded-For` 最右值作为真实客户端 IP（用于登录限流等）；直连公网时保持 `false` 防伪造。多级代理/CDN 场景下限流 key 可能退化为边缘代理 IP，需额外评估 | `false` |
 | `MAX_WORKERS` | 并发线程数 | `3` |
 | `MARKET_REVIEW_ENABLED` | 启用大盘复盘 | `true` |

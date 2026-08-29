@@ -137,6 +137,22 @@ describe('App routing behavior', () => {
     expect(screen.queryByTestId('landing-page')).not.toBeInTheDocument();
   });
 
+  it('redirects an unauthenticated direct application visit to user access', async () => {
+    vi.mocked(UserAccessContext.useUserAccess).mockReturnValue(makeUserAccessState({
+      loggedIn: false,
+      user: null,
+      authMethod: null,
+    }));
+    window.history.pushState({}, '', '/essay-radar/feed?keyword=光模块');
+
+    render(<App />);
+
+    expect(await screen.findByTestId('user-access-page')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/access');
+    expect(new URLSearchParams(window.location.search).get('redirect')).toBe('/essay-radar/feed?keyword=%E5%85%89%E6%A8%A1%E5%9D%97');
+    expect(screen.queryByTestId('landing-page')).not.toBeInTheDocument();
+  });
+
   it('shows loading fallback while an admin route is initializing auth', () => {
     vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState({ isLoading: true }));
     window.history.pushState({}, '', '/admin');

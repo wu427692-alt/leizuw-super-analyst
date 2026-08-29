@@ -22,12 +22,10 @@ class StartupWarmupService:
     def _default_tasks(self) -> tuple[WarmupTask, ...]:
         # Import and construct lazily: merely importing api.app must remain fast.
         from src.services.essay_analysis_service import EssayAnalysisService
-        from src.services.industry_research_service import IndustryResearchService
         from src.services.investment_monitor_service import InvestmentMonitorService
 
         essays = EssayAnalysisService()
         monitor = InvestmentMonitorService()
-        industry_research = IndustryResearchService()
         essential: tuple[WarmupTask, ...] = (
             ("essay-library-stats", essays.historical_backlog),
             ("essay-status", lambda: essays.progress(days=30)),
@@ -35,24 +33,26 @@ class StartupWarmupService:
                 "essay-feed-first-page",
                 lambda: essays.list_feed(days=0, page=1, page_size=20),
             ),
-            ("essay-deep-insights-short", lambda: essays.deep_insights(horizon="short")),
-            ("essay-deep-insights-medium", lambda: essays.deep_insights(horizon="medium")),
-            ("essay-deep-insights-long", lambda: essays.deep_insights(horizon="long")),
             (
                 "investment-feed-first-page",
-                lambda: monitor.list_events(days=7, page=1, page_size=100),
-            ),
-            (
-                "industry-research-optical-module",
-                lambda: industry_research.blueprint("光模块", lookback_days=730),
+                lambda: monitor.list_events(days=7, page=1, page_size=30),
             ),
         )
         if os.getenv("APP_STARTUP_WARMUP_PROFILE", "essential").strip().lower() != "full":
             return essential
         from src.services.home_dashboard_service import HomeDashboardService
+        from src.services.industry_research_service import IndustryResearchService
 
+        industry_research = IndustryResearchService()
         home = HomeDashboardService(monitor=monitor, background_refresh=True)
         return essential + (
+            ("essay-deep-insights-short", lambda: essays.deep_insights(horizon="short")),
+            ("essay-deep-insights-medium", lambda: essays.deep_insights(horizon="medium")),
+            ("essay-deep-insights-long", lambda: essays.deep_insights(horizon="long")),
+            (
+                "industry-research-optical-module",
+                lambda: industry_research.blueprint("光模块", lookback_days=730),
+            ),
             ("home-dashboard", lambda: home.dashboard(force=False)),
             ("essay-dashboard", lambda: essays.dashboard(days=30)),
             ("investment-dashboard", lambda: monitor.dashboard(days=7)),

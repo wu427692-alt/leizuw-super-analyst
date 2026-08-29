@@ -1,6 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
-import type { EssayAnalysis, EssayAnalysisList, EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFileList, EssayCountBackfillResponse, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayHistoricalBacklog, EssayInsights, EssayStatus, EssayWordCloud, EssayWorkerStatus, ResearchNoteDetail } from '../types/essayRadar';
+import type { EssayAnalysis, EssayAnalysisList, EssayAudioAnalysisCapability, EssayAudioAnalysisTask, EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFileList, EssayAudioTranscript, EssayCountBackfillResponse, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayHistoricalBacklog, EssayInsights, EssayStatus, EssayWordCloud, EssayWorkerStatus, ResearchNoteDetail } from '../types/essayRadar';
 
 export type EssayFilters = {
   days?: number;
@@ -163,6 +163,45 @@ export const essayRadarApi = {
           percent: total ? Math.min(100, Math.round((event.loaded / total) * 100)) : undefined,
         });
       },
+    });
+    return response.data as Blob;
+  },
+  audioAnalysisCapability: async (): Promise<EssayAudioAnalysisCapability> => {
+    const response = await apiClient.get('/api/v1/financial-data/research-notes/audio-analysis/capability');
+    return toCamelCase<EssayAudioAnalysisCapability>(response.data);
+  },
+  startAudioAnalysisTask: async (
+    items: Array<{ topicId: string; fileId: string }>,
+    options: { title?: string; focus?: string; hotwords?: string[]; speakerCount?: number } = {},
+  ): Promise<EssayAudioAnalysisTask> => {
+    const response = await apiClient.post('/api/v1/financial-data/research-notes/audio-analysis/tasks', {
+      items: items.map((item) => ({ topic_id: item.topicId, file_id: item.fileId })),
+      title: options.title || undefined,
+      focus: options.focus || undefined,
+      hotwords: options.hotwords || [],
+      speaker_count: options.speakerCount || undefined,
+    });
+    return toCamelCase<EssayAudioAnalysisTask>(response.data);
+  },
+  audioAnalysisTask: async (taskId: string): Promise<EssayAudioAnalysisTask> => {
+    const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-analysis/tasks/${encodeURIComponent(taskId)}`);
+    return toCamelCase<EssayAudioAnalysisTask>(response.data);
+  },
+  audioAnalysisTasks: async (): Promise<{ items: EssayAudioAnalysisTask[]; total: number }> => {
+    const response = await apiClient.get('/api/v1/financial-data/research-notes/audio-analysis/tasks', { params: { limit: 20 } });
+    return toCamelCase(response.data);
+  },
+  retryAudioAnalysisTask: async (taskId: string): Promise<EssayAudioAnalysisTask> => {
+    const response = await apiClient.post(`/api/v1/financial-data/research-notes/audio-analysis/tasks/${encodeURIComponent(taskId)}/retry`);
+    return toCamelCase<EssayAudioAnalysisTask>(response.data);
+  },
+  audioAnalysisTranscript: async (taskId: string, fileId: string): Promise<EssayAudioTranscript> => {
+    const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-analysis/tasks/${encodeURIComponent(taskId)}/transcripts/${encodeURIComponent(fileId)}`);
+    return toCamelCase<EssayAudioTranscript>(response.data);
+  },
+  downloadAudioAnalysis: async (taskId: string, format: 'zip' | 'md' | 'docx' | 'json'): Promise<Blob> => {
+    const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-analysis/tasks/${encodeURIComponent(taskId)}/download`, {
+      params: { format }, responseType: 'blob', timeout: 600000,
     });
     return response.data as Blob;
   },

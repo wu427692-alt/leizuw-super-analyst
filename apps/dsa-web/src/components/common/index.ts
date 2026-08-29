@@ -5,6 +5,7 @@ export * from './AppPage';
 export * from './SectionCard';
 export * from './StatCard';
 export * from './EmptyState';
+export * from './EvidenceRail';
 export * from './InlineAlert';
 export * from './StickyActionBar';
 export * from './Toolbar';

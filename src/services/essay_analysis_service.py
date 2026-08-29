@@ -54,29 +54,64 @@ _SENTIMENTS = {"bullish", "bearish", "neutral", "mixed"}
 _HORIZONS = {"intraday", "short", "medium", "long", "unclear"}
 _STANCES = {"bullish", "bearish", "neutral", "watching"}
 _TS_CODE_RE = re.compile(r"^(\d{6})(?:\.(SH|SS|SZ|BJ))?$", re.IGNORECASE)
+
+
+def _bounded_env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 256) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(value, maximum))
+
+
 _DASHBOARD_ROWS_CACHE_TTL_SECONDS = 30.0
+_DASHBOARD_ROWS_CACHE_MAX_ENTRIES = _bounded_env_int("ESSAY_DASHBOARD_ROWS_CACHE_MAX_ENTRIES", 4)
 _dashboard_rows_cache: Dict[Any, tuple[float, List[Dict[str, Any]]]] = {}
 _dashboard_rows_cache_lock = threading.Lock()
 _DEEP_INSIGHTS_CACHE_TTL_SECONDS = 1800.0
+_DEEP_INSIGHTS_CACHE_MAX_ENTRIES = _bounded_env_int("ESSAY_DEEP_INSIGHTS_CACHE_MAX_ENTRIES", 8)
 _deep_insights_cache: Dict[tuple[Any, ...], tuple[float, Dict[str, Any]]] = {}
 _deep_insights_cache_lock = threading.Lock()
 _ESSAY_SUMMARY_CACHE_TTL_SECONDS = 30.0
+_ESSAY_SUMMARY_CACHE_MAX_ENTRIES = _bounded_env_int("ESSAY_SUMMARY_CACHE_MAX_ENTRIES", 32)
 _essay_summary_cache: Dict[tuple[Any, ...], tuple[float, Dict[str, Any]]] = {}
 _essay_summary_cache_lock = threading.Lock()
+
+
+def _prune_ttl_cache(cache: Dict[Any, tuple[float, Any]], *, now: float, ttl: float, max_entries: int) -> None:
+    """Drop expired and oldest cache values while their owning lock is held."""
+    expired = [key for key, (created_at, _) in cache.items() if now - created_at >= ttl]
+    for key in expired:
+        cache.pop(key, None)
+    overflow = len(cache) - max_entries
+    if overflow > 0:
+        oldest = sorted(cache, key=lambda item: cache[item][0])[:overflow]
+        for key in oldest:
+            cache.pop(key, None)
 
 
 def _cached_essay_summary(key: tuple[Any, ...], loader) -> Dict[str, Any]:
     now = time.monotonic()
     with _essay_summary_cache_lock:
+        _prune_ttl_cache(
+            _essay_summary_cache,
+            now=now,
+            ttl=_ESSAY_SUMMARY_CACHE_TTL_SECONDS,
+            max_entries=_ESSAY_SUMMARY_CACHE_MAX_ENTRIES,
+        )
         cached = _essay_summary_cache.get(key)
-        if cached and now - cached[0] < _ESSAY_SUMMARY_CACHE_TTL_SECONDS:
+        if cached:
             return cached[1]
     value = loader()
     with _essay_summary_cache_lock:
-        _essay_summary_cache[key] = (now, value)
-        if len(_essay_summary_cache) > 32:
-            oldest = min(_essay_summary_cache, key=lambda item: _essay_summary_cache[item][0])
-            _essay_summary_cache.pop(oldest, None)
+        stored_at = time.monotonic()
+        _essay_summary_cache[key] = (stored_at, value)
+        _prune_ttl_cache(
+            _essay_summary_cache,
+            now=stored_at,
+            ttl=_ESSAY_SUMMARY_CACHE_TTL_SECONDS,
+            max_entries=_ESSAY_SUMMARY_CACHE_MAX_ENTRIES,
+        )
     return value
 
 _SYSTEM_PROMPT = """你是中国资本市场研究资料结构化分析员。请只根据输入文本提取事实、观点和风险，
@@ -942,15 +977,25 @@ class EssayAnalysisService:
             return self.repo.completed_for_dashboard(cutoff=cutoff)
         now = time.monotonic()
         with _dashboard_rows_cache_lock:
+            _prune_ttl_cache(
+                _dashboard_rows_cache,
+                now=now,
+                ttl=_DASHBOARD_ROWS_CACHE_TTL_SECONDS,
+                max_entries=_DASHBOARD_ROWS_CACHE_MAX_ENTRIES,
+            )
             cached = _dashboard_rows_cache.get(safe_days)
-            if cached and now - cached[0] < _DASHBOARD_ROWS_CACHE_TTL_SECONDS:
+            if cached:
                 return cached[1]
         rows = self.repo.completed_for_dashboard(cutoff=cutoff)
         with _dashboard_rows_cache_lock:
-            _dashboard_rows_cache[safe_days] = (now, rows)
-            if len(_dashboard_rows_cache) > 16:
-                oldest = min(_dashboard_rows_cache, key=lambda item: _dashboard_rows_cache[item][0])
-                _dashboard_rows_cache.pop(oldest, None)
+            stored_at = time.monotonic()
+            _dashboard_rows_cache[safe_days] = (stored_at, rows)
+            _prune_ttl_cache(
+                _dashboard_rows_cache,
+                now=stored_at,
+                ttl=_DASHBOARD_ROWS_CACHE_TTL_SECONDS,
+                max_entries=_DASHBOARD_ROWS_CACHE_MAX_ENTRIES,
+            )
         return rows
 
     def _completed_dashboard_rows_between(self, start_day: date, end_day: date) -> List[Dict[str, Any]]:
@@ -963,15 +1008,25 @@ class EssayAnalysisService:
         cache_key = ("range", start_day.isoformat(), end_day.isoformat())
         now = time.monotonic()
         with _dashboard_rows_cache_lock:
+            _prune_ttl_cache(
+                _dashboard_rows_cache,
+                now=now,
+                ttl=_DASHBOARD_ROWS_CACHE_TTL_SECONDS,
+                max_entries=_DASHBOARD_ROWS_CACHE_MAX_ENTRIES,
+            )
             cached = _dashboard_rows_cache.get(cache_key)
-            if cached and now - cached[0] < _DASHBOARD_ROWS_CACHE_TTL_SECONDS:
+            if cached:
                 return cached[1]
         rows = self.repo.completed_between(start=start, end=end)
         with _dashboard_rows_cache_lock:
-            _dashboard_rows_cache[cache_key] = (now, rows)
-            if len(_dashboard_rows_cache) > 16:
-                oldest = min(_dashboard_rows_cache, key=lambda item: _dashboard_rows_cache[item][0])
-                _dashboard_rows_cache.pop(oldest, None)
+            stored_at = time.monotonic()
+            _dashboard_rows_cache[cache_key] = (stored_at, rows)
+            _prune_ttl_cache(
+                _dashboard_rows_cache,
+                now=stored_at,
+                ttl=_DASHBOARD_ROWS_CACHE_TTL_SECONDS,
+                max_entries=_DASHBOARD_ROWS_CACHE_MAX_ENTRIES,
+            )
         return rows
 
     def dashboard(self, *, days: int = 30, top_n: int = 12) -> Dict[str, Any]:
@@ -984,8 +1039,15 @@ class EssayAnalysisService:
                 self.repo.cache_revision(),
             )
             with _essay_summary_cache_lock:
+                now = time.monotonic()
+                _prune_ttl_cache(
+                    _essay_summary_cache,
+                    now=now,
+                    ttl=_ESSAY_SUMMARY_CACHE_TTL_SECONDS,
+                    max_entries=_ESSAY_SUMMARY_CACHE_MAX_ENTRIES,
+                )
                 cached = _essay_summary_cache.get(cache_key)
-                if cached and time.monotonic() - cached[0] < _ESSAY_SUMMARY_CACHE_TTL_SECONDS:
+                if cached:
                     return cached[1]
         rows = self._completed_dashboard_rows(safe_days)
         sentiment = Counter()
@@ -1081,10 +1143,14 @@ class EssayAnalysisService:
         }
         if type(self.repo) is EssayAnalysisRepository:
             with _essay_summary_cache_lock:
-                _essay_summary_cache[cache_key] = (time.monotonic(), payload)
-                if len(_essay_summary_cache) > 32:
-                    oldest = min(_essay_summary_cache, key=lambda item: _essay_summary_cache[item][0])
-                    _essay_summary_cache.pop(oldest, None)
+                stored_at = time.monotonic()
+                _essay_summary_cache[cache_key] = (stored_at, payload)
+                _prune_ttl_cache(
+                    _essay_summary_cache,
+                    now=stored_at,
+                    ttl=_ESSAY_SUMMARY_CACHE_TTL_SECONDS,
+                    max_entries=_ESSAY_SUMMARY_CACHE_MAX_ENTRIES,
+                )
             return payload
 
     def insights(self, *, days: int = 30, trend_days: int = 14) -> Dict[str, Any]:
@@ -1238,8 +1304,14 @@ class EssayAnalysisService:
         )
         now = time.monotonic()
         with _deep_insights_cache_lock:
+            _prune_ttl_cache(
+                _deep_insights_cache,
+                now=now,
+                ttl=_DEEP_INSIGHTS_CACHE_TTL_SECONDS,
+                max_entries=_DEEP_INSIGHTS_CACHE_MAX_ENTRIES,
+            )
             cached = _deep_insights_cache.get(cache_key)
-            if cached and now - cached[0] < _DEEP_INSIGHTS_CACHE_TTL_SECONDS:
+            if cached:
                 return cached[1]
         rows = self._completed_dashboard_rows_between(selected_start, selected_end)
         trend_start = max(selected_start, selected_end - timedelta(days=safe_trend_days - 1))
@@ -1565,7 +1637,14 @@ class EssayAnalysisService:
             ],
         }
         with _deep_insights_cache_lock:
-            _deep_insights_cache[cache_key] = (time.monotonic(), result)
+            stored_at = time.monotonic()
+            _deep_insights_cache[cache_key] = (stored_at, result)
+            _prune_ttl_cache(
+                _deep_insights_cache,
+                now=stored_at,
+                ttl=_DEEP_INSIGHTS_CACHE_TTL_SECONDS,
+                max_entries=_DEEP_INSIGHTS_CACHE_MAX_ENTRIES,
+            )
         return result
 
     def interpret_market_impact(

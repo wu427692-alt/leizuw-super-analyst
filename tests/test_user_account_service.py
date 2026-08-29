@@ -9,6 +9,7 @@ from src.services.user_account_service import (
     UserAccountError,
     UserAccountService,
     create_user_session,
+    parse_user_session,
 )
 from src.repositories.alert_repo import AlertRepository
 from src.repositories.backtest_repo import BacktestRepository
@@ -31,7 +32,7 @@ def user_service(tmp_path, monkeypatch):
         DatabaseManager.reset_instance()
 
 
-def test_registration_requires_approval_then_trusts_registration_ip(user_service):
+def test_registration_requires_approval_then_password_login(user_service):
     created = user_service.register("测试用户", "secret1", "203.0.113.7")
     assert created["status"] == "pending"
 
@@ -40,18 +41,17 @@ def test_registration_requires_approval_then_trusts_registration_ip(user_service
     assert pending.value.code == "pending_approval"
 
     user_service.set_status(created["id"], "approved")
-    trusted = user_service.account_for_ip("203.0.113.7")
-    assert trusted is not None
-    assert trusted.display_name == "测试用户"
+    logged_in = user_service.login("测试用户", "secret1", "203.0.113.7")
+    assert logged_in.display_name == "测试用户"
 
 
-def test_shared_ip_never_guesses_between_two_approved_users(user_service):
+def test_shared_ip_requires_each_approved_user_to_log_in(user_service):
     first = user_service.register("用户甲", "secret1", "198.51.100.4")
     second = user_service.register("用户乙", "secret2", "198.51.100.4")
     user_service.set_status(first["id"], "approved")
     user_service.set_status(second["id"], "approved")
 
-    assert user_service.account_for_ip("198.51.100.4") is None
+    assert user_service.login("用户甲", "secret1", "198.51.100.4").id == first["id"]
     assert user_service.login("用户乙", "secret2", "198.51.100.4").id == second["id"]
 
 
@@ -66,6 +66,14 @@ def test_session_cache_is_invalidated_immediately_when_account_is_disabled(user_
 
     user_service.set_status(created["id"], "disabled")
     assert user_service.account_for_session(cookie) is None
+
+
+def test_legacy_ip_autologin_sessions_are_invalidated(user_service):
+    created = user_service.register("历史会话用户", "secret1", "203.0.113.11")
+    user_service.set_status(created["id"], "approved")
+
+    assert parse_user_session(f"v1.{created['id']}.1.legacy.invalid") is None
+    assert create_user_session(created["id"]).startswith("v2.")
 
 
 def test_watchlists_are_isolated_while_symbols_can_share_market_storage(user_service):

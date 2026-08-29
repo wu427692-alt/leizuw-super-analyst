@@ -24,6 +24,7 @@ from src.storage import DatabaseManager, UserAccount, UserTrustedIp, UserWatchli
 USER_COOKIE_NAME = "dsa_user_session"
 USER_AUTO_LOGIN_SUPPRESSION_COOKIE = "dsa_user_auto_login_suppressed"
 SESSION_MAX_AGE_DAYS = 30
+USER_SESSION_VERSION = "v2"
 PASSWORD_ITERATIONS = 240_000
 MIN_PASSWORD_LENGTH = 6
 MAX_TRUSTED_IPS = 5
@@ -150,14 +151,14 @@ def hash_ip(value: str) -> str:
 def create_user_session(user_id: int) -> str:
     issued_at = str(int(time.time()))
     nonce = secrets.token_urlsafe(24)
-    payload = f"v1.{int(user_id)}.{issued_at}.{nonce}"
+    payload = f"{USER_SESSION_VERSION}.{int(user_id)}.{issued_at}.{nonce}"
     signature = hmac.new(_load_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
 
 
 def parse_user_session(value: str) -> Optional[int]:
     parts = str(value or "").split(".")
-    if len(parts) != 5 or parts[0] != "v1":
+    if len(parts) != 5 or parts[0] != USER_SESSION_VERSION:
         return None
     payload = ".".join(parts[:4])
     expected = hmac.new(_load_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -303,26 +304,6 @@ class UserAccountService:
             ]
             for key in stale_keys:
                 cls._session_cache.pop(key, None)
-
-    def account_for_ip(self, client_ip: str) -> Optional[UserAccount]:
-        digest = hash_ip(client_ip)
-        with self.db.session_scope() as session:
-            rows = session.execute(
-                select(UserAccount, UserTrustedIp)
-                .join(UserTrustedIp, UserTrustedIp.user_id == UserAccount.id)
-                .where(UserTrustedIp.ip_hash == digest, UserAccount.status == "approved")
-            ).all()
-            # Shared office/home NAT must never guess which account is active.
-            distinct = {int(account.id): (account, trusted) for account, trusted in rows}
-            if len(distinct) != 1:
-                return None
-            account, trusted = next(iter(distinct.values()))
-            trusted.last_seen_at = utc_naive_now()
-            account.last_login_at = utc_naive_now()
-            account.last_login_ip_label = mask_ip(client_ip)
-            session.flush()
-            session.expunge(account)
-            return account
 
     def get_account(self, user_id: int) -> Optional[UserAccount]:
         with self.db.get_session() as session:

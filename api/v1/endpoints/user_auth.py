@@ -54,7 +54,7 @@ def _error(exc: UserAccountError, status_code: int = 400) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": exc.code, "message": exc.message})
 
 
-def _resolve_request_user(request: Request, *, allow_ip: bool = True):
+def _resolve_request_user(request: Request):
     # The already authenticated operator can inspect the front office without
     # creating a normal user account; private resources remain in owner scope 0.
     admin_cookie = request.cookies.get(ADMIN_COOKIE_NAME)
@@ -64,10 +64,6 @@ def _resolve_request_user(request: Request, *, allow_ip: bool = True):
     row = service.account_for_session(request.cookies.get(USER_COOKIE_NAME, ""))
     if row is not None:
         return row, "session"
-    if allow_ip and not request.cookies.get(USER_AUTO_LOGIN_SUPPRESSION_COOKIE):
-        row = service.account_for_ip(get_client_ip(request))
-        if row is not None:
-            return row, "trusted_ip"
     return None, None
 
 
@@ -90,18 +86,7 @@ def status(request: Request):
         "user": serialize_current_user(user, method) if user is not None else None,
         "authMethod": method,
     }
-    if user is None or method != "trusted_ip":
-        return payload
-
-    # Turn the one-time trusted-IP lookup into a signed session. This avoids a
-    # database lookup on each API call and keeps the chosen identity stable.
-    response = JSONResponse(payload)
-    response.set_cookie(
-        USER_COOKIE_NAME,
-        create_user_session(int(user.id)),
-        **_cookie_options(request, max_age=SESSION_MAX_AGE_DAYS * 86400),
-    )
-    return response
+    return payload
 
 
 @router.post("/register", status_code=202, summary="提交姓名与密码注册申请")
@@ -147,13 +132,9 @@ def login(request: Request, body: UserCredentialsRequest):
 def logout(request: Request):
     response = Response(status_code=204)
     response.delete_cookie(USER_COOKIE_NAME, path="/")
-    # Without this marker the trusted-IP convenience login would immediately
-    # undo logout and make account switching impossible on shared networks.
-    response.set_cookie(
-        USER_AUTO_LOGIN_SUPPRESSION_COOKIE,
-        "1",
-        **_cookie_options(request, max_age=86400),
-    )
+    # Remove the legacy trusted-IP suppression marker as IP addresses are no
+    # longer accepted as authentication credentials.
+    response.delete_cookie(USER_AUTO_LOGIN_SUPPRESSION_COOKIE, path="/")
     return response
 
 

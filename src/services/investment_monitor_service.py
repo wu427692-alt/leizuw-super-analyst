@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import ctypes
 from datetime import datetime, timedelta, timezone
+import gc
 import hashlib
 import json
 import logging
@@ -82,7 +84,7 @@ _EVENT_ORIGIN_APIS: Dict[str, Sequence[str]] = {
 
 def _source(source_key: str, name: str, adapter_type: str, provider: str, category: str,
             cadence: int, *, level: str = "licensed", apis: Sequence[str] = (),
-            config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+            config: Optional[Dict[str, Any]] = None, enabled: bool = True) -> Dict[str, Any]:
     if cadence <= 60:
         refresh_mode = "near_realtime"
     elif cadence <= 3600:
@@ -96,7 +98,8 @@ def _source(source_key: str, name: str, adapter_type: str, provider: str, catego
         "target_refresh_seconds": cadence,
     }
     return {"source_key": source_key, "name": name, "adapter_type": adapter_type,
-            "provider": provider, "category": category, "poll_interval_seconds": cadence,
+            "provider": provider, "category": category, "enabled": enabled,
+            "poll_interval_seconds": cadence,
             "config": {**evidence, **(config or {})}}
 
 
@@ -141,8 +144,12 @@ BUILTIN_MONITORING_SOURCES = [
             apis=("registration-info", "risk-overview", "credit-evaluation", "ipr-score", "historical-overview")),
     _source("zsxq.essays", "知识星球小作文（待核验）", "mcp", "zsxq", "essay", 10,
             level="unverified", apis=("zsxq_mcp",)),
-    _source("akshare.stock_comments", "东方财富千股千评指标", "akshare", "eastmoney", "comment", 300,
-            level="reported", apis=("stock_comment_em",)),
+    # stock_comment_em downloads the full A-share universe and is not a real
+    # comment stream.  Keep the adapter available for explicit/manual use but
+    # do not run it in the background; genuine watchlist comments are provided
+    # by the bounded eastmoney.guba_posts adapter below.
+    _source("akshare.stock_comments", "东方财富千股千评指标", "akshare", "eastmoney", "comment", 600,
+            level="reported", apis=("stock_comment_em",), enabled=False),
     _source("eastmoney.guba_posts", "东方财富股吧公开股评", "html", "eastmoney_guba", "comment", 30,
             level="unverified", apis=("mguba_public_list",)),
     _source("feeds.intelligence", "RSS / NewsNow 媒体流", "feed", "configurable", "news", 15,
@@ -655,12 +662,12 @@ class InvestmentMonitorService:
             config = source.get("config") or {}
             evidence_counts[str(config.get("evidence_level") or "unverified")] += count
             channel_counts[str(source.get("category") or "other")] += count
-        symbol_buckets = {
-            symbol: self.repo.all_symbol_events(symbol=symbol, days=safe_days)
-            for symbol in watchlist
-        }
         cards = [
-            self._symbol_card(symbol, self._stock_name(symbol), symbol_buckets.get(symbol, []))
+            self._symbol_card_from_stats(
+                symbol,
+                self._stock_name(symbol),
+                self.repo.symbol_dashboard_stats(symbol=symbol, days=safe_days),
+            )
             for symbol in watchlist
         ]
         latest = events
@@ -1370,7 +1377,10 @@ class InvestmentMonitorService:
         ordered = sorted(sources, key=lambda item: (int(item.get("poll_interval_seconds") or 300), item["source_key"]))
         max_workers = max(1, min(int(os.getenv("INVESTMENT_MONITOR_MAX_WORKERS", "16")), 24, len(ordered) or 1))
         if max_workers == 1 or len(ordered) <= 1:
-            results = [self._sync_one(source) for source in ordered]
+            results = []
+            for source in ordered:
+                results.append(self._sync_one(source))
+                self._release_large_source_memory(source["source_key"])
             return self._sync_summary(results, max_workers=1)
 
         # Fetch independent upstreams concurrently so a slow low-frequency API
@@ -1381,6 +1391,7 @@ class InvestmentMonitorService:
             self.repo.update_source_status(source["source_key"], status="running", started_at=started)
 
         results = []
+        released_payloads = False
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="monitor-source") as executor:
             futures = {executor.submit(self._timed_source_fetch, source): source for source in ordered}
             for future in as_completed(futures):
@@ -1393,12 +1404,45 @@ class InvestmentMonitorService:
                 # or enterprise API must never hold already-fetched news in memory
                 # until the whole polling cycle finishes.
                 key = source["source_key"]
+                released_payloads = released_payloads or bool(value)
                 result = self._persist_fetched_source(
                     source, value=value, duration_ms=duration_ms, fetch_error=fetch_error,
                 )
                 results.append(result)
+                del value
+        # A full collection after each parallel future serializes the fast
+        # path and repeatedly scans the same live objects. Release once after
+        # all fetched payloads have been persisted; sequential cloud mode still
+        # trims between sources to keep its lower peak RSS.
+        if released_payloads:
+            self._release_large_source_memory("parallel-cycle")
         results.sort(key=lambda item: item["source_key"])
         return self._sync_summary(results, max_workers=max_workers)
+
+    @staticmethod
+    def _release_large_source_memory(source_key: str) -> None:
+        """Return temporary DataFrame/JSON arenas after memory-heavy adapters.
+
+        The cloud service is a long-lived process.  CPython and glibc otherwise
+        retain the high-water RSS from large Tushare payloads even after the
+        source result has been persisted, eventually tripping the container
+        memory limit after several independent adapters.
+        """
+        # Every adapter may allocate sizeable JSON/DataFrame graphs.  The
+        # process is deliberately long-lived, so release cycles consistently
+        # instead of relying on a hand-maintained list of supposedly "large"
+        # sources.  On the 4 GB cloud host this prevents gradual RSS growth
+        # across market, governance, forum and report polling cycles.
+        gc.collect()
+        try:
+            malloc_trim = ctypes.CDLL(None).malloc_trim
+            malloc_trim.argtypes = [ctypes.c_size_t]
+            malloc_trim.restype = ctypes.c_int
+            malloc_trim(0)
+        except (AttributeError, OSError):
+            # malloc_trim is glibc-specific; garbage collection still helps on
+            # macOS and other development platforms.
+            pass
 
     def _persist_fetched_source(
         self, source: Dict[str, Any], *, value: Optional[List[Dict[str, Any]]],
@@ -1670,7 +1714,8 @@ class InvestmentMonitorService:
                 "src": src,
                 "start_date": window_start.strftime("%Y-%m-%d %H:%M:%S"),
                 "end_date": window_end.strftime("%Y-%m-%d %H:%M:%S"),
-            }, limit=1500, max_pages=20 if self._backfill_days else 1))
+            }, limit=300, max_pages=20 if self._backfill_days else 1,
+                fields=("datetime", "content", "title", "channels")))
             window_start = window_end
         events = []
         names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
@@ -2257,7 +2302,7 @@ class InvestmentMonitorService:
             chunk_end = min(cursor + timedelta(days=29), end_dt)
             rows = self._paged_tushare_rows("research_report", params={
                 "start_date": cursor.strftime("%Y%m%d"), "end_date": chunk_end.strftime("%Y%m%d"),
-            }, limit=1000, max_pages=20, fields=fields)
+            }, limit=300, max_pages=4 if self._backfill_days else 2, fields=fields)
             for row in rows:
                 url = str(row.get("url") or "")
                 key = url or hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()
@@ -2291,7 +2336,8 @@ class InvestmentMonitorService:
             rows.extend(self._paged_tushare_rows("major_news", params={
                 "src": "新浪财经", "start_date": window_start.strftime("%Y-%m-%d %H:%M:%S"),
                 "end_date": window_end.strftime("%Y-%m-%d %H:%M:%S"),
-            }, limit=800, max_pages=20 if self._backfill_days else 1))
+            }, limit=300, max_pages=20 if self._backfill_days else 1,
+                fields=("pub_time", "src", "title", "content")))
             window_start = window_end
         cctv = []
         cursor_day = start.date() if self._backfill_days else (now - timedelta(days=1)).date()
@@ -2344,7 +2390,7 @@ class InvestmentMonitorService:
     def _tianyancha_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Fetch licensed enterprise facts through the authenticated Tianyancha CLI."""
         if shutil.which("tyc") is None:
-            raise InvestmentMonitorError("天眼查 tyc CLI 未安装")
+            raise MonitoringSourceNotConfigured("天眼查 tyc CLI 未安装")
         facets = (
             (("company", "registration-info"), "enterprise_registration", "企业登记信息", "company"),
             (("risk", "overview"), "enterprise_risk", "企业风险总览", "company"),
@@ -2363,7 +2409,15 @@ class InvestmentMonitorService:
                     timeout=45, check=False,
                 )
                 if completed.returncode != 0:
-                    raise InvestmentMonitorError(f"天眼查 {label} 查询失败：{completed.stderr.strip()[:180]}")
+                    error_text = completed.stderr.strip()[:180]
+                    if any(marker in error_text.lower() for marker in (
+                        "未配置 authorization", "authorization is not configured",
+                        "unauthorized", "not initialized", "tyc init",
+                    )):
+                        raise MonitoringSourceNotConfigured(
+                            f"天眼查尚未完成授权配置：{error_text}"
+                        )
+                    raise InvestmentMonitorError(f"天眼查 {label} 查询失败：{error_text}")
                 if len(completed.stdout) > 2_000_000:
                     raise InvestmentMonitorError(f"天眼查 {label} 返回数据超过安全上限")
                 try:
@@ -2729,6 +2783,33 @@ class InvestmentMonitorService:
             "latest_rating": (forecasts[0].get("metrics") or {}).get("rating") if forecasts else None,
             "latest_event_at": max((event.get("event_at") or "" for event in events), default=None),
             "today_event_count": sum(1 for event in events if str(event.get("event_at") or "")[:10] == today),
+        }
+
+    @staticmethod
+    def _symbol_card_from_stats(symbol: str, name: str, stats: Dict[str, Any]) -> Dict[str, Any]:
+        event_count = int(stats.get("event_count") or 0)
+        sentiment = Counter(stats.get("sentiment") or {})
+        weighted = int(stats.get("weighted_sentiment") or 0)
+        opportunity = max(0, min(100, 50 + round(weighted / max(8, event_count ** 0.5))))
+        risk = max(0, min(
+            100,
+            35 + sentiment["bearish"] * 7 + int(stats.get("risk_title_count") or 0) * 5,
+        ))
+        perspective = Counter(stats.get("perspectives") or {})
+        return {
+            "symbol": symbol,
+            "name": name,
+            "event_count": event_count,
+            "high_priority_count": int(stats.get("high_priority_count") or 0),
+            "opportunity_score": opportunity,
+            "risk_score": risk,
+            "perspectives": {key: perspective[key] for key in PERSPECTIVES},
+            "sentiment": {key: sentiment[key] for key in SENTIMENTS},
+            "latest_quote": None,
+            "institution_rating_count": int(stats.get("institution_rating_count") or 0),
+            "latest_rating": stats.get("latest_rating"),
+            "latest_event_at": stats.get("latest_event_at"),
+            "today_event_count": int(stats.get("today_event_count") or 0),
         }
 
     @staticmethod

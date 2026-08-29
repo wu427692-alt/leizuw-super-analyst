@@ -13,7 +13,7 @@
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -29,6 +29,28 @@ _ALLOWED_LOG_LEVELS = {
     'CRITICAL': logging.CRITICAL,
 }
 _DEFAULT_LITELLM_LOG_LEVEL = 'WARNING'
+
+
+def _env_enabled(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _cleanup_old_log_files(log_path: Path) -> None:
+    """Bound dated application logs without touching active files."""
+    try:
+        retention_days = max(2, min(int(os.getenv('APP_LOG_RETENTION_DAYS', '14')), 90))
+    except ValueError:
+        retention_days = 14
+    cutoff = datetime.now().timestamp() - timedelta(days=retention_days).total_seconds()
+    for path in log_path.glob('*.log*'):
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            continue
 
 
 class RelativePathFormatter(logging.Formatter):
@@ -111,6 +133,7 @@ def setup_logging(
     # 创建日志目录
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
+    _cleanup_old_log_files(log_path)
 
     # 日志文件路径（按日期分文件）
     today_str = datetime.now().strftime('%Y%m%d')
@@ -147,15 +170,17 @@ def setup_logging(
     root_logger.addHandler(file_handler)
 
     # Handler 3: 调试日志文件（DEBUG 级别，包含所有详细信息）
-    debug_handler = RotatingFileHandler(
-        debug_log_file,
-        maxBytes=50 * 1024 * 1024,  # 50MB
-        backupCount=3,
-        encoding='utf-8'
-    )
-    debug_handler.setLevel(logging.DEBUG)
-    debug_handler.setFormatter(rel_formatter)
-    root_logger.addHandler(debug_handler)
+    debug_file_enabled = _env_enabled('APP_DEBUG_FILE_LOG_ENABLED', True)
+    if debug_file_enabled:
+        debug_handler = RotatingFileHandler(
+            debug_log_file,
+            maxBytes=50 * 1024 * 1024,  # 50MB
+            backupCount=3,
+            encoding='utf-8'
+        )
+        debug_handler.setLevel(logging.DEBUG)
+        debug_handler.setFormatter(rel_formatter)
+        root_logger.addHandler(debug_handler)
 
     # 降低第三方库的日志级别
     quiet_loggers = DEFAULT_QUIET_LOGGERS.copy()
@@ -187,7 +212,8 @@ def setup_logging(
 
     logging.info(f"日志系统初始化完成，日志目录: {rel_log_path}")
     logging.info(f"常规日志: {rel_log_file}")
-    logging.info(f"调试日志: {rel_debug_log_file}")
+    if debug_file_enabled:
+        logging.info(f"调试日志: {rel_debug_log_file}")
     if invalid_litellm_level is not None:
         logging.warning(
             "LITELLM_LOG_LEVEL=%r 无效，已回退为 %s；可选值：%s",

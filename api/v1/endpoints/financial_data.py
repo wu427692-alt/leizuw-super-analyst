@@ -25,6 +25,7 @@ from api.v1.schemas.financial_data import (
     ResearchNoteItem,
     ResearchNoteListResponse,
     ResearchNoteAudioBatchDownloadRequest,
+    ResearchNoteAudioAnalysisRequest,
     TushareQueryRequest,
     ZsxqHistoryBackfillRequest,
 )
@@ -41,6 +42,10 @@ from src.services.data_storage_service import DataStorageMaintenanceWorker, Data
 from src.services.research_note_media_task_service import (
     ResearchNoteMediaTaskError,
     ResearchNoteMediaTaskService,
+)
+from src.services.research_note_audio_analysis_service import (
+    ResearchNoteAudioAnalysisError,
+    ResearchNoteAudioAnalysisTaskService,
 )
 
 logger = logging.getLogger(__name__)
@@ -319,6 +324,91 @@ def download_research_note_audio_package(task_id: str):
         filename=filename,
         media_type="application/zip",
     )
+
+
+@router.get(
+    "/research-notes/audio-analysis/capability",
+    summary="查看录音转写与纪要分析能力是否已配置",
+)
+def research_note_audio_analysis_capability():
+    return ResearchNoteAudioAnalysisTaskService.get_instance().capability()
+
+
+@router.get(
+    "/research-notes/audio-analysis/tasks",
+    summary="读取当前用户的录音纪要后台任务",
+)
+def list_research_note_audio_analysis_tasks(limit: int = Query(20, ge=1, le=50)):
+    return ResearchNoteAudioAnalysisTaskService.get_instance().list_tasks(limit)
+
+
+@router.post(
+    "/research-notes/audio-analysis/tasks",
+    status_code=202,
+    summary="提交所选录音的后台转写与 AI 纪要任务",
+)
+def create_research_note_audio_analysis_task(request: ResearchNoteAudioAnalysisRequest):
+    try:
+        return ResearchNoteAudioAnalysisTaskService.get_instance().submit(
+            ((item.topic_id, item.file_id) for item in request.items),
+            title=request.title or "",
+            focus=request.focus or "",
+            hotwords=request.hotwords,
+            speaker_count=request.speaker_count,
+        )
+    except ResearchNoteAudioAnalysisError as exc:
+        raise _bad_request(exc)
+
+
+@router.get(
+    "/research-notes/audio-analysis/tasks/{task_id}",
+    summary="读取录音转写与纪要生成进度",
+)
+def get_research_note_audio_analysis_task(task_id: str):
+    try:
+        return ResearchNoteAudioAnalysisTaskService.get_instance().get(task_id)
+    except ResearchNoteAudioAnalysisError as exc:
+        raise _not_found(exc)
+
+
+@router.post(
+    "/research-notes/audio-analysis/tasks/{task_id}/retry",
+    status_code=202,
+    summary="重试失败或中断的录音纪要任务",
+)
+def retry_research_note_audio_analysis_task(task_id: str):
+    try:
+        return ResearchNoteAudioAnalysisTaskService.get_instance().retry(task_id)
+    except ResearchNoteAudioAnalysisError as exc:
+        message = str(exc)
+        raise _not_found(exc) if "不存在" in message or "无权" in message else _bad_request(exc)
+
+
+@router.get(
+    "/research-notes/audio-analysis/tasks/{task_id}/transcripts/{file_id}",
+    summary="读取一个录音的带时间戳逐字稿",
+)
+def get_research_note_audio_analysis_transcript(task_id: str, file_id: str):
+    try:
+        return ResearchNoteAudioAnalysisTaskService.get_instance().transcript(task_id, file_id)
+    except ResearchNoteAudioAnalysisError as exc:
+        raise _not_found(exc)
+
+
+@router.get(
+    "/research-notes/audio-analysis/tasks/{task_id}/download",
+    summary="下载录音纪要 Markdown、Word、JSON 或完整 ZIP",
+)
+def download_research_note_audio_analysis_task(
+    task_id: str,
+    format: str = Query("zip", pattern="^(zip|md|docx|json)$"),
+):
+    try:
+        path, filename, media_type = ResearchNoteAudioAnalysisTaskService.get_instance().download(task_id, format)
+    except ResearchNoteAudioAnalysisError as exc:
+        message = str(exc)
+        raise _not_found(exc) if "不存在" in message or "无权" in message or "过期" in message else _bad_request(exc)
+    return FileResponse(path, filename=filename, media_type=media_type)
 
 
 @router.get(

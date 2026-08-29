@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { lazy, useEffect } from 'react';
 import type React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -93,7 +93,7 @@ describe('RouteOutletBoundary', () => {
               )}
             >
               <Route path="/chat" element={<BrokenLazyRoute />} />
-              <Route path="/portfolio" element={<div data-testid="portfolio-page">Portfolio</div>} />
+              <Route path="/super-watchlist" element={<div data-testid="watchlist-page">Watchlist</div>} />
             </Route>
           </Routes>
         </MemoryRouter>,
@@ -104,9 +104,11 @@ describe('RouteOutletBoundary', () => {
       expect(screen.getByRole('button', { name: '重试当前模块' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole('link', { name: '持仓' }));
+      fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('link', {
+        name: '自选股超级看板',
+      }));
 
-      expect(await screen.findByTestId('portfolio-page')).toBeInTheDocument();
+      expect(await screen.findByTestId('watchlist-page')).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: '模块暂未完成加载' })).not.toBeInTheDocument();
     } finally {
       consoleError.mockRestore();

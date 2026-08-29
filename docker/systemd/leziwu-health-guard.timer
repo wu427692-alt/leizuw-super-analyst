@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Leziwu web availability every 30 seconds
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=leziwu-health-guard.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Leziwu web availability guard
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+Environment=LEZIWU_PROJECT_DIR=/opt/financial-intelligence-platform
+ExecStart=/usr/local/sbin/leziwu-health-guard
+TimeoutStartSec=45

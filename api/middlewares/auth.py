@@ -5,15 +5,14 @@ from __future__ import annotations
 
 import logging
 from typing import Callable
+from urllib.parse import quote
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.auth import COOKIE_NAME, is_auth_enabled, verify_session
-from src.auth import get_client_ip
 from src.services.user_account_service import (
-    USER_AUTO_LOGIN_SUPPRESSION_COOKIE,
     USER_COOKIE_NAME,
     UserAccountService,
     user_access_enabled,
@@ -28,9 +27,6 @@ EXEMPT_PATHS = frozenset({
     "/api/health",
     "/api/v1/health",
     "/health",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
     "/api/v1/user-auth/status",
     "/api/v1/user-auth/register",
     "/api/v1/user-auth/login",
@@ -44,6 +40,9 @@ ADMIN_PREFIXES = (
 )
 
 ADMIN_EXACT_PATHS = frozenset({
+    "/docs",
+    "/redoc",
+    "/openapi.json",
     "/api/v1/auth/settings",
     "/api/v1/auth/change-password",
     "/api/v1/auth/logout",
@@ -73,6 +72,22 @@ ADMIN_EXACT_PATHS = frozenset({
     "/api/v1/stocks/market-data/refresh",
 })
 
+PUBLIC_FRONTEND_PATHS = frozenset({
+    "/",
+    "/access",
+    "/admin/login",
+    "/login",
+    "/vite.svg",
+    "/stocks.index.json",
+    "/favicon.ico",
+    "/robots.txt",
+    "/manifest.webmanifest",
+})
+
+PUBLIC_FRONTEND_PREFIXES = (
+    "/assets/",
+)
+
 
 def _requires_admin(method: str, path: str) -> bool:
     """Return whether an API request changes or exposes operator state."""
@@ -99,6 +114,27 @@ def _path_exempt(path: str) -> bool:
     return normalized in EXEMPT_PATHS
 
 
+def _requires_frontend_user(method: str, path: str) -> bool:
+    """Protect every front-office document route at the server boundary.
+
+    The SPA still performs its own route guard for a smooth transition, but it
+    is not the security boundary. Static assets and the public landing/access
+    pages remain reachable so an unauthenticated visitor can register or log in.
+    """
+    if method.upper() not in {"GET", "HEAD"}:
+        return False
+    normalized = path.rstrip("/") or "/"
+    if normalized.startswith("/api/"):
+        return False
+    if normalized == "/admin" or normalized.startswith("/admin/"):
+        return False
+    if normalized in PUBLIC_FRONTEND_PATHS:
+        return False
+    if normalized.startswith(PUBLIC_FRONTEND_PREFIXES):
+        return False
+    return True
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Enforce two independent boundaries: approved users and administrators."""
 
@@ -118,7 +154,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if _path_exempt(path):
             return await call_with_identity(None)
 
-        if not path.startswith("/api/v1/"):
+        is_api_request = path.startswith("/api/v1/")
+        is_frontend_request = _requires_frontend_user(request.method, path)
+        if not is_api_request and not is_frontend_request:
             return await call_with_identity(None)
 
         admin_cookie = request.cookies.get(COOKIE_NAME)
@@ -131,6 +169,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 request.state.auth_method = "disabled"
                 return await call_with_identity(0)
             if not is_admin:
+                if not is_api_request:
+                    destination = path
+                    if request.url.query:
+                        destination = f"{destination}?{request.url.query}"
+                    return RedirectResponse(
+                        url=f"/admin/login?redirect={quote(destination, safe='')}",
+                        status_code=307,
+                        headers={"Cache-Control": "no-store"},
+                    )
                 return JSONResponse(
                     status_code=401,
                     content={"error": "unauthorized", "message": "Administrator login required"},
@@ -155,10 +202,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         service = UserAccountService()
         user = service.account_for_session(request.cookies.get(USER_COOKIE_NAME, ""))
         method = "session"
-        if user is None and not request.cookies.get(USER_AUTO_LOGIN_SUPPRESSION_COOKIE):
-            user = service.account_for_ip(get_client_ip(request))
-            method = "trusted_ip"
         if user is None:
+            if is_frontend_request:
+                destination = path
+                if request.url.query:
+                    destination = f"{destination}?{request.url.query}"
+                return RedirectResponse(
+                    url=f"/access?redirect={quote(destination, safe='')}",
+                    status_code=307,
+                    headers={"Cache-Control": "no-store"},
+                )
             return JSONResponse(
                 status_code=401,
                 content={

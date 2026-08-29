@@ -17,6 +17,7 @@ import zipfile
 
 import requests
 
+from src.request_identity import current_owner_id
 from src.services.financial_data_service import (
     FinancialDataValidationError,
     ResearchNoteNotFoundError,
@@ -49,10 +50,12 @@ class ResearchNoteMediaTaskService:
         http_get: Callable[..., Any] = requests.get,
         task_root: Optional[Path] = None,
         workers: Optional[int] = None,
+        owner_getter: Callable[[], Optional[str]] = current_owner_id,
     ) -> None:
         self._service_factory = service_factory
         self._resolver = resolver or self._resolve_source_url
         self._http_get = http_get
+        self._owner_getter = owner_getter
         database_path = Path(os.getenv("DATABASE_PATH", "./data/stock_analysis.db")).resolve()
         configured_root = os.getenv("RESEARCH_NOTE_EXPORT_ROOT", "").strip()
         self.task_root = Path(
@@ -93,6 +96,7 @@ class ResearchNoteMediaTaskService:
         task_id = f"audio-{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:10]}"
         state = {
             "task_id": task_id,
+            "owner_id": self._owner_getter(),
             "status": "queued",
             "phase": "queued",
             "progress": 0,
@@ -112,9 +116,15 @@ class ResearchNoteMediaTaskService:
         }
         self._write_state(state)
         self._executor.submit(self._run, task_id, selected)
-        return state
+        return self._public_state(state)
 
     def get(self, task_id: str) -> Dict[str, Any]:
+        state = self._read_state(task_id)
+        if state.get("owner_id") != self._owner_getter():
+            raise ResearchNoteMediaTaskError("录音打包任务不存在或无权访问")
+        return self._public_state(state)
+
+    def _read_state(self, task_id: str) -> Dict[str, Any]:
         path = self._task_path(task_id)
         if not path.is_file():
             raise ResearchNoteMediaTaskError("录音打包任务不存在或已过期")
@@ -281,7 +291,7 @@ class ResearchNoteMediaTaskService:
 
     def _fail(self, task_id: str, message: str) -> None:
         try:
-            current = self.get(task_id)
+            current = self._read_state(task_id)
         except ResearchNoteMediaTaskError:
             return
         self._update(
@@ -296,13 +306,17 @@ class ResearchNoteMediaTaskService:
 
     def _update(self, task_id: str, **changes: Any) -> Dict[str, Any]:
         with self._lock:
-            current = self.get(task_id)
+            current = self._read_state(task_id)
             if "progress" in changes:
                 changes["progress"] = max(0, min(int(changes["progress"]), 100))
             current.update(changes)
             current["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._write_state(current)
-            return current
+            return self._public_state(current)
+
+    @staticmethod
+    def _public_state(state: Dict[str, Any]) -> Dict[str, Any]:
+        return {key: value for key, value in state.items() if key != "owner_id"}
 
     def _write_state(self, state: Dict[str, Any]) -> None:
         path = self._task_path(str(state["task_id"]))

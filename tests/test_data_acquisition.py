@@ -6,6 +6,8 @@ from pathlib import Path
 import time
 import zipfile
 
+import pytest
+
 from src.services.data_acquisition_service import DataAcquisitionService
 from src.services.data_acquisition_service import DataAcquisitionError
 from src.services.data_acquisition_task_service import DataAcquisitionTaskService
@@ -115,6 +117,25 @@ def test_background_acquisition_task_persists_progress_and_result(tmp_path: Path
     assert current["progress"] == 100
     assert current["result"]["summary"]["row_count"] == 2
     assert service.package_path(current["job_id"]).is_file()
+
+
+def test_background_acquisition_task_is_owner_scoped(tmp_path: Path):
+    owner = {"value": "user:1"}
+    service = DataAcquisitionService(
+        planner=FakePlanner(), financial=FakeFinancial(), monitor=FakeMonitor(), output_root=tmp_path,
+    )
+    manager = DataAcquisitionTaskService(
+        service_factory=lambda: service,
+        task_root=tmp_path / ".tasks",
+        owner_getter=lambda: owner["value"],
+    )
+    submitted = manager.submit("获取华懋科技数据", FakePlanner().plan("获取华懋科技数据"))
+    assert "owner_id" not in submitted
+
+    owner["value"] = "user:2"
+    with pytest.raises(DataAcquisitionError, match="无权访问"):
+        manager.get(submitted["task_id"])
+    manager._executor.shutdown(wait=True)
 
 
 def test_acquisition_keeps_package_when_one_source_fails(tmp_path: Path):

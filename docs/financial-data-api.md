@@ -198,6 +198,28 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 - `POST /api/v1/financial-data/research-notes/audio-files/batch-download-tasks`：将最多 100 个勾选录音提交到后台下载与 ZIP 打包，立即返回持久化任务编号。
 - `GET /api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}`：读取逐文件、源文件字节与压缩包进度；页面离开后任务继续运行。
 - `GET /api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}/download`：下载已完成 ZIP；任务与压缩包默认保留 48 小时。
+- `GET /api/v1/financial-data/research-notes/audio-analysis/capability`：检查语音转写与文本分析上游是否完整配置。
+- `POST /api/v1/financial-data/research-notes/audio-analysis/tasks`：把最多 `AUDIO_ANALYSIS_MAX_FILES` 个勾选录音提交为当前用户独立的后台任务；任务依次临时下载、语音转写、DeepSeek 分段提取与合并分析。
+- `GET /api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}`：读取下载、转写、分析和报告生成的真实进度及页面内报告数据。
+- `POST /api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/retry`：使用持久化的原录音清单重试失败任务；排队或执行中的任务直接返回当前状态。
+- `GET /api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/transcripts/{file_id}`：按文件读取带时间戳、说话人的逐字稿，供页面内证据回溯。
+- `GET /api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/download?format=zip|md|docx|json`：下载完整资料包、录音小作文 Markdown、Word 报告或结构化结果；完整包同时包含逐录音转写文本，不包含源音频。
+
+创建任务时可额外传入 `hotwords`（最多 100 个金融、公司或产品术语）和 `speaker_count`（2～20）；任务输入会随状态持久化，服务器重启后自动从原录音清单续跑。完成报告同时写入 `research_notes` 和 `monitoring_events`，因此可在机构段子全文检索、投资情报台和匹配到证券代码的自选股证据链中复用。
+
+录音 AI 纪要是明确按需功能，不会对全部录音自动消耗额度。默认转写链路是阿里云百炼
+`qwen-audio-3.0-asr-flash-filetrans` 异步录音文件识别：配置 `DASHSCOPE_API_KEY` 即可，
+也会复用已有 `LLM_DASHSCOPE_API_KEY`。系统向阿里云提交知识星球临时音频地址，轮询真实任务
+状态，取回带句级时间戳与说话人编号的转写文本；`DASHSCOPE_ASR_DIARIZATION_ENABLED=true`
+默认开启说话人分离。需要切回其他兼容服务时，可设置
+`AUDIO_TRANSCRIPTION_PROVIDER=openai_compatible`，并配置原有
+`AUDIO_TRANSCRIPTION_API_KEY`、`AUDIO_TRANSCRIPTION_BASE_URL` 和
+`AUDIO_TRANSCRIPTION_MODEL`。
+
+文本整理继续使用 `DEEPSEEK_API_KEY` 和 `AUDIO_MEMO_ANALYSIS_MODEL`（留空复用
+`ESSAY_ANALYSIS_MODEL`）。源音频只存在于任务临时目录，完成转写或任务失败后都会删除；
+报告按用户隔离并默认保留 7 天。阿里云文件转写需要公网可访问的录音 URL；若知识星球临时
+地址无法被阿里云读取，任务会保留上游错误而不会生成空纪要。
 
 日报使用 Asia/Shanghai 自然日口径。`ESSAY_DAILY_REPORT_MODELS` 以逗号配置多个模型；每个
 日期与模型独立落入 `essay_daily_reports`，来源没有变化时不会重复消耗模型额度。日报 v3

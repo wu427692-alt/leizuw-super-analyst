@@ -144,7 +144,7 @@ export default function InvestmentMonitorOverviewPage() {
   };
 
   return <AppPage className="intelligence-hub-page max-w-[1760px]">
-    <main className="overflow-hidden border border-[#242A31] bg-[#050605] font-mono text-[#D7DCE2]">
+    <main className="intelligence-terminal overflow-hidden border border-[#242A31] bg-[#050605] text-[#D7DCE2]">
       <header className="flex flex-col gap-4 border-b border-[#242A31] bg-[#090B09] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
         <div><p className="text-[9px] uppercase tracking-[0.22em] text-[#00E676]">统一事件库 · 全部真实来源</p><h1 className="mt-2 text-2xl font-black tracking-[-0.05em] text-white">全渠道情报</h1><p className="mt-1 text-[10px] text-[#717A84]">按信息渠道查看存量、最新时间、同步状态与原始消息；不混入行情看板和自选股分析。</p></div>
         <div className="intelligence-header-actions flex gap-2"><button onClick={() => void Promise.allSettled([loadStatus(), loadEvents()])} disabled={loadingStatus || loadingEvents} className="inline-flex h-8 items-center gap-2 border border-[#303740] bg-[#0B0C0A] px-3 text-[10px] hover:border-[#00E676] disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${loadingStatus || loadingEvents ? 'animate-spin' : ''}`} />刷新本地情报</button><button onClick={() => void syncAll()} disabled={syncingAll} className="inline-flex h-8 items-center gap-2 border border-[#00E676] px-3 text-[10px] font-bold text-[#00E676] disabled:opacity-50"><DatabaseZap className="h-3.5 w-3.5"/>{syncingAll ? '逐源同步中' : '从上游同步全部'}</button></div>

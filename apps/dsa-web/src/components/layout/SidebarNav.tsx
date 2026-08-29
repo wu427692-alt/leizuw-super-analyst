@@ -73,7 +73,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const navItems = showAlphaSiftNav ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.key !== 'screening');
   const isRail = variant === 'rail';
   const itemBaseClass = cn(
-    'group relative box-border flex h-[var(--nav-item-height)] w-full min-w-0 max-w-full items-center overflow-hidden rounded-2xl border border-transparent text-sm leading-none text-secondary-text transition-all',
+    'group relative box-border flex h-[var(--nav-item-height)] w-full min-w-0 max-w-full items-center overflow-hidden rounded-md border border-transparent text-sm leading-none text-secondary-text transition-all',
     isRail
       ? 'justify-center gap-2.5 px-1.5'
       : collapsed
@@ -99,14 +99,14 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
       >
         <div
           className={cn(
-            'flex items-center justify-center bg-primary-gradient text-[hsl(var(--primary-foreground))] shadow-[0_12px_28px_var(--nav-brand-shadow)]',
-            isRail ? 'h-9 w-9 rounded-[1rem]' : 'h-10 w-10 rounded-2xl'
+            'flex items-center justify-center bg-[var(--research-blue)] text-white',
+            isRail ? 'h-9 w-9 rounded-md' : 'h-10 w-10 rounded-md'
           )}
         >
           <BarChart3 className={cn(isRail ? 'h-[19px] w-[19px]' : 'h-5 w-5')} />
         </div>
         {!collapsed ? (
-          <p className={cn('min-w-0 truncate font-semibold text-foreground', isRail ? 'text-[0.78rem] leading-none' : 'text-sm')}>乐子乌超级价值</p>
+          <p className={cn('min-w-0 font-semibold leading-tight text-foreground', isRail ? 'max-w-[130px] text-[0.75rem]' : 'text-sm')}>乐子乌超级价值</p>
         ) : null}
       </div>
 

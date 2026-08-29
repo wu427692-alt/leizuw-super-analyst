@@ -3,9 +3,10 @@
   isolation: isolate;
   padding: 14px !important;
   background:
-    radial-gradient(circle at 8% 4%, rgba(0, 240, 255, .09), transparent 28rem),
-    radial-gradient(circle at 92% 12%, rgba(168, 85, 247, .12), transparent 30rem),
+    linear-gradient(rgb(var(--research-blue-rgb) / .025) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--research-blue-rgb) / .02) 1px, transparent 1px),
     hsl(var(--background));
+  background-size: 32px 32px;
 }
 
 .super-watchlist-page::before {
@@ -22,10 +23,9 @@
   overflow: hidden;
   color: hsl(var(--foreground));
   border: 1px solid hsl(var(--border) / .78) !important;
-  border-radius: 24px;
+  border-radius: 12px;
   background: linear-gradient(145deg, hsl(var(--card) / .9), hsl(var(--background) / .76)) !important;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, .28), inset 0 1px rgba(255, 255, 255, .04);
-  backdrop-filter: blur(22px);
+  box-shadow: var(--research-shadow);
 }
 
 .super-watchlist-shell * { border-color: hsl(var(--border) / .68) !important; }
@@ -77,8 +77,8 @@
   width: 3px;
   content: '';
   border-radius: 0 4px 4px 0;
-  background: linear-gradient(hsl(var(--cyan)), #a855f7);
-  box-shadow: 0 0 16px hsl(var(--cyan) / .7);
+  background: var(--research-blue);
+  box-shadow: none;
 }
 
 .super-watchlist-delete {
@@ -90,15 +90,21 @@
 .super-market-band {
   min-height: 92px;
   height: auto !important;
-  background: linear-gradient(100deg, hsl(var(--cyan) / .08), transparent 54%, rgba(168, 85, 247, .07));
+  background: linear-gradient(100deg, rgb(var(--research-blue-rgb) / .09), transparent 70%);
 }
 .super-market-band h2,
 .super-market-band .font-mono { text-shadow: 0 0 22px hsl(var(--cyan) / .13); }
 .super-market-band > button,
 .super-watchlist-sidebar form button[type="submit"] {
-  color: #061016 !important;
-  background: linear-gradient(120deg, #27d9ef, #61e6c8) !important;
-  box-shadow: 0 8px 24px rgba(39, 217, 239, .18);
+  color: #fff !important;
+  background: var(--research-blue) !important;
+  box-shadow: none;
+}
+.super-evidence-rail {
+  --evidence-columns: 4;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  box-shadow: none;
 }
 .super-backfill-button { color: #61dcea !important; border-color: rgba(77, 215, 232, .42) !important; background: rgba(77, 215, 232, .06) !important; }
 .super-refresh-button { color: hsl(var(--foreground)) !important; background: hsl(var(--card) / .55) !important; }

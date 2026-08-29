@@ -13,6 +13,7 @@ import threading
 from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 
+from src.request_identity import current_owner_id
 from src.services.data_acquisition_service import DataAcquisitionError, DataAcquisitionService
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,10 @@ class DataAcquisitionTaskService:
         *,
         service_factory: Callable[[], DataAcquisitionService] = DataAcquisitionService,
         task_root: Optional[Path] = None,
+        owner_getter: Callable[[], Optional[str]] = current_owner_id,
     ) -> None:
         self._service_factory = service_factory
+        self._owner_getter = owner_getter
         service = service_factory()
         self.task_root = Path(task_root or (service.output_root / ".tasks")).resolve()
         self.task_root.mkdir(parents=True, exist_ok=True)
@@ -63,6 +66,7 @@ class DataAcquisitionTaskService:
         ]
         state = {
             "task_id": task_id,
+            "owner_id": self._owner_getter(),
             "status": "queued",
             "progress": 0,
             "phase": "queued",
@@ -80,9 +84,15 @@ class DataAcquisitionTaskService:
         }
         self._write_state(state)
         self._executor.submit(self._run, task_id, str(request_text or "").strip(), plan)
-        return state
+        return self._public_state(state)
 
     def get(self, task_id: str) -> Dict[str, Any]:
+        state = self._read_state(task_id)
+        if state.get("owner_id") != self._owner_getter():
+            raise DataAcquisitionError("取数任务不存在或无权访问")
+        return self._public_state(state)
+
+    def _read_state(self, task_id: str) -> Dict[str, Any]:
         path = self._task_path(task_id)
         if not path.is_file():
             raise DataAcquisitionError("取数任务不存在")
@@ -127,7 +137,7 @@ class DataAcquisitionTaskService:
             self._fail(task_id, f"后台取数失败：{type(exc).__name__}")
 
     def _fail(self, task_id: str, message: str) -> None:
-        current = self.get(task_id)
+        current = self._read_state(task_id)
         self._update(
             task_id,
             status="failed",
@@ -139,13 +149,17 @@ class DataAcquisitionTaskService:
 
     def _update(self, task_id: str, **changes: Any) -> Dict[str, Any]:
         with self._lock:
-            current = self.get(task_id)
+            current = self._read_state(task_id)
             if "progress" in changes:
                 changes["progress"] = max(0, min(int(changes["progress"]), 100))
             current.update(changes)
             current["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._write_state(current)
-            return current
+            return self._public_state(current)
+
+    @staticmethod
+    def _public_state(state: Dict[str, Any]) -> Dict[str, Any]:
+        return {key: value for key, value in state.items() if key != "owner_id"}
 
     def _write_state(self, state: Dict[str, Any]) -> None:
         path = self._task_path(str(state["task_id"]))

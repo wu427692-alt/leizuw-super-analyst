@@ -115,6 +115,36 @@ describe('essayRadarApi', () => {
     expect(downloaded).toBe(archive);
   });
 
+  it('submits selected recordings for background transcription and downloads the memo', async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: {
+      configured: true, transcription_configured: true, analysis_configured: true,
+      max_files: 8, max_file_mb: 25, message: '可提交',
+    } });
+    expect((await essayRadarApi.audioAnalysisCapability()).maxFiles).toBe(8);
+
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ data: {
+      task_id: 'audio-analysis-1', status: 'queued', phase: 'queued', progress: 0,
+      message: '已提交', total_files: 1, completed_files: 0,
+      created_at: '2026-08-28', updated_at: '2026-08-28', expires_at: '2026-09-04',
+    } });
+    const task = await essayRadarApi.startAudioAnalysisTask(
+      [{ topicId: 'topic-1', fileId: 'audio-1' }],
+      { title: '公司录音纪要', focus: '业绩', hotwords: ['CPO'], speakerCount: 3 },
+    );
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/financial-data/research-notes/audio-analysis/tasks', {
+      items: [{ topic_id: 'topic-1', file_id: 'audio-1' }], title: '公司录音纪要', focus: '业绩', hotwords: ['CPO'], speaker_count: 3,
+    });
+    expect(task.taskId).toBe('audio-analysis-1');
+
+    const document = new Blob(['docx']);
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: document });
+    expect(await essayRadarApi.downloadAudioAnalysis('audio-analysis-1', 'docx')).toBe(document);
+    expect(apiClient.get).toHaveBeenLastCalledWith(
+      '/api/v1/financial-data/research-notes/audio-analysis/tasks/audio-analysis-1/download',
+      { params: { format: 'docx' }, responseType: 'blob', timeout: 600000 },
+    );
+  });
+
   it('downloads only checked essays as an Excel workbook', async () => {
     const workbook = new Blob(['xlsx']);
     vi.mocked(apiClient.post).mockResolvedValue({ data: workbook });

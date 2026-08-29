@@ -101,3 +101,15 @@ def test_invalid_litellm_log_level_falls_back_to_warning(tmp_path, monkeypatch):
     assert "invalid level warning should remain" in debug_log_text
     assert "LITELLM_LOG_LEVEL" in debug_log_text
     assert "已回退为 WARNING" in debug_log_text
+
+
+def test_debug_file_can_be_disabled_for_resource_constrained_server(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_DEBUG_FILE_LOG_ENABLED", "false")
+
+    setup_logging(log_prefix="stock_analysis", log_dir=str(tmp_path), debug=False)
+    logging.getLogger("src.sample").info("production log")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    assert not list(tmp_path.glob("stock_analysis_debug_*.log"))
+    assert "production log" in next(tmp_path.glob("stock_analysis_*.log")).read_text(encoding="utf-8")

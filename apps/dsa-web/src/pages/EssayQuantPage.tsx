@@ -81,10 +81,6 @@ function SectionTitle({ icon: Icon, title, note, aside }: { icon: typeof Activit
 function Status({ ok, children }: { ok: boolean; children: React.ReactNode }) {
   return <span className={ok ? 'quant-status is-ok' : 'quant-status'}>{ok ? <CheckCircle2 /> : <LoaderCircle />}{children}</span>;
 }
-function LoadingScreen({ progress }: { progress: number }) {
-  return <div className="quant-loading" role="status"><RadioTower /><h1>正在装载量化研究工作台</h1><p>读取研究方法、真实数据资产、最近运行和后台状态</p><div><span style={{ width: `${progress}%` }} /></div><strong>{progress}%</strong></div>;
-}
-
 function StableChart({ children }: { children: React.ReactElement }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -117,16 +113,15 @@ export default function EssayQuantPage() {
   const [taskList, setTaskList] = useState<EssayQuantTaskList>({ items: [], total: 0 });
   const [rules, setRules] = useState<EssayQuantRule[]>([]);
   const [rule, setRule] = useState<EssayQuantRule>(DEFAULT_RULE);
-  const [loading, setLoading] = useState(true); const [progress, setProgress] = useState(12);
   const [running, setRunning] = useState(false); const [message, setMessage] = useState('');
   const [messageScope, setMessageScope] = useState<QuantSection | null>(null);
   const [failedModules, setFailedModules] = useState<QuantModule[]>([]);
-  const initiallyLoaded = useRef(false);
+  const loadSequence = useRef(0);
   const [prompt, setPrompt] = useState(EXAMPLES[0]); const [plan, setPlan] = useState<EssayQuantPlan | null>(null);
 
   const load = useCallback(async () => {
-    if (!initiallyLoaded.current) setLoading(true);
-    setProgress(18); setMessage(''); setMessageScope(null); setFailedModules([]);
+    const sequence = ++loadSequence.current;
+    setMessage(''); setMessageScope(null); setFailedModules([]);
     const tasks: Record<QuantModule, () => Promise<void>> = {
       dashboard: async () => { const value = await essayQuantApi.dashboard(); setData(value); setRule({ ...DEFAULT_RULE, ...value.rule }); },
       catalog: async () => { setCatalog(await essayQuantApi.catalog()); },
@@ -135,12 +130,9 @@ export default function EssayQuantPage() {
       rules: async () => { const value = await essayQuantApi.rules(); setRules(value.items); },
     };
     const modules = SECTION_MODULES[active];
-    const timer = window.setInterval(() => setProgress(current => Math.min(88, current + 7)), 140);
     const settled = await Promise.allSettled(modules.map(key => tasks[key]()));
-    window.clearInterval(timer); setProgress(100);
+    if (sequence !== loadSequence.current) return;
     setFailedModules(modules.filter((_, index) => settled[index]?.status === 'rejected'));
-    initiallyLoaded.current = true;
-    window.setTimeout(() => setLoading(false), 160);
   }, [active]);
   const refreshLive = useCallback(async () => {
     const [taskJob, dashboardJob, historyJob] = await Promise.allSettled([
@@ -227,7 +219,6 @@ export default function EssayQuantPage() {
   ) === rule.strategyType) ?? null;
   const activeTaskCount = taskList.items.filter(item => item.status === 'queued' || item.status === 'running').length;
 
-  if (loading) return <AppPage className="aurora-workbench max-w-[1720px] px-3 py-3"><LoadingScreen progress={progress} /></AppPage>;
   return <AppPage className="aurora-workbench max-w-[1760px] px-2 pb-8 pt-2 md:px-3"><div className="essay-quant-terminal">
     <header className="quant-header"><div><h1>量化研究任务中心</h1><p>从交易假设出发，建立可后台运行、可复现、能解释到交易规则的个人研究任务。</p></div><div className="quant-header-actions">{activeTaskCount ? <Status ok={false}>运行中 {activeTaskCount}</Status> : <Status ok>暂无运行任务</Status>}{active === 'history' ? <Status ok={Boolean(latestHistoryCutoff)}>行情截止 {latestHistoryCutoff || '检测中'}</Status> : <Status ok={freshness >= 98}>行情 {data?.dataQuality.priceTargetDate || '检测中'} · {freshness.toFixed(1)}%</Status>}<span className="quant-auto-sync"><RadioTower />自动同步</span></div></header>
     <nav className="quant-tabs" aria-label="量化研究栏目">{NAV.map(([key, label, Icon]) => <button key={key} className={active === key ? 'is-active' : ''} onClick={() => navigate(key === 'overview' ? '/essay-quant' : `/essay-quant?section=${key}`)}><Icon />{label}</button>)}</nav>

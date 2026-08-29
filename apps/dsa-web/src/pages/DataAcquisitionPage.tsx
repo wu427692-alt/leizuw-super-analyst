@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bot, CheckCircle2, CircleDashed, DatabaseZap, Download, FileArchive, PackageCheck, Play, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react';
 import { dataAcquisitionApi } from '../api/dataAcquisition';
-import { AppPage, Badge, Card, EmptyState, PageHeader, StatCard } from '../components/common';
+import { AppPage, Badge, Card, EmptyState, EvidenceRail, PageHeader, StatCard } from '../components/common';
 import ResearchReportLibrary from '../components/data-acquisition/ResearchReportLibrary';
 import type { AcquisitionCapabilities, AcquisitionDownloadProgress, AcquisitionJob, AcquisitionPlan, AcquisitionRunTask } from '../types/dataAcquisition';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
@@ -172,6 +172,13 @@ const DataAcquisitionPage = () => {
           actions={<button className="btn-secondary inline-flex items-center gap-2" onClick={() => void load()}>
             <RefreshCw className="h-4 w-4" />刷新任务
           </button>} />
+
+        <EvidenceRail items={[
+          { label: '可用渠道', value: `${capabilities?.sources.filter((source) => source.available).length ?? 0} / ${capabilities?.sources.length ?? 0}`, note: '每个渠道独立筛选与导出', tone: capabilities?.sources.some((source) => source.available) ? 'verified' : 'warning' },
+          { label: '规划模型', value: capabilities?.planner.available ? capabilities.planner.model : '等待配置', note: capabilities?.planner.available ? `最多 ${capabilities.planner.maxTasks} 个子任务` : '仍可使用本地研报库', tone: capabilities?.planner.available ? 'verified' : 'warning' },
+          { label: '当前任务', value: runTask ? PHASE_LABELS[runTask.phase] : '无运行任务', note: runTask ? `${runTask.progress}% · ${runTask.completedTasks}/${runTask.totalTasks}` : '任务会在后台持续执行', tone: runActive ? 'live' : runTask?.status === 'failed' ? 'warning' : 'default' },
+          { label: '历史数据包', value: `${jobs.length} 个`, note: '保留真实任务与下载记录', tone: jobs.length ? 'verified' : 'default' },
+        ]} />
 
         {error ? <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div> : null}
 

@@ -1,5 +1,8 @@
 services:
   server:
+    # The website is the highest-priority workload on the small cloud host.
+    # Prefer restarting/slowdown of collectors over losing request serving.
+    oom_score_adj: -500
     env_file:
       - ../.env
       - ../cloud-config/.env
@@ -10,9 +13,16 @@ services:
       - API_PORT=8000
       - API_STARTUP_TIMEOUT_SECONDS=120
       - WEBUI_HOST=0.0.0.0
+      # Cloud deployments must fail closed even if a local .env is missing or stale.
+      - USER_ACCESS_ENABLED=true
+      - ADMIN_AUTH_ENABLED=true
       - DATABASE_PATH=/app/data/stock_analysis.db
       - ENV_FILE=/app/config/.env
       - MAX_WORKERS=1
+      # The full-channel poller runs in monitor-worker.  Keep request serving
+      # isolated so a large upstream payload can never take the website down.
+      - INVESTMENT_MONITOR_AUTO_START=false
+      - INVESTMENT_MONITOR_RUN_MODE=external
       - INVESTMENT_MONITOR_MAX_WORKERS=1
       - ESSAY_ANALYSIS_CONCURRENCY=1
       - DATA_ACQUISITION_MAX_WORKERS=1
@@ -42,12 +52,23 @@ services:
       - APP_STARTUP_WARMUP=true
       - APP_STARTUP_WARMUP_PROFILE=essential
       - APP_STARTUP_WARMUP_DELAY_SECONDS=10
-      - SQLITE_CACHE_SIZE_KIB=32768
-      - SQLITE_MMAP_SIZE_MB=128
+      - SQLITE_CACHE_SIZE_KIB=16384
+      - SQLITE_MMAP_SIZE_MB=0
       # Data adapters create short-lived Pandas/HTTP buffers. Limit glibc arena
       # fragmentation and return large freed blocks sooner on small instances.
       - MALLOC_ARENA_MAX=2
       - MALLOC_TRIM_THRESHOLD_=131072
+      - MALLOC_MMAP_THRESHOLD_=131072
+      - PYTHONMALLOC=malloc
+      # Console and Docker logs already retain production diagnostics. Avoid a
+      # second 200 MB debug-log copy on the small system disk.
+      - APP_DEBUG_FILE_LOG_ENABLED=false
+      - APP_LOG_RETENTION_DAYS=14
+      # Bound large ORM-derived insight caches on the 4 GB host. A miss only
+      # recomputes the requested window; no feature or historical range is removed.
+      - ESSAY_DASHBOARD_ROWS_CACHE_MAX_ENTRIES=2
+      - ESSAY_DEEP_INSIGHTS_CACHE_MAX_ENTRIES=4
+      - ESSAY_SUMMARY_CACHE_MAX_ENTRIES=16
       - USER_SESSION_CACHE_SECONDS=30
       - ESSAY_QUANT_AUTO_START=false
       - DATA_STORAGE_MAINTENANCE_AUTO_START=false
@@ -63,6 +84,56 @@ services:
           # usable by Linux).  Give the application enough headroom for the
           # SQLite cache and large upstream payloads while reserving roughly
           # 700 MB for the kernel, Docker, SSH and the tunnel process.
-          memory: 2800M
+          memory: 2200M
         reservations:
-          memory: 1G
+          memory: 768M
+
+  monitor-worker:
+    image: daily-stock-analysis-server
+    container_name: stock-monitor-worker
+    command: ["python", "-m", "src.services.investment_monitor_daemon"]
+    restart: unless-stopped
+    oom_score_adj: 500
+    env_file:
+      - ../.env
+      - ../cloud-config/.env
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../reports:/app/reports
+      - ../strategies:/app/strategies:ro
+      - ../cloud-config:/app/config
+      - ../tyc-config:/home/dsa/.tyc
+      - ../longbridge_tokens:/home/dsa/.longbridge
+    environment:
+      - TZ=Asia/Shanghai
+      - DATABASE_PATH=/app/data/stock_analysis.db
+      - ENV_FILE=/app/config/.env
+      - INVESTMENT_MONITOR_AUTO_START=true
+      - INVESTMENT_MONITOR_RUN_MODE=embedded
+      - INVESTMENT_MONITOR_MAX_WORKERS=1
+      - INVESTMENT_MONITOR_POLL_SEC=15
+      - INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES=10
+      - INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES=360
+      - SQLITE_CACHE_SIZE_KIB=8192
+      - SQLITE_MMAP_SIZE_MB=0
+      - MALLOC_ARENA_MAX=1
+      - MALLOC_TRIM_THRESHOLD_=65536
+      - MALLOC_MMAP_THRESHOLD_=65536
+      - PYTHONMALLOC=malloc
+      - APP_DEBUG_FILE_LOG_ENABLED=false
+      - APP_LOG_RETENTION_DAYS=14
+    healthcheck:
+      disable: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 900M
+        reservations:
+          memory: 256M

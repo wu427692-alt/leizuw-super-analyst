@@ -2,7 +2,7 @@ import type React from 'react';
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowRight, CheckCircle2, KeyRound, LockKeyhole, RadioTower, ShieldCheck, UserRoundPlus } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import './UserAccessPage.css';
 
@@ -10,7 +10,9 @@ type Mode = 'login' | 'register';
 
 const UserAccessPage: React.FC = () => {
   const { login, register } = useUserAccess();
-  const [mode, setMode] = useState<Mode>('login');
+  const [searchParams] = useSearchParams();
+  const requestedMode = searchParams.get('mode');
+  const [mode, setMode] = useState<Mode>(requestedMode === 'register' ? 'register' : 'login');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -26,7 +28,7 @@ const UserAccessPage: React.FC = () => {
     setBusy(false);
     if (result.success && result.pending) {
       setPending(true);
-      setMessage('申请已经进入管理员审核队列。批准后，在当前网络可自动进入；换网时使用姓名和密码登录。');
+      setMessage('申请已经进入管理员审核队列。管理员批准后，请使用姓名和密码登录。');
       return;
     }
     if (!result.success) setMessage(result.error?.message ?? '请求未完成，请稍后重试');
@@ -44,7 +46,7 @@ const UserAccessPage: React.FC = () => {
           <div className="user-access-features">
             <article><ShieldCheck /><div><strong>管理员审批</strong><span>注册后先审核，再开放数据和 AI 能力</span></div></article>
             <article><LockKeyhole /><div><strong>用户数据隔离</strong><span>服务端按账号分区，不依赖浏览器自报身份</span></div></article>
-            <article><KeyRound /><div><strong>可信 IP 便捷进入</strong><span>同一网络自动识别，密码始终可作为后备</span></div></article>
+            <article><KeyRound /><div><strong>会话登录保护</strong><span>必须完成账号登录，共享网络不会自动放行</span></div></article>
           </div>
         </div>
         <small>MARKET DATA · INTELLIGENCE · AI RESEARCH</small>

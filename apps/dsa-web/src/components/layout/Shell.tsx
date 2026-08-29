@@ -49,12 +49,12 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
         </div>
       </header>
 
-      <div className="mx-auto flex min-h-screen w-full max-w-[1680px] px-3 py-3 sm:px-4 sm:py-4 lg:px-5">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1920px] px-0 lg:px-4 lg:py-4">
         <aside
           className={cn(
-            'sticky top-3 z-40 hidden shrink-0 overflow-visible rounded-[1.5rem] border border-[var(--shell-sidebar-border)] bg-card/72 p-2.5 shadow-soft-card backdrop-blur-sm transition-[width] duration-200 lg:flex',
-            'max-h-[calc(100vh-1.5rem)] self-start sm:top-4 sm:max-h-[calc(100vh-2rem)]',
-            collapsed ? 'w-[64px]' : 'w-[192px]'
+            'research-sidebar sticky top-4 z-40 hidden shrink-0 overflow-visible border border-[var(--shell-sidebar-border)] bg-card/94 p-2.5 transition-[width] duration-200 lg:flex',
+            'max-h-[calc(100vh-2rem)] self-start',
+            collapsed ? 'w-[64px]' : 'w-[208px]'
           )}
           aria-label={t('layout.desktopSidebar')}
         >
@@ -63,7 +63,7 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
           </div>
         </aside>
 
-        <main className="mobile-shell-main min-h-0 min-w-0 flex-1 lg:pl-3 touch-pan-y">
+        <main className="mobile-shell-main min-h-0 min-w-0 flex-1 lg:pl-4 touch-pan-y">
           {children ?? <Outlet />}
         </main>
       </div>

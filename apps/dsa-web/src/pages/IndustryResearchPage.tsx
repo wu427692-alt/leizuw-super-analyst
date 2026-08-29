@@ -271,7 +271,9 @@ export default function IndustryResearchPage() {
   const hasRunningProjects = projects.some(project => runningStatuses.has(project.status));
   useEffect(() => {
     if (!hasRunningProjects) return undefined;
-    const timer = window.setInterval(() => { void loadProjects(); }, 3_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void loadProjects();
+    }, 10_000);
     return () => window.clearInterval(timer);
   }, [hasRunningProjects, loadProjects]);
 
@@ -280,6 +282,7 @@ export default function IndustryResearchPage() {
   useEffect(() => {
     if (!pollingProjectId || !pollingProjectStatus || !['queued', 'collecting', 'analyzing'].includes(pollingProjectStatus)) return undefined;
     const timer = window.setInterval(async () => {
+      if (document.visibilityState === 'hidden') return;
       try {
         const next = await industryResearchApi.project(pollingProjectId);
         setActiveProject(next);

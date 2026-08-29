@@ -85,18 +85,22 @@ class MarketDataService:
             refreshed = self.refresh_ticks([code]) > 0 if refresh else False
             session_count = 5 if selected_range == "5d" else 1
             storage_days = 14 if session_count == 5 else 7
-            raw_tick_rows = self._tick_rows(code, storage_days)
+            raw_tick_rows = self._tick_rows(code, storage_days, minimum_sessions=session_count)
             tick_rows = self._regular_session_rows(raw_tick_rows, code)
-            minute_rows = self._regular_session_rows(self._intraday_rows(code, storage_days), code)
+            minute_rows = self._regular_session_rows(
+                self._intraday_rows(code, storage_days, minimum_sessions=session_count), code
+            )
             available_dates = {row.timestamp.date() for row in [*tick_rows, *minute_rows]}
             if refresh or len(available_dates) < session_count:
                 refreshed = self.refresh_historical_intraday([code], sessions=session_count) > 0 or refreshed
-                raw_tick_rows = self._tick_rows(code, storage_days)
+                raw_tick_rows = self._tick_rows(code, storage_days, minimum_sessions=session_count)
                 tick_rows = self._regular_session_rows(raw_tick_rows, code)
-                minute_rows = self._regular_session_rows(self._intraday_rows(code, storage_days), code)
+                minute_rows = self._regular_session_rows(
+                    self._intraday_rows(code, storage_days, minimum_sessions=session_count), code
+                )
             if not tick_rows and not minute_rows:
                 refreshed = self.refresh_ticks([code]) > 0 or refreshed
-                raw_tick_rows = self._tick_rows(code, storage_days)
+                raw_tick_rows = self._tick_rows(code, storage_days, minimum_sessions=session_count)
                 tick_rows = self._regular_session_rows(raw_tick_rows, code)
             rows = _merge_second_and_minute_rows(tick_rows, minute_rows, sessions=session_count)
             completed_session = _latest_completed_a_share_session()
@@ -634,10 +638,14 @@ class MarketDataService:
                 fetched = True
         return rows, fetched
 
-    def _intraday_rows(self, code: str, lookback_days: int) -> List[Any]:
+    def _intraday_rows(self, code: str, lookback_days: int, *, minimum_sessions: int = 1) -> List[Any]:
         end = datetime.now()
         start = end - timedelta(days=lookback_days)
-        return self.repo.intraday_range(code, start, end)
+        rows = self.repo.intraday_range(code, start, end)
+        if len({row.timestamp.date() for row in rows}) >= max(1, minimum_sessions):
+            return rows
+        recent = self.repo.recent_intraday(code, lookback_days)
+        return recent if len(recent) > len(rows) else rows
 
     @staticmethod
     def _regular_session_rows(rows: List[Any], symbol: str) -> List[Any]:
@@ -656,10 +664,14 @@ class MarketDataService:
             return rows
         return [row for row in rows if _is_a_share_intraday_timestamp(row.timestamp)]
 
-    def _tick_rows(self, code: str, lookback_days: int) -> List[Any]:
+    def _tick_rows(self, code: str, lookback_days: int, *, minimum_sessions: int = 1) -> List[Any]:
         end = datetime.now()
         start = end - timedelta(days=lookback_days)
-        return self.repo.tick_range(code, start, end)
+        rows = self.repo.tick_range(code, start, end)
+        if len({row.timestamp.date() for row in rows}) >= max(1, minimum_sessions):
+            return rows
+        recent = self.repo.recent_ticks(code, lookback_days)
+        return recent if len(recent) > len(rows) else rows
 
     def _stock_name(self, code: str) -> Optional[str]:
         try:

@@ -16,6 +16,7 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: '量化回测与数据利用' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '数据一站式获取' })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /进入研究终端/ })[0]).toHaveAttribute('href', '/app');
+    expect(screen.getByRole('link', { name: '注册' })).toHaveAttribute('href', '/access?mode=register&redirect=%2Fapp');
     expect(screen.getAllByRole('link', { name: '管理员' })[0]).toHaveAttribute('href', '/admin');
   });
 

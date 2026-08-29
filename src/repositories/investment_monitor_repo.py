@@ -20,6 +20,23 @@ from src.storage import (
 )
 
 
+# List and dashboard responses never expose ``raw_payload``. Avoid hydrating
+# that often very large evidence blob; the detail endpoint loads it separately
+# when a user explicitly opens one item.
+_EVENT_LIST_COLUMNS = (
+    MonitoringEventRecord.id, MonitoringEventRecord.source_key,
+    MonitoringEventRecord.source_name, MonitoringEventRecord.source_type,
+    MonitoringEventRecord.external_id, MonitoringEventRecord.event_type,
+    MonitoringEventRecord.perspective, MonitoringEventRecord.title,
+    MonitoringEventRecord.summary, MonitoringEventRecord.url,
+    MonitoringEventRecord.symbol_codes, MonitoringEventRecord.sentiment,
+    MonitoringEventRecord.importance_score, MonitoringEventRecord.confidence_score,
+    MonitoringEventRecord.tags_json, MonitoringEventRecord.actors_json,
+    MonitoringEventRecord.metrics_json, MonitoringEventRecord.event_at,
+    MonitoringEventRecord.ingested_at,
+)
+
+
 def _dump(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
@@ -392,6 +409,67 @@ class InvestmentMonitorRepository:
                 "daily_sources": daily_sources,
             }
 
+    def symbol_dashboard_stats(self, *, symbol: str, days: int) -> Dict[str, Any]:
+        """Aggregate one watchlist card without hydrating every evidence body.
+
+        A popular stock can have thousands of essays, reports and forum posts.
+        Loading their summaries and JSON payloads merely to count sentiments
+        makes the public dashboard retain hundreds of megabytes per request.
+        Keep that complete evidence set available to paginated workspaces while
+        using narrow SQL aggregates for the home-card summary.
+        """
+        cutoff = utc_naive_now() - timedelta(days=max(1, int(days)))
+        conditions = (
+            MonitoringEventRecord.event_at >= cutoff,
+            MonitoringEventRecord.symbol_codes.like(f"%{symbol}%"),
+            MonitoringEventRecord.event_type != "realtime_quote",
+        )
+        today = utc_naive_now().date().isoformat()
+        direction = case(
+            (MonitoringEventRecord.sentiment == "bullish", 1),
+            (MonitoringEventRecord.sentiment == "bearish", -1),
+            else_=0,
+        )
+        with self.db.get_session() as session:
+            summary = session.execute(select(
+                func.count(MonitoringEventRecord.id),
+                func.sum(case((MonitoringEventRecord.importance_score >= 75, 1), else_=0)),
+                func.sum((MonitoringEventRecord.importance_score - 40) * direction),
+                func.sum(case((MonitoringEventRecord.title.like("%风险%"), 1), else_=0)),
+                func.sum(case((MonitoringEventRecord.event_type == "institution_forecast", 1), else_=0)),
+                func.max(MonitoringEventRecord.event_at),
+                func.sum(case((func.date(MonitoringEventRecord.event_at) == today, 1), else_=0)),
+            ).where(*conditions)).one()
+
+            def grouped(column: Any) -> Dict[str, int]:
+                rows = session.execute(
+                    select(column, func.count(MonitoringEventRecord.id))
+                    .where(*conditions)
+                    .group_by(column)
+                ).all()
+                return {str(key or "unknown"): int(count or 0) for key, count in rows}
+
+            latest_forecast = session.execute(
+                select(MonitoringEventRecord.metrics_json)
+                .where(*conditions, MonitoringEventRecord.event_type == "institution_forecast")
+                .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+                .limit(1)
+            ).scalar_one_or_none()
+
+        metrics = _load(latest_forecast, {}) if latest_forecast else {}
+        return {
+            "event_count": int(summary[0] or 0),
+            "high_priority_count": int(summary[1] or 0),
+            "weighted_sentiment": int(summary[2] or 0),
+            "risk_title_count": int(summary[3] or 0),
+            "institution_rating_count": int(summary[4] or 0),
+            "latest_event_at": summary[5].isoformat() if summary[5] else None,
+            "today_event_count": int(summary[6] or 0),
+            "perspectives": grouped(MonitoringEventRecord.perspective),
+            "sentiment": grouped(MonitoringEventRecord.sentiment),
+            "latest_rating": metrics.get("rating"),
+        }
+
     def due_sources(self, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         current = now or utc_naive_now()
         due = []
@@ -587,6 +665,7 @@ class InvestmentMonitorRepository:
                 .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
                 .offset((safe_page - 1) * safe_size)
                 .limit(safe_size)
+                .options(load_only(*_EVENT_LIST_COLUMNS))
             ).scalars().all()
         return [self._event_dict(row) for row in rows], int(total)
 
@@ -596,18 +675,7 @@ class InvestmentMonitorRepository:
                 select(MonitoringEventRecord)
                 .where(MonitoringEventRecord.event_at >= utc_naive_now() - timedelta(days=max(1, days)))
                 .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
-                .options(load_only(
-                    MonitoringEventRecord.id, MonitoringEventRecord.source_key,
-                    MonitoringEventRecord.source_name, MonitoringEventRecord.source_type,
-                    MonitoringEventRecord.external_id, MonitoringEventRecord.event_type,
-                    MonitoringEventRecord.perspective, MonitoringEventRecord.title,
-                    MonitoringEventRecord.summary, MonitoringEventRecord.url,
-                    MonitoringEventRecord.symbol_codes, MonitoringEventRecord.sentiment,
-                    MonitoringEventRecord.importance_score, MonitoringEventRecord.confidence_score,
-                    MonitoringEventRecord.tags_json, MonitoringEventRecord.actors_json,
-                    MonitoringEventRecord.metrics_json, MonitoringEventRecord.event_at,
-                    MonitoringEventRecord.ingested_at,
-                ))
+                .options(load_only(*_EVENT_LIST_COLUMNS))
             )
             if limit is not None:
                 query = query.limit(max(1, int(limit)))
@@ -630,18 +698,7 @@ class InvestmentMonitorRepository:
                     MonitoringEventRecord.symbol_codes.like(f"%{symbol}%"),
                     MonitoringEventRecord.event_type != "realtime_quote",
                 ).order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
-                .options(load_only(
-                    MonitoringEventRecord.id, MonitoringEventRecord.source_key,
-                    MonitoringEventRecord.source_name, MonitoringEventRecord.source_type,
-                    MonitoringEventRecord.external_id, MonitoringEventRecord.event_type,
-                    MonitoringEventRecord.perspective, MonitoringEventRecord.title,
-                    MonitoringEventRecord.summary, MonitoringEventRecord.url,
-                    MonitoringEventRecord.symbol_codes, MonitoringEventRecord.sentiment,
-                    MonitoringEventRecord.importance_score, MonitoringEventRecord.confidence_score,
-                    MonitoringEventRecord.tags_json, MonitoringEventRecord.actors_json,
-                    MonitoringEventRecord.metrics_json, MonitoringEventRecord.event_at,
-                    MonitoringEventRecord.ingested_at,
-                ))
+                .options(load_only(*_EVENT_LIST_COLUMNS))
             ).scalars().all()
         return [self._event_dict(row) for row in rows]
 
@@ -779,6 +836,7 @@ class InvestmentMonitorRepository:
                 select(MonitoringEventRecord).where(where_clause)
                 .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
                 .offset((safe_page - 1) * safe_size).limit(safe_size)
+                .options(load_only(*_EVENT_LIST_COLUMNS))
             ).scalars().all()
         return [self._event_dict(row) for row in rows], int(total)
 
@@ -791,6 +849,7 @@ class InvestmentMonitorRepository:
                 select(MonitoringEventRecord)
                 .where(MonitoringEventRecord.id.in_(ids))
                 .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+                .options(load_only(*_EVENT_LIST_COLUMNS))
             ).scalars().all()
         return [self._event_dict(row) for row in rows]
 

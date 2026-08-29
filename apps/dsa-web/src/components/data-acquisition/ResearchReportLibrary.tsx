@@ -101,7 +101,9 @@ export default function ResearchReportLibrary() {
 
   useEffect(() => {
     if (!status || !['queued', 'running', 'interrupted'].includes(status.status)) return undefined;
-    const timer = window.setInterval(() => void loadStatus(), 3000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void loadStatus();
+    }, 3000);
     return () => window.clearInterval(timer);
   }, [loadStatus, status]);
 

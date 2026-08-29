@@ -127,7 +127,7 @@ const AdminConsolePage: React.FC = () => {
           <section className="admin-panel admin-users-panel">
             <div className="admin-panel-title"><div><p>USER APPROVAL QUEUE</p><h2>注册申请与账号</h2></div><button type="button" onClick={() => void loadUsers()} disabled={usersLoading}><RefreshCw size={14} className={usersLoading ? 'animate-spin' : ''} />刷新</button></div>
             <div className="admin-user-table">
-              <div className="admin-user-row is-head"><span>用户</span><span>状态</span><span>注册网络</span><span>可信 IP</span><span>最近登录</span><span>操作</span></div>
+              <div className="admin-user-row is-head"><span>用户</span><span>状态</span><span>注册网络</span><span>网络记录</span><span>最近登录</span><span>操作</span></div>
               {users.map((user) => (
                 <div className="admin-user-row" key={user.id}>
                   <span><strong>{user.name}</strong><small>#{user.id} · {user.createdAt ? new Date(user.createdAt).toLocaleString('zh-CN') : '—'}</small></span>
@@ -153,8 +153,8 @@ const AdminConsolePage: React.FC = () => {
               <div className="admin-access-row"><span>用户审批、同步启停、用量审计</span><b className="is-admin">仅管理员</b></div>
             </article>
             <article className="admin-panel admin-security-card">
-              <p className="admin-panel-kicker">TRUSTED NETWORK</p><h2>可信 IP 自动识别</h2>
-              <p>批准时自动信任注册来源网络；密码登录成功会绑定当前网络。IP 只保存不可逆哈希和脱敏展示，同一 IP 有多个账号时不会自动选择。</p>
+              <p className="admin-panel-kicker">SESSION SECURITY</p><h2>账号会话强制验证</h2>
+              <p>批准账号不会自动登录。每个浏览器必须使用姓名和密码建立有效会话；网络信息仅做脱敏审计，不再作为身份凭证，共享网络无法绕过注册与登录。</p>
               <Link to="/admin/api-models">检查 API 与模型 <KeyRound size={15} /></Link>
             </article>
           </section>

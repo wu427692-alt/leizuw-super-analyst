@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   ArrowDown, ArrowRight, BarChart3, Building2, DatabaseZap, Download,
   FileText, FlaskConical, Landmark, LineChart, LockKeyhole, MessageCircleMore,
-  Radio, Radar, ShieldCheck, Sparkles, Star, Waves,
+  Radio, Radar, ShieldCheck, Sparkles, Star, UserRoundPlus, Waves,
 } from 'lucide-react';
 import './LandingPage.css';
 
@@ -122,7 +122,11 @@ const LandingPage = () => {
     <header className="landing-header">
       <Link className="landing-brand" to="/" aria-label="乐子乌超级价值首页"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link>
       <nav aria-label="首页栏目"><a href="#research-flow">研究流程</a><a href="#platform-features">平台能力</a><a href="#landing-start">开始使用</a></nav>
-      <div className="landing-header-actions"><Link className="landing-admin-enter" to="/admin"><LockKeyhole aria-hidden="true" />管理员</Link><Link className="landing-header-enter" to="/app">进入研究终端<ArrowRight aria-hidden="true" /></Link></div>
+      <div className="landing-header-actions">
+        <Link className="landing-register-enter" to="/access?mode=register&redirect=%2Fapp"><UserRoundPlus aria-hidden="true" />注册</Link>
+        <Link className="landing-admin-enter" to="/admin"><LockKeyhole aria-hidden="true" />管理员</Link>
+        <Link className="landing-header-enter" to="/app">进入研究终端<ArrowRight aria-hidden="true" /></Link>
+      </div>
     </header>
 
     <section className="landing-hero" aria-labelledby="landing-title">

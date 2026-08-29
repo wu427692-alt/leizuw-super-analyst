@@ -57,4 +57,17 @@ describe('EssayQuantPage section-scoped loading', () => {
     await waitFor(() => expect(screen.getByText(/任务档案暂时未更新/)).toBeInTheDocument());
     expect(screen.queryByText(/外部依赖/)).not.toBeInTheDocument();
   });
+
+  it('opens the workbench immediately when a heavy overview request is still pending', async () => {
+    vi.mocked(essayQuantApi.dashboard).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(essayQuantApi.catalog).mockResolvedValue({ generatedAt: '2026-08-25T00:00:00', assets: [], methods: [], safeguards: [] });
+    vi.mocked(essayQuantApi.runs).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: [], total: 0 });
+
+    render(<MemoryRouter initialEntries={['/essay-quant']}><EssayQuantPage /></MemoryRouter>);
+
+    expect(screen.getByRole('heading', { name: '量化研究任务中心' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新建研究任务' })).toBeInTheDocument();
+    expect(screen.queryByText('正在装载量化研究工作台')).not.toBeInTheDocument();
+  });
 });

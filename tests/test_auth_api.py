@@ -227,6 +227,48 @@ class AuthApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_api_docs_redirect_to_admin_login_without_session(self) -> None:
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/docs",
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+        request = Request(scope)
+        middleware = AuthMiddleware(app=MagicMock())
+
+        with patch("api.middlewares.auth.is_auth_enabled", return_value=True):
+            response = asyncio.run(middleware.dispatch(request, AsyncMock(return_value=Response(status_code=200))))
+
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], "/admin/login?redirect=%2Fdocs")
+
+    def test_openapi_schema_requires_admin_session(self) -> None:
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/openapi.json",
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+        request = Request(scope)
+        middleware = AuthMiddleware(app=MagicMock())
+
+        with patch("api.middlewares.auth.is_auth_enabled", return_value=True):
+            response = asyncio.run(middleware.dispatch(request, AsyncMock(return_value=Response(status_code=200))))
+
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], "/admin/login?redirect=%2Fopenapi.json")
+
     def test_public_data_api_does_not_require_admin_session(self) -> None:
         scope = {
             "type": "http",
