@@ -149,7 +149,7 @@ function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
   onOpen: (tsCode: string) => void;
 }) {
   const modes: Array<[ConceptLeaders['mode'], string]> = [['consensus', '独立主线共识'], ['beta', '高弹性'], ['alpha', '独立强势'], ['specificity', '独特题材']];
-  return <section className="concept-market-radar">
+  return <section className="concept-market-radar" id="concept-stock-radar">
     <header><div><span><Target /> CROSS-THEME STOCK RADAR</span><h2>跨题材股票雷达</h2><p>不是按单个概念涨跌排名，而是在同一归因截止日比较股票的多源题材覆盖、Beta 与独特 Alpha。</p></div><div>{modes.map(([key, label]) => <button type="button" className={mode === key ? 'is-active' : ''} onClick={() => onMode(key)} key={key}>{label}</button>)}</div></header>
     <div className="concept-market-radar__grid">
       {value?.items.slice(0, 12).map((item, index) => { const focus = mode === 'alpha' ? item.alphaFocus : mode === 'beta' ? item.betaFocus : mode === 'specificity' ? item.specificityFocus : item.primaryThemes[0]; return <button type="button" key={item.tsCode} onClick={() => onOpen(item.tsCode)}>
@@ -172,7 +172,7 @@ function InstitutionDiscoveryRadar({ value, onSelect, onOpen }: {
   const statusLabel = {
     provider_consensus: '多源已确认', provider_single: '单源待交叉', corpus_candidate: '语料新候选',
   } as const;
-  return <section className="concept-institution-radar">
+  return <section className="concept-institution-radar" id="concept-corpus-radar">
     <header><div><span><BrainCircuit /> LOCAL CORPUS DISCOVERY</span><h2>机构语料新兴题材雷达</h2><p>从本地机构段子提取正在加速的主题与明确提及股票；AI 候选不会自动升级为市场共识。</p></div><div><strong>{number(value?.totalCandidates)}</strong><small>{value?.windowDays || 30} 日有效候选</small></div></header>
     <div className="concept-institution-radar__track">
       {value?.items.slice(0, 8).map(item => {
@@ -215,7 +215,7 @@ function WatchlistExposureMap({ value, onOpen, onCluster, onExport }: {
   onExport: () => void;
 }) {
   if (!value?.stockCount) return null;
-  return <section className="concept-watchlist-map">
+  return <section className="concept-watchlist-map" id="concept-watchlist">
     <header><div><span><Star /> PERSONAL EXPOSURE MAP</span><h2>我的自选题材暴露</h2><p>按当前登录用户隔离，只统计多源确认的业务主线；相近题材先去重再看集中度。</p></div><div className="concept-watchlist-map__actions"><b>{value.stockCount} 只自选 · {value.asOfDate || '最新归因'}</b><button type="button" onClick={onExport}><Download />导出数据</button></div></header>
     <div className="concept-watchlist-map__summary">
       <div data-level={value.concentration.level}><span>共同题材集中度</span><strong>{value.concentration.level}</strong><small>{value.concentration.topCluster || '暂无共同主线'} · 覆盖 {metric(value.concentration.topCoveragePct, 0)}%</small></div>
@@ -237,7 +237,7 @@ function MembershipChangeLedger({ value, onOpen, onTheme }: {
   onOpen: (tsCode: string) => void;
   onTheme: (name: string) => void;
 }) {
-  return <section className="concept-change-ledger">
+  return <section className="concept-change-ledger" id="concept-changes">
     <header><div><span><Activity /> PROVIDER MEMBERSHIP LEDGER</span><h2>题材成分变化账本</h2><p>跟踪供应商后续新增与退出；首次建库成分不会伪装成市场变化。</p></div><div><b>{number(value?.added)}</b><small>新增归属</small><b>{number(value?.removed)}</b><small>退出归属</small></div></header>
     <div className="concept-change-ledger__track">
       {value?.items.slice(0, 12).map(item => <article data-state={item.state} key={`${item.state}-${item.tsCode}-${item.canonicalName}`}>
@@ -532,6 +532,16 @@ export default function ConceptThemesPage() {
         <div><span>归因截止</span><strong>{overview?.summary.quality.exposureDate || '—'}</strong></div>
         <p>{overview?.summary.quality.warnings.join(' · ') || '目录、成分与归因截止时间一致；仍需结合原始证据核验。'}</p>
       </section>
+      <nav className="concept-section-nav" aria-label="概念题材研究导航">
+        <span>研究路径</span>
+        <a href="#concept-rotation">市场轮动</a>
+        <a href="#concept-corpus-radar">机构语料</a>
+        <a href="#concept-watchlist">自选暴露</a>
+        <a href="#concept-changes">成分变化</a>
+        <a href="#concept-stock-radar">股票雷达</a>
+        <a href="#concept-universe">题材宇宙</a>
+        <small>找主题 → 核成分 → 看 Beta → 查 Alpha</small>
+      </nav>
 
       <section className="concept-toolbar">
         <label className="concept-search"><Search /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索题材、行业、股票代码或源代码" /></label>
@@ -548,7 +558,7 @@ export default function ConceptThemesPage() {
         </button>)}</div>
       </section> : null}
 
-      <section className="concept-rotation-board">
+      <section className="concept-rotation-board" id="concept-rotation">
         <header><div><span><Activity /> THEME ROTATION</span><h2>多源题材轮动</h2></div><p>{rotation?.latestDate || overview?.summary.marketDate || '最新交易日'} · {rotation?.availableDates || 0} 个历史交易日 · 日涨跌取多来源中位数</p></header>
         <div className="concept-rotation-track">
           {rotation?.items.slice(0, 12).map(item => <button type="button" key={item.canonicalName} onClick={() => setQuery(item.canonicalName)}>
@@ -570,7 +580,7 @@ export default function ConceptThemesPage() {
 
       <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
 
-      <div className="concept-workspace">
+      <div className="concept-workspace" id="concept-universe">
         <aside className="concept-families">
           <div className="concept-panel-title"><Layers3 /><div><strong>题材分层</strong><small>规范族群 → 原始题材</small></div></div>
           <button type="button" className={!family ? 'is-active' : ''} onClick={() => { setFamily(''); setCluster(''); }}><span>全部题材宇宙</span><b>{number(overview?.summary.themes)}</b></button>
