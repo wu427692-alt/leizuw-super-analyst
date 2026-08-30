@@ -12,6 +12,7 @@ import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type 
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
+import './ConceptThemesCompare.css';
 
 const SOURCE_COLOR: Record<string, string> = {
   ths: '#5AA7FF', dc_board: '#7C5CFC', dc_theme: '#00D4B8', kpl: '#FFB547', tdx: '#F06C9B', sw: '#98A2B3',
@@ -680,7 +681,7 @@ export default function ConceptThemesPage() {
       <section className="concept-compare">
         <header><div><span><Scale /> THEME COMPARISON</span><h2>题材对照台</h2></div><p>{comparison ? `${comparison.left.theme.canonicalName} × ${comparison.right.theme.canonicalName}` : `已选 ${compareThemes.length}/2 · 在右侧题材详情点击“加入对照”`}</p></header>
         {comparison ? <div className="concept-compare-grid">
-          {[comparison.left, comparison.right].map((item, index) => <article key={item.theme.canonicalName}><span>{index ? 'B' : 'A'} · {item.theme.family}</span><h3>{item.theme.canonicalName}</h3><dl><div><dt>全部成分</dt><dd>{item.totalStocks}</dd></div><div><dt>多源确认</dt><dd>{item.consensusStocks}</dd></div><div><dt>归因完成</dt><dd>{item.attributionReady}</dd></div><div><dt>来源节点</dt><dd>{item.sourceNodes.length}</dd></div></dl><p>独占高权重 · {(index ? comparison.rightExclusive : comparison.leftExclusive).map(stock => stock.name).join('、') || '暂无'}</p></article>)}
+          {[comparison.left, comparison.right].map((item, index) => { const lastPoint = item.history?.points.at(-1); return <article key={item.theme.canonicalName}><span>{index ? 'B' : 'A'} · {item.theme.family}</span><h3>{item.theme.canonicalName}</h3><dl><div><dt>全部成分</dt><dd>{item.totalStocks}</dd></div><div><dt>多源确认</dt><dd>{item.consensusStocks}</dd></div><div><dt>归因完成</dt><dd>{item.attributionReady}</dd></div><div><dt>来源节点</dt><dd>{item.sourceNodes.length}</dd></div><div><dt>最新日涨跌</dt><dd data-tone={(lastPoint?.pctChange ?? 0) >= 0 ? 'up' : 'down'}>{signed(lastPoint?.pctChange)}</dd></div><div><dt>{item.history?.availableDates || 0}日累计</dt><dd data-tone={(item.history?.cumulativeReturn ?? 0) >= 0 ? 'up' : 'down'}>{signed(item.history?.cumulativeReturn)}</dd></div><div><dt>多源确认率</dt><dd>{item.totalStocks ? metric(item.consensusStocks / item.totalStocks * 100, 1) : '—'}%</dd></div><div><dt>归因覆盖率</dt><dd>{item.totalStocks ? metric(item.attributionReady / item.totalStocks * 100, 1) : '—'}%</dd></div></dl><p>独占高权重 · {(index ? comparison.rightExclusive : comparison.leftExclusive).map(stock => stock.name).join('、') || '暂无'}</p></article>; })}
           <aside><strong>{comparison.similarity.toFixed(1)}%</strong><span>成分 Jaccard 相似度</span><b>{comparison.shared.length} 只共同成分</b><p>{comparison.shared.slice(0, 12).map(item => item.name).join('、') || '没有共同成分'}</p></aside>
         </div> : <div className="concept-compare-empty"><Scale /><p>对照不是只比涨跌：系统会比较成分重合、市场共识、归因覆盖和双方独占的高权重股票。</p></div>}
       </section>

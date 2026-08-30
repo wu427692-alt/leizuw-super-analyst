@@ -1,0 +1,7 @@
+.concept-compare-grid dd[data-tone="up"] {
+  color: #ff667d;
+}
+
+.concept-compare-grid dd[data-tone="down"] {
+  color: #25c897;
+}
