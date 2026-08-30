@@ -208,14 +208,15 @@ function InstitutionCandidatePanel({ item, onClose, onTheme, onOpen }: {
   </aside>;
 }
 
-function WatchlistExposureMap({ value, onOpen, onCluster }: {
+function WatchlistExposureMap({ value, onOpen, onCluster, onExport }: {
   value: WatchlistThemeMap | null;
   onOpen: (tsCode: string) => void;
   onCluster: (family: string, cluster: string) => void;
+  onExport: () => void;
 }) {
   if (!value?.stockCount) return null;
   return <section className="concept-watchlist-map">
-    <header><div><span><Star /> PERSONAL EXPOSURE MAP</span><h2>我的自选题材暴露</h2><p>按当前登录用户隔离，只统计多源确认的业务主线；相近题材先去重再看集中度。</p></div><b>{value.stockCount} 只自选 · {value.asOfDate || '最新归因'}</b></header>
+    <header><div><span><Star /> PERSONAL EXPOSURE MAP</span><h2>我的自选题材暴露</h2><p>按当前登录用户隔离，只统计多源确认的业务主线；相近题材先去重再看集中度。</p></div><div className="concept-watchlist-map__actions"><b>{value.stockCount} 只自选 · {value.asOfDate || '最新归因'}</b><button type="button" onClick={onExport}><Download />导出数据</button></div></header>
     <div className="concept-watchlist-map__summary">
       <div data-level={value.concentration.level}><span>共同题材集中度</span><strong>{value.concentration.level}</strong><small>{value.concentration.topCluster || '暂无共同主线'} · 覆盖 {metric(value.concentration.topCoveragePct, 0)}%</small></div>
       <div><span>多源归因覆盖</span><strong>{value.concentration.coveredStockCount}/{value.stockCount}</strong><small>未达两源门槛不会凑数</small></div>
@@ -273,7 +274,7 @@ function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: b
   </button>;
 }
 
-function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: () => void }) {
+function StockLensPanel({ value, onClose, onExport }: { value: StockThemeLens; onClose: () => void; onExport: () => void }) {
   const chart = value.primaryThemes.map(item => ({
     name: item.canonicalName.length > 9 ? `${item.canonicalName.slice(0, 9)}…` : item.canonicalName,
     weight: item.weightScore,
@@ -283,7 +284,7 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
   return <aside className="concept-stock-lens">
     <div className="concept-stock-lens__head">
       <div><span>STOCK EXPOSURE LENS</span><h2>{value.name || value.tsCode}</h2><p>{value.tsCode} · 截止 {value.asOfDate || '最新入库交易日'}</p></div>
-      <button type="button" onClick={onClose} aria-label="关闭股票题材透镜"><X /></button>
+      <div className="concept-stock-lens__head-actions"><button type="button" onClick={onExport}><Download />导出画像</button><button type="button" onClick={onClose} aria-label="关闭股票题材透镜"><X /></button></div>
     </div>
     <div className="concept-lens-summary">
       <div><strong>{value.summary.themeCount}</strong><span>归属题材</span></div>
@@ -563,7 +564,7 @@ export default function ConceptThemesPage() {
 
       <InstitutionDiscoveryRadar value={institutionRadar} onSelect={item => { setStockLens(null); setInstitutionCandidate(item); }} onOpen={tsCode => void openStock(tsCode)} />
 
-      <WatchlistExposureMap value={watchlistMap} onOpen={tsCode => void openStock(tsCode)} onCluster={(nextFamily, nextCluster) => { setFamily(nextFamily); setCluster(nextCluster); }} />
+      <WatchlistExposureMap value={watchlistMap} onOpen={tsCode => void openStock(tsCode)} onCluster={(nextFamily, nextCluster) => { setFamily(nextFamily); setCluster(nextCluster); }} onExport={() => void conceptThemesApi.exportWatchlistMap(horizonDays)} />
 
       <MembershipChangeLedger value={membershipChanges} onOpen={tsCode => void openStock(tsCode)} onTheme={name => { setQuery(name); setPage(1); }} />
 
@@ -624,7 +625,7 @@ export default function ConceptThemesPage() {
         <small>{overview?.methodology.licenseNote}</small>
       </section>
     </div>
-      {stockLens ? <StockLensPanel value={stockLens} onClose={() => setStockLens(null)} /> : null}
+      {stockLens ? <StockLensPanel value={stockLens} onClose={() => setStockLens(null)} onExport={() => void conceptThemesApi.exportStock(stockLens.tsCode, horizonDays)} /> : null}
       {institutionCandidate ? <InstitutionCandidatePanel item={institutionCandidate} onClose={() => setInstitutionCandidate(null)} onTheme={setQuery} onOpen={tsCode => { setInstitutionCandidate(null); void openStock(tsCode); }} /> : null}
   </AppPage>;
 }

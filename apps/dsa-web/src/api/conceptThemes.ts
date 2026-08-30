@@ -537,6 +537,30 @@ export const conceptThemesApi = {
     anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   },
+  exportStock: async (tsCode: string, horizonDays = 60): Promise<void> => {
+    const response = await apiClient.get(`/api/v1/concept-themes/stocks/${encodeURIComponent(tsCode)}/export.csv`, {
+      params: { horizon_days: horizonDays }, responseType: 'blob', timeout: 90_000,
+    });
+    const disposition = String(response.headers['content-disposition'] || '');
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    const filename = encodedName ? decodeURIComponent(encodedName) : `${tsCode}_题材画像.csv`;
+    const url = URL.createObjectURL(response.data);
+    const anchor = document.createElement('a');
+    anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  },
+  exportWatchlistMap: async (horizonDays = 60): Promise<void> => {
+    const response = await apiClient.get('/api/v1/concept-themes/watchlist-map/export.csv', {
+      params: { horizon_days: horizonDays }, responseType: 'blob', timeout: 90_000,
+    });
+    const disposition = String(response.headers['content-disposition'] || '');
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    const filename = encodedName ? decodeURIComponent(encodedName) : '我的自选题材暴露.csv';
+    const url = URL.createObjectURL(response.data);
+    const anchor = document.createElement('a');
+    anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  },
   wakeSync: async (): Promise<void> => {
     await apiClient.post('/api/v1/concept-themes/sync/catalog', {});
     invalidateCachedQueries('concept:');

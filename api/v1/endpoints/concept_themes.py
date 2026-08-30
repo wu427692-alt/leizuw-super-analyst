@@ -118,6 +118,41 @@ def stock_lens(
         raise _http_error(exc)
 
 
+@router.get("/stocks/{ts_code}/export.csv", summary="导出个股题材画像与归因")
+def export_stock_lens_csv(
+    ts_code: str,
+    horizon_days: int = Query(default=60, ge=20, le=120),
+):
+    try:
+        lens = ConceptThemeService().stock_lens(
+            ts_code, refresh_if_empty=False, horizon_days=horizon_days,
+        )
+    except ConceptThemeError as exc:
+        raise _http_error(exc)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "股票代码", "股票名称", "规范题材", "题材家族", "独立语义簇", "共识层级", "独立来源数",
+        "来源目录", "题材权重", "题材Beta", "市场Beta", f"{lens['horizon_days']}日Alpha",
+        "R²", "样本数", "置信等级", "归因截止日", "入选理由",
+    ])
+    for item in lens["themes"]:
+        writer.writerow([
+            lens["ts_code"], lens["name"], item.get("canonical_name"), item.get("family"), item.get("cluster"),
+            "多源市场共识" if int(item.get("source_count") or 0) >= 2 else "单源待核验",
+            item.get("source_count"), "、".join(item.get("sources") or []), item.get("weight_score"),
+            item.get("beta"), item.get("market_beta"), item.get("residual_return"), item.get("r_squared"),
+            item.get("observations"), item.get("confidence"), lens.get("as_of_date"),
+            "；".join(item.get("reasons") or []),
+        ])
+    safe_name = str(lens.get("name") or lens["ts_code"]).replace("/", "-").replace("\\", "-")
+    filename = f"{safe_name}_题材画像_{lens['horizon_days']}日.csv"
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
 @router.get("/status", summary="读取题材库同步状态")
 def status():
     return {**ConceptThemeService().sync_status(), "worker": ConceptThemeWorker.get_instance().status()}
@@ -163,6 +198,38 @@ def watchlist_map(
 ):
     return ConceptThemeService().watchlist_theme_map(
         _watchlist_codes(request), horizon_days=horizon_days,
+    )
+
+
+@router.get("/watchlist-map/export.csv", summary="导出当前用户自选股题材暴露")
+def export_watchlist_map_csv(
+    request: Request,
+    horizon_days: int = Query(default=60, ge=20, le=120),
+):
+    value = ConceptThemeService().watchlist_theme_map(
+        _watchlist_codes(request), horizon_days=horizon_days,
+    )
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "股票代码", "股票名称", "归因截止日", "独立主线数", "原始多源标签数", "相近标签重叠率",
+        "题材家族", "独立语义簇", "代表规范题材", "题材权重", "共同题材覆盖率", "集中度等级", "口径说明",
+    ])
+    concentration = value.get("concentration") or {}
+    for stock in value["stocks"]:
+        themes = stock.get("themes") or [None]
+        for item in themes:
+            item = item or {}
+            writer.writerow([
+                stock.get("ts_code"), stock.get("name"), stock.get("as_of_date"),
+                stock.get("independent_cluster_count"), stock.get("raw_theme_count"), stock.get("overlap_rate"),
+                item.get("family"), item.get("cluster"), item.get("canonical_name"), item.get("weight_score"),
+                concentration.get("top_coverage_pct"), concentration.get("level"), value.get("method"),
+            ])
+    filename = f"我的自选题材暴露_{value.get('as_of_date') or '最新'}.csv"
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
 
