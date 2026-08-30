@@ -140,6 +140,8 @@ def test_rotation_history_backfill_uses_real_dates_without_rewinding_live_catalo
         ))
 
     def query(api_name, *, params):
+        if api_name == "trade_cal":
+            return {"rows": [{"cal_date": day.strftime("%Y%m%d")} for day in trade_dates]}
         trade_date = params["trade_date"]
         rows = {
             "moneyflow_cnt_ths": [{
@@ -177,6 +179,30 @@ def test_rotation_history_backfill_uses_real_dates_without_rewinding_live_catalo
     rotation = service.rotation(days=5, limit=8)
     assert rotation["available_dates"] == 2
     assert all(item["momentum_5d"] is None for item in rotation["items"])
+
+
+def test_rotation_history_fallback_skips_weekend_fact_dates(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        for day in (21, 22, 23, 24):
+            session.add(StockDaily(code="300308", date=date(2026, 8, day), close=100.0, data_source="test"))
+
+    queried_dates = []
+
+    def query(api_name, *, params):
+        if api_name == "trade_cal":
+            raise RuntimeError("calendar unavailable")
+        queried_dates.append(params["trade_date"])
+        return {"rows": []}
+
+    service.gateway = SimpleNamespace(available=True, query=query)
+    ConceptThemeService._market_date_value = date(2026, 8, 24)
+    ConceptThemeService._market_date_checked_at = datetime.now()
+    service.backfill_rotation_history(days=5, dates_per_run=5)
+    assert "20260822" not in queried_dates
+    assert "20260823" not in queried_dates
+    assert set(queried_dates) == {"20260821", "20260824"}
 
 
 def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path) -> None:

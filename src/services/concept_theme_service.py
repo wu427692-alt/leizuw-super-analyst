@@ -2409,10 +2409,27 @@ class ConceptThemeService:
         days = max(5, min(int(days), 60))
         dates_per_run = max(1, min(int(dates_per_run), 8))
         latest = self.latest_market_date()
+        trade_dates: List[date] = []
+        try:
+            calendar = self.gateway.query("trade_cal", params={
+                "exchange": "SSE",
+                "start_date": (latest - timedelta(days=days * 3 + 20)).strftime("%Y%m%d"),
+                "end_date": latest.strftime("%Y%m%d"),
+                "is_open": "1",
+            })["rows"]
+            trade_dates = sorted({
+                parsed for row in calendar
+                if (parsed := _parse_date(row.get("cal_date"))) is not None and parsed <= latest
+            }, reverse=True)[:days]
+        except Exception as exc:  # noqa: BLE001 - local completed sessions are a safe fallback.
+            logger.debug("concept rotation calendar unavailable; using local weekday sessions: %s", exc)
+        if not trade_dates:
+            with self._read_scope() as session:
+                candidates = list(session.execute(select(StockDaily.date).where(
+                    StockDaily.date <= latest,
+                ).distinct().order_by(StockDaily.date.desc()).limit(days * 3)).scalars().all())
+            trade_dates = [day for day in candidates if day.weekday() < 5][:days]
         with self._read_scope() as session:
-            trade_dates = list(session.execute(select(StockDaily.date).where(
-                StockDaily.date <= latest,
-            ).distinct().order_by(StockDaily.date.desc()).limit(days)).scalars().all())
             existing_counts = dict(session.execute(select(
                 ConceptThemeSnapshotRecord.market_date,
                 func.count(ConceptThemeSnapshotRecord.id),
@@ -2514,7 +2531,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.65",
+            "version": "concept-consensus-v1.66",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
