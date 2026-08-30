@@ -1127,9 +1127,12 @@ class ConceptThemeService:
             prior_week_equivalent = float(item["prior_count"]) / baseline_days * 7
             acceleration = ((recent - prior_week_equivalent) / max(1.0, prior_week_equivalent)) * 100
             average_evidence = float(item["importance_sum"]) / note_count
+            concentration_score = min(20.0, recent / max(1, note_count) * 30)
+            acceleration_score = max(-5.0, min(10.0, acceleration / 100))
             discovery_score = min(100.0,
-                math.log1p(note_count) * 16 + min(recent, 20) * 1.7
-                + min(provider_count, 5) * 5 + average_evidence * .18
+                math.log1p(note_count) * 7 + concentration_score
+                + min(provider_count, 3) * 4 + min(14.0, average_evidence * .18)
+                + acceleration_score
             )
             ranked_stocks = sorted(item["stocks"].items(), key=lambda value: (-value[1], value[0]))[:6]
             items.append({
@@ -1139,7 +1142,8 @@ class ConceptThemeService:
                 "provider_sources": sorted(sources),
                 "note_count": note_count,
                 "recent_7d": recent,
-                "acceleration_pct": round(acceleration, 1),
+                "acceleration_pct": round(acceleration, 1) if prior_week_equivalent >= 1 else None,
+                "baseline_week": round(prior_week_equivalent, 1),
                 "discovery_score": round(discovery_score, 1),
                 "sentiment": {"bullish": item["bullish"], "neutral": item["neutral"], "bearish": item["bearish"]},
                 "stocks": [{"ts_code": code, "name": name, "mentions": count} for (code, name), count in ranked_stocks],
@@ -1999,7 +2003,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.49",
+            "version": "concept-consensus-v1.50",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

@@ -152,9 +152,9 @@ function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
   </section>;
 }
 
-function InstitutionDiscoveryRadar({ value, onTheme, onOpen }: {
+function InstitutionDiscoveryRadar({ value, onSelect, onOpen }: {
   value: InstitutionThemeRadar | null;
-  onTheme: (name: string) => void;
+  onSelect: (item: InstitutionThemeRadar['items'][number]) => void;
   onOpen: (tsCode: string) => void;
 }) {
   const statusLabel = {
@@ -166,8 +166,8 @@ function InstitutionDiscoveryRadar({ value, onTheme, onOpen }: {
       {value?.items.slice(0, 8).map(item => {
         const totalTone = Math.max(1, item.sentiment.bullish + item.sentiment.neutral + item.sentiment.bearish);
         return <article key={item.canonicalName} data-status={item.status}>
-          <div className="concept-institution-radar__title"><button type="button" onClick={() => onTheme(item.canonicalName)}><strong>{item.canonicalName}</strong><ChevronRight /></button><span>{statusLabel[item.status]}</span></div>
-          <div className="concept-institution-radar__metrics"><b>{item.noteCount}<small>篇语料</small></b><b>{item.recent7D}<small>近7日</small></b><b data-tone={item.accelerationPct >= 0 ? 'up' : 'down'}>{signed(item.accelerationPct)}<small>提及加速度</small></b><b>{metric(item.discoveryScore, 0)}<small>发现分</small></b></div>
+          <div className="concept-institution-radar__title"><button type="button" onClick={() => onSelect(item)}><strong>{item.canonicalName}</strong><ChevronRight /></button><span>{statusLabel[item.status]}</span></div>
+          <div className="concept-institution-radar__metrics"><b>{item.noteCount}<small>篇语料</small></b><b>{item.recent7D}<small>近7日</small></b><b data-tone={(item.accelerationPct ?? 0) >= 0 ? 'up' : 'down'}>{item.accelerationPct == null ? 'NEW' : signed(item.accelerationPct)}<small>提及加速度</small></b><b>{metric(item.discoveryScore, 0)}<small>发现分</small></b></div>
           <div className="concept-institution-radar__tone" title={`看多 ${item.sentiment.bullish} · 中性 ${item.sentiment.neutral} · 看空 ${item.sentiment.bearish}`}><i data-tone="bullish" style={{ width: `${item.sentiment.bullish / totalTone * 100}%` }} /><i data-tone="neutral" style={{ width: `${item.sentiment.neutral / totalTone * 100}%` }} /><i data-tone="bearish" style={{ width: `${item.sentiment.bearish / totalTone * 100}%` }} /></div>
           <div className="concept-institution-radar__stocks">{item.stocks.slice(0, 4).map(stock => <button type="button" key={`${item.canonicalName}-${stock.tsCode || stock.name}`} onClick={() => stock.tsCode ? onOpen(stock.tsCode) : undefined} disabled={!stock.tsCode}><span>{stock.name}</span><b>{stock.mentions}</b></button>)}{!item.stocks.length ? <em>暂无明确股票提及</em> : null}</div>
           <footer>{item.providerCount ? `${item.providerCount} 个独立供应商已有同名题材` : '尚无供应商同名题材，需人工核验'} · {item.latestAt?.slice(0, 10) || '近期'}</footer>
@@ -177,6 +177,23 @@ function InstitutionDiscoveryRadar({ value, onTheme, onOpen }: {
     </div>
     <footer>{value?.method || '机构语料只负责发现线索，供应商目录负责定义市场共识，两套口径不会混算。'}</footer>
   </section>;
+}
+
+function InstitutionCandidatePanel({ item, onClose, onTheme, onOpen }: {
+  item: InstitutionThemeRadar['items'][number];
+  onClose: () => void;
+  onTheme: (name: string) => void;
+  onOpen: (tsCode: string) => void;
+}) {
+  const statusLabel = item.status === 'provider_consensus' ? '多源市场确认' : item.status === 'provider_single' ? '单源待交叉' : '机构语料候选';
+  return <aside className="concept-candidate-panel">
+    <header><div><span><Sparkles /> CORPUS EVIDENCE LENS</span><h2>{item.canonicalName}</h2><p>{statusLabel} · 最近证据 {item.latestAt?.slice(0, 10) || '—'}</p></div><button type="button" onClick={onClose} aria-label="关闭机构题材证据"><X /></button></header>
+    <section className="concept-candidate-panel__summary"><div><strong>{item.noteCount}</strong><span>30日语料</span></div><div><strong>{item.recent7D}</strong><span>近7日</span></div><div><strong>{item.accelerationPct == null ? 'NEW' : signed(item.accelerationPct)}</strong><span>提及加速度</span></div><div><strong>{metric(item.discoveryScore, 0)}</strong><span>发现分</span></div></section>
+    <section className="concept-candidate-panel__boundary"><ShieldCheck /><div><strong>{item.providerCount ? `${item.providerCount} 个独立供应商已确认` : '尚未进入供应商市场共识'}</strong><p>{item.providerCount ? `源目录：${item.providerSources.map(source => SOURCE_LABEL[source] || source).join(' · ')}` : '当前只说明机构语料集中讨论，不能据此新增题材成分或解释股价。'}</p></div></section>
+    <section className="concept-candidate-panel__stocks"><header><strong>明确提及股票</strong><small>同名股票已与题材成分库统一身份</small></header><div>{item.stocks.map(stock => <button type="button" disabled={!stock.tsCode} onClick={() => stock.tsCode ? onOpen(stock.tsCode) : undefined} key={`${stock.tsCode}-${stock.name}`}><span><strong>{stock.name}</strong><small>{stock.tsCode || '非A股/待映射'}</small></span><b>{stock.mentions} 次</b><ChevronRight /></button>)}</div></section>
+    <section className="concept-candidate-panel__evidence"><header><strong>最近原始证据</strong><small>点击回到机构段子原文</small></header>{item.samples.map(sample => <a href={sample.url} key={sample.topicId}><span>{sample.date.slice(0, 10)}</span><strong>{sample.title || '未命名机构段子'}</strong><ChevronRight /></a>)}</section>
+    {item.providerCount ? <button type="button" className="concept-candidate-panel__action" onClick={() => { onTheme(item.canonicalName); onClose(); }}>进入市场题材与成分归因 <ArrowRight /></button> : <p className="concept-candidate-panel__note">继续等待供应商目录交叉确认；候选证据不会自动进入题材权重、Beta 或 Alpha。</p>}
+  </aside>;
 }
 
 function ClusterAggregate({ value, onOpen }: { value: ConceptClusterDetail; onOpen: (tsCode: string) => void }) {
@@ -296,6 +313,7 @@ export default function ConceptThemesPage() {
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
   const [institutionRadar, setInstitutionRadar] = useState<InstitutionThemeRadar | null>(null);
+  const [institutionCandidate, setInstitutionCandidate] = useState<InstitutionThemeRadar['items'][number] | null>(null);
   const [leaderMode, setLeaderMode] = useState<ConceptLeaders['mode']>('consensus');
   const [clusterDetail, setClusterDetail] = useState<ConceptClusterDetail | null>(null);
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
@@ -476,7 +494,7 @@ export default function ConceptThemesPage() {
         <footer>{rotation?.method || '每日保留各来源原始快照后再聚合；数据不足时不外推历史。'}</footer>
       </section>
 
-      <InstitutionDiscoveryRadar value={institutionRadar} onTheme={setQuery} onOpen={tsCode => void openStock(tsCode)} />
+      <InstitutionDiscoveryRadar value={institutionRadar} onSelect={item => { setStockLens(null); setInstitutionCandidate(item); }} onOpen={tsCode => void openStock(tsCode)} />
 
       <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
 
@@ -534,6 +552,7 @@ export default function ConceptThemesPage() {
         <small>{overview?.methodology.licenseNote}</small>
       </section>
     </div>
-    {stockLens ? <StockLensPanel value={stockLens} onClose={() => setStockLens(null)} /> : null}
+      {stockLens ? <StockLensPanel value={stockLens} onClose={() => setStockLens(null)} /> : null}
+      {institutionCandidate ? <InstitutionCandidatePanel item={institutionCandidate} onClose={() => setInstitutionCandidate(null)} onTheme={setQuery} onOpen={tsCode => { setInstitutionCandidate(null); void openStock(tsCode); }} /> : null}
   </AppPage>;
 }

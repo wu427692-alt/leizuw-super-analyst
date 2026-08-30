@@ -169,7 +169,8 @@ export type InstitutionThemeRadar = {
     providerSources: string[];
     noteCount: number;
     recent7D: number;
-    accelerationPct: number;
+    accelerationPct?: number | null;
+    baselineWeek: number;
     discoveryScore: number;
     sentiment: { bullish: number; neutral: number; bearish: number };
     stocks: Array<{ tsCode: string; name: string; mentions: number }>;

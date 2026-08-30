@@ -558,6 +558,8 @@ def test_institution_radar_keeps_ai_candidates_separate_from_provider_consensus(
     assert by_name["CPO/共封装光学"]["provider_count"] == 2
     assert by_name["自研新主题"]["status"] == "corpus_candidate"
     assert by_name["自研新主题"]["provider_count"] == 0
+    assert by_name["自研新主题"]["discovery_score"] < 100
+    assert by_name["自研新主题"]["acceleration_pct"] is None
     assert by_name["自研新主题"]["stocks"][0] == {
         "ts_code": "300308.SZ", "name": "中际旭创", "mentions": 2,
     }
