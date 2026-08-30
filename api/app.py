@@ -322,6 +322,7 @@ async def app_lifespan(app: FastAPI):
     essay_quant_worker = None
     essay_quant_task_manager = None
     industry_research_task_manager = None
+    concept_theme_worker = None
     if os.getenv("DATA_STORAGE_MAINTENANCE_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.data_storage_service import DataStorageMaintenanceWorker
@@ -396,6 +397,15 @@ async def app_lifespan(app: FastAPI):
         app.state.industry_research_task_manager = industry_research_task_manager
     except Exception as exc:  # noqa: BLE001 - research projects must not prevent API startup.
         logger.warning("Industry research task manager did not start: %s", exc)
+    if os.getenv("CONCEPT_THEME_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.concept_theme_worker import ConceptThemeWorker
+
+            concept_theme_worker = ConceptThemeWorker.get_instance()
+            concept_theme_worker.start()
+            app.state.concept_theme_worker = concept_theme_worker
+        except Exception as exc:  # noqa: BLE001 - theme refresh must not prevent API startup.
+            logger.warning("Concept theme worker did not start: %s", exc)
     if os.getenv("INVESTMENT_MONITOR_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
         try:
             from src.services.investment_monitor_worker import InvestmentMonitorWorker
@@ -477,6 +487,10 @@ async def app_lifespan(app: FastAPI):
             industry_research_task_manager.stop()
             if hasattr(app.state, "industry_research_task_manager"):
                 delattr(app.state, "industry_research_task_manager")
+        if concept_theme_worker is not None:
+            concept_theme_worker.stop()
+            if hasattr(app.state, "concept_theme_worker"):
+                delattr(app.state, "concept_theme_worker")
         if icloud_knowledge_worker is not None:
             icloud_knowledge_worker.stop()
             if hasattr(app.state, "icloud_knowledge_worker"):

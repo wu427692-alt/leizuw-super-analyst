@@ -18,6 +18,7 @@ from api.v1.endpoints import (
     analysis,
     auth,
     backtest,
+    concept_themes,
     decision_signals,
     data_acquisition,
     essay_radar,
@@ -80,6 +81,12 @@ router.include_router(
     stocks.router,
     prefix="/stocks",
     tags=["Stocks"]
+)
+
+router.include_router(
+    concept_themes.router,
+    prefix="/concept-themes",
+    tags=["ConceptThemes"],
 )
 
 router.include_router(

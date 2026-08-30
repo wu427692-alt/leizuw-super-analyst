@@ -11,6 +11,7 @@ const ROUTE_LOADERS: Array<{ match: (pathname: string) => boolean; load: () => R
   { match: (path) => path === '/app' || path === '/dashboard', load: () => import('../pages/MarketDashboardPage') },
   { match: (path) => path.startsWith('/research-center'), load: () => import('../pages/ResearchCenterPage') },
   { match: (path) => path.startsWith('/industry-research'), load: () => import('../pages/IndustryResearchPage') },
+  { match: (path) => path.startsWith('/concept-themes'), load: () => import('../pages/ConceptThemesPage') },
   { match: (path) => path.startsWith('/chat'), load: () => import('../pages/ChatPage') },
   { match: (path) => path.startsWith('/essay-radar'), load: () => import('../pages/EssayRadarPage') },
   { match: (path) => path.startsWith('/essay-quant'), load: () => import('../pages/EssayQuantPage') },

@@ -76,6 +76,7 @@ const SuperWatchlistPage = lazyRoute(() => import('./pages/SuperWatchlistPage'),
 const DataAcquisitionPage = lazyRoute(() => import('./pages/DataAcquisitionPage'), 'data-acquisition');
 const ResearchCenterPage = lazyRoute(() => import('./pages/ResearchCenterPage'), 'research-center');
 const IndustryResearchPage = lazyRoute(() => import('./pages/IndustryResearchPage'), 'industry-research');
+const ConceptThemesPage = lazyRoute(() => import('./pages/ConceptThemesPage'), 'concept-themes');
 const DragonTigerPage = lazyRoute(() => import('./pages/DragonTigerPage'), 'dragon-tiger');
 const AdminConsolePage = lazyRoute(() => import('./pages/AdminConsolePage'), 'admin-console');
 const UserGuidePage = lazyRoute(() => import('./pages/UserGuidePage'), 'user-guide');
@@ -88,6 +89,7 @@ const APP_ROUTE_PRELOAD_PATHS = [
   '/chat',
   '/research-center',
   '/industry-research',
+  '/concept-themes',
   '/data-acquisition',
 ];
 
@@ -238,6 +240,7 @@ const AppContent: React.FC = () => {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/research-center" element={<ResearchCenterPage />} />
         <Route path="/industry-research" element={<IndustryResearchPage />} />
+        <Route path="/concept-themes" element={<ConceptThemesPage />} />
         <Route path="/portfolio" element={<Navigate to="/app" replace />} />
         <Route path="/decision-signals" element={<Navigate to="/app" replace />} />
         <Route path="/screening" element={<StockScreeningPage />} />

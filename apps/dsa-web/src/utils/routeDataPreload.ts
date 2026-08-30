@@ -26,6 +26,13 @@ const DATA_PRELOADERS: DataPreloader[] = [
     },
   },
   {
+    match: (path) => path.startsWith('/concept-themes'),
+    load: async () => {
+      const { conceptThemesApi } = await import('../api/conceptThemes');
+      return conceptThemesApi.overview({ pageSize: 100 });
+    },
+  },
+  {
     match: (path) => path.startsWith('/essay-radar'),
     load: async () => {
       const { essayRadarApi } = await import('../api/essayRadar');

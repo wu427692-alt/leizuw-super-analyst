@@ -749,6 +749,120 @@ class IndustryResearchProjectRecord(Base):
     )
 
 
+class ConceptThemeRecord(Base):
+    """Source-preserving concept, theme, industry, region, or style node."""
+
+    __tablename__ = "concept_themes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(24), nullable=False, index=True)
+    source_code = Column(String(32), nullable=False, index=True)
+    name = Column(String(120), nullable=False, index=True)
+    canonical_name = Column(String(120), nullable=False, index=True)
+    theme_type = Column(String(24), nullable=False, default="concept", index=True)
+    level = Column(Integer, nullable=False, default=3, index=True)
+    parent_code = Column(String(32), index=True)
+    constituent_count = Column(Integer, nullable=False, default=0)
+    market_date = Column(Date, index=True)
+    heat_score = Column(Float)
+    pct_change = Column(Float)
+    fund_flow = Column(Float)
+    source_payload_json = Column(Text, nullable=False, default="{}")
+    first_seen_at = Column(DateTime, default=utc_naive_now, nullable=False)
+    last_seen_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("source", "source_code", name="uix_concept_theme_source_code"),
+        Index("ix_concept_theme_type_heat", "theme_type", "heat_score"),
+    )
+
+
+class ConceptMembershipRecord(Base):
+    """Latest source membership with the source's inclusion reason intact."""
+
+    __tablename__ = "concept_memberships"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    theme_id = Column(Integer, ForeignKey("concept_themes.id"), nullable=False, index=True)
+    source = Column(String(24), nullable=False, index=True)
+    ts_code = Column(String(16), nullable=False, index=True)
+    stock_name = Column(String(80), nullable=False, default="")
+    reason = Column(Text)
+    active = Column(Boolean, nullable=False, default=True, index=True)
+    source_weight = Column(Float)
+    hot_rank = Column(Integer)
+    market_date = Column(Date, index=True)
+    first_seen_at = Column(DateTime, default=utc_naive_now, nullable=False)
+    last_seen_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("theme_id", "source", "ts_code", name="uix_concept_membership_theme_stock"),
+        Index("ix_concept_membership_stock_active", "ts_code", "active"),
+    )
+
+
+class ConceptExposureRecord(Base):
+    """Explainable stock-to-canonical-theme exposure and return attribution."""
+
+    __tablename__ = "concept_exposures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts_code = Column(String(16), nullable=False, index=True)
+    stock_name = Column(String(80), nullable=False, default="")
+    canonical_name = Column(String(120), nullable=False, index=True)
+    as_of_date = Column(Date, nullable=False, index=True)
+    horizon_days = Column(Integer, nullable=False, default=60)
+    weight_score = Column(Float, nullable=False, default=0.0, index=True)
+    consensus_score = Column(Float, nullable=False, default=0.0)
+    relevance_score = Column(Float, nullable=False, default=0.0)
+    market_score = Column(Float, nullable=False, default=0.0)
+    specificity_score = Column(Float, nullable=False, default=0.0)
+    beta = Column(Float)
+    market_beta = Column(Float)
+    alpha_annualized = Column(Float)
+    residual_return = Column(Float)
+    r_squared = Column(Float)
+    observations = Column(Integer, nullable=False, default=0)
+    confidence = Column(String(16), nullable=False, default="insufficient")
+    source_count = Column(Integer, nullable=False, default=0)
+    evidence_count = Column(Integer, nullable=False, default=0)
+    components_json = Column(Text, nullable=False, default="{}")
+    evidence_json = Column(Text, nullable=False, default="[]")
+    unique_drivers_json = Column(Text, nullable=False, default="[]")
+    calculated_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "ts_code", "canonical_name", "as_of_date", "horizon_days",
+            name="uix_concept_exposure_stock_theme_date_horizon",
+        ),
+        Index("ix_concept_exposure_theme_weight", "canonical_name", "weight_score"),
+    )
+
+
+class ConceptSyncRunRecord(Base):
+    """Durable telemetry for catalog, membership, and attribution refreshes."""
+
+    __tablename__ = "concept_sync_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_type = Column(String(24), nullable=False, index=True)
+    status = Column(String(16), nullable=False, default="running", index=True)
+    market_date = Column(Date, index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    stage = Column(String(80), nullable=False, default="queued")
+    themes_seen = Column(Integer, nullable=False, default=0)
+    memberships_seen = Column(Integer, nullable=False, default=0)
+    exposures_seen = Column(Integer, nullable=False, default=0)
+    source_stats_json = Column(Text, nullable=False, default="{}")
+    error = Column(Text)
+    started_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    finished_at = Column(DateTime, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+
 class MonitoringSourceRecord(Base):
     """可插拔投资情报源及其健康状态。"""
 

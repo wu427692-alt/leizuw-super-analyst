@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, BookOpen, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
+import { BarChart3, BookOpen, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Orbit, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
 import { useAgentChatStore } from '../../stores/agentChatStore';
@@ -31,6 +31,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'home', labelKey: 'layout.nav.home', to: '/app', icon: Home, exact: true },
   { key: 'research-center', labelKey: 'layout.nav.researchCenter', to: '/research-center', icon: ShieldCheck },
   { key: 'industry-research', labelKey: 'layout.nav.industryResearch', to: '/industry-research', icon: Network },
+  { key: 'concept-themes', labelKey: 'layout.nav.conceptThemes', to: '/concept-themes', icon: Orbit },
   { key: 'chat', labelKey: 'layout.nav.chat', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
   { key: 'essay-radar', labelKey: 'layout.nav.essayRadar', to: '/essay-radar', icon: Radar },
   { key: 'essay-quant', labelKey: 'layout.nav.essayQuant', to: '/essay-quant', icon: FlaskConical },
