@@ -265,7 +265,8 @@ export default function ConceptThemesPage() {
   const loadOverview = useCallback(async () => {
     const sequence = ++requestSequence.current;
     try {
-      const value = await conceptThemesApi.overview({ query: debouncedQuery, themeType, source, family, cluster, minSources, sortBy, page, pageSize: 48 });
+      const responsivePageSize = typeof window !== 'undefined' && window.innerWidth <= 720 ? 12 : 48;
+      const value = await conceptThemesApi.overview({ query: debouncedQuery, themeType, source, family, cluster, minSources, sortBy, page, pageSize: responsivePageSize });
       if (sequence !== requestSequence.current) return;
       setOverview(value);
       setStatus(`${value.summary.marketDate || '最新交易日'} · ${number(value.summary.themes)} 个源题材 · ${number(value.summary.memberships)} 条成分关系`);
