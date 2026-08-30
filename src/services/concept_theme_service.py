@@ -1301,11 +1301,43 @@ class ConceptThemeService:
         theme_items.sort(key=lambda item: (-item["stock_count"], -item["average_weight"], item["cluster"]))
         stocks.sort(key=lambda item: (-item["independent_cluster_count"], item["name"]))
         latest_watchlist_date = max((value for value in latest_dates.values() if value), default=None)
+        covered_stocks = [item for item in stocks if int(item["independent_cluster_count"] or 0) > 0]
+        top_theme = theme_items[0] if theme_items else None
+        top_coverage = round(
+            float(top_theme["stock_count"]) / max(1, len(stocks)) * 100, 1,
+        ) if top_theme else 0.0
+        concentration_level = (
+            "高" if len(stocks) >= 2 and top_coverage >= 67
+            else "中" if len(stocks) >= 2 and top_coverage >= 40
+            else "低"
+        )
+        average_clusters = round(statistics.mean(
+            [float(item["independent_cluster_count"] or 0) for item in stocks]
+        ), 1) if stocks else 0.0
+        top_cluster = str(top_theme["cluster"]) if top_theme else ""
+        divergent_stocks = [
+            {"ts_code": item["ts_code"], "name": item["name"]}
+            for item in stocks
+            if str((item.get("dominant_theme") or {}).get("cluster") or "") != top_cluster
+        ] if top_cluster else []
         return {
             "stocks": stocks, "themes": theme_items[:12], "stock_count": len(stocks),
             "horizon_days": horizon,
             "as_of_date": latest_watchlist_date.isoformat() if latest_watchlist_date else None,
-            "method": "只聚合当前用户自选股在各自最新归因日的多源业务主线；相近标签按独立语义簇去重，地域、风格和宽基不计入集中度。",
+            "concentration": {
+                "level": concentration_level,
+                "top_cluster": top_cluster or None,
+                "top_coverage_pct": top_coverage,
+                "shared_cluster_count": sum(1 for item in theme_items if int(item["stock_count"]) >= 2),
+                "covered_stock_count": len(covered_stocks),
+                "average_cluster_count": average_clusters,
+                "divergent_stocks": divergent_stocks,
+                "interpretation": (
+                    f"{top_cluster}覆盖{int(top_theme['stock_count'])}/{len(stocks)}只自选股；这是等股票数量的题材暴露，不代表持仓市值权重。"
+                    if top_theme else "当前自选股尚无达到多源门槛的业务题材归因。"
+                ),
+            },
+            "method": "只聚合当前用户自选股在各自最新归因日的多源业务主线；相近标签按独立语义簇去重，地域、风格和宽基不计入集中度。集中度按股票数量等权，不读取或推断持仓金额。",
         }
 
     def stock_lens(self, ts_code: str, *, refresh_if_empty: bool = True, horizon_days: int = 60) -> Dict[str, Any]:
@@ -2154,7 +2186,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.54",
+            "version": "concept-consensus-v1.55",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

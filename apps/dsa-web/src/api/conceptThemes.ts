@@ -205,6 +205,16 @@ export type WatchlistThemeMap = {
   stockCount: number;
   horizonDays: number;
   asOfDate?: string | null;
+  concentration: {
+    level: '高' | '中' | '低';
+    topCluster?: string | null;
+    topCoveragePct: number;
+    sharedClusterCount: number;
+    coveredStockCount: number;
+    averageClusterCount: number;
+    divergentStocks: Array<{ tsCode: string; name: string }>;
+    interpretation: string;
+  };
   method: string;
 };
 

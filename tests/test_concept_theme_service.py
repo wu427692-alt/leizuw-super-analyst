@@ -640,3 +640,8 @@ def test_watchlist_theme_map_isolates_codes_and_deduplicates_narratives(tmp_path
     assert result["themes"][0]["cluster"] == "光通信产业链"
     assert result["themes"][0]["stock_count"] == 2
     assert result["stocks"][0]["independent_cluster_count"] == 1
+    assert result["concentration"]["level"] == "高"
+    assert result["concentration"]["top_cluster"] == "光通信产业链"
+    assert result["concentration"]["top_coverage_pct"] == 100.0
+    assert result["concentration"]["covered_stock_count"] == 2
+    assert "不代表持仓市值权重" in result["concentration"]["interpretation"]

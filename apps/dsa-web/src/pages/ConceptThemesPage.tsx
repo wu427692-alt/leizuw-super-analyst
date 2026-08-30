@@ -216,6 +216,13 @@ function WatchlistExposureMap({ value, onOpen, onCluster }: {
   if (!value?.stockCount) return null;
   return <section className="concept-watchlist-map">
     <header><div><span><Star /> PERSONAL EXPOSURE MAP</span><h2>我的自选题材暴露</h2><p>按当前登录用户隔离，只统计多源确认的业务主线；相近题材先去重再看集中度。</p></div><b>{value.stockCount} 只自选 · {value.asOfDate || '最新归因'}</b></header>
+    <div className="concept-watchlist-map__summary">
+      <div data-level={value.concentration.level}><span>共同题材集中度</span><strong>{value.concentration.level}</strong><small>{value.concentration.topCluster || '暂无共同主线'} · 覆盖 {metric(value.concentration.topCoveragePct, 0)}%</small></div>
+      <div><span>多源归因覆盖</span><strong>{value.concentration.coveredStockCount}/{value.stockCount}</strong><small>未达两源门槛不会凑数</small></div>
+      <div><span>共同题材</span><strong>{value.concentration.sharedClusterCount}</strong><small>至少覆盖两只自选股</small></div>
+      <div><span>每股独立主线</span><strong>{metric(value.concentration.averageClusterCount, 1)}</strong><small>按语义簇去重后的均值</small></div>
+      <p>{value.concentration.interpretation}</p>
+    </div>
     <div className="concept-watchlist-map__body">
       <div className="concept-watchlist-map__themes">{value.themes.slice(0, 8).map(item => <button type="button" key={`${item.family}-${item.cluster}`} onClick={() => onCluster(item.family, item.cluster)}><span><strong>{item.cluster}</strong><small>{item.family}</small></span><b>{item.stockCount}/{value.stockCount}</b><p>平均权重 {metric(item.averageWeight, 0)} · {item.stocks.map(stock => stock.name).join('、')}</p><i style={{ width: `${item.stockCount / value.stockCount * 100}%` }} /></button>)}</div>
       <div className="concept-watchlist-map__stocks">{value.stocks.map(stock => <button type="button" onClick={() => onOpen(stock.tsCode)} key={stock.tsCode}><div><strong>{stock.name}</strong><code>{stock.tsCode}</code></div><b>{stock.independentClusterCount} 主线</b><p>{stock.themes.slice(0, 3).map(theme => theme.cluster).join(' · ') || '等待多源题材归因'}</p><span>{stock.rawThemeCount} 标签 · 重叠 {metric(stock.overlapRate, 0)}% · {stock.asOfDate || '待归因'}</span><ChevronRight /></button>)}</div>
