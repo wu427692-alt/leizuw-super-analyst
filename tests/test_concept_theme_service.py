@@ -54,6 +54,11 @@ def test_theme_hierarchy_merges_market_synonyms_without_losing_subtheme() -> Non
     assert theme_cluster("通信设备Ⅲ(A股)", "申万/市场行业体系") == "通信设备"
     assert theme_cluster("通信设备Ⅳ(A股)", "申万/市场行业体系") == "通信设备"
     assert theme_cluster("NPO高速光模块", family) == "光通信产业链"
+    assert theme_cluster("薄膜铌酸锂（TFLN）", family) == "光通信器件与互连"
+    assert theme_cluster("RISC-V", family) == "AI芯片与基础软件"
+    assert theme_cluster("Chiplet", "半导体与先进电子") == "先进封装与载板"
+    assert theme_cluster("800V快充", "汽车与智能驾驶") == "动力电池与充换电"
+    assert theme_cluster("城市更新", "基础设施与交通物流") == "建筑基建与水网"
 
 
 def test_unique_alpha_driver_classification_separates_reason_and_wording_direction() -> None:
