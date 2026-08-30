@@ -69,6 +69,22 @@ function SourceRail({ themes }: { themes: ConceptTheme[] }) {
   </div>;
 }
 
+function ConsensusMatrix({ stocks }: { stocks: ConceptStock[] }) {
+  const sources = ['ths', 'dc_board', 'dc_theme', 'kpl', 'tdx', 'sw'];
+  const rows = [...stocks].sort((left, right) => right.sourceCount - left.sourceCount || right.weightScore - left.weightScore).slice(0, 12);
+  if (!rows.length) return null;
+  return <section className="concept-consensus-matrix">
+    <header><div><strong>核心成分 × 六源共识矩阵</strong><small>亮点表示该来源明确将股票纳入当前规范题材</small></div><span>TOP {rows.length}</span></header>
+    <div className="concept-matrix-grid" style={{ '--matrix-columns': sources.length } as CSSProperties}>
+      <b>股票</b>{sources.map(source => <b key={source}>{SOURCE_LABEL[source] ?? source}</b>)}
+      {rows.map(stock => <div className="concept-matrix-row" key={stock.tsCode}>
+        <span><strong>{stock.name}</strong><small>{stock.tsCode}</small></span>
+        {sources.map(source => <i key={source} className={stock.sources.includes(source) ? 'is-hit' : ''} title={`${stock.name} · ${SOURCE_LABEL[source]} · ${stock.sources.includes(source) ? '已纳入' : '未纳入'}`} />)}
+      </div>)}
+    </div>
+  </section>;
+}
+
 function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: boolean; onClick: () => void }) {
   return <button type="button" className={`concept-stock-row ${selected ? 'is-active' : ''}`} onClick={onClick}>
     <span className="concept-stock-name"><strong>{item.name || item.tsCode}</strong><small>{item.tsCode}</small></span>
@@ -324,6 +340,7 @@ export default function ConceptThemesPage() {
             <section className="concept-consensus-meter"><ScoreRing value={detail.totalStocks ? detail.consensusStocks / detail.totalStocks * 100 : 0} label="多源率" /><div><strong>市场共识不是 AI 猜测</strong><p>来源成分表独立保留；相同规范题材下合并投票，文字入选原因单独进入业务相关性评分。</p></div></section>
             <section className="concept-consensus-spectrum"><div><span>强共识 · 3+源</span><b>{consensusDistribution.strong}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.strong / detail.totalStocks * 100 : 0}%` }} /></div><div><span>交叉确认 · 2源</span><b>{consensusDistribution.confirmed}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.confirmed / detail.totalStocks * 100 : 0}%` }} /></div><div><span>单源待核验</span><b>{consensusDistribution.singleSource}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.singleSource / detail.totalStocks * 100 : 0}%` }} /></div></section>
             <SourceRail themes={detail.sourceNodes} />
+            <ConsensusMatrix stocks={detail.stocks} />
             <div className="concept-stock-table-head"><span>成分股 / 权重 / Beta / {horizonDays}日 Alpha</span><span>点击展开股票题材透镜</span></div>
             <div className="concept-stock-tools"><label><Search /><input value={stockQuery} onChange={event => setStockQuery(event.target.value)} placeholder="搜索成分股名称或代码" /></label><select value={stockSort} onChange={event => setStockSort(event.target.value as typeof stockSort)} aria-label="成分股排序"><option value="weight">题材权重</option><option value="beta">Beta弹性</option><option value="alpha">Alpha排序</option><option value="name">名称</option></select></div>
             <div className="concept-stock-table">{visibleStocks.map(item => <StockRow key={item.tsCode} item={item} selected={stockLens?.tsCode === item.tsCode} onClick={() => void openStock(item.tsCode)} />)}</div>
