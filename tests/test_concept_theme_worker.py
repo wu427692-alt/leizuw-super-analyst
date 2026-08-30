@@ -105,8 +105,9 @@ def test_new_watchlist_trigger_bypasses_periodic_defer(monkeypatch) -> None:
     worker._last_watchlist_refresh_at = 123.0
     monkeypatch.setattr(worker, "trigger", lambda: {"running": True, "refresh_requested": True})
 
-    result = worker.trigger_watchlist_refresh()
+    result = worker.trigger_watchlist_refresh("300308.SZ")
 
     assert worker._last_watchlist_refresh_at is None
+    assert worker._priority_watchlist_codes == {"300308.SZ"}
     assert result["watchlist_refresh_requested"] is True
     assert result["refresh_requested"] is True

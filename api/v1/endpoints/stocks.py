@@ -443,7 +443,7 @@ def add_to_watchlist(
                 from src.services.market_data_worker import MarketDataWorker
                 MarketDataWorker.get_instance().register_symbol(validated)
                 from src.services.concept_theme_worker import ConceptThemeWorker
-                ConceptThemeWorker.get_instance().trigger_watchlist_refresh()
+                ConceptThemeWorker.get_instance().trigger_watchlist_refresh(validated)
             except Exception as exc:  # config is already durable; watchdog repairs workers
                 logger.warning("自选股已加入，但后台同步唤醒失败 %s: %s", validated, type(exc).__name__)
         return WatchlistResponse(stock_codes=codes, message=f"已加入 {body.stock_code.strip()}")

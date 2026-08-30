@@ -44,6 +44,7 @@ class ConceptThemeWorker:
         self._last_error: Optional[str] = None
         self._last_cycle_at: Optional[float] = None
         self._last_watchlist_refresh_at: Optional[float] = None
+        self._priority_watchlist_codes: set[str] = set()
         self.watchlist_interval_seconds = max(
             3600,
             min(int(os.getenv("CONCEPT_THEME_WATCHLIST_INTERVAL_SEC", "21600")), 86400),
@@ -76,7 +77,7 @@ class ConceptThemeWorker:
         self._wake_event.set()
         return {**self.status(), "refresh_requested": True}
 
-    def trigger_watchlist_refresh(self) -> Dict[str, Any]:
+    def trigger_watchlist_refresh(self, symbol: Optional[str] = None) -> Dict[str, Any]:
         """Wake the worker and bypass the periodic watchlist defer once.
 
         New symbols should not wait for the normal six-hour audit cadence. The
@@ -85,6 +86,8 @@ class ConceptThemeWorker:
         """
         with self._lock:
             self._last_watchlist_refresh_at = None
+            if symbol:
+                self._priority_watchlist_codes.add(str(symbol).strip().upper())
         return {**self.trigger(), "watchlist_refresh_requested": True}
 
     def status(self) -> Dict[str, Any]:
@@ -99,6 +102,7 @@ class ConceptThemeWorker:
                 "cursor": None,
                 "resume_mode": "oldest-attempt-first",
                 "watchlist_interval_seconds": self.watchlist_interval_seconds,
+                "priority_watchlist_codes": len(self._priority_watchlist_codes),
             }
 
     def _run(self) -> None:
@@ -143,11 +147,14 @@ class ConceptThemeWorker:
             self._wake_event.wait(self.interval_seconds)
             self._wake_event.clear()
 
-    @staticmethod
-    def _refresh_watchlist(service: ConceptThemeService) -> Dict[str, int]:
+    def _refresh_watchlist(self, service: ConceptThemeService) -> Dict[str, int]:
         db = DatabaseManager.get_instance()
         with db.session_scope() as session:
-            codes = [row[0] for row in session.execute(select(UserWatchlistItem.symbol).distinct()).all()]
+            stored_codes = [row[0] for row in session.execute(select(UserWatchlistItem.symbol).distinct()).all()]
+        with self._lock:
+            priority_codes = sorted(self._priority_watchlist_codes)
+            self._priority_watchlist_codes.clear()
+        codes = list(dict.fromkeys([*priority_codes, *stored_codes]))
         completed = failed = 0
         for code in codes[:80]:
             try:
@@ -156,7 +163,7 @@ class ConceptThemeWorker:
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 logger.warning("[concept-theme] watchlist refresh failed for %s: %s", code, exc)
-        return {"completed": completed, "failed": failed}
+        return {"completed": completed, "failed": failed, "priority": len(priority_codes)}
 
     @staticmethod
     def _bootstrap_membership_state() -> int:
