@@ -5,7 +5,7 @@ import csv
 import io
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from src.services.concept_theme_service import ConceptThemeError, ConceptThemeService
@@ -38,14 +38,31 @@ def overview(
 
 @router.get("/themes/{theme_id}", summary="读取题材成分、权重及Beta/Alpha")
 def theme_detail(
+    request: Request,
     theme_id: int,
     refresh_if_empty: bool = Query(default=True),
     horizon_days: int = Query(default=60, ge=20, le=120),
 ):
     try:
-        return ConceptThemeService().theme_detail(
+        result = ConceptThemeService().theme_detail(
             theme_id, refresh_if_empty=refresh_if_empty, horizon_days=horizon_days,
         )
+        user_id = int(getattr(request.state, "user_id", 0) or 0)
+        watched = set()
+        if user_id > 0:
+            from src.services.user_account_service import UserAccountService
+            watched = {
+                str(symbol or "").upper().split(".", 1)[0].removeprefix("SH").removeprefix("SZ").removeprefix("BJ")
+                for symbol in UserAccountService().list_watchlist(user_id)
+            }
+        watchlist_stocks = []
+        for stock in result.get("stocks", []):
+            compact = str(stock.get("ts_code") or "").upper().split(".", 1)[0]
+            stock["in_watchlist"] = compact in watched
+            if stock["in_watchlist"]:
+                watchlist_stocks.append({"ts_code": stock.get("ts_code"), "name": stock.get("name")})
+        result["watchlist_stocks"] = watchlist_stocks
+        return result
     except ConceptThemeError as exc:
         raise _http_error(exc, 404 if "不存在" in str(exc) else 422)
 

@@ -42,6 +42,7 @@ export type ConceptStock = {
   betaInterpretation?: string;
   components?: Record<string, number | string | null>;
   evidence?: Array<string | { kind?: string; title?: string; summary?: string; source?: string; topicId?: string }>;
+  inWatchlist?: boolean;
 };
 
 export type ConceptOverview = {
@@ -116,6 +117,7 @@ export type ThemeDetail = {
   theme: ConceptTheme;
   sourceNodes: ConceptTheme[];
   stocks: ConceptStock[];
+  watchlistStocks: Array<{ tsCode: string; name: string }>;
   totalStocks: number;
   consensusStocks: number;
   consensusDistribution?: { strong: number; confirmed: number; singleSource: number };

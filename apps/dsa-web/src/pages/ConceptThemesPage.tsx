@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import {
   Activity, ArrowRight, Binary, Boxes, BrainCircuit, ChevronRight, CircleDot,
   Database, Download, GitBranch, Layers3, Network, RefreshCw, Scale, Search, ShieldCheck,
-  Sparkles, Target, TrendingUp, X,
+  Sparkles, Star, Target, TrendingUp, X,
 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
@@ -121,7 +121,7 @@ function ThemeResearchQueue({ stocks, onOpen }: { stocks: ConceptStock[]; onOpen
 
 function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: boolean; onClick: () => void }) {
   return <button type="button" className={`concept-stock-row ${selected ? 'is-active' : ''}`} onClick={onClick}>
-    <span className="concept-stock-name"><strong>{item.name || item.tsCode}</strong><small>{item.tsCode}</small></span>
+    <span className="concept-stock-name"><strong>{item.name || item.tsCode}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><small>{item.tsCode}</small></span>
     <span><strong>{item.weightScore ? item.weightScore.toFixed(1) : '待算'}</strong><small>题材权重</small></span>
     <span title={item.betaInterpretation}><strong>{metric(item.beta)}</strong><small>题材 Beta · {item.confidence === 'high' ? '高' : item.confidence === 'medium' ? '中' : '低'}置信</small></span>
     <span data-tone={(item.residualReturn ?? 0) >= 0 ? 'up' : 'down'}><strong>{signed(item.residualReturn)}</strong><small>窗口 Alpha</small></span>
@@ -220,6 +220,7 @@ export default function ConceptThemesPage() {
   const [selectedTheme, setSelectedTheme] = useState<number | null>(null);
   const [stockQuery, setStockQuery] = useState('');
   const [stockSort, setStockSort] = useState<'weight' | 'beta' | 'alpha' | 'name'>('weight');
+  const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [stockPage, setStockPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -267,13 +268,13 @@ export default function ConceptThemesPage() {
   const visibleThemes = overview?.items ?? [];
   const filteredStocks = useMemo(() => {
     const term = stockQuery.trim().toLowerCase();
-    const values = (detail?.stocks ?? []).filter(item => !term || item.name.toLowerCase().includes(term) || item.tsCode.toLowerCase().includes(term));
+    const values = (detail?.stocks ?? []).filter(item => (!watchlistOnly || item.inWatchlist) && (!term || item.name.toLowerCase().includes(term) || item.tsCode.toLowerCase().includes(term)));
     values.sort((left, right) => stockSort === 'name' ? left.name.localeCompare(right.name, 'zh-CN')
       : stockSort === 'beta' ? (right.beta ?? -999) - (left.beta ?? -999)
         : stockSort === 'alpha' ? (right.residualReturn ?? -999) - (left.residualReturn ?? -999)
           : right.weightScore - left.weightScore);
     return values;
-  }, [detail, stockQuery, stockSort]);
+  }, [detail, stockQuery, stockSort, watchlistOnly]);
   const stockPageSize = 60;
   const visibleStocks = filteredStocks.slice((stockPage - 1) * stockPageSize, stockPage * stockPageSize);
   const consensusDistribution = detail?.consensusDistribution ?? {
@@ -297,7 +298,7 @@ export default function ConceptThemesPage() {
     };
   }, [compareThemes]);
 
-  useEffect(() => { setStockPage(1); setStockQuery(''); }, [selectedTheme]);
+  useEffect(() => { setStockPage(1); setStockQuery(''); setWatchlistOnly(false); }, [selectedTheme]);
   useEffect(() => { setStockPage(1); }, [stockQuery, stockSort]);
 
   const openStock = async (tsCode: string) => {
@@ -385,7 +386,7 @@ export default function ConceptThemesPage() {
             <BetaAlphaMap stocks={detail.stocks} horizonDays={horizonDays} />
             <ThemeResearchQueue stocks={detail.stocks} onOpen={tsCode => void openStock(tsCode)} />
             <div className="concept-stock-table-head"><span>成分股 / 权重 / Beta / {horizonDays}日 Alpha</span><span>点击展开股票题材透镜</span></div>
-            <div className="concept-stock-tools"><label><Search /><input value={stockQuery} onChange={event => setStockQuery(event.target.value)} placeholder="搜索成分股名称或代码" /></label><select value={stockSort} onChange={event => setStockSort(event.target.value as typeof stockSort)} aria-label="成分股排序"><option value="weight">题材权重</option><option value="beta">Beta弹性</option><option value="alpha">Alpha排序</option><option value="name">名称</option></select></div>
+            <div className="concept-stock-tools"><label><Search /><input value={stockQuery} onChange={event => setStockQuery(event.target.value)} placeholder="搜索成分股名称或代码" /></label><button type="button" className={watchlistOnly ? 'is-active' : ''} disabled={!detail.watchlistStocks?.length} onClick={() => setWatchlistOnly(value => !value)}><Star />我的自选 {detail.watchlistStocks?.length || 0}</button><select value={stockSort} onChange={event => setStockSort(event.target.value as typeof stockSort)} aria-label="成分股排序"><option value="weight">题材权重</option><option value="beta">Beta弹性</option><option value="alpha">Alpha排序</option><option value="name">名称</option></select></div>
             <div className="concept-stock-table">{visibleStocks.map(item => <StockRow key={item.tsCode} item={item} selected={stockLens?.tsCode === item.tsCode} onClick={() => void openStock(item.tsCode)} />)}</div>
             {filteredStocks.length > stockPageSize ? <nav className="concept-pagination concept-stock-pages" aria-label="成分股分页"><button type="button" disabled={stockPage <= 1} onClick={() => setStockPage(value => Math.max(1, value - 1))}>上一页</button><span>{stockPage} / {Math.ceil(filteredStocks.length / stockPageSize)} · {filteredStocks.length}股</span><button type="button" disabled={stockPage >= Math.ceil(filteredStocks.length / stockPageSize)} onClick={() => setStockPage(value => value + 1)}>下一页</button></nav> : null}
           </> : <div className="concept-detail-empty"><CircleDot className={detailLoading ? 'is-loading' : ''} /><h2>{detailLoading ? '正在组装题材共识' : '选择一个题材'}</h2><p>{detailLoading ? '系统正在对齐多源成分股并计算当前窗口 Beta/Alpha，其他区域可继续使用。' : '这里将展开各来源节点、成分股共识、可解释权重和收益归因。'}</p></div>}
