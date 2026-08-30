@@ -181,6 +181,30 @@ export type ThemeDetail = {
   consensusStocks: number;
   consensusDistribution?: { strong: number; confirmed: number; singleSource: number };
   attributionReady: number;
+  institutionCorpus: {
+    total: number;
+    bullish: number;
+    bearish: number;
+    neutral: number;
+    score: number;
+    recent14D: number;
+    priorWindow: number;
+    volumeChangePct?: number | null;
+    truncated?: boolean;
+    windowDays: number;
+    items: Array<{
+      topicId: string;
+      title: string;
+      summary: string;
+      sentiment: 'bullish' | 'bearish' | 'neutral';
+      importance: number;
+      confidence: number;
+      model: string;
+      createdAt?: string | null;
+      url: string;
+    }>;
+    method: string;
+  };
   horizonDays: number;
   methodology: ConceptMethodology;
 };

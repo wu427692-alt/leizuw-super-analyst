@@ -728,8 +728,69 @@ class ConceptThemeService:
             "consensus_stocks": sum(1 for item in ordered if item["source_count"] >= 2),
             "consensus_distribution": consensus_distribution,
             "attribution_ready": sum(1 for item in ordered if item["beta"] is not None),
+            "institution_corpus": self._theme_corpus_consensus(canonical),
             "horizon_days": horizon,
             "methodology": self.methodology(),
+        }
+
+    def _theme_corpus_consensus(self, canonical_name: str, *, days: int = 90) -> Dict[str, Any]:
+        """Summarize AI-structured institution notes without calling them market facts."""
+        tokens = [item.strip() for item in re.split(r"[/、|]", canonical_name) if len(item.strip()) >= 2]
+        tokens = list(dict.fromkeys([canonical_name, *tokens]))[:6]
+        clauses = []
+        for token in tokens:
+            pattern = f"%{token}%"
+            clauses.extend((
+                EssayAnalysisRecord.themes_json.like(pattern), EssayAnalysisRecord.tags_json.like(pattern),
+                EssayAnalysisRecord.industries_json.like(pattern),
+            ))
+        if not clauses:
+            return {"total": 0, "bullish": 0, "bearish": 0, "neutral": 0, "score": 0, "items": []}
+        cutoff = utc_naive_now() - timedelta(days=max(30, min(int(days), 365)))
+        with self._read_scope() as session:
+            rows = session.execute(select(
+                EssayAnalysisRecord.topic_id, EssayAnalysisRecord.sentiment,
+                EssayAnalysisRecord.importance_score, EssayAnalysisRecord.confidence_score,
+                EssayAnalysisRecord.summary, EssayAnalysisRecord.model,
+                ResearchNote.title, ResearchNote.created_at,
+            ).join(
+                ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id,
+            ).where(
+                EssayAnalysisRecord.status == "completed", ResearchNote.created_at >= cutoff, or_(*clauses),
+            ).order_by(desc(ResearchNote.created_at), desc(EssayAnalysisRecord.importance_score)).limit(600)).all()
+        counts = {"bullish": 0, "bearish": 0, "neutral": 0}
+        weighted_sum = total_weight = 0.0
+        recent_cutoff = utc_naive_now() - timedelta(days=14)
+        prior_cutoff = utc_naive_now() - timedelta(days=28)
+        recent = prior = 0
+        items = []
+        for topic_id, sentiment, importance, confidence, summary, model, title, created_at in rows:
+            raw = str(sentiment or "neutral").lower()
+            tone = "bullish" if raw in {"bullish", "positive", "看多", "利多", "正面"} else "bearish" if raw in {"bearish", "negative", "看空", "利空", "负面"} else "neutral"
+            counts[tone] += 1
+            weight = max(.1, float(confidence or .5)) * max(20.0, float(importance or 50.0))
+            weighted_sum += (1 if tone == "bullish" else -1 if tone == "bearish" else 0) * weight
+            total_weight += weight
+            if created_at and created_at >= recent_cutoff:
+                recent += 1
+            elif created_at and created_at >= prior_cutoff:
+                prior += 1
+            if len(items) < 6:
+                items.append({
+                    "topic_id": topic_id, "title": title or canonical_name,
+                    "summary": str(summary or "")[:220], "sentiment": tone,
+                    "importance": int(importance or 0), "confidence": round(float(confidence or 0), 2),
+                    "model": model, "created_at": created_at.isoformat() if created_at else None,
+                    "url": f"/essay-radar/feed?topic={topic_id}",
+                })
+        return {
+            "total": len(rows), **counts,
+            "score": round(weighted_sum / total_weight * 100, 1) if total_weight else 0.0,
+            "recent_14d": recent, "prior_window": prior,
+            "volume_change_pct": round((recent / prior - 1) * 100, 1) if prior else None,
+            "truncated": len(rows) >= 600,
+            "window_days": max(30, min(int(days), 365)), "items": items,
+            "method": "只统计AI已结构化且主题字段明确命中的机构段子；情绪是语料观点，不等于事实或投资建议。",
         }
 
     def stock_lens(self, ts_code: str, *, refresh_if_empty: bool = True, horizon_days: int = 60) -> Dict[str, Any]:
@@ -1353,7 +1414,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.36",
+            "version": "concept-consensus-v1.37",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",

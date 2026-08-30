@@ -117,6 +117,7 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
             first_seen_at=now, last_seen_at=now, updated_at=now,
         )
         session.add(theme); session.flush()
+        theme_id = theme.id
         for code in ("300308.SZ", "300001.SZ", "300002.SZ", "300003.SZ"):
             session.add(ConceptMembershipRecord(
                 theme_id=theme.id, source="ths", ts_code=code, stock_name=code,
@@ -132,7 +133,7 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
         session.add(EssayAnalysisRecord(
             topic_id="theme-evidence-1", status="completed", model="test-model",
             prompt_version="test-v1", input_hash="theme-analysis-hash-1",
-            summary="中际旭创受益于CPO和高速光模块需求。", importance_score=82,
+            summary="中际旭创受益于CPO和高速光模块需求。", sentiment="bullish", importance_score=82,
             confidence_score=0.86, themes_json=json.dumps(["CPO", "光模块"], ensure_ascii=False),
             stock_mentions_json=json.dumps([{
                 "ts_code": "300308.SZ", "name": "中际旭创", "confidence": 0.9,
@@ -179,6 +180,10 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
     assert exposure["components"]["local_corpus_evidence_count"] == 1
     assert exposure["components"]["local_corpus_score"] > 0
     assert exposure["evidence"][-1]["kind"] == "institution_corpus"
+    detail = service.theme_detail(theme_id, refresh_if_empty=False, horizon_days=60)
+    assert detail["institution_corpus"]["total"] == 1
+    assert detail["institution_corpus"]["bullish"] == 1
+    assert detail["institution_corpus"]["score"] > 0
 
 
 def test_complete_membership_refresh_deactivates_vanished_stock_without_deleting_history(tmp_path) -> None:

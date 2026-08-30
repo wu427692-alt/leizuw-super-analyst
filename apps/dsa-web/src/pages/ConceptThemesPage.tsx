@@ -69,6 +69,17 @@ function SourceRail({ themes }: { themes: ConceptTheme[] }) {
   </div>;
 }
 
+function InstitutionCorpusPulse({ value }: { value: ThemeDetail['institutionCorpus'] }) {
+  const total = Math.max(1, value.total || 0);
+  return <section className="concept-corpus-pulse">
+    <header><div><span><BrainCircuit /> AI STRUCTURED CORPUS</span><strong>机构语料共识</strong><small>近 {value.windowDays || 90} 日 · 只统计主题字段明确命中的已分析机构段子</small></div><ScoreRing value={(value.score + 100) / 2} label={value.score > 12 ? '偏多' : value.score < -12 ? '偏空' : '中性'} /></header>
+    <div className="concept-corpus-pulse__meter"><i data-tone="bullish" style={{ width: `${value.bullish / total * 100}%` }} /><i data-tone="neutral" style={{ width: `${value.neutral / total * 100}%` }} /><i data-tone="bearish" style={{ width: `${value.bearish / total * 100}%` }} /></div>
+    <dl><div><dt>明确看多</dt><dd>{value.bullish}</dd></div><div><dt>中性跟踪</dt><dd>{value.neutral}</dd></div><div><dt>明确看空</dt><dd>{value.bearish}</dd></div><div><dt>近14日新增</dt><dd>{value.recent14D}<small>{value.volumeChangePct == null ? ' · 无前窗' : ` · ${signed(value.volumeChangePct)}`}</small></dd></div></dl>
+    {value.items.length ? <div className="concept-corpus-pulse__items">{value.items.slice(0, 4).map(item => <a href={item.url} key={item.topicId}><span data-tone={item.sentiment}>{item.sentiment === 'bullish' ? '看多' : item.sentiment === 'bearish' ? '看空' : '中性'}</span><strong>{item.title}</strong><small>{item.summary || `${item.model} 已完成结构化研判`}</small></a>)}</div> : <p>当前题材暂无满足“已分析 + 明确主题命中”的机构语料，不用通用行业文字凑共识。</p>}
+    <footer>{value.truncated ? '高频题材仅取最近 600 篇作为当前样本 · ' : ''}{value.method}</footer>
+  </section>;
+}
+
 function ConsensusMatrix({ stocks }: { stocks: ConceptStock[] }) {
   const sources = ['ths', 'dc_board', 'dc_theme', 'kpl', 'tdx', 'sw'];
   const rows = [...stocks].sort((left, right) => right.sourceCount - left.sourceCount || right.weightScore - left.weightScore).slice(0, 12);
@@ -430,6 +441,7 @@ export default function ConceptThemesPage() {
           {detail ? <>
             <header className="concept-detail__head"><span>{detail.theme.family}</span><h2>{detail.theme.canonicalName}</h2><p>{detail.totalStocks} 只股票 · {detail.consensusStocks} 只获得多源确认 · {detail.attributionReady} 只已完成归因</p><div className="concept-detail-actions"><div className="concept-horizon" aria-label="归因窗口">{([20, 60, 120] as const).map(days => <button type="button" className={horizonDays === days ? 'is-active' : ''} onClick={() => setHorizonDays(days)} key={days}>{days}日</button>)}</div><button type="button" className={compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? 'is-active' : ''} onClick={() => toggleCompare(detail)}><Scale />{compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? '移出对照' : '加入对照'}</button><button type="button" onClick={() => void conceptThemesApi.exportTheme(detail.theme.id, horizonDays)}><Download />导出 CSV</button></div></header>
             <section className="concept-consensus-meter"><ScoreRing value={detail.totalStocks ? detail.consensusStocks / detail.totalStocks * 100 : 0} label="多源率" /><div><strong>市场共识不是 AI 猜测</strong><p>来源成分表独立保留；相同规范题材下合并投票，文字入选原因单独进入业务相关性评分。</p></div></section>
+            {detail.institutionCorpus ? <InstitutionCorpusPulse value={detail.institutionCorpus} /> : null}
             <section className="concept-consensus-spectrum"><div><span>强共识 · 3+源</span><b>{consensusDistribution.strong}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.strong / detail.totalStocks * 100 : 0}%` }} /></div><div><span>交叉确认 · 2源</span><b>{consensusDistribution.confirmed}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.confirmed / detail.totalStocks * 100 : 0}%` }} /></div><div><span>单源待核验</span><b>{consensusDistribution.singleSource}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.singleSource / detail.totalStocks * 100 : 0}%` }} /></div></section>
             <SourceRail themes={detail.sourceNodes} />
             <ConsensusMatrix stocks={detail.stocks} />
