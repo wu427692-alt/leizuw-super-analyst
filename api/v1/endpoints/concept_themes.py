@@ -63,6 +63,14 @@ def status():
     return {**ConceptThemeService().sync_status(), "worker": ConceptThemeWorker.get_instance().status()}
 
 
+@router.get("/rotation", summary="读取多源题材轮动强弱")
+def rotation(
+    days: int = Query(default=20, ge=5, le=60),
+    limit: int = Query(default=24, ge=8, le=60),
+):
+    return ConceptThemeService().rotation(days=days, limit=limit)
+
+
 @router.post("/sync/catalog", status_code=202, summary="唤醒题材库后台更新")
 def wake_catalog_sync():
     return ConceptThemeWorker.get_instance().trigger()

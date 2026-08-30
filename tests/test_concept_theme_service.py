@@ -13,6 +13,7 @@ from src.storage import (
     ConceptExposureRecord,
     ConceptMembershipRecord,
     ConceptThemeRecord,
+    ConceptThemeSnapshotRecord,
     DatabaseManager,
     EssayAnalysisRecord,
     MarketIndexBar,
@@ -196,6 +197,31 @@ def test_complete_membership_refresh_deactivates_vanished_stock_without_deleting
         assert [(row.ts_code, row.active) for row in rows] == [
             ("300308.SZ", True), ("300502.SZ", False),
         ]
+
+
+def test_rotation_uses_cross_source_daily_median_and_keeps_history(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 8, 28), close=10.0, data_source="test"))
+        for market_date, values in (
+            (date(2026, 8, 27), (("ths", 1.0, 70.0), ("dc_board", 3.0, 78.0))),
+            (date(2026, 8, 28), (("ths", 2.0, 80.0), ("dc_board", 4.0, 88.0))),
+        ):
+            for source, change, heat in values:
+                session.add(ConceptThemeSnapshotRecord(
+                    source=source, source_code=f"{source}-{market_date}",
+                    canonical_name="CPO/共封装光学", theme_type="concept", market_date=market_date,
+                    pct_change=change, heat_score=heat, captured_at=now,
+                ))
+
+    rotation = service.rotation(days=5, limit=8)
+    item = rotation["items"][0]
+    assert item["canonical_name"] == "CPO/共封装光学"
+    assert item["pct_change"] == 3.0
+    assert item["momentum_5d"] == 5.0
+    assert item["source_count"] == 2
+    assert item["history_days"] == 2
 
 
 def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:

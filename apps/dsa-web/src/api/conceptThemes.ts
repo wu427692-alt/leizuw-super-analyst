@@ -78,6 +78,27 @@ export type ConceptMethodology = {
   licenseNote: string;
 };
 
+export type ConceptRotation = {
+  items: Array<{
+    canonicalName: string;
+    family: string;
+    cluster: string;
+    marketDate: string;
+    pctChange?: number | null;
+    momentum5d?: number | null;
+    heatScore?: number | null;
+    sourceCount: number;
+    rotationScore: number;
+    historyDays: number;
+    points: Array<{ date: string; pctChange?: number | null; heatScore?: number | null; sourceCount: number }>;
+  }>;
+  total: number;
+  windowDays: number;
+  availableDates: number;
+  latestDate?: string | null;
+  method: string;
+};
+
 export type ThemeDetail = {
   theme: ConceptTheme;
   sourceNodes: ConceptTheme[];
@@ -175,6 +196,16 @@ export const conceptThemesApi = {
       return normalizeConceptOverview(response.data);
     }, { freshMs: 20_000, staleMs: 5 * 60_000 });
   },
+  rotation: async (days = 20, limit = 24): Promise<ConceptRotation> => cachedQuery(
+    `concept:rotation:${days}:${limit}`,
+    async () => {
+      const response = await apiClient.get('/api/v1/concept-themes/rotation', {
+        params: { days, limit }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<ConceptRotation>(response.data);
+    },
+    { freshMs: 60_000, staleMs: 15 * 60_000 },
+  ),
   theme: async (themeId: number, refreshIfEmpty = true, horizonDays = 60): Promise<ThemeDetail> => {
     const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}`, {
       params: { refresh_if_empty: refreshIfEmpty, horizon_days: horizonDays },

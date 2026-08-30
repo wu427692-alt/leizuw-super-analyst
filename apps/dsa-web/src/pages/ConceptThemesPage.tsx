@@ -8,7 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
-import { conceptThemesApi, type ConceptOverview, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
+import { conceptThemesApi, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
@@ -32,6 +32,14 @@ function ScoreRing({ value, label }: { value: number; label: string }) {
   return <div className="concept-score-ring" style={{ '--score-angle': `${safe * 3.6}deg` } as CSSProperties}>
     <strong>{safe.toFixed(0)}</strong><span>{label}</span>
   </div>;
+}
+
+function RotationSparkline({ points }: { points: ConceptRotation['items'][number]['points'] }) {
+  const values = points.map(item => item.pctChange).filter((value): value is number => typeof value === 'number');
+  if (values.length < 2) return <span className="concept-rotation-new">NEW</span>;
+  const low = Math.min(...values); const high = Math.max(...values); const spread = Math.max(0.1, high - low);
+  const path = values.map((value, index) => `${index ? 'L' : 'M'}${(index / Math.max(1, values.length - 1) * 72).toFixed(1)},${(23 - (value - low) / spread * 20).toFixed(1)}`).join(' ');
+  return <svg className="concept-rotation-spark" viewBox="0 0 72 26" role="img" aria-label={`${values.length}日题材涨跌轨迹`}><path d={path} /></svg>;
 }
 
 function ThemeCard({ item, active, onClick }: { item: ConceptTheme; active: boolean; onClick: () => void }) {
@@ -145,6 +153,7 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
 
 export default function ConceptThemesPage() {
   const [overview, setOverview] = useState<ConceptOverview | null>(null);
+  const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
   const [stockLens, setStockLens] = useState<StockThemeLens | null>(null);
   const [query, setQuery] = useState('');
@@ -180,6 +189,7 @@ export default function ConceptThemesPage() {
   }, [cluster, debouncedQuery, family, page, sortBy, source, themeType]);
 
   useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
+  useEffect(() => { void conceptThemesApi.rotation(20, 18).then(setRotation).catch(() => undefined); }, []);
   useEffect(() => { setPage(1); }, [cluster, debouncedQuery, family, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
   usePageActivationRefresh(loadOverview, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
@@ -252,6 +262,20 @@ export default function ConceptThemesPage() {
           <strong>{item.name}</strong><code>{item.tsCode}</code><small>{item.themeCount} 个题材 · {item.sourceCount} 个来源</small><ChevronRight />
         </button>)}</div>
       </section> : null}
+
+      <section className="concept-rotation-board">
+        <header><div><span><Activity /> THEME ROTATION</span><h2>多源题材轮动</h2></div><p>{rotation?.latestDate || overview?.summary.marketDate || '最新交易日'} · {rotation?.availableDates || 0} 个历史交易日 · 日涨跌取多来源中位数</p></header>
+        <div className="concept-rotation-track">
+          {rotation?.items.slice(0, 12).map(item => <button type="button" key={item.canonicalName} onClick={() => setQuery(item.canonicalName)}>
+            <div><strong>{item.canonicalName}</strong><span>{item.cluster}</span></div>
+            <RotationSparkline points={item.points} />
+            <b data-tone={(item.pctChange || 0) >= 0 ? 'up' : 'down'}>{signed(item.pctChange)}</b>
+            <small>轮动 {metric(item.rotationScore, 0)} · {item.sourceCount}源 · 5日 {signed(item.momentum5d)}</small>
+          </button>)}
+          {!rotation?.items.length ? <p>题材历史快照正在自动建立；当前目录与成分股仍可正常检索。</p> : null}
+        </div>
+        <footer>{rotation?.method || '每日保留各来源原始快照后再聚合；数据不足时不外推历史。'}</footer>
+      </section>
 
       <div className="concept-workspace">
         <aside className="concept-families">

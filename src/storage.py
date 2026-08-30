@@ -778,6 +778,29 @@ class ConceptThemeRecord(Base):
     )
 
 
+class ConceptThemeSnapshotRecord(Base):
+    """Daily source-preserving theme metrics used for rotation analysis."""
+
+    __tablename__ = "concept_theme_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(24), nullable=False, index=True)
+    source_code = Column(String(32), nullable=False, index=True)
+    canonical_name = Column(String(120), nullable=False, index=True)
+    theme_type = Column(String(24), nullable=False, default="concept", index=True)
+    market_date = Column(Date, nullable=False, index=True)
+    constituent_count = Column(Integer, nullable=False, default=0)
+    heat_score = Column(Float)
+    pct_change = Column(Float)
+    fund_flow = Column(Float)
+    captured_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("source", "source_code", "market_date", name="uix_concept_theme_snapshot_source_date"),
+        Index("ix_concept_theme_snapshot_canonical_date", "canonical_name", "market_date"),
+    )
+
+
 class ConceptMembershipRecord(Base):
     """Latest source membership with the source's inclusion reason intact."""
 

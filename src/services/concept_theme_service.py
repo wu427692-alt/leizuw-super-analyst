@@ -27,6 +27,7 @@ from src.storage import (
     ConceptMembershipSyncState,
     ConceptSyncRunRecord,
     ConceptThemeRecord,
+    ConceptThemeSnapshotRecord,
     DatabaseManager,
     EssayAnalysisRecord,
     MarketIndexBar,
@@ -1021,6 +1022,88 @@ class ConceptThemeService:
             }
         return {"available": self.gateway.available, "latest_run": self._run_dict(latest) if latest else None, **counts}
 
+    def rotation(self, *, days: int = 20, limit: int = 24) -> Dict[str, Any]:
+        """Aggregate daily source snapshots into a transparent theme rotation board."""
+        window = max(5, min(int(days), 60))
+        row_limit = max(8, min(int(limit), 60))
+        cutoff = self.latest_market_date() - timedelta(days=window * 2 + 10)
+        with self._read_scope() as session:
+            rows = session.execute(select(ConceptThemeSnapshotRecord).where(
+                ConceptThemeSnapshotRecord.market_date >= cutoff,
+                ConceptThemeSnapshotRecord.theme_type.in_(("theme", "concept")),
+            ).order_by(ConceptThemeSnapshotRecord.market_date)).scalars().all()
+        grouped: Dict[str, Dict[date, List[ConceptThemeSnapshotRecord]]] = defaultdict(lambda: defaultdict(list))
+        for row in rows:
+            grouped[row.canonical_name][row.market_date].append(row)
+        items: List[Dict[str, Any]] = []
+        all_dates: set[date] = set()
+        for canonical_name, by_date in grouped.items():
+            points: List[Dict[str, Any]] = []
+            for market_date, values in sorted(by_date.items())[-window:]:
+                changes = [float(value.pct_change) for value in values if value.pct_change is not None]
+                heats = [float(value.heat_score) for value in values if value.heat_score is not None]
+                if not changes and not heats:
+                    continue
+                all_dates.add(market_date)
+                points.append({
+                    "date": market_date.isoformat(),
+                    "pct_change": round(float(statistics.median(changes)), 3) if changes else None,
+                    "heat_score": round(max(heats), 1) if heats else None,
+                    "source_count": len({value.source for value in values}),
+                })
+            if not points:
+                continue
+            latest = points[-1]
+            recent_changes = [point["pct_change"] for point in points[-5:] if point["pct_change"] is not None]
+            latest_change = float(latest["pct_change"] or 0.0)
+            momentum_5d = round(sum(recent_changes), 3) if recent_changes else None
+            heat = float(latest["heat_score"] or 45.0)
+            source_count = int(latest["source_count"] or 0)
+            rotation_score = max(0.0, min(100.0,
+                42.0 + max(-24.0, min(24.0, latest_change * 5.0))
+                + min(18.0, source_count * 6.0) + (heat - 50.0) * 0.16
+            ))
+            family_name = theme_family(canonical_name, "theme")
+            items.append({
+                "canonical_name": canonical_name, "family": family_name,
+                "cluster": theme_cluster(canonical_name, family_name),
+                "market_date": latest["date"], "pct_change": latest["pct_change"],
+                "momentum_5d": momentum_5d, "heat_score": latest["heat_score"],
+                "source_count": source_count, "rotation_score": round(rotation_score, 1),
+                "history_days": len(points), "points": points,
+            })
+        items.sort(key=lambda item: (-item["rotation_score"], -item["source_count"], item["canonical_name"]))
+        return {
+            "items": items[:row_limit], "total": len(items), "window_days": window,
+            "available_dates": len(all_dates),
+            "latest_date": max(all_dates).isoformat() if all_dates else None,
+            "method": "同一规范题材按来源日涨跌中位数聚合；轮动分由当日涨跌、来源数和热度构成，不是收益预测。",
+        }
+
+    def backfill_current_snapshots(self) -> Dict[str, int]:
+        """Seed daily history from the latest catalog after schema upgrades."""
+        now = utc_naive_now()
+        saved = 0
+        with self.db.session_scope() as session:
+            themes = session.execute(select(ConceptThemeRecord).where(
+                ConceptThemeRecord.market_date.is_not(None),
+            )).scalars().all()
+            existing = {(row.source, row.source_code, row.market_date) for row in session.execute(
+                select(ConceptThemeSnapshotRecord)
+            ).scalars().all()}
+            for row in themes:
+                key = (row.source, row.source_code, row.market_date)
+                if key in existing:
+                    continue
+                session.add(ConceptThemeSnapshotRecord(
+                    source=row.source, source_code=row.source_code, canonical_name=row.canonical_name,
+                    theme_type=row.theme_type, market_date=row.market_date,
+                    constituent_count=row.constituent_count or 0, heat_score=row.heat_score,
+                    pct_change=row.pct_change, fund_flow=row.fund_flow, captured_at=now,
+                ))
+                saved += 1
+        return {"saved": saved}
+
     def normalize_catalog_names(self) -> Dict[str, int]:
         """Reapply the current ontology to stored source nodes without touching source facts."""
         changed = 0
@@ -1039,7 +1122,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.16",
+            "version": "concept-consensus-v1.18",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
@@ -1047,6 +1130,7 @@ class ConceptThemeService:
                 "Beta 使用剔除个股自身后的题材组合，并同时控制沪深300，避免机械自相关。",
                 "Beta 置信度同时检查样本数、来源数、R²及回归系数t统计量，并展示95%区间。",
                 "Alpha 分为统计残差与可核验证据两层；证据只做归因线索，不声称因果。",
+                "题材轮动保留每日来源快照后再聚合，不用当前值伪造历史，也不把轮动分解释为收益预测。",
             ],
             "weight_formula": {
                 "source_consensus": 0.36, "business_evidence": 0.29,
@@ -1076,22 +1160,49 @@ class ConceptThemeService:
     def _upsert_themes(self, rows: Iterable[Dict[str, Any]]) -> int:
         now = utc_naive_now()
         saved = 0
+        prepared = [values for values in rows if values.get("source_code")]
         with self.db.session_scope() as session:
-            for values in rows:
-                if not values.get("source_code"):
-                    continue
-                existing = session.execute(select(ConceptThemeRecord).where(
-                    ConceptThemeRecord.source == values["source"],
-                    ConceptThemeRecord.source_code == values["source_code"],
-                )).scalar_one_or_none()
+            theme_map = {(row.source, row.source_code): row for row in session.execute(
+                select(ConceptThemeRecord)
+            ).scalars().all()}
+            dates = {values.get("market_date") for values in prepared if values.get("market_date")}
+            snapshot_map = {(row.source, row.source_code, row.market_date): row for row in session.execute(
+                select(ConceptThemeSnapshotRecord).where(ConceptThemeSnapshotRecord.market_date.in_(dates))
+            ).scalars().all()} if dates else {}
+            for values in prepared:
+                theme_key = (values["source"], values["source_code"])
+                existing = theme_map.get(theme_key)
                 if existing is None:
-                    session.add(ConceptThemeRecord(**values, first_seen_at=now, last_seen_at=now, updated_at=now))
+                    existing = ConceptThemeRecord(**values, first_seen_at=now, last_seen_at=now, updated_at=now)
+                    session.add(existing)
+                    theme_map[theme_key] = existing
                 else:
                     for key, value in values.items():
                         if value is not None or key not in {"heat_score", "pct_change", "fund_flow"}:
                             setattr(existing, key, value)
                     existing.last_seen_at = now
                     existing.updated_at = now
+                market_date = values.get("market_date")
+                if market_date:
+                    snapshot_key = (values["source"], values["source_code"], market_date)
+                    snapshot = snapshot_map.get(snapshot_key)
+                    snapshot_values = {
+                        "canonical_name": values["canonical_name"], "theme_type": values["theme_type"],
+                        "constituent_count": values.get("constituent_count") or 0,
+                        "heat_score": values.get("heat_score"), "pct_change": values.get("pct_change"),
+                        "fund_flow": values.get("fund_flow"), "captured_at": now,
+                    }
+                    if snapshot is None:
+                        snapshot = ConceptThemeSnapshotRecord(
+                            source=values["source"], source_code=values["source_code"],
+                            market_date=market_date, **snapshot_values,
+                        )
+                        session.add(snapshot)
+                        snapshot_map[snapshot_key] = snapshot
+                    else:
+                        for key, value in snapshot_values.items():
+                            if value is not None or key not in {"heat_score", "pct_change", "fund_flow"}:
+                                setattr(snapshot, key, value)
                 saved += 1
         return saved
 

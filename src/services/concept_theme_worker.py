@@ -94,6 +94,7 @@ class ConceptThemeWorker:
         try:
             startup_result["legacy_ledger_rows"] = self._bootstrap_membership_state()
             startup_result["normalization"] = service.normalize_catalog_names()
+            startup_result["snapshot_seed"] = service.backfill_current_snapshots()
         except Exception as exc:  # noqa: BLE001 - startup repair must not kill recurring updates.
             logger.exception("[concept-theme] startup normalization failed")
             startup_result["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"
