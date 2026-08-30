@@ -8,7 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
-import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
+import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail, type WatchlistThemeMap } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
@@ -86,7 +86,7 @@ function ThemeAffinityMap({ value, onTheme }: { value: ThemeDetail['relatedTheme
   return <section className="concept-affinity-map">
     <header><div><span><Network /> CONSTITUENT AFFINITY</span><strong>题材成分关系图</strong><small>寻找共同股票，也识别只是名字相近但成分不同的题材</small></div><b>{value.targetTotalStocks} 股基准</b></header>
     <div>{value.items.slice(0, 10).map(item => <button type="button" key={item.canonicalName} onClick={() => onTheme(item.canonicalName)}>
-      <span><strong>{item.canonicalName}</strong><small>{item.family} · {item.cluster}</small></span><b>{metric(item.jaccardPct, 1)}%</b><i style={{ width: `${Math.max(4, item.jaccardPct / maxJaccard * 100)}%` }} /><p>{item.sharedStocks} 只共同成分 · 覆盖当前题材 {metric(item.targetCoveragePct, 1)}% · 对方共 {item.otherTotalStocks} 股</p><ChevronRight />
+      <span><strong>{item.canonicalName}</strong><small>{item.relationType} · {item.family} · {item.cluster}</small></span><b>{metric(item.jaccardPct, 1)}%</b><i style={{ width: `${Math.max(4, item.jaccardPct / maxJaccard * 100)}%` }} /><p>{item.sharedStocks} 只共同 · 当前题材仍有 {item.targetExclusiveStocks} 只独占 · 对方共 {item.otherTotalStocks} 股</p><ChevronRight />
     </button>)}</div>
     <footer>{value.method}</footer>
   </section>;
@@ -208,6 +208,22 @@ function InstitutionCandidatePanel({ item, onClose, onTheme, onOpen }: {
   </aside>;
 }
 
+function WatchlistExposureMap({ value, onOpen, onCluster }: {
+  value: WatchlistThemeMap | null;
+  onOpen: (tsCode: string) => void;
+  onCluster: (family: string, cluster: string) => void;
+}) {
+  if (!value?.stockCount) return null;
+  return <section className="concept-watchlist-map">
+    <header><div><span><Star /> PERSONAL EXPOSURE MAP</span><h2>我的自选题材暴露</h2><p>按当前登录用户隔离，只统计多源确认的业务主线；相近题材先去重再看集中度。</p></div><b>{value.stockCount} 只自选 · {value.asOfDate || '最新归因'}</b></header>
+    <div className="concept-watchlist-map__body">
+      <div className="concept-watchlist-map__themes">{value.themes.slice(0, 8).map(item => <button type="button" key={`${item.family}-${item.cluster}`} onClick={() => onCluster(item.family, item.cluster)}><span><strong>{item.cluster}</strong><small>{item.family}</small></span><b>{item.stockCount}/{value.stockCount}</b><p>平均权重 {metric(item.averageWeight, 0)} · {item.stocks.map(stock => stock.name).join('、')}</p><i style={{ width: `${item.stockCount / value.stockCount * 100}%` }} /></button>)}</div>
+      <div className="concept-watchlist-map__stocks">{value.stocks.map(stock => <button type="button" onClick={() => onOpen(stock.tsCode)} key={stock.tsCode}><div><strong>{stock.name}</strong><code>{stock.tsCode}</code></div><b>{stock.independentClusterCount} 主线</b><p>{stock.themes.slice(0, 3).map(theme => theme.cluster).join(' · ') || '等待多源题材归因'}</p><span>{stock.rawThemeCount} 标签 · 重叠 {metric(stock.overlapRate, 0)}% · {stock.asOfDate || '待归因'}</span><ChevronRight /></button>)}</div>
+    </div>
+    <footer>{value.method}</footer>
+  </section>;
+}
+
 function ClusterAggregate({ value, onOpen }: { value: ConceptClusterDetail; onOpen: (tsCode: string) => void }) {
   return <section className="concept-cluster-aggregate">
     <header><div><span>LEVEL 2 AGGREGATE</span><h3>{value.cluster}</h3><p>{value.themeNodes} 个原始节点 · {value.canonicalThemes} 个规范题材 · {value.totalStocks} 只去重股票 · {value.sourceCount} 个独立提供方</p></div><b>{value.asOfDate || '最新快照'}</b></header>
@@ -326,6 +342,7 @@ export default function ConceptThemesPage() {
   const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
   const [institutionRadar, setInstitutionRadar] = useState<InstitutionThemeRadar | null>(null);
   const [institutionCandidate, setInstitutionCandidate] = useState<InstitutionThemeRadar['items'][number] | null>(null);
+  const [watchlistMap, setWatchlistMap] = useState<WatchlistThemeMap | null>(null);
   const [leaderMode, setLeaderMode] = useState<ConceptLeaders['mode']>('consensus');
   const [clusterDetail, setClusterDetail] = useState<ConceptClusterDetail | null>(null);
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
@@ -378,6 +395,10 @@ export default function ConceptThemesPage() {
     try { setInstitutionRadar(await conceptThemesApi.institutionRadar(30, 16)); }
     catch { /* keep the last successful corpus discovery snapshot while analysis catches up */ }
   }, []);
+  const loadWatchlistMap = useCallback(async () => {
+    try { setWatchlistMap(await conceptThemesApi.watchlistMap(horizonDays)); }
+    catch { /* a user without a watchlist should not block the market workspace */ }
+  }, [horizonDays]);
   const loadCluster = useCallback(async () => {
     if (!family || !cluster) return;
     try { setClusterDetail(await conceptThemesApi.cluster(family, cluster, horizonDays)); }
@@ -388,10 +409,11 @@ export default function ConceptThemesPage() {
   useEffect(() => { void loadRotation(); }, [loadRotation]);
   useEffect(() => { void loadLeaders(); }, [loadLeaders]);
   useEffect(() => { void loadInstitutionRadar(); }, [loadInstitutionRadar]);
+  useEffect(() => { void loadWatchlistMap(); }, [loadWatchlistMap]);
   useEffect(() => { setClusterDetail(null); void loadCluster(); }, [loadCluster]);
   useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadOverview, loadRotation]);
+  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadWatchlistMap(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadOverview, loadRotation, loadWatchlistMap]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
@@ -507,6 +529,8 @@ export default function ConceptThemesPage() {
       </section>
 
       <InstitutionDiscoveryRadar value={institutionRadar} onSelect={item => { setStockLens(null); setInstitutionCandidate(item); }} onOpen={tsCode => void openStock(tsCode)} />
+
+      <WatchlistExposureMap value={watchlistMap} onOpen={tsCode => void openStock(tsCode)} onCluster={(nextFamily, nextCluster) => { setFamily(nextFamily); setCluster(nextCluster); }} />
 
       <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
 

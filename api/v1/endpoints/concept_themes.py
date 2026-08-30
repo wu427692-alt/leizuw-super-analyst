@@ -156,6 +156,16 @@ def institution_radar(
     return ConceptThemeService().institution_theme_radar(days=days, limit=limit)
 
 
+@router.get("/watchlist-map", summary="读取当前用户自选股的题材暴露地图")
+def watchlist_map(
+    request: Request,
+    horizon_days: int = Query(default=60, ge=20, le=120),
+):
+    return ConceptThemeService().watchlist_theme_map(
+        _watchlist_codes(request), horizon_days=horizon_days,
+    )
+
+
 @router.get("/cluster-detail", summary="读取二级题材簇的聚合成分")
 def cluster_detail(
     request: Request,

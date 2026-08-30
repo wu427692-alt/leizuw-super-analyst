@@ -183,6 +183,31 @@ export type InstitutionThemeRadar = {
   method: string;
 };
 
+export type WatchlistThemeMap = {
+  stocks: Array<{
+    tsCode: string;
+    name: string;
+    asOfDate?: string | null;
+    rawThemeCount: number;
+    independentClusterCount: number;
+    overlapRate: number;
+    dominantTheme?: (ConceptLeaderExposure & { family: string; cluster: string }) | null;
+    themes: Array<ConceptLeaderExposure & { family: string; cluster: string }>;
+  }>;
+  themes: Array<{
+    cluster: string;
+    family: string;
+    stockCount: number;
+    stocks: Array<{ tsCode: string; name: string }>;
+    averageWeight: number;
+    themes: string[];
+  }>;
+  stockCount: number;
+  horizonDays: number;
+  asOfDate?: string | null;
+  method: string;
+};
+
 export type ConceptClusterDetail = {
   family: string;
   cluster: string;
@@ -245,9 +270,11 @@ export type ThemeDetail = {
       canonicalName: string;
       family: string;
       cluster: string;
+      relationType: '高度重叠' | '同主题簇' | '同题材家族' | '跨题材共现';
       sharedStocks: number;
       targetCoveragePct: number;
       jaccardPct: number;
+      targetExclusiveStocks: number;
       otherTotalStocks: number;
     }>;
     targetTotalStocks: number;
@@ -419,6 +446,16 @@ export const conceptThemesApi = {
       return toCamelCase<InstitutionThemeRadar>(response.data);
     },
     { freshMs: 60_000, staleMs: 10 * 60_000 },
+  ),
+  watchlistMap: async (horizonDays = 60): Promise<WatchlistThemeMap> => cachedQuery(
+    `concept:watchlist-map:${horizonDays}`,
+    async () => {
+      const response = await apiClient.get('/api/v1/concept-themes/watchlist-map', {
+        params: { horizon_days: horizonDays }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<WatchlistThemeMap>(response.data);
+    },
+    { freshMs: 30_000, staleMs: 5 * 60_000 },
   ),
   cluster: async (family: string, cluster: string, horizonDays = 60, limit = 80): Promise<ConceptClusterDetail> => cachedQuery(
     `concept:cluster:${family}:${cluster}:${horizonDays}:${limit}`,

@@ -49,6 +49,8 @@ def test_theme_hierarchy_merges_market_synonyms_without_losing_subtheme() -> Non
     assert theme_family("长江三角", "concept") == "区域与地理"
     assert theme_family("地方国企", "theme") == "国资与所有制"
     assert theme_family("中际旭创", "industry") == "申万/市场行业体系"
+    assert theme_cluster("通信设备Ⅲ(A股)", "申万/市场行业体系") == "通信设备"
+    assert theme_cluster("通信设备Ⅳ(A股)", "申万/市场行业体系") == "通信设备"
     assert theme_cluster("NPO高速光模块", family) == "光通信产业链"
 
 
@@ -599,3 +601,42 @@ def test_related_theme_affinity_uses_real_constituent_jaccard(tmp_path) -> None:
     assert affinity["items"][0]["canonical_name"] == "光通信/光模块"
     assert affinity["items"][0]["shared_stocks"] == 2
     assert affinity["items"][0]["jaccard_pct"] == 50.0
+    assert affinity["items"][0]["relation_type"] == "高度重叠"
+    assert affinity["items"][0]["target_exclusive_stocks"] == 1
+
+
+def test_watchlist_theme_map_isolates_codes_and_deduplicates_narratives(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add_all([
+            ConceptExposureRecord(
+                ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
+                as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=88,
+                source_count=3, beta=1.3, residual_return=8, confidence="high", calculated_at=now,
+            ),
+            ConceptExposureRecord(
+                ts_code="300308.SZ", stock_name="中际旭创", canonical_name="光通信/光模块",
+                as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=80,
+                source_count=2, beta=1.1, residual_return=5, confidence="medium", calculated_at=now,
+            ),
+            ConceptExposureRecord(
+                ts_code="300502.SZ", stock_name="新易盛", canonical_name="CPO/共封装光学",
+                as_of_date=date(2026, 8, 27), horizon_days=60, weight_score=84,
+                source_count=3, beta=1.2, residual_return=7, confidence="high", calculated_at=now,
+            ),
+            ConceptExposureRecord(
+                ts_code="600000.SH", stock_name="非自选", canonical_name="银行",
+                as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=99,
+                source_count=4, beta=.8, residual_return=2, confidence="high", calculated_at=now,
+            ),
+        ])
+
+    result = service.watchlist_theme_map(["300308", "300502"], horizon_days=60)
+
+    assert result["stock_count"] == 2
+    assert {item["ts_code"] for item in result["stocks"]} == {"300308.SZ", "300502.SZ"}
+    assert result["as_of_date"] == "2026-08-28"
+    assert result["themes"][0]["cluster"] == "光通信产业链"
+    assert result["themes"][0]["stock_count"] == 2
+    assert result["stocks"][0]["independent_cluster_count"] == 1

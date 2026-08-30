@@ -334,7 +334,15 @@ def theme_family(name: str, theme_type: str) -> str:
 
 
 def theme_cluster(name: str, family: str) -> str:
-    upper = str(name or "").upper()
+    raw_name = str(name or "").strip()
+    if family == "申万/市场行业体系":
+        # Preserve the economic industry instead of collapsing every Shenwan
+        # level into one generic cluster.  Roman suffixes describe hierarchy,
+        # not independent narratives.
+        industry = re.sub(r"[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+(?:\(A股\))?$", "", raw_name).strip()
+        industry = re.sub(r"\(A股\)$", "", industry).strip()
+        return industry or family
+    upper = raw_name.upper()
     for cluster, keywords in CLUSTER_RULES:
         if any(keyword.upper() in upper for keyword in keywords):
             return cluster
@@ -970,6 +978,9 @@ class ConceptThemeService:
         if not codes:
             return {"items": [], "method": "当前题材没有可用于关系计算的有效成分。"}
         with self._read_scope() as session:
+            target_type = session.execute(select(func.max(ConceptThemeRecord.theme_type)).where(
+                ConceptThemeRecord.canonical_name == canonical_name,
+            )).scalar_one_or_none()
             shared_rows = session.execute(select(
                 ConceptThemeRecord.canonical_name,
                 func.max(ConceptThemeRecord.theme_type).label("theme_type"),
@@ -1003,13 +1014,25 @@ class ConceptThemeService:
                 continue
             union = target_total + other_total - shared
             family = theme_family(name, str(related_type or "theme"))
+            related_cluster = theme_cluster(name, family)
+            target_family = theme_family(canonical_name, str(target_type or "theme"))
+            target_cluster = theme_cluster(canonical_name, target_family)
+            jaccard_pct = round(shared / max(1, union) * 100, 1)
+            relation_type = (
+                "高度重叠" if related_cluster == target_cluster and jaccard_pct >= 35
+                else "同主题簇" if related_cluster == target_cluster
+                else "同题材家族" if family == target_family
+                else "跨题材共现"
+            )
             items.append({
                 "canonical_name": name,
                 "family": family,
-                "cluster": theme_cluster(name, family),
+                "cluster": related_cluster,
+                "relation_type": relation_type,
                 "shared_stocks": shared,
                 "target_coverage_pct": round(shared / max(1, target_total) * 100, 1),
-                "jaccard_pct": round(shared / max(1, union) * 100, 1),
+                "jaccard_pct": jaccard_pct,
+                "target_exclusive_stocks": max(0, target_total - shared),
                 "other_total_stocks": other_total,
             })
         items.sort(key=lambda value: (-value["jaccard_pct"], -value["shared_stocks"], value["canonical_name"]))
@@ -1211,6 +1234,78 @@ class ConceptThemeService:
             "items": items[:output_limit], "total_candidates": len(items), "window_days": window,
             "as_of_at": max((item["latest_at"] for item in items if item["latest_at"]), default=None),
             "method": "近窗机构段子 AI 主题与明确股票提及聚合；供应商未确认的主题只进入候选层，不自动计入市场共识或题材权重。",
+        }
+
+    def watchlist_theme_map(self, stock_codes: Iterable[str], *, horizon_days: int = 60) -> Dict[str, Any]:
+        """Aggregate user watchlist exposures without mixing users or dates."""
+        codes = list(dict.fromkeys(_ts_code(code) for code in stock_codes if _ts_code(code)))
+        horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
+        if not codes:
+            return {"stocks": [], "themes": [], "stock_count": 0, "horizon_days": horizon, "as_of_date": None}
+        with self._read_scope() as session:
+            latest_dates = dict(session.execute(select(
+                ConceptExposureRecord.ts_code, func.max(ConceptExposureRecord.as_of_date),
+            ).where(
+                ConceptExposureRecord.ts_code.in_(codes),
+                ConceptExposureRecord.horizon_days == horizon,
+            ).group_by(ConceptExposureRecord.ts_code)).all())
+            filters = [and_(
+                ConceptExposureRecord.ts_code == code,
+                ConceptExposureRecord.as_of_date == as_of,
+            ) for code, as_of in latest_dates.items() if as_of]
+            rows = session.execute(select(ConceptExposureRecord).where(
+                ConceptExposureRecord.horizon_days == horizon,
+                or_(*filters) if filters else ConceptExposureRecord.id < 0,
+            )).scalars().all()
+        taxonomy = self._taxonomy_index()
+        by_stock: Dict[str, List[ConceptExposureRecord]] = defaultdict(list)
+        for row in rows:
+            by_stock[row.ts_code].append(row)
+        theme_groups: Dict[str, Dict[str, Any]] = {}
+        stocks = []
+        for code in codes:
+            all_rows = sorted(by_stock.get(code, []), key=lambda row: -float(row.weight_score or 0))
+            eligible = []
+            for row in all_rows:
+                family, cluster = self._semantic_cluster_for(row.canonical_name, taxonomy)
+                if int(row.source_count or 0) < 2 or family in NON_NARRATIVE_FAMILIES:
+                    continue
+                eligible.append({**self._leader_exposure(row), "family": family, "cluster": cluster})
+            overlap = self._overlap_profile(eligible)
+            representatives = overlap["representatives"]
+            stock_name = next((row.stock_name for row in all_rows if row.stock_name), code)
+            stocks.append({
+                "ts_code": code, "name": stock_name,
+                "as_of_date": latest_dates.get(code).isoformat() if latest_dates.get(code) else None,
+                "raw_theme_count": len(eligible),
+                "independent_cluster_count": overlap["independent_cluster_count"],
+                "overlap_rate": overlap["overlap_rate"],
+                "dominant_theme": representatives[0] if representatives else None,
+                "themes": representatives[:5],
+            })
+            for exposure in representatives:
+                cluster_name = str(exposure.get("cluster") or exposure.get("canonical_name") or "其他")
+                group = theme_groups.setdefault(cluster_name, {
+                    "cluster": cluster_name, "family": exposure.get("family"), "stocks": [],
+                    "weights": [], "themes": set(),
+                })
+                group["stocks"].append({"ts_code": code, "name": stock_name})
+                group["weights"].append(float(exposure.get("weight_score") or 0))
+                group["themes"].add(str(exposure.get("canonical_name") or ""))
+        theme_items = [{
+            "cluster": group["cluster"], "family": group["family"],
+            "stock_count": len(group["stocks"]), "stocks": group["stocks"],
+            "average_weight": round(statistics.mean(group["weights"]), 1) if group["weights"] else 0.0,
+            "themes": sorted(value for value in group["themes"] if value)[:6],
+        } for group in theme_groups.values()]
+        theme_items.sort(key=lambda item: (-item["stock_count"], -item["average_weight"], item["cluster"]))
+        stocks.sort(key=lambda item: (-item["independent_cluster_count"], item["name"]))
+        latest_watchlist_date = max((value for value in latest_dates.values() if value), default=None)
+        return {
+            "stocks": stocks, "themes": theme_items[:12], "stock_count": len(stocks),
+            "horizon_days": horizon,
+            "as_of_date": latest_watchlist_date.isoformat() if latest_watchlist_date else None,
+            "method": "只聚合当前用户自选股在各自最新归因日的多源业务主线；相近标签按独立语义簇去重，地域、风格和宽基不计入集中度。",
         }
 
     def stock_lens(self, ts_code: str, *, refresh_if_empty: bool = True, horizon_days: int = 60) -> Dict[str, Any]:
@@ -2059,7 +2154,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.51",
+            "version": "concept-consensus-v1.54",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
