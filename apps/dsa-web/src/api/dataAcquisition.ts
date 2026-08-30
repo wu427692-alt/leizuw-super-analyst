@@ -1,5 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
+import { cachedQuery, invalidateCachedQueries } from './requestCache';
 import type {
   AcquisitionCapabilities,
   AcquisitionDownloadProgress,
@@ -47,8 +48,10 @@ function writePlan(plan: AcquisitionPlan) {
 
 export const dataAcquisitionApi = {
   capabilities: async (): Promise<AcquisitionCapabilities> => {
-    const response = await apiClient.get('/api/v1/data-acquisition/capabilities');
-    return toCamelCase<AcquisitionCapabilities>(response.data);
+    return cachedQuery('acquisition:capabilities', async () => {
+      const response = await apiClient.get('/api/v1/data-acquisition/capabilities');
+      return toCamelCase<AcquisitionCapabilities>(response.data);
+    }, { freshMs: 5 * 60_000, staleMs: 24 * 60 * 60_000 });
   },
   plan: async (request: string): Promise<AcquisitionPlan> => {
     const response = await apiClient.post('/api/v1/data-acquisition/plan', { request }, { timeout: 150000 });
@@ -65,8 +68,10 @@ export const dataAcquisitionApi = {
     return task;
   },
   jobs: async (): Promise<{ items: AcquisitionJob[]; total: number }> => {
-    const response = await apiClient.get('/api/v1/data-acquisition/jobs');
-    return toCamelCase(response.data);
+    return cachedQuery('acquisition:jobs', async () => {
+      const response = await apiClient.get('/api/v1/data-acquisition/jobs');
+      return toCamelCase(response.data);
+    }, { freshMs: 3_000, staleMs: 15_000 });
   },
   download: async (
     jobId: string,
@@ -86,32 +91,40 @@ export const dataAcquisitionApi = {
     return response.data as Blob;
   },
   researchReportStatus: async (): Promise<ResearchReportLibraryStatus> => {
-    const response = await apiClient.get('/api/v1/data-acquisition/research-reports/status');
-    return toCamelCase(response.data);
+    return cachedQuery('acquisition:research-status', async () => {
+      const response = await apiClient.get('/api/v1/data-acquisition/research-reports/status');
+      return toCamelCase(response.data);
+    }, { freshMs: 5_000, staleMs: 30_000 });
   },
   syncResearchReports: async (years = 2): Promise<ResearchReportLibraryStatus> => {
     const response = await apiClient.post('/api/v1/data-acquisition/research-reports/sync', undefined, { params: { years } });
+    invalidateCachedQueries('acquisition:research-');
     return toCamelCase(response.data);
   },
   researchReportFacets: async (): Promise<ResearchReportFacets> => {
-    const response = await apiClient.get('/api/v1/data-acquisition/research-reports/facets');
-    return toCamelCase(response.data);
+    return cachedQuery('acquisition:research-facets', async () => {
+      const response = await apiClient.get('/api/v1/data-acquisition/research-reports/facets');
+      return toCamelCase(response.data);
+    }, { freshMs: 10 * 60_000, staleMs: 24 * 60 * 60_000 });
   },
   searchResearchReports: async (
     filters: ResearchReportSearchFilters,
     page = 1,
     pageSize = 30,
   ): Promise<ResearchReportSearchResult> => {
-    const response = await apiClient.get('/api/v1/data-acquisition/research-reports/search', {
-      params: {
-        title_query: filters.titleQuery, content_query: filters.contentQuery,
-        broker: filters.broker, company: filters.company, ts_code: filters.tsCode,
-        report_type: filters.reportType, industry: filters.industry, author: filters.author,
-        tag: filters.tag, start_date: filters.startDate, end_date: filters.endDate,
-        has_pdf: filters.hasPdf, sort: filters.sort, page, page_size: pageSize,
-      },
-    });
-    return toCamelCase(response.data);
+    const key = `acquisition:research-search:${JSON.stringify({ filters, page, pageSize })}`;
+    return cachedQuery(key, async () => {
+      const response = await apiClient.get('/api/v1/data-acquisition/research-reports/search', {
+        params: {
+          title_query: filters.titleQuery, content_query: filters.contentQuery,
+          broker: filters.broker, company: filters.company, ts_code: filters.tsCode,
+          report_type: filters.reportType, industry: filters.industry, author: filters.author,
+          tag: filters.tag, start_date: filters.startDate, end_date: filters.endDate,
+          has_pdf: filters.hasPdf, sort: filters.sort, page, page_size: pageSize,
+        },
+      });
+      return toCamelCase(response.data);
+    }, { freshMs: 30_000, staleMs: 5 * 60_000 });
   },
   exportSelectedResearchReports: async (ids: number[]): Promise<Blob> => {
     const response = await apiClient.post('/api/v1/data-acquisition/research-reports/export-selected', { ids }, {

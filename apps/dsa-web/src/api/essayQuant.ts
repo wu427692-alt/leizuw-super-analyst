@@ -1,6 +1,7 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
 import type { EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan, EssayQuantPrecomputeStatus, EssayQuantRule, EssayQuantRunHistory, EssayQuantTask, EssayQuantTaskList } from '../types/essayQuant';
+import { cachedQuery, invalidateCachedQueries } from './requestCache';
 
 const payload = (rule: EssayQuantRule) => ({
   name: rule.name, source_query: rule.sourceQuery, signal_direction: rule.signalDirection,
@@ -14,24 +15,58 @@ const payload = (rule: EssayQuantRule) => ({
 });
 
 export const essayQuantApi = {
-  dashboard: async (): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get('/api/v1/essay-quant/dashboard')).data),
-  precomputeStatus: async (): Promise<EssayQuantPrecomputeStatus> => toCamelCase((await apiClient.get('/api/v1/essay-quant/precompute/status')).data),
-  requestPrecompute: async (): Promise<EssayQuantPrecomputeStatus> => toCamelCase((await apiClient.post('/api/v1/essay-quant/precompute/run')).data),
-  catalog: async (): Promise<EssayQuantCatalog> => toCamelCase((await apiClient.get('/api/v1/essay-quant/research-catalog')).data),
-  runs: async (): Promise<EssayQuantRunHistory> => toCamelCase((await apiClient.get('/api/v1/essay-quant/runs')).data),
-  tasks: async (): Promise<EssayQuantTaskList> => toCamelCase((await apiClient.get('/api/v1/essay-quant/tasks')).data),
+  dashboard: async (): Promise<EssayQuantDashboard> => cachedQuery(
+    'quant:dashboard',
+    async () => normalizeDashboard((await apiClient.get('/api/v1/essay-quant/dashboard')).data),
+    { freshMs: 8_000, staleMs: 60_000 },
+  ),
+  precomputeStatus: async (): Promise<EssayQuantPrecomputeStatus> => cachedQuery(
+    'quant:precompute-status',
+    async () => toCamelCase((await apiClient.get('/api/v1/essay-quant/precompute/status')).data),
+    { freshMs: 5_000, staleMs: 30_000 },
+  ),
+  requestPrecompute: async (): Promise<EssayQuantPrecomputeStatus> => {
+    const result = toCamelCase<EssayQuantPrecomputeStatus>((await apiClient.post('/api/v1/essay-quant/precompute/run')).data);
+    invalidateCachedQueries('quant:');
+    return result;
+  },
+  catalog: async (): Promise<EssayQuantCatalog> => cachedQuery(
+    'quant:catalog',
+    async () => toCamelCase((await apiClient.get('/api/v1/essay-quant/research-catalog')).data),
+    { freshMs: 10 * 60_000, staleMs: 24 * 60 * 60_000 },
+  ),
+  runs: async (): Promise<EssayQuantRunHistory> => cachedQuery(
+    'quant:runs',
+    async () => toCamelCase((await apiClient.get('/api/v1/essay-quant/runs')).data),
+    { freshMs: 5_000, staleMs: 30_000 },
+  ),
+  tasks: async (): Promise<EssayQuantTaskList> => cachedQuery(
+    'quant:tasks',
+    async () => toCamelCase((await apiClient.get('/api/v1/essay-quant/tasks')).data),
+    { freshMs: 1_000, staleMs: 5_000 },
+  ),
   taskStatus: async (taskId: string): Promise<EssayQuantTask> => toCamelCase((await apiClient.get(`/api/v1/essay-quant/tasks/${taskId}`)).data),
   runResult: async (runId: number): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get(`/api/v1/essay-quant/runs/${runId}`)).data),
-  startTask: async (rule: EssayQuantRule): Promise<EssayQuantTask> => toCamelCase((await apiClient.post('/api/v1/essay-quant/tasks', {
-    ...payload(rule), rule_id: rule.id, refresh_prices: false, max_symbols: 30,
-  })).data),
+  startTask: async (rule: EssayQuantRule): Promise<EssayQuantTask> => {
+    const result = toCamelCase<EssayQuantTask>((await apiClient.post('/api/v1/essay-quant/tasks', {
+      ...payload(rule), rule_id: rule.id, refresh_prices: false, max_symbols: 30,
+    })).data);
+    invalidateCachedQueries('quant:tasks');
+    invalidateCachedQueries('quant:runs');
+    return result;
+  },
   plan: async (prompt: string): Promise<EssayQuantPlan> => toCamelCase((await apiClient.post('/api/v1/essay-quant/natural-language/plan', { prompt })).data),
   executePlan: async (rule: EssayQuantRule): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.post('/api/v1/essay-quant/natural-language/execute', { rule: payload(rule), refresh_prices: false }, { timeout: 180000 })).data),
-  rules: async (): Promise<{ items: EssayQuantRule[]; total: number }> => toCamelCase((await apiClient.get('/api/v1/essay-quant/rules')).data),
+  rules: async (): Promise<{ items: EssayQuantRule[]; total: number }> => cachedQuery(
+    'quant:rules',
+    async () => toCamelCase((await apiClient.get('/api/v1/essay-quant/rules')).data),
+    { freshMs: 10_000, staleMs: 60_000 },
+  ),
   saveRule: async (rule: EssayQuantRule): Promise<EssayQuantRule> => {
     const response = rule.id
       ? await apiClient.put(`/api/v1/essay-quant/rules/${rule.id}`, payload(rule))
       : await apiClient.post('/api/v1/essay-quant/rules', payload(rule));
+    invalidateCachedQueries('quant:rules');
     return toCamelCase(response.data);
   },
   run: async (rule: EssayQuantRule): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.post('/api/v1/essay-quant/run', {

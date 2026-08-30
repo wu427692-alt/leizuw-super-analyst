@@ -7,6 +7,7 @@ import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import type { UiTextKey } from '../../i18n/uiText';
 import { cn } from '../../utils/cn';
 import { preloadRoute } from '../../utils/routePreload';
+import { preloadRouteData } from '../../utils/routeDataPreload';
 import { StatusDot } from '../common/StatusDot';
 import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { ThemeToggle } from '../theme/ThemeToggle';
@@ -88,6 +89,9 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const itemActiveClass = 'border-[var(--nav-active-border)] bg-[var(--nav-active-bg)] font-medium text-[hsl(var(--primary))]';
   const itemIconClass = cn(isRail ? 'h-[18px] w-[18px]' : 'h-5 w-5', 'shrink-0');
   const itemLabelClass = cn('truncate', isRail ? 'text-center' : '');
+  const warmNavigation = (to: string) => {
+    void Promise.allSettled([preloadRoute(to), preloadRouteData(to)]);
+  };
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
@@ -123,9 +127,9 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
             to={to}
             end={exact}
             onClick={onNavigate}
-            onMouseEnter={() => void preloadRoute(to).catch(() => undefined)}
-            onFocus={() => void preloadRoute(to).catch(() => undefined)}
-            onTouchStart={() => void preloadRoute(to).catch(() => undefined)}
+            onMouseEnter={() => warmNavigation(to)}
+            onFocus={() => warmNavigation(to)}
+            onTouchStart={() => warmNavigation(to)}
             aria-label={label}
             className={({ isActive }) =>
               cn(

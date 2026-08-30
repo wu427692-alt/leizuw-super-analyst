@@ -328,6 +328,18 @@ deploy:
 
 **根因**：`static/index.html` 存在，但 CSS/JS 资源文件缺失（`static/assets/` 为空或不存在），浏览器无法加载样式与脚本，导致裸 HTML 渲染。
 
+### 云端静态资源加速
+
+阿里云小型主机应让 nginx 直接发送带内容哈希的 `/assets/*` 文件，避免页面切换时由 Python 服务处理 JS/CSS。每次更新并启动 `stock-server` 后执行：
+
+```bash
+sudo ./scripts/publish-nginx-assets.sh
+sudo cp docker/nginx-leziwu.conf /etc/nginx/sites-available/leziwu
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+脚本把容器内完整前端产物发布到带时间戳的只读目录，再原子切换 `/var/www/leziwu-static` 软链接；旧版本仍保留，可将软链接切回上一目录完成快速回滚。若尚未发布静态目录，nginx 会自动回退到应用容器，不会导致页面白屏。
+
 **解决方法**：
 
 - **Docker 部署**：执行以下命令重新构建镜像（确保前端已正确打包进镜像）：

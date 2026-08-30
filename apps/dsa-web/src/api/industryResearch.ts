@@ -1,7 +1,7 @@
 import apiClient, { BACKGROUND_ROUTE_HEADERS } from './index';
 import { toCamelCase } from './utils';
 import type { IndustryResearchBlueprint, IndustryResearchProject } from '../types/industryResearch';
-import { cachedQuery } from './requestCache';
+import { cachedQuery, invalidateCachedQueries } from './requestCache';
 
 export const industryResearchApi = {
   blueprint: async (topic: string, lookbackDays = 730): Promise<IndustryResearchBlueprint> => {
@@ -25,11 +25,14 @@ export const industryResearchApi = {
       lookback_days: payload.lookbackDays,
       query_terms: payload.queryTerms ?? [],
     }, { timeout: 30_000 });
+    invalidateCachedQueries('industry:projects');
     return toCamelCase<IndustryResearchProject>(response.data);
   },
   projects: async (): Promise<{ items: IndustryResearchProject[]; total: number }> => {
-    const response = await apiClient.get('/api/v1/industry-research/projects', { headers: BACKGROUND_ROUTE_HEADERS });
-    return toCamelCase(response.data);
+    return cachedQuery('industry:projects', async () => {
+      const response = await apiClient.get('/api/v1/industry-research/projects', { headers: BACKGROUND_ROUTE_HEADERS });
+      return toCamelCase(response.data);
+    }, { freshMs: 5_000, staleMs: 30_000 });
   },
   project: async (projectId: string): Promise<IndustryResearchProject> => {
     const response = await apiClient.get(`/api/v1/industry-research/projects/${encodeURIComponent(projectId)}`, {
