@@ -5,3 +5,33 @@
 .concept-compare-grid dd[data-tone="down"] {
   color: #25c897;
 }
+
+.concept-compare-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.concept-compare-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid rgba(77, 143, 229, 0.36);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: rgba(20, 66, 124, 0.24);
+  color: #bcd7f8;
+  font-size: 9px;
+}
+
+.concept-compare-actions button svg {
+  width: 13px;
+}
+
+@media (max-width: 720px) {
+  .concept-compare-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}

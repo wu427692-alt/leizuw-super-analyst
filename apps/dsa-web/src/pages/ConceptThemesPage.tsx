@@ -29,6 +29,24 @@ const metric = (value?: number | null, digits = 2) => value == null ? '—' : Nu
 const signed = (value?: number | null, suffix = '%') => value == null ? '—' : `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}${suffix}`;
 const growthMultiple = (value?: number | null) => value == null ? 'NEW' : `${Math.max(0, 1 + value / 100).toFixed(1)}×`;
 
+function exportThemeComparison(left: ThemeDetail, right: ThemeDetail, horizonDays: number) {
+  const leftByCode = new Map(left.stocks.map(item => [item.tsCode, item]));
+  const rightByCode = new Map(right.stocks.map(item => [item.tsCode, item]));
+  const codes = [...new Set([...leftByCode.keys(), ...rightByCode.keys()])].sort();
+  const quote = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+  const columns = ['股票代码', '股票名称', `${left.theme.canonicalName}成分`, `${left.theme.canonicalName}权重`, `${left.theme.canonicalName}来源数`, `${left.theme.canonicalName}Beta`, `${left.theme.canonicalName}${horizonDays}日Alpha`, `${right.theme.canonicalName}成分`, `${right.theme.canonicalName}权重`, `${right.theme.canonicalName}来源数`, `${right.theme.canonicalName}Beta`, `${right.theme.canonicalName}${horizonDays}日Alpha`, '关系'];
+  const rows = codes.map(code => {
+    const a = leftByCode.get(code); const b = rightByCode.get(code);
+    return [code, a?.name || b?.name || '', a ? '是' : '否', a?.weightScore, a?.sourceCount, a?.beta, a?.residualReturn, b ? '是' : '否', b?.weightScore, b?.sourceCount, b?.beta, b?.residualReturn, a && b ? '共同成分' : a ? `仅${left.theme.canonicalName}` : `仅${right.theme.canonicalName}`];
+  });
+  const csv = `\ufeff${[columns, ...rows].map(row => row.map(quote).join(',')).join('\r\n')}`;
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const anchor = document.createElement('a'); anchor.href = url;
+  anchor.download = `${left.theme.canonicalName.replaceAll('/', '-')}_对比_${right.theme.canonicalName.replaceAll('/', '-')}_${horizonDays}日.csv`;
+  document.body.appendChild(anchor); anchor.click(); anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 function ScoreRing({ value, label }: { value: number; label: string }) {
   const safe = Math.max(0, Math.min(100, value || 0));
   return <div className="concept-score-ring" style={{ '--score-angle': `${safe * 3.6}deg` } as CSSProperties}>
@@ -681,7 +699,7 @@ export default function ConceptThemesPage() {
       </div>
 
       <section className="concept-compare">
-        <header><div><span><Scale /> THEME COMPARISON</span><h2>题材对照台</h2></div><p>{comparison ? `${comparison.left.theme.canonicalName} × ${comparison.right.theme.canonicalName}` : `已选 ${compareThemes.length}/2 · 在右侧题材详情点击“加入对照”`}</p></header>
+        <header><div><span><Scale /> THEME COMPARISON</span><h2>题材对照台</h2></div><div className="concept-compare-actions"><p>{comparison ? `${comparison.left.theme.canonicalName} × ${comparison.right.theme.canonicalName}` : `已选 ${compareThemes.length}/2 · 在右侧题材详情点击“加入对照”`}</p>{comparison ? <button type="button" onClick={() => exportThemeComparison(comparison.left, comparison.right, horizonDays)}><Download />导出对照 CSV</button> : null}</div></header>
         {comparison ? <div className="concept-compare-grid">
           {[comparison.left, comparison.right].map((item, index) => { const lastPoint = item.history?.points.at(-1); return <article key={item.theme.canonicalName}><span>{index ? 'B' : 'A'} · {item.theme.family}</span><h3>{item.theme.canonicalName}</h3><dl><div><dt>全部成分</dt><dd>{item.totalStocks}</dd></div><div><dt>多源确认</dt><dd>{item.consensusStocks}</dd></div><div><dt>归因完成</dt><dd>{item.attributionReady}</dd></div><div><dt>来源节点</dt><dd>{item.sourceNodes.length}</dd></div><div><dt>最新日涨跌</dt><dd data-tone={(lastPoint?.pctChange ?? 0) >= 0 ? 'up' : 'down'}>{signed(lastPoint?.pctChange)}</dd></div><div><dt>{item.history?.availableDates || 0}日累计</dt><dd data-tone={(item.history?.cumulativeReturn ?? 0) >= 0 ? 'up' : 'down'}>{signed(item.history?.cumulativeReturn)}</dd></div><div><dt>多源确认率</dt><dd>{item.totalStocks ? metric(item.consensusStocks / item.totalStocks * 100, 1) : '—'}%</dd></div><div><dt>归因覆盖率</dt><dd>{item.totalStocks ? metric(item.attributionReady / item.totalStocks * 100, 1) : '—'}%</dd></div></dl><p>独占高权重 · {(index ? comparison.rightExclusive : comparison.leftExclusive).map(stock => stock.name).join('、') || '暂无'}</p></article>; })}
           <aside><strong>{comparison.similarity.toFixed(1)}%</strong><span>成分 Jaccard 相似度</span><b>{comparison.shared.length} 只共同成分</b><p>{comparison.shared.slice(0, 12).map(item => item.name).join('、') || '没有共同成分'}</p></aside>
