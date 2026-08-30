@@ -2347,7 +2347,8 @@ class ConceptThemeService:
             latest = points[-1]
             recent_changes = [point["pct_change"] for point in points[-5:] if point["pct_change"] is not None]
             latest_change = float(latest["pct_change"] or 0.0)
-            momentum_5d = round(sum(recent_changes), 3) if recent_changes else None
+            # Never label a partial history window as five-day momentum.
+            momentum_5d = round(sum(recent_changes), 3) if len(recent_changes) == 5 else None
             heat = float(latest["heat_score"] or 45.0)
             source_count = int(latest["source_count"] or 0)
             rotation_score = max(0.0, min(100.0,
@@ -2395,6 +2396,106 @@ class ConceptThemeService:
                 saved += 1
         return {"saved": saved}
 
+    def backfill_rotation_history(self, *, days: int = 20, dates_per_run: int = 2) -> Dict[str, Any]:
+        """Incrementally seed genuine historical theme snapshots.
+
+        Only upstream endpoints that accept an explicit historical trade date
+        and return a daily change are used.  Historical rows are written
+        directly to the snapshot ledger so an old observation can never
+        overwrite the live catalog state.
+        """
+        if not self.gateway.available:
+            return {"dates": 0, "saved": 0, "deferred": 1}
+        days = max(5, min(int(days), 60))
+        dates_per_run = max(1, min(int(dates_per_run), 8))
+        latest = self.latest_market_date()
+        with self._read_scope() as session:
+            trade_dates = list(session.execute(select(StockDaily.date).where(
+                StockDaily.date <= latest,
+            ).distinct().order_by(StockDaily.date.desc()).limit(days)).scalars().all())
+            existing_counts = dict(session.execute(select(
+                ConceptThemeSnapshotRecord.market_date,
+                func.count(ConceptThemeSnapshotRecord.id),
+            ).where(
+                ConceptThemeSnapshotRecord.market_date.in_(trade_dates),
+            ).group_by(ConceptThemeSnapshotRecord.market_date)).all()) if trade_dates else {}
+        # A complete history date normally contains about two thousand rows.
+        # Revisit clearly partial dates; upsert makes retries idempotent.
+        pending = [day for day in reversed(trade_dates) if int(existing_counts.get(day) or 0) < 500]
+        selected = pending[:dates_per_run]
+        total_saved = 0
+        source_rows: Dict[str, int] = defaultdict(int)
+        failures: Dict[str, str] = {}
+        for trade_day in selected:
+            day_text = trade_day.strftime("%Y%m%d")
+            snapshots: List[Dict[str, Any]] = []
+            calls = (
+                ("ths", "moneyflow_cnt_ths"),
+                ("dc_board", "dc_index"),
+                ("dc_theme", "dc_concept"),
+            )
+            for source, api_name in calls:
+                try:
+                    rows = self.gateway.query(api_name, params={"trade_date": day_text})["rows"]
+                    source_rows[source] += len(rows)
+                    for row in rows:
+                        raw_name = row.get("name")
+                        source_code = row.get("theme_code") if source == "dc_theme" else row.get("ts_code")
+                        if not raw_name or not source_code:
+                            continue
+                        rank = _safe_float(row.get("sort")) if source == "dc_theme" else None
+                        snapshots.append({
+                            "source": source,
+                            "source_code": str(source_code),
+                            "canonical_name": canonicalize_theme(str(raw_name)),
+                            "theme_type": "theme" if source != "dc_board" else (
+                                "industry" if "行业" in str(row.get("idx_type") or "") else "concept"
+                            ),
+                            "market_date": _parse_date(row.get("trade_date")) or trade_day,
+                            "constituent_count": _safe_int(row.get("company_num")) or (
+                                (_safe_int(row.get("up_num")) or 0) + (_safe_int(row.get("down_num")) or 0)
+                            ),
+                            "heat_score": (
+                                max(0.0, min(100.0, 101.0 - math.sqrt(rank or 10_000)))
+                                if source == "dc_theme" else None
+                            ),
+                            "pct_change": _safe_float(row.get("pct_change")),
+                            "fund_flow": _safe_float(row.get("main_change")) if source == "dc_theme" else _safe_float(row.get("net_amount")),
+                        })
+                except Exception as exc:  # noqa: BLE001 - one source/date must not block the ledger.
+                    failures[f"{day_text}:{source}"] = f"{type(exc).__name__}: {str(exc)[:180]}"
+            total_saved += self._upsert_snapshots_only(snapshots)
+        return {
+            "dates": len(selected), "saved": total_saved, "pending_dates": max(0, len(pending) - len(selected)),
+            "source_rows": dict(source_rows), "failures": failures,
+        }
+
+    def _upsert_snapshots_only(self, rows: Iterable[Dict[str, Any]]) -> int:
+        prepared = [row for row in rows if row.get("source_code") and row.get("market_date")]
+        if not prepared:
+            return 0
+        dates = {row["market_date"] for row in prepared}
+        now = utc_naive_now()
+        saved = 0
+        with self.db.session_scope() as session:
+            existing = {(row.source, row.source_code, row.market_date): row for row in session.execute(
+                select(ConceptThemeSnapshotRecord).where(ConceptThemeSnapshotRecord.market_date.in_(dates))
+            ).scalars().all()}
+            for values in prepared:
+                key = (values["source"], values["source_code"], values["market_date"])
+                snapshot = existing.get(key)
+                payload = {**values, "captured_at": now}
+                if snapshot is None:
+                    snapshot = ConceptThemeSnapshotRecord(**payload)
+                    session.add(snapshot)
+                    existing[key] = snapshot
+                else:
+                    for field, value in payload.items():
+                        if value is not None or field not in {"heat_score", "pct_change", "fund_flow"}:
+                            setattr(snapshot, field, value)
+                saved += 1
+        return saved
+
     def normalize_catalog_names(self) -> Dict[str, int]:
         """Reapply the current ontology to stored source nodes without touching source facts."""
         changed = 0
@@ -2413,7 +2514,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.64",
+            "version": "concept-consensus-v1.65",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
@@ -2423,6 +2524,7 @@ class ConceptThemeService:
                 "Beta 置信度同时检查样本数、来源数、R²及回归系数t统计量，并展示95%区间。",
                 "Alpha 分为统计残差与可核验证据两层；证据只做归因线索，不声称因果。",
                 "题材轮动保留每日来源快照后再聚合，不用当前值伪造历史，也不把轮动分解释为收益预测。",
+                "历史轮动只使用明确接受交易日期的日度接口，并直写快照账本，旧日期不会覆盖当前目录。",
                 "个股透镜同时读取20/60/120日独立快照，跨周期稳定性不混用不同窗口或日期。",
             ],
             "weight_formula": {

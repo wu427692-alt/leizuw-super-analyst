@@ -126,6 +126,59 @@ def test_latest_market_date_never_uses_weekend_fact_row(tmp_path) -> None:
     assert service.latest_market_date() == date(2026, 8, 21)
 
 
+def test_rotation_history_backfill_uses_real_dates_without_rewinding_live_catalog(tmp_path) -> None:
+    service = _service(tmp_path)
+    trade_dates = [date(2026, 8, day) for day in (24, 25, 26, 27, 28)]
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        for trade_day in trade_dates:
+            session.add(StockDaily(code="300308", date=trade_day, close=100.0, data_source="test"))
+        session.add(ConceptThemeRecord(
+            source="ths", source_code="885001.TI", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=trade_dates[-1], first_seen_at=now, last_seen_at=now, updated_at=now,
+        ))
+
+    def query(api_name, *, params):
+        trade_date = params["trade_date"]
+        rows = {
+            "moneyflow_cnt_ths": [{
+                "trade_date": trade_date, "ts_code": "885001.TI", "name": "CPO概念",
+                "pct_change": 1.2, "company_num": 18, "net_amount": 30,
+            }],
+            "dc_index": [{
+                "trade_date": trade_date, "ts_code": "BK001.DC", "name": "光模块",
+                "pct_change": 0.8, "up_num": 10, "down_num": 2, "idx_type": "概念板块",
+            }],
+            "dc_concept": [{
+                "trade_date": trade_date, "theme_code": "000001.DC", "name": "光通信",
+                "pct_change": "1.0", "sort": "25", "main_change": "1000",
+            }],
+        }[api_name]
+        return {"rows": rows}
+
+    service.gateway = SimpleNamespace(available=True, query=query)
+    ConceptThemeService._market_date_value = trade_dates[-1]
+    ConceptThemeService._market_date_checked_at = datetime.now()
+    result = service.backfill_rotation_history(days=5, dates_per_run=2)
+    assert result["dates"] == 2
+    assert result["saved"] == 6
+    with service.db.session_scope() as session:
+        live = session.execute(select(ConceptThemeRecord).where(
+            ConceptThemeRecord.source == "ths", ConceptThemeRecord.source_code == "885001.TI",
+        )).scalar_one()
+        snapshots = session.execute(select(ConceptThemeSnapshotRecord)).scalars().all()
+        live_market_date = live.market_date
+        snapshot_dates = {row.market_date for row in snapshots}
+        snapshot_changes = [row.pct_change for row in snapshots]
+    assert live_market_date == trade_dates[-1]
+    assert snapshot_dates == {trade_dates[0], trade_dates[1]}
+    assert all(value is not None for value in snapshot_changes)
+    rotation = service.rotation(days=5, limit=8)
+    assert rotation["available_dates"] == 2
+    assert all(item["momentum_5d"] is None for item in rotation["items"])
+
+
 def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path) -> None:
     service = _service(tmp_path)
     now = utc_naive_now()
@@ -358,7 +411,7 @@ def test_complete_membership_refresh_deactivates_vanished_stock_without_deleting
         ]
 
 
-def test_rotation_uses_cross_source_daily_median_and_keeps_history(tmp_path) -> None:
+def test_rotation_uses_cross_source_daily_median_and_rejects_partial_5d_window(tmp_path) -> None:
     service = _service(tmp_path)
     now = utc_naive_now()
     with service.db.session_scope() as session:
@@ -378,7 +431,7 @@ def test_rotation_uses_cross_source_daily_median_and_keeps_history(tmp_path) -> 
     item = rotation["items"][0]
     assert item["canonical_name"] == "CPO/共封装光学"
     assert item["pct_change"] == 3.0
-    assert item["momentum_5d"] == 5.0
+    assert item["momentum_5d"] is None
     assert item["source_count"] == 2
     assert item["history_days"] == 2
 
