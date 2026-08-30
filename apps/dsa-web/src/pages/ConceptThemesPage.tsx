@@ -426,6 +426,7 @@ export default function ConceptThemesPage() {
   const [family, setFamily] = useState('');
   const [cluster, setCluster] = useState('');
   const [minSources, setMinSources] = useState(1);
+  const [readiness, setReadiness] = useState<'all' | 'membered' | 'attributed' | 'researchable'>('all');
   const [catalogView, setCatalogView] = useState<'canonical' | 'source'>('canonical');
   const [sortBy, setSortBy] = useState<'heat' | 'name' | 'size' | 'change'>('heat');
   const [page, setPage] = useState(1);
@@ -444,7 +445,7 @@ export default function ConceptThemesPage() {
     const sequence = ++requestSequence.current;
     try {
       const responsivePageSize = typeof window !== 'undefined' && window.innerWidth <= 720 ? 12 : 48;
-      const value = await conceptThemesApi.overview({ query: debouncedQuery, themeType, source, family, cluster, minSources, sortBy, view: catalogView, page, pageSize: responsivePageSize });
+      const value = await conceptThemesApi.overview({ query: debouncedQuery, themeType, source, family, cluster, minSources, readiness, sortBy, view: catalogView, page, pageSize: responsivePageSize });
       if (sequence !== requestSequence.current) return;
       setOverview(value);
       setStatus(`${value.summary.marketDate || '最新交易日'} · ${number(value.summary.themes)} 个源题材 · ${number(value.summary.memberships)} 条成分关系`);
@@ -453,7 +454,7 @@ export default function ConceptThemesPage() {
       if (sequence !== requestSequence.current) return;
       setStatus(error instanceof Error ? error.message : '题材库暂时不可用，系统会静默重试');
     } finally { if (sequence === requestSequence.current) setLoading(false); }
-  }, [catalogView, cluster, debouncedQuery, family, minSources, page, sortBy, source, themeType]);
+  }, [catalogView, cluster, debouncedQuery, family, minSources, page, readiness, sortBy, source, themeType]);
   const loadRotation = useCallback(async () => {
     try { setRotation(await conceptThemesApi.rotation(20, 18)); }
     catch { /* keep the last successful rotation snapshot while the upstream refreshes */ }
@@ -492,7 +493,7 @@ export default function ConceptThemesPage() {
   useEffect(() => { void loadWatchlistMap(); }, [loadWatchlistMap]);
   useEffect(() => { void loadMembershipChanges(); }, [loadMembershipChanges]);
   useEffect(() => { setClusterDetail(null); void loadCluster(); }, [loadCluster]);
-  useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
+  useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, readiness, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
   const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadLifecycle(), loadWatchlistMap(), loadMembershipChanges(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadLifecycle, loadMembershipChanges, loadOverview, loadRotation, loadWatchlistMap]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
@@ -603,6 +604,7 @@ export default function ConceptThemesPage() {
         <select value={themeType} onChange={event => setThemeType(event.target.value)} aria-label="题材类型"><option value="">全部层级</option><option value="theme">市场题材</option><option value="concept">概念</option><option value="industry">行业</option><option value="region">地域</option><option value="style">风格</option></select>
         <select value={source} onChange={event => setSource(event.target.value)} aria-label="数据来源"><option value="">全部来源</option>{overview?.methodology.sources.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</select>
         <select value={minSources} onChange={event => setMinSources(Number(event.target.value))} aria-label="共识门槛"><option value={1}>全部共识层级</option><option value={2}>至少 2 个来源</option><option value={3}>至少 3 个来源</option><option value={4}>至少 4 个来源</option></select>
+        <select value={readiness} onChange={event => setReadiness(event.target.value as typeof readiness)} aria-label="数据成熟度"><option value="all">全部数据成熟度</option><option value="membered">已有成分股</option><option value="attributed">已完成归因</option><option value="researchable">可研究 · 多源且已归因</option></select>
         <select value={catalogView} onChange={event => setCatalogView(event.target.value as typeof catalogView)} aria-label="题材展示口径"><option value="canonical">规范题材 · 去重</option><option value="source">全部源节点</option></select>
         <select value={sortBy} onChange={event => setSortBy(event.target.value as typeof sortBy)} aria-label="排序"><option value="heat">市场热度</option><option value="change">当日涨跌</option><option value="size">成分规模</option><option value="name">名称</option></select>
       </section>

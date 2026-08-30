@@ -423,6 +423,7 @@ type OverviewParams = {
   family?: string;
   cluster?: string;
   minSources?: number;
+  readiness?: 'all' | 'membered' | 'attributed' | 'researchable';
   view?: 'canonical' | 'source';
   sortBy?: 'heat' | 'name' | 'size' | 'change';
   page?: number;
@@ -472,6 +473,7 @@ export const conceptThemesApi = {
           family: params.family || undefined,
           cluster: params.cluster || undefined,
           min_sources: params.minSources && params.minSources > 1 ? params.minSources : undefined,
+          readiness: params.readiness && params.readiness !== 'all' ? params.readiness : undefined,
           view: params.view ?? 'canonical',
           sort_by: params.sortBy ?? 'heat',
           page: params.page ?? 1,

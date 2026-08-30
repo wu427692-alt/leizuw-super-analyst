@@ -82,6 +82,16 @@ def test_family_rules_do_not_confuse_consumer_electronics_words_with_semiconduct
     assert theme_family("PM2.5", "concept") == "生态环保"
     assert theme_family("国家大基金持股", "concept") == "机构持仓与资金偏好"
     assert theme_family("统一大市场", "concept") == "政策改革与区域"
+    assert theme_family("RISC-V", "concept") == "AI算力与数字基础设施"
+    assert theme_family("薄膜铌酸锂（TFLN）", "concept") == "AI算力与数字基础设施"
+    assert theme_family("Chiplet", "concept") == "半导体与先进电子"
+    assert theme_family("麦角硫因", "concept") == "医药健康"
+    assert theme_family("科技重组预期", "concept") == "公司治理与资本事件"
+    assert theme_family("人民币升值", "concept") == "宏观与跨境"
+    assert theme_family("IC载板", "concept") == "半导体与先进电子"
+    assert theme_family("800V快充", "concept") == "汽车与智能驾驶"
+    assert theme_family("2026一季报扭亏", "style") == "业绩与财务特征"
+    assert theme_family("城市更新", "concept") == "基础设施与交通物流"
     assert canonicalize_theme("CPO(共封装光学)") == "CPO/共封装光学"
     assert canonicalize_theme("光通信模块") == "光通信/光模块"
     assert canonicalize_theme("飞行汽车(eVTOL)") == "eVTOL/飞行汽车"
@@ -228,6 +238,8 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
     filtered = service.overview(family="AI算力与数字基础设施", page_size=12)
     recalled = service.overview(query="中际旭创", page_size=12)
     strict_consensus = service.overview(min_sources=2, page_size=12)
+    membered = service.overview(readiness="membered", view="canonical", page_size=12)
+    attributed = service.overview(readiness="attributed", view="canonical", page_size=12)
 
     assert filtered["total"] == 1
     assert filtered["items"][0]["cluster"] == "光通信产业链"
@@ -242,6 +254,9 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
         "ts_code": "300308.SZ", "name": "中际旭创", "theme_count": 1, "source_count": 1,
     }]
     assert strict_consensus["total"] == 0
+    assert membered["total"] == 1
+    assert membered["items"][0]["canonical_name"] == "CPO/共封装光学"
+    assert attributed["total"] == 0
     with service.db.session_scope() as session:
         session.add_all([
             ConceptThemeRecord(

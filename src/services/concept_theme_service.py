@@ -123,11 +123,13 @@ STRUCTURAL_FAMILY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
     )),
     ("国资与所有制", ("地方国企", "地方国资", "央企", "国资控股", "国资入股")),
     ("宏观与跨境", ("人民币贬值", "贬值受益", "海外业务", "中概股", "红筹股", "俄乌冲突", "出口管制", "对日反制")),
+    ("宏观与跨境", ("人民币升值", "RCEP")),
     ("行业供需与价格", ("涨价", "降价", "库存周期", "供给收缩")),
     ("业绩与财务特征", (
         "中报预增", "中报首亏", "中报预减", "中报扭亏", "一季报预增", "三季报预增", "业绩预升", "连续亏损", "扣非亏损",
         "亏损股", "微利股", "绩优股", "高应收款", "商誉减值", "久不分红", "自由现金流",
         "预计转亏", "高负债率",
+        "一季报扭亏", "一季报预减", "三季报扭亏", "三季报预减",
     )),
     ("机构持仓与资金偏好", (
         "机构重仓", "QFII", "基金重仓", "社保重仓", "社保新进", "私募重仓", "私募新进",
@@ -141,7 +143,9 @@ STRUCTURAL_FAMILY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
         "破增发价", "破发行价", "破发股", "破净", "趋势股", "强势", "高振幅", "超跌", "周期股",
         "非周期股", "行业龙头", "次新", "ST股", "活跃小盘", "活跃股", "低安全分", "专项贷款",
         "微盘精选", "最近多板", "两年新股", "近已解禁", "科技风格", "先进制造风格", "红利股",
+        "白马股", "科特估", "近期新高", "宁组合",
         "热股", "高贝塔", "户数增加", "户数减少", "送转潜力", "创业成份", "深证100", "中特估",
+        "高送转", "B股", "FAANG", "FANG", "MAG7", "MAMAA", "GAMAM",
         "漂亮100", "通达信88", "高融资盘", "昨日涨停", "昨日高换手", "风险提示", "含B股", "AB股",
         "机构吸筹", "即将解禁", "题材股", "活跃ETF", "WSB",
     )),
@@ -215,6 +219,32 @@ FAMILY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
         "Kimi", "MCP", "移动互联网", "互联网+", "软件外包", "WiFi", "IPv6", "VPN", "UWB",
         "高带宽内存", "超节点", "超聚变", "摩尔线程", "谷歌", "AMD", "太赫兹", "数字阅读",
     )),
+    ("AI算力与数字基础设施", (
+        "网络切片", "交换机", "NPO", "OCS", "MPO", "高速耦合透镜", "薄膜铌酸锂", "TFLN",
+        "RISC-V", "CANN", "FP8", "DSP", "量子通信", "量子计算", "新一代通信网", "通信安全",
+        "通信服务", "算电协同", "eSIM", "GEO", "毫米波", "OpenClaw", "东方算芯", "字节", "VR&AR",
+        "HALO", "甲骨文", "神经网络", "商汤", "数字哨兵", "自主可控", "大模型", "RCS", "蚂蚁阿福",
+    )),
+    ("半导体与先进电子", (
+        "ABF", "Chiplet", "一体成型电感", "铜箔", "晶硅", "洁净室", "3D成像", "纳米技术",
+        "电磁屏蔽", "SST", "MIM", "氧化钇", "法拉第旋片", "3C充电宝", "沐曦", "涂胶显影",
+        "新凯来", "3D玻璃", "IC载板", "MCU", "智能戒指",
+    )),
+    ("先进制造与机器人", ("制造业", "超硬材料", "深海科技", "燃气轮机", "水轮机", "盾构机", "冷锻工艺")),
+    ("新能源与电力系统", ("V2G", "SOFC", "人造太阳", "HVDC供电", "充电装置", "ITER", "燃气")),
+    ("医药健康", ("消毒剂", "SPD", "麦角硫因", "mRNA", "蒙脱石散", "超级真菌", "炭疽", "基孔肯雅热", "健康中国", "地塞米松", "美容护理", "注射器", "抗艾滋病药")),
+    ("农业与食品", ("农药", "蝗虫防治", "氯虫苯甲酰胺", "禽肉", "婴儿奶粉")),
+    ("消费与品牌", ("黑神话悟空", "网红直播", "智慧教育", "户外运动", "育儿", "版权", "微信小店", "商业百货", "影石全景相机", "京东", "酿酒行业", "烟花爆竹", "动漫", "广电", "文教用品", "母婴用品", "泡泡玛特", "黄酒", "儿童服装", "乙游", "动作捕捉", "教培", "短剧产业", "电器", "纸制品", "造纸", "服饰", "纺织服装")),
+    ("资源与周期", (
+        "甲醇", "尿素", "硫酸", "硫化锂", "PPE树脂", "TDI", "动力煤", "焦炭", "原油", "锑",
+        "钨", "钽", "钴", "锌", "铟", "溴素", "铜", "锂", "化纤", "采矿业", "纯碱", "螺纹钢", "采掘行业", "共聚聚甲醛", "氩气",
+    )),
+    ("基础设施与交通物流", ("建筑业", "装饰材料", "园林工程", "水网", "管道建材", "城市更新", "民航", "无人配送")),
+    ("生态环保", ("大气治理", "拆解回收", "ESG")),
+    ("汽车与智能驾驶", ("乘用车", "商用车", "800V快充")),
+    ("低空经济与商业航天", ("北斗导航", "太空经济", "相控阵天线")),
+    ("政策改革与区域", ("中部崛起", "海南封关", "沿海排头兵", "中原经济区", "新疆核心区", "湖北国资", "珠江经济带", "北莫走廊", "进口博览会", "新疆", "远东大开发", "沙特合作")),
+    ("公司治理与资本事件", ("科技重组预期", "兵装重组", "分拆预期", "国资重组", "CDR", "GDR", "IPO受益")),
     ("半导体与先进电子", (
         "IGBT", "碳化硅", "氮化镓", "磷化铟", "裸眼3D", "3D摄像头", "屏下摄像", "纳米银",
     )),
@@ -341,8 +371,6 @@ def theme_family(name: str, theme_type: str) -> str:
         return "申万/市场行业体系"
     if theme_type == "region":
         return "区域与地理"
-    if theme_type in {"style", "feature", "broad"}:
-        return "市场风格与宽基"
     upper = name.upper()
     if upper == "ST":
         return "指数与交易风格"
@@ -351,6 +379,8 @@ def theme_family(name: str, theme_type: str) -> str:
     for family, keywords in STRUCTURAL_FAMILY_RULES:
         if any(keyword.upper() in upper for keyword in keywords):
             return family
+    if theme_type in {"style", "feature", "broad"}:
+        return "市场风格与宽基"
     for family, keywords in FAMILY_RULES:
         if any(keyword.upper() in upper for keyword in keywords):
             return family
@@ -708,7 +738,8 @@ class ConceptThemeService:
 
     def overview(
         self, *, query: str = "", theme_type: str = "", source: str = "", family: str = "", cluster: str = "",
-        min_sources: int = 1, sort_by: str = "heat", view: str = "source", page: int = 1, page_size: int = 80,
+        min_sources: int = 1, readiness: str = "all", sort_by: str = "heat", view: str = "source",
+        page: int = 1, page_size: int = 80,
     ) -> Dict[str, Any]:
         page = max(1, page)
         page_size = max(12, min(page_size, 200))
@@ -735,6 +766,29 @@ class ConceptThemeService:
                     ConceptThemeRecord.canonical_name,
                 ).having(func.count(func.distinct(_provider_sql(ConceptThemeRecord.source))) >= min(5, int(min_sources)))
                 filters.append(ConceptThemeRecord.canonical_name.in_(consensus_names))
+            if readiness in {"membered", "attributed", "researchable"}:
+                if readiness == "membered":
+                    if view == "canonical":
+                        ready_names = select(ConceptThemeRecord.canonical_name).join(
+                            ConceptMembershipRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+                        ).where(ConceptMembershipRecord.active.is_(True)).distinct()
+                        filters.append(ConceptThemeRecord.canonical_name.in_(ready_names))
+                    else:
+                        ready_ids = select(ConceptMembershipRecord.theme_id).where(
+                            ConceptMembershipRecord.active.is_(True),
+                        ).distinct()
+                        filters.append(ConceptThemeRecord.id.in_(ready_ids))
+                else:
+                    latest_exposure_day = select(func.max(ConceptExposureRecord.as_of_date)).scalar_subquery()
+                    attributed_names = select(ConceptExposureRecord.canonical_name).where(
+                        ConceptExposureRecord.as_of_date == latest_exposure_day,
+                    ).distinct()
+                    filters.append(ConceptThemeRecord.canonical_name.in_(attributed_names))
+                    if readiness == "researchable":
+                        provider_names = select(ConceptThemeRecord.canonical_name).group_by(
+                            ConceptThemeRecord.canonical_name,
+                        ).having(func.count(func.distinct(_provider_sql(ConceptThemeRecord.source))) >= 2)
+                        filters.append(ConceptThemeRecord.canonical_name.in_(provider_names))
             if family or cluster:
                 matching_ids = [theme_id for theme_id, (family_name, cluster_name) in taxonomy["by_id"].items()
                                 if (not family or family_name == family) and (not cluster or cluster_name == cluster)]
