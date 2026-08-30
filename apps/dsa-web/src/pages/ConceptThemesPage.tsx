@@ -239,12 +239,17 @@ export default function ConceptThemesPage() {
       setStatus(error instanceof Error ? error.message : '题材库暂时不可用，系统会静默重试');
     } finally { if (sequence === requestSequence.current) setLoading(false); }
   }, [cluster, debouncedQuery, family, minSources, page, sortBy, source, themeType]);
+  const loadRotation = useCallback(async () => {
+    try { setRotation(await conceptThemesApi.rotation(20, 18)); }
+    catch { /* keep the last successful rotation snapshot while the upstream refreshes */ }
+  }, []);
 
   useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
-  useEffect(() => { void conceptThemesApi.rotation(20, 18).then(setRotation).catch(() => undefined); }, []);
+  useEffect(() => { void loadRotation(); }, [loadRotation]);
   useEffect(() => { setPage(1); }, [cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  usePageActivationRefresh(loadOverview, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
+  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation()]); }, [loadOverview, loadRotation]);
+  usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
     if (selectedTheme == null) { setDetail(null); return; }
@@ -311,7 +316,7 @@ export default function ConceptThemesPage() {
     <div className="concept-shell">
       <header className="concept-hero">
         <div className="concept-hero__copy"><span><Network /> CONCEPT CONSENSUS GRAPH</span><h1>概念题材查看</h1><p>把分散的市场题材、行业层级和成分股归属，变成有来源、有权重、有 Beta/Alpha 解释的共识地图。</p></div>
-        <div className="concept-hero__status"><i className={loading || detailLoading ? 'is-loading' : ''} /><span>{status}</span><button type="button" onClick={() => void conceptThemesApi.wakeSync()}><RefreshCw />后台更新</button></div>
+        <div className="concept-hero__status"><i className={loading || detailLoading ? 'is-loading' : ''} /><span>{status}</span><b><RefreshCw />自动更新</b></div>
         <div className="concept-orbit" aria-hidden="true"><span /><span /><span /><b /></div>
       </header>
 

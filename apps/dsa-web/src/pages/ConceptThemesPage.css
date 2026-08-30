@@ -38,3 +38,4 @@
 .concept-toolbar{grid-template-columns:minmax(260px,1fr) repeat(4,150px)}
 @media(max-width:1100px){.concept-toolbar{grid-template-columns:1fr 1fr}.concept-search{grid-column:1/-1}}
 @media(max-width:720px){.concept-toolbar{grid-template-columns:1fr}.concept-search{grid-column:auto}}
+.concept-hero__status>b{display:flex;height:30px;align-items:center;gap:5px;border:1px solid rgba(49,215,197,.22);border-radius:999px;padding:0 9px;font-size:8px;font-weight:500;color:#54cdb9;white-space:nowrap}.concept-hero__status>b svg{width:11px}.concept-hero__status i.is-loading~b svg{animation:concept-orbit 1.2s linear infinite}
