@@ -582,7 +582,25 @@ export default function ConceptThemesPage() {
     const url = new URL(window.location.href);
     url.searchParams.set('theme', String(detail.theme.id));
     url.searchParams.set('window', String(horizonDays));
-    await navigator.clipboard.writeText(url.toString());
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(url.toString());
+    } catch {
+      const input = document.createElement('textarea');
+      input.value = url.toString();
+      input.setAttribute('readonly', '');
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.select();
+      const copied = document.execCommand('copy');
+      input.remove();
+      if (!copied) {
+        setStatus('浏览器未授权复制；研究链接已写入当前地址，可直接复制地址栏');
+        window.history.replaceState({}, '', url);
+        return;
+      }
+    }
     setStatus(`已复制 ${detail.theme.canonicalName} 的可复现研究链接`);
   };
   const toggleCompare = (value: ThemeDetail) => setCompareThemes(current => {
