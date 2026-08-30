@@ -20,6 +20,8 @@ from src.storage import (
 
 def _service(tmp_path) -> ConceptThemeService:
     DatabaseManager.reset_instance()
+    ConceptThemeService._market_date_value = None
+    ConceptThemeService._market_date_checked_at = None
     db = DatabaseManager(db_url=f"sqlite:///{tmp_path / 'concept-themes.db'}")
     return ConceptThemeService(db=db, gateway=SimpleNamespace(available=False))
 
@@ -34,6 +36,15 @@ def test_theme_hierarchy_merges_market_synonyms_without_losing_subtheme() -> Non
     assert family == "AI算力与数字基础设施"
     assert theme_cluster("CPO/共封装光学", family) == "光通信产业链"
     assert theme_cluster("NPO高速光模块", family) == "光通信产业链"
+
+
+def test_latest_market_date_never_uses_weekend_fact_row(tmp_path) -> None:
+    service = _service(tmp_path)
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 8, 21), close=10.0, data_source="test"))
+        session.add(StockDaily(code="000001", date=date(2026, 8, 23), close=11.0, data_source="bad-weekend"))
+
+    assert service.latest_market_date() == date(2026, 8, 21)
 
 
 def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path) -> None:

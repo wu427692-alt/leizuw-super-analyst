@@ -11,6 +11,7 @@ import logging
 import math
 import re
 import statistics
+import threading
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -196,6 +197,10 @@ def theme_cluster(name: str, family: str) -> str:
 class ConceptThemeService:
     """Shared concept catalog, evidence weights, and return attribution service."""
 
+    _market_date_lock = threading.Lock()
+    _market_date_value: Optional[date] = None
+    _market_date_checked_at: Optional[datetime] = None
+
     def __init__(self, *, gateway: Optional[TushareGatewayService] = None, db: Optional[DatabaseManager] = None):
         self.gateway = gateway or TushareGatewayService()
         self.db = db or DatabaseManager.get_instance()
@@ -210,9 +215,47 @@ class ConceptThemeService:
             session.close()
 
     def latest_market_date(self) -> date:
-        with self._read_scope() as session:
-            value = session.execute(select(func.max(StockDaily.date))).scalar_one_or_none()
-        return value or date.today()
+        now = datetime.now()
+        cached_at = self.__class__._market_date_checked_at
+        cached_value = self.__class__._market_date_value
+        if cached_value is not None and cached_at is not None and (now - cached_at).total_seconds() < 1800:
+            return cached_value
+        with self.__class__._market_date_lock:
+            cached_at = self.__class__._market_date_checked_at
+            cached_value = self.__class__._market_date_value
+            if cached_value is not None and cached_at is not None and (now - cached_at).total_seconds() < 1800:
+                return cached_value
+            # Constituents and close-to-close attribution use the latest completed
+            # exchange session. A malformed weekend StockDaily row must never be
+            # forwarded as a provider trade_date (some concept APIs then return 0 rows).
+            cutoff = date.today() if now.hour >= 16 else date.today() - timedelta(days=1)
+            resolved: Optional[date] = None
+            if getattr(self.gateway, "available", False):
+                try:
+                    calendar = self.gateway.query("trade_cal", params={
+                        "exchange": "SSE",
+                        "start_date": (cutoff - timedelta(days=24)).strftime("%Y%m%d"),
+                        "end_date": cutoff.strftime("%Y%m%d"),
+                        "is_open": "1",
+                    })["rows"]
+                    candidates = [_parse_date(row.get("cal_date")) for row in calendar]
+                    resolved = max((item for item in candidates if item and item <= cutoff), default=None)
+                except FinancialDataUpstreamError:
+                    logger.debug("concept market calendar unavailable; using local completed session")
+            if resolved is None:
+                with self._read_scope() as session:
+                    candidates = session.execute(
+                        select(StockDaily.date).where(StockDaily.date <= cutoff)
+                        .distinct().order_by(desc(StockDaily.date)).limit(12)
+                    ).scalars().all()
+                resolved = next((item for item in candidates if item.weekday() < 5), None)
+            if resolved is None:
+                resolved = cutoff
+                while resolved.weekday() >= 5:
+                    resolved -= timedelta(days=1)
+            self.__class__._market_date_value = resolved
+            self.__class__._market_date_checked_at = now
+            return resolved
 
     def sync_catalog(self, *, market_date: Optional[date] = None) -> Dict[str, Any]:
         if not self.gateway.available:
