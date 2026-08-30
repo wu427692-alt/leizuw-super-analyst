@@ -18,6 +18,17 @@ def _http_error(exc: Exception, status: int = 422) -> HTTPException:
     return HTTPException(status_code=status, detail={"error": "concept_theme_error", "message": str(exc)[:500]})
 
 
+def _watchlist_codes(request: Request) -> set[str]:
+    user_id = int(getattr(request.state, "user_id", 0) or 0)
+    if user_id <= 0:
+        return set()
+    from src.services.user_account_service import UserAccountService
+    return {
+        str(symbol or "").upper().split(".", 1)[0].removeprefix("SH").removeprefix("SZ").removeprefix("BJ")
+        for symbol in UserAccountService().list_watchlist(user_id)
+    }
+
+
 @router.get("/overview", summary="读取分层概念题材总览")
 def overview(
     query: str = Query(default="", max_length=100),
@@ -47,14 +58,7 @@ def theme_detail(
         result = ConceptThemeService().theme_detail(
             theme_id, refresh_if_empty=refresh_if_empty, horizon_days=horizon_days,
         )
-        user_id = int(getattr(request.state, "user_id", 0) or 0)
-        watched = set()
-        if user_id > 0:
-            from src.services.user_account_service import UserAccountService
-            watched = {
-                str(symbol or "").upper().split(".", 1)[0].removeprefix("SH").removeprefix("SZ").removeprefix("BJ")
-                for symbol in UserAccountService().list_watchlist(user_id)
-            }
+        watched = _watchlist_codes(request)
         watchlist_stocks = []
         for stock in result.get("stocks", []):
             compact = str(stock.get("ts_code") or "").upper().split(".", 1)[0]
@@ -124,6 +128,23 @@ def rotation(
     limit: int = Query(default=24, ge=8, le=60),
 ):
     return ConceptThemeService().rotation(days=days, limit=limit)
+
+
+@router.get("/leaders", summary="读取跨题材市场共识股票雷达")
+def leaders(
+    request: Request,
+    horizon_days: int = Query(default=60, ge=20, le=120),
+    limit: int = Query(default=24, ge=8, le=60),
+    mode: str = Query(default="consensus", pattern="^(consensus|alpha|beta|specificity)$"),
+):
+    result = ConceptThemeService().market_consensus_leaders(
+        horizon_days=horizon_days, limit=limit, mode=mode,
+    )
+    watched = _watchlist_codes(request)
+    for item in result["items"]:
+        compact = str(item.get("ts_code") or "").split(".", 1)[0]
+        item["in_watchlist"] = compact in watched
+    return result
 
 
 @router.post("/sync/catalog", status_code=202, summary="唤醒题材库后台更新")

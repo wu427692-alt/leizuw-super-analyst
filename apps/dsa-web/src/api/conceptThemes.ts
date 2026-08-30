@@ -113,6 +113,41 @@ export type ConceptRotation = {
   method: string;
 };
 
+export type ConceptLeaderExposure = {
+  canonicalName: string;
+  weightScore: number;
+  sourceCount: number;
+  beta?: number | null;
+  residualReturn?: number | null;
+  specificityScore?: number | null;
+  confidence: string;
+};
+
+export type ConceptLeaders = {
+  items: Array<{
+    tsCode: string;
+    name: string;
+    asOfDate?: string | null;
+    radarScore: number;
+    totalThemeCount: number;
+    consensusThemeCount: number;
+    positiveAlphaCount: number;
+    sourceBreadth: number;
+    averageWeight: number;
+    primaryThemes: ConceptLeaderExposure[];
+    betaFocus?: ConceptLeaderExposure | null;
+    alphaFocus?: ConceptLeaderExposure | null;
+    divergenceFocus?: ConceptLeaderExposure | null;
+    specificityFocus?: ConceptLeaderExposure | null;
+    inWatchlist?: boolean;
+  }>;
+  totalCandidates: number;
+  mode: 'consensus' | 'alpha' | 'beta' | 'specificity';
+  horizonDays: number;
+  asOfDate?: string | null;
+  method: string;
+};
+
 export type ThemeDetail = {
   theme: ConceptTheme;
   sourceNodes: ConceptTheme[];
@@ -226,6 +261,16 @@ export const conceptThemesApi = {
       return toCamelCase<ConceptRotation>(response.data);
     },
     { freshMs: 60_000, staleMs: 15 * 60_000 },
+  ),
+  leaders: async (horizonDays = 60, mode: ConceptLeaders['mode'] = 'consensus', limit = 24): Promise<ConceptLeaders> => cachedQuery(
+    `concept:leaders:${horizonDays}:${mode}:${limit}`,
+    async () => {
+      const response = await apiClient.get('/api/v1/concept-themes/leaders', {
+        params: { horizon_days: horizonDays, mode, limit }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<ConceptLeaders>(response.data);
+    },
+    { freshMs: 30_000, staleMs: 5 * 60_000 },
   ),
   theme: async (themeId: number, refreshIfEmpty = true, horizonDays = 60): Promise<ThemeDetail> => {
     const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}`, {

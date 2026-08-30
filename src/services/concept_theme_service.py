@@ -807,6 +807,98 @@ class ConceptThemeService:
             "methodology": self.methodology(),
         }
 
+    def market_consensus_leaders(
+        self, *, horizon_days: int = 60, limit: int = 24, mode: str = "consensus",
+    ) -> Dict[str, Any]:
+        """Rank stocks across themes without turning one noisy exposure into a signal.
+
+        The radar only uses the latest completed attribution snapshot for the
+        selected horizon. Consensus ranking requires at least two independent
+        source catalogs; alpha/beta rankings additionally require a usable
+        regression confidence level.
+        """
+        horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
+        mode = mode if mode in {"consensus", "alpha", "beta", "specificity"} else "consensus"
+        limit = max(8, min(int(limit), 60))
+        with self._read_scope() as session:
+            latest_date = session.execute(select(func.max(ConceptExposureRecord.as_of_date)).where(
+                ConceptExposureRecord.horizon_days == horizon,
+            )).scalar_one_or_none()
+            rows = session.execute(select(ConceptExposureRecord).where(
+                ConceptExposureRecord.horizon_days == horizon,
+                ConceptExposureRecord.as_of_date == latest_date if latest_date else ConceptExposureRecord.id < 0,
+                ConceptExposureRecord.weight_score >= 35,
+            )).scalars().all()
+        grouped: Dict[str, List[ConceptExposureRecord]] = defaultdict(list)
+        for row in rows:
+            grouped[row.ts_code].append(row)
+        items: List[Dict[str, Any]] = []
+        for code, values in grouped.items():
+            values.sort(key=lambda row: (-float(row.weight_score or 0), -int(row.source_count or 0)))
+            consensus = [row for row in values if int(row.source_count or 0) >= 2]
+            valid = [row for row in values if row.confidence in {"medium", "high"} and row.beta is not None]
+            valid_consensus = [row for row in valid if int(row.source_count or 0) >= 2]
+            if not consensus and mode != "specificity":
+                continue
+            primary = (consensus or values)[:4]
+            beta_focus = max(valid_consensus or valid, key=lambda row: abs(float(row.beta or 0)), default=None)
+            alpha_focus = max(valid_consensus or valid, key=lambda row: float(row.residual_return or -999), default=None)
+            divergence_focus = min(valid_consensus or valid, key=lambda row: float(row.residual_return or 999), default=None)
+            specificity_focus = max(values, key=lambda row: float(row.specificity_score or 0), default=None)
+            top_weights = [float(row.weight_score or 0) for row in (consensus or values)[:4]]
+            average_weight = statistics.mean(top_weights) if top_weights else 0.0
+            consensus_count = len(consensus)
+            positive_alpha_count = sum(1 for row in valid_consensus if float(row.residual_return or 0) > 0)
+            source_breadth = max((int(row.source_count or 0) for row in values), default=0)
+            score = min(100.0, average_weight * 0.55 + min(consensus_count, 6) * 5.0 + min(source_breadth, 6) * 2.5)
+            if mode == "alpha" and alpha_focus is None:
+                continue
+            if mode == "beta" and beta_focus is None:
+                continue
+            item = {
+                "ts_code": code,
+                "name": values[0].stock_name or code,
+                "as_of_date": latest_date.isoformat() if latest_date else None,
+                "radar_score": round(score, 1),
+                "total_theme_count": len(values),
+                "consensus_theme_count": consensus_count,
+                "positive_alpha_count": positive_alpha_count,
+                "source_breadth": source_breadth,
+                "average_weight": round(average_weight, 1),
+                "primary_themes": [self._leader_exposure(row) for row in primary],
+                "beta_focus": self._leader_exposure(beta_focus) if beta_focus else None,
+                "alpha_focus": self._leader_exposure(alpha_focus) if alpha_focus else None,
+                "divergence_focus": self._leader_exposure(divergence_focus) if divergence_focus else None,
+                "specificity_focus": self._leader_exposure(specificity_focus) if specificity_focus else None,
+            }
+            items.append(item)
+        sort_key = {
+            "alpha": lambda item: (-float((item["alpha_focus"] or {}).get("residual_return") or -999), -item["consensus_theme_count"], -item["radar_score"]),
+            "beta": lambda item: (-abs(float((item["beta_focus"] or {}).get("beta") or 0)), -item["consensus_theme_count"], -item["radar_score"]),
+            "specificity": lambda item: (-float((item["specificity_focus"] or {}).get("specificity_score") or 0), -item["radar_score"]),
+            "consensus": lambda item: (-item["consensus_theme_count"], -item["radar_score"], -item["source_breadth"]),
+        }[mode]
+        items.sort(key=sort_key)
+        return {
+            "items": items[:limit], "total_candidates": len(items), "mode": mode,
+            "horizon_days": horizon, "as_of_date": latest_date.isoformat() if latest_date else None,
+            "method": "同一归因截止日聚合；共识榜要求题材至少两个独立来源，Beta/Alpha榜要求回归置信度达到中或高。",
+        }
+
+    @staticmethod
+    def _leader_exposure(row: Optional[ConceptExposureRecord]) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        return {
+            "canonical_name": row.canonical_name,
+            "weight_score": round(float(row.weight_score or 0), 1),
+            "source_count": int(row.source_count or 0),
+            "beta": row.beta,
+            "residual_return": row.residual_return,
+            "specificity_score": row.specificity_score,
+            "confidence": row.confidence,
+        }
+
     def calculate_canonical_exposures(
         self, canonical_name: str, *, horizon_days: int = 60, only_stock: Optional[str] = None,
     ) -> int:
@@ -1193,7 +1285,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.33",
+            "version": "concept-consensus-v1.34",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",

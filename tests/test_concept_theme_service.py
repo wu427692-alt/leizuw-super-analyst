@@ -270,3 +270,45 @@ def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:
     assert lens_20["themes"][0]["beta"] == 1.2
     assert lens_60["as_of_date"] == "2026-08-27"
     assert lens_60["themes"][0]["beta"] == 0.8
+
+
+def test_market_consensus_leaders_require_cross_source_themes_and_one_snapshot(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add_all([
+            ConceptExposureRecord(
+                ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
+                as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=88,
+                specificity_score=70, beta=1.35, residual_return=12.0, observations=60,
+                confidence="high", source_count=4, calculated_at=now,
+            ),
+            ConceptExposureRecord(
+                ts_code="300308.SZ", stock_name="中际旭创", canonical_name="液冷服务器",
+                as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=76,
+                specificity_score=62, beta=.95, residual_return=8.0, observations=60,
+                confidence="medium", source_count=2, calculated_at=now,
+            ),
+            ConceptExposureRecord(
+                ts_code="300502.SZ", stock_name="新易盛", canonical_name="光模块单源线索",
+                as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=92,
+                specificity_score=91, beta=1.6, residual_return=20.0, observations=60,
+                confidence="high", source_count=1, calculated_at=now,
+            ),
+            ConceptExposureRecord(
+                ts_code="300308.SZ", stock_name="中际旭创", canonical_name="旧快照",
+                as_of_date=date(2026, 8, 27), horizon_days=60, weight_score=99,
+                specificity_score=99, beta=3.0, residual_return=50.0, observations=60,
+                confidence="high", source_count=6, calculated_at=now,
+            ),
+        ])
+
+    radar = service.market_consensus_leaders(horizon_days=60, limit=8, mode="consensus")
+
+    assert radar["as_of_date"] == "2026-08-28"
+    assert radar["total_candidates"] == 1
+    assert radar["items"][0]["ts_code"] == "300308.SZ"
+    assert radar["items"][0]["consensus_theme_count"] == 2
+    assert [item["canonical_name"] for item in radar["items"][0]["primary_themes"]] == [
+        "CPO/共封装光学", "液冷服务器",
+    ]

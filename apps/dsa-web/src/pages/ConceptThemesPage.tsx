@@ -8,7 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
-import { conceptThemesApi, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
+import { conceptThemesApi, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
@@ -119,6 +119,28 @@ function ThemeResearchQueue({ stocks, onOpen }: { stocks: ConceptStock[]; onOpen
   return <section className="concept-research-queue"><header><div><strong>题材研究优先队列</strong><small>由来源共识与归因结果生成，用于决定先核验谁，不构成买卖信号</small></div><Target /></header><div>{groups.map(group => <article key={group.key} data-kind={group.key}><h3>{group.title}</h3><p>{group.note}</p>{group.values.map(item => <button type="button" key={item.tsCode} title={item.betaInterpretation} onClick={() => onOpen(item.tsCode)}><span>{item.name}<small>{item.tsCode}</small></span><b>{group.key === 'consensus' ? `${item.sourceCount}源 · W${metric(item.weightScore, 0)}` : group.key === 'elastic' ? `β ${metric(item.beta)}` : signed(item.residualReturn)}</b></button>)}{!group.values.length ? <em>当前无满足条件的成分</em> : null}</article>)}</div></section>;
 }
 
+function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
+  value: ConceptLeaders | null;
+  mode: ConceptLeaders['mode'];
+  onMode: (mode: ConceptLeaders['mode']) => void;
+  onOpen: (tsCode: string) => void;
+}) {
+  const modes: Array<[ConceptLeaders['mode'], string]> = [['consensus', '多题材共识'], ['beta', '高弹性'], ['alpha', '独立强势'], ['specificity', '独特题材']];
+  return <section className="concept-market-radar">
+    <header><div><span><Target /> CROSS-THEME STOCK RADAR</span><h2>跨题材股票雷达</h2><p>不是按单个概念涨跌排名，而是在同一归因截止日比较股票的多源题材覆盖、Beta 与独特 Alpha。</p></div><div>{modes.map(([key, label]) => <button type="button" className={mode === key ? 'is-active' : ''} onClick={() => onMode(key)} key={key}>{label}</button>)}</div></header>
+    <div className="concept-market-radar__grid">
+      {value?.items.slice(0, 12).map((item, index) => { const focus = mode === 'alpha' ? item.alphaFocus : mode === 'beta' ? item.betaFocus : mode === 'specificity' ? item.specificityFocus : item.primaryThemes[0]; return <button type="button" key={item.tsCode} onClick={() => onOpen(item.tsCode)}>
+        <i>{String(index + 1).padStart(2, '0')}</i><div><strong>{item.name}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><code>{item.tsCode}</code></div>
+        <b>{mode === 'alpha' ? signed(focus?.residualReturn) : mode === 'beta' ? `β ${metric(focus?.beta)}` : mode === 'specificity' ? metric(focus?.specificityScore, 0) : `${item.consensusThemeCount}题材`}</b>
+        <p>{focus?.canonicalName || item.primaryThemes.map(theme => theme.canonicalName).slice(0, 2).join(' · ') || '待补充归因'}</p>
+        <span>W{metric(item.averageWeight, 0)} · 最宽 {item.sourceBreadth} 源 · 雷达 {metric(item.radarScore, 0)}</span><ChevronRight />
+      </button>; })}
+      {!value?.items.length ? <p className="concept-market-radar__empty">跨题材归因正在随成分扫描自动扩展；不会用单源题材凑榜。</p> : null}
+    </div>
+    <footer>{value?.asOfDate || '最新交易日'} · {value?.totalCandidates || 0} 个合格候选 · {value?.method || '仅展示同一截止日、满足共识与回归质量条件的真实结果。'}</footer>
+  </section>;
+}
+
 function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: boolean; onClick: () => void }) {
   return <button type="button" className={`concept-stock-row ${selected ? 'is-active' : ''}`} onClick={onClick}>
     <span className="concept-stock-name"><strong>{item.name || item.tsCode}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><small>{item.tsCode}</small></span>
@@ -204,6 +226,8 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
 export default function ConceptThemesPage() {
   const [overview, setOverview] = useState<ConceptOverview | null>(null);
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
+  const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
+  const [leaderMode, setLeaderMode] = useState<ConceptLeaders['mode']>('consensus');
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
   const [stockLens, setStockLens] = useState<StockThemeLens | null>(null);
   const [compareThemes, setCompareThemes] = useState<ThemeDetail[]>([]);
@@ -244,12 +268,17 @@ export default function ConceptThemesPage() {
     try { setRotation(await conceptThemesApi.rotation(20, 18)); }
     catch { /* keep the last successful rotation snapshot while the upstream refreshes */ }
   }, []);
+  const loadLeaders = useCallback(async () => {
+    try { setLeaders(await conceptThemesApi.leaders(horizonDays, leaderMode, 24)); }
+    catch { /* keep the last successful market radar while attribution catches up */ }
+  }, [horizonDays, leaderMode]);
 
   useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
   useEffect(() => { void loadRotation(); }, [loadRotation]);
+  useEffect(() => { void loadLeaders(); }, [loadLeaders]);
   useEffect(() => { setPage(1); }, [cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation()]); }, [loadOverview, loadRotation]);
+  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders()]); }, [loadLeaders, loadOverview, loadRotation]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
@@ -355,6 +384,8 @@ export default function ConceptThemesPage() {
         </div>
         <footer>{rotation?.method || '每日保留各来源原始快照后再聚合；数据不足时不外推历史。'}</footer>
       </section>
+
+      <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
 
       <div className="concept-workspace">
         <aside className="concept-families">
