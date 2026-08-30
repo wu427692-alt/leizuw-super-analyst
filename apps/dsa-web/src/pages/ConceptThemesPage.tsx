@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   Activity, ArrowRight, Binary, Boxes, BrainCircuit, ChevronRight, CircleDot,
-  Database, Download, GitBranch, Layers3, Network, RefreshCw, Scale, Search, ShieldCheck,
+  Clock3, Database, Download, GitBranch, Layers3, Network, RefreshCw, Scale, Search, ShieldCheck,
   Sparkles, Star, Target, TrendingUp, X,
 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
@@ -531,6 +531,13 @@ export default function ConceptThemesPage() {
         <div><span>成分扫描</span><strong>{metric(overview?.summary.scanCoveragePct, 1)}%</strong></div>
         <div><span>归因截止</span><strong>{overview?.summary.quality.exposureDate || '—'}</strong></div>
         <p>{overview?.summary.quality.warnings.join(' · ') || '目录、成分与归因截止时间一致；仍需结合原始证据核验。'}</p>
+      </section>
+      <section className="concept-cadence" aria-label="概念题材数据更新节奏">
+        <header><Clock3 /><div><strong>数据更新节奏</strong><small>按数据本身的生成频率更新，不把页面轮询冒充上游实时数据</small></div></header>
+        <div><span>供应商题材目录</span><strong>每日交易日同步</strong><small>保留六套原始口径与各自交易日</small></div>
+        <div><span>全市场成分扫描</span><strong>每 5 分钟续跑</strong><small>断点续扫 · 单轮 120 个源节点</small></div>
+        <div><span>我的自选校验</span><strong>每 6 小时复核</strong><small>优先补齐新增自选的题材和归因</small></div>
+        <div><span>当前页面</span><strong>切回即刷新</strong><small>停留期间每 60 秒静默读取共享库</small></div>
       </section>
       <nav className="concept-section-nav" aria-label="概念题材研究导航">
         <span>研究路径</span>
