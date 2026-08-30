@@ -692,13 +692,7 @@ class ConceptThemeService:
             item["source_count"] = len(item["sources"])
             exposure = exposure_by_stock.get(code)
             if exposure:
-                item.update({
-                    "weight_score": round(exposure.weight_score, 1), "beta": exposure.beta,
-                    "alpha_annualized": exposure.alpha_annualized, "residual_return": exposure.residual_return,
-                    "r_squared": exposure.r_squared, "confidence": exposure.confidence,
-                    "components": _json(exposure.components_json, {}),
-                    "beta_interpretation": self._beta_interpretation(exposure.beta, exposure.confidence),
-                })
+                item.update(self._exposure_dict(exposure))
             item["reasons"] = item["reasons"][:3]
         ordered = sorted(stocks.values(), key=lambda value: (-value["weight_score"], -value["source_count"], value["name"]))
         consensus_distribution = {
@@ -1179,7 +1173,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.23",
+            "version": "concept-consensus-v1.25",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   Activity, ArrowRight, Binary, Boxes, BrainCircuit, ChevronRight, CircleDot,
-  Database, GitBranch, Layers3, Network, RefreshCw, Search, ShieldCheck,
+  Database, Download, GitBranch, Layers3, Network, RefreshCw, Scale, Search, ShieldCheck,
   Sparkles, Target, TrendingUp, X,
 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -156,6 +156,7 @@ export default function ConceptThemesPage() {
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
   const [stockLens, setStockLens] = useState<StockThemeLens | null>(null);
+  const [compareThemes, setCompareThemes] = useState<ThemeDetail[]>([]);
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 320);
   const [themeType, setThemeType] = useState('');
@@ -224,6 +225,21 @@ export default function ConceptThemesPage() {
     confirmed: detail?.stocks.filter(item => item.sourceCount === 2).length ?? 0,
     singleSource: detail?.stocks.filter(item => item.sourceCount === 1).length ?? 0,
   };
+  const comparison = useMemo(() => {
+    if (compareThemes.length !== 2) return null;
+    const [left, right] = compareThemes;
+    const leftCodes = new Set(left.stocks.map(item => item.tsCode));
+    const rightCodes = new Set(right.stocks.map(item => item.tsCode));
+    const shared = left.stocks.filter(item => rightCodes.has(item.tsCode));
+    const union = new Set([...leftCodes, ...rightCodes]).size;
+    const exclusive = (source: ThemeDetail, otherCodes: Set<string>) => source.stocks
+      .filter(item => !otherCodes.has(item.tsCode)).sort((a, b) => b.weightScore - a.weightScore).slice(0, 8);
+    return {
+      left, right, shared,
+      similarity: union ? shared.length / union * 100 : 0,
+      leftExclusive: exclusive(left, rightCodes), rightExclusive: exclusive(right, leftCodes),
+    };
+  }, [compareThemes]);
 
   useEffect(() => { setStockPage(1); setStockQuery(''); }, [selectedTheme]);
   useEffect(() => { setStockPage(1); }, [stockQuery, stockSort]);
@@ -234,6 +250,11 @@ export default function ConceptThemesPage() {
     catch (error) { setStatus(error instanceof Error ? error.message : '股票题材透镜读取失败'); }
     finally { setDetailLoading(false); }
   };
+  const toggleCompare = (value: ThemeDetail) => setCompareThemes(current => {
+    const exists = current.some(item => item.theme.canonicalName === value.theme.canonicalName);
+    if (exists) return current.filter(item => item.theme.canonicalName !== value.theme.canonicalName);
+    return current.length >= 2 ? [current[1], value] : [...current, value];
+  });
 
   return <AppPage className="concept-page max-w-[1840px]">
     <div className="concept-shell">
@@ -299,7 +320,7 @@ export default function ConceptThemesPage() {
 
         <aside className="concept-detail">
           {detail ? <>
-            <header className="concept-detail__head"><span>{detail.theme.family}</span><h2>{detail.theme.canonicalName}</h2><p>{detail.totalStocks} 只股票 · {detail.consensusStocks} 只获得多源确认 · {detail.attributionReady} 只已完成归因</p><div className="concept-horizon" aria-label="归因窗口">{([20, 60, 120] as const).map(days => <button type="button" className={horizonDays === days ? 'is-active' : ''} onClick={() => setHorizonDays(days)} key={days}>{days}日</button>)}</div></header>
+            <header className="concept-detail__head"><span>{detail.theme.family}</span><h2>{detail.theme.canonicalName}</h2><p>{detail.totalStocks} 只股票 · {detail.consensusStocks} 只获得多源确认 · {detail.attributionReady} 只已完成归因</p><div className="concept-detail-actions"><div className="concept-horizon" aria-label="归因窗口">{([20, 60, 120] as const).map(days => <button type="button" className={horizonDays === days ? 'is-active' : ''} onClick={() => setHorizonDays(days)} key={days}>{days}日</button>)}</div><button type="button" className={compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? 'is-active' : ''} onClick={() => toggleCompare(detail)}><Scale />{compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? '移出对照' : '加入对照'}</button><button type="button" onClick={() => void conceptThemesApi.exportTheme(detail.theme.id, horizonDays)}><Download />导出 CSV</button></div></header>
             <section className="concept-consensus-meter"><ScoreRing value={detail.totalStocks ? detail.consensusStocks / detail.totalStocks * 100 : 0} label="多源率" /><div><strong>市场共识不是 AI 猜测</strong><p>来源成分表独立保留；相同规范题材下合并投票，文字入选原因单独进入业务相关性评分。</p></div></section>
             <section className="concept-consensus-spectrum"><div><span>强共识 · 3+源</span><b>{consensusDistribution.strong}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.strong / detail.totalStocks * 100 : 0}%` }} /></div><div><span>交叉确认 · 2源</span><b>{consensusDistribution.confirmed}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.confirmed / detail.totalStocks * 100 : 0}%` }} /></div><div><span>单源待核验</span><b>{consensusDistribution.singleSource}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.singleSource / detail.totalStocks * 100 : 0}%` }} /></div></section>
             <SourceRail themes={detail.sourceNodes} />
@@ -310,6 +331,14 @@ export default function ConceptThemesPage() {
           </> : <div className="concept-detail-empty"><CircleDot className={detailLoading ? 'is-loading' : ''} /><h2>{detailLoading ? '正在组装题材共识' : '选择一个题材'}</h2><p>{detailLoading ? '系统正在对齐多源成分股并计算当前窗口 Beta/Alpha，其他区域可继续使用。' : '这里将展开各来源节点、成分股共识、可解释权重和收益归因。'}</p></div>}
         </aside>
       </div>
+
+      <section className="concept-compare">
+        <header><div><span><Scale /> THEME COMPARISON</span><h2>题材对照台</h2></div><p>{comparison ? `${comparison.left.theme.canonicalName} × ${comparison.right.theme.canonicalName}` : `已选 ${compareThemes.length}/2 · 在右侧题材详情点击“加入对照”`}</p></header>
+        {comparison ? <div className="concept-compare-grid">
+          {[comparison.left, comparison.right].map((item, index) => <article key={item.theme.canonicalName}><span>{index ? 'B' : 'A'} · {item.theme.family}</span><h3>{item.theme.canonicalName}</h3><dl><div><dt>全部成分</dt><dd>{item.totalStocks}</dd></div><div><dt>多源确认</dt><dd>{item.consensusStocks}</dd></div><div><dt>归因完成</dt><dd>{item.attributionReady}</dd></div><div><dt>来源节点</dt><dd>{item.sourceNodes.length}</dd></div></dl><p>独占高权重 · {(index ? comparison.rightExclusive : comparison.leftExclusive).map(stock => stock.name).join('、') || '暂无'}</p></article>)}
+          <aside><strong>{comparison.similarity.toFixed(1)}%</strong><span>成分 Jaccard 相似度</span><b>{comparison.shared.length} 只共同成分</b><p>{comparison.shared.slice(0, 12).map(item => item.name).join('、') || '没有共同成分'}</p></aside>
+        </div> : <div className="concept-compare-empty"><Scale /><p>对照不是只比涨跌：系统会比较成分重合、市场共识、归因覆盖和双方独占的高权重股票。</p></div>}
+      </section>
 
       <section className="concept-method">
         <header><BrainCircuit /><div><span>ATTRIBUTION METHOD</span><h2>Beta 与 Alpha 如何被计算</h2></div></header>

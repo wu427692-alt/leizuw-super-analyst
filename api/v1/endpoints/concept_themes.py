@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """Concept/theme graph, membership, exposure, beta, and alpha endpoints."""
 
+import csv
+import io
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 from src.services.concept_theme_service import ConceptThemeError, ConceptThemeService
 from src.services.concept_theme_worker import ConceptThemeWorker
@@ -42,6 +47,38 @@ def theme_detail(
         )
     except ConceptThemeError as exc:
         raise _http_error(exc, 404 if "不存在" in str(exc) else 422)
+
+
+@router.get("/themes/{theme_id}/export.csv", summary="导出题材成分、权重与归因结果")
+def export_theme_csv(
+    theme_id: int,
+    horizon_days: int = Query(default=60, ge=20, le=120),
+):
+    try:
+        detail = ConceptThemeService().theme_detail(
+            theme_id, refresh_if_empty=False, horizon_days=horizon_days,
+        )
+    except ConceptThemeError as exc:
+        raise _http_error(exc, 404 if "不存在" in str(exc) else 422)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "股票代码", "股票名称", "题材权重", "题材Beta", "市场Beta", f"{detail['horizon_days']}日Alpha",
+        "R²", "有效样本", "置信等级", "独立来源数", "来源", "入选理由",
+    ])
+    for item in detail["stocks"]:
+        writer.writerow([
+            item.get("ts_code"), item.get("name"), item.get("weight_score"), item.get("beta"),
+            item.get("market_beta"), item.get("residual_return"), item.get("r_squared"),
+            item.get("observations"), item.get("confidence"), item.get("source_count"),
+            "、".join(item.get("sources") or []), "；".join(item.get("reasons") or []),
+        ])
+    safe_name = str(detail["theme"].get("canonical_name") or "题材").replace("/", "-").replace("\\", "-")
+    filename = f"{safe_name}_{detail['horizon_days']}日归因.csv"
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @router.get("/stocks/{ts_code}", summary="读取个股题材暴露与独特Alpha证据")

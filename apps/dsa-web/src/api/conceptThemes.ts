@@ -237,6 +237,18 @@ export const conceptThemesApi = {
     });
     return toCamelCase<StockThemeLens>(response.data);
   },
+  exportTheme: async (themeId: number, horizonDays = 60): Promise<void> => {
+    const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}/export.csv`, {
+      params: { horizon_days: horizonDays }, responseType: 'blob', timeout: 90_000,
+    });
+    const disposition = String(response.headers['content-disposition'] || '');
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    const filename = encodedName ? decodeURIComponent(encodedName) : `题材归因_${themeId}.csv`;
+    const url = URL.createObjectURL(response.data);
+    const anchor = document.createElement('a');
+    anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  },
   wakeSync: async (): Promise<void> => {
     await apiClient.post('/api/v1/concept-themes/sync/catalog', {});
     invalidateCachedQueries('concept:');
