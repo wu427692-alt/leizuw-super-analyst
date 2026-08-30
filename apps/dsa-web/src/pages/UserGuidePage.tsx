@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, BarChart3, BookOpen, Building2, CheckCircle2,
   DatabaseZap, Download, Expand, FileSearch, FlaskConical, HelpCircle,
-  Landmark, LineChart, LockKeyhole, Mic2, Radar, Search, ShieldCheck,
+  Landmark, LineChart, LockKeyhole, Mic2, Network, Radar, Search, ShieldCheck,
   Star, X,
 } from 'lucide-react';
 import './UserGuidePage.css';
@@ -36,6 +36,13 @@ const chapters: GuideChapter[] = [
     screenshot: '/landing/screens/super-watchlist.jpg', alt: '自选股超级看板实机页面截图', href: '/super-watchlist', action: '打开自选股看板',
     steps: ['在左侧输入股票名称或代码，从候选结果中确认加入。', '切换分时和K线周期，核对最新价、昨收、成交量与行情时间。', '使用财务估值、资金筹码、公告研报、小作文、一致预期等标签查看证据。'],
     result: '形成围绕单只股票的行情、事实、观点与原文时间线；新增股票会自动触发历史资料补充。',
+  },
+  {
+    id: 'concepts', eyebrow: '识别市场主线', title: '概念题材查看', icon: Network,
+    summary: '把六套来源的原始题材、行业层级和成分归属组织成共识地图，解释个股题材权重、Beta 与独特 Alpha。',
+    screenshot: '/landing/screens/concept-themes.jpg', alt: '概念题材六源共识与Beta Alpha研究工作台实机截图', href: '/concept-themes', action: '打开概念题材查看',
+    steps: ['先按家族、产业链、来源或2源+/3源+/4源+共识门槛缩小题材范围。', '打开题材查看六源成分矩阵、Beta/Alpha四象限和研究优先队列。', '点击股票下钻到主要题材、非共识线索与公司独特证据；需要时对照两个题材或导出CSV。'],
+    result: '区分市场共同认可的主线、单源待核验标签、题材共振和公司独立表现，不把题材名直接当作投资结论。',
   },
   {
     id: 'essays', eyebrow: '检索非结构化资料', title: '机构段子与录音', icon: Mic2,
@@ -81,6 +88,7 @@ const sourceRows = [
   ['天眼查', '企业登记、风险和知识产权事实', '核对企业主体、事件日期和接口返回字段'],
   ['公开股评', '东方财富股吧公开讨论', '属于投资者观点，不等同于公司事实'],
   ['本地 SQLite', '跨页面共享的行情与证据索引', '页面应显示数据时间、来源和最近同步状态'],
+  ['六源题材库', '同花顺、东方财富板块/题材、开盘啦、通达信与申万', '先看独立来源数、扫描覆盖率，再核验成分和入选理由'],
 ];
 
 const quickTasks = [
@@ -88,6 +96,7 @@ const quickTasks = [
   { title: '搞明白一家公司', detail: '加入自选 → 行情 → 基本面 → 公告研报 → 观点证据', href: '#watchlist', icon: Building2 },
   { title: '找一批研报或录音', detail: '选择资料 → 细化筛选 → 人工确认 → 后台打包', href: '#download', icon: FileSearch },
   { title: '研究一个行业', detail: '提出问题 → 固定证据 → 后台生成 → 沿引用核验', href: '#industry', icon: Landmark },
+  { title: '判断股票属于什么主线', detail: '共识门槛 → 六源矩阵 → Beta/Alpha → 公司证据', href: '#concepts', icon: Network },
 ];
 
 const UserGuidePage = () => {
@@ -139,7 +148,7 @@ const UserGuidePage = () => {
         <span>目录</span>
         <a href="#start">01 · 注册与第一次登录</a>
         <a href="#read-data">02 · 先读懂数据口径</a>
-        <a href="#workspaces">03 · 七个工作台</a>
+        <a href="#workspaces">03 · 八个工作台</a>
         {chapters.map(({ id, title }) => <a className="is-child" href={`#${id}`} key={id}>{title}</a>)}
         <a href="#workflow">04 · 推荐研究流程</a>
         <a href="#sources">05 · 数据来源</a>
@@ -168,7 +177,7 @@ const UserGuidePage = () => {
         </section>
 
         <section className="guide-section guide-workspaces" id="workspaces">
-          <div className="guide-section-heading"><span>03</span><div><small>核心功能</small><h2>七个工作台怎么用</h2></div></div>
+          <div className="guide-section-heading"><span>03</span><div><small>核心功能</small><h2>八个工作台怎么用</h2></div></div>
           {chapters.map(({ id, eyebrow, title, summary, screenshot, alt, icon: Icon, steps, result, href, action }, index) => <section className="guide-chapter" id={id} key={id}>
             <div className="guide-chapter-top"><span>{String(index + 1).padStart(2, '0')}</span><div><small>{eyebrow}</small><h3><Icon />{title}</h3><p>{summary}</p></div></div>
             <button className="guide-screenshot" type="button" onClick={() => setLightbox({ src: screenshot, alt })} aria-label={`放大查看${title}截图`}>
