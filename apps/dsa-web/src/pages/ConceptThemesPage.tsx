@@ -5,7 +5,7 @@ import {
   Database, Download, GitBranch, Layers3, Network, RefreshCw, Scale, Search, ShieldCheck,
   Sparkles, Target, TrendingUp, X,
 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
 import { conceptThemesApi, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
@@ -82,6 +82,29 @@ function ConsensusMatrix({ stocks }: { stocks: ConceptStock[] }) {
         {sources.map(source => <i key={source} className={stock.sources.includes(source) ? 'is-hit' : ''} title={`${stock.name} · ${SOURCE_LABEL[source]} · ${stock.sources.includes(source) ? '已纳入' : '未纳入'}`} />)}
       </div>)}
     </div>
+  </section>;
+}
+
+function BetaAlphaMap({ stocks, horizonDays }: { stocks: ConceptStock[]; horizonDays: number }) {
+  const points = stocks.filter(item => typeof item.beta === 'number' && typeof item.residualReturn === 'number')
+    .sort((left, right) => right.weightScore - left.weightScore).slice(0, 160)
+    .map(item => ({ name: item.name, code: item.tsCode, beta: item.beta, alpha: item.residualReturn, weight: Math.max(16, item.weightScore) }));
+  if (points.length < 3) return null;
+  return <section className="concept-beta-alpha-map">
+    <header><div><strong>Beta / Alpha 四象限</strong><small>横轴题材敏感度 · 纵轴 {horizonDays} 日窗口 Alpha · 气泡为题材权重</small></div><span>{points.length} 只已归因</span></header>
+    <div className="concept-quadrant-labels"><i>独立强势</i><i>高弹性领涨</i><i>低相关/弱势</i><i>高弹性落后</i></div>
+    <ResponsiveContainer width="100%" height={245}>
+      <ScatterChart margin={{ top: 12, right: 16, bottom: 8, left: 4 }}>
+        <CartesianGrid stroke="rgba(90,135,190,.12)" />
+        <XAxis type="number" dataKey="beta" name="题材 Beta" tick={{ fill: '#607a9a', fontSize: 8 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
+        <YAxis type="number" dataKey="alpha" name={`${horizonDays}日 Alpha`} unit="%" tick={{ fill: '#607a9a', fontSize: 8 }} axisLine={false} tickLine={false} width={36} domain={['auto', 'auto']} />
+        <ZAxis type="number" dataKey="weight" range={[24, 150]} />
+        <ReferenceLine x={1} stroke="rgba(90,167,255,.55)" strokeDasharray="4 4" />
+        <ReferenceLine y={0} stroke="rgba(49,215,197,.45)" strokeDasharray="4 4" />
+        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ background: '#071326', border: '1px solid #29476c', fontSize: 10 }} formatter={(value, name) => [typeof value === 'number' ? value.toFixed(2) : value, name]} />
+        <Scatter name="成分股" data={points} fill="#4e8cff" fillOpacity={0.66} stroke="#83bdff" />
+      </ScatterChart>
+    </ResponsiveContainer>
   </section>;
 }
 
@@ -341,6 +364,7 @@ export default function ConceptThemesPage() {
             <section className="concept-consensus-spectrum"><div><span>强共识 · 3+源</span><b>{consensusDistribution.strong}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.strong / detail.totalStocks * 100 : 0}%` }} /></div><div><span>交叉确认 · 2源</span><b>{consensusDistribution.confirmed}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.confirmed / detail.totalStocks * 100 : 0}%` }} /></div><div><span>单源待核验</span><b>{consensusDistribution.singleSource}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.singleSource / detail.totalStocks * 100 : 0}%` }} /></div></section>
             <SourceRail themes={detail.sourceNodes} />
             <ConsensusMatrix stocks={detail.stocks} />
+            <BetaAlphaMap stocks={detail.stocks} horizonDays={horizonDays} />
             <div className="concept-stock-table-head"><span>成分股 / 权重 / Beta / {horizonDays}日 Alpha</span><span>点击展开股票题材透镜</span></div>
             <div className="concept-stock-tools"><label><Search /><input value={stockQuery} onChange={event => setStockQuery(event.target.value)} placeholder="搜索成分股名称或代码" /></label><select value={stockSort} onChange={event => setStockSort(event.target.value as typeof stockSort)} aria-label="成分股排序"><option value="weight">题材权重</option><option value="beta">Beta弹性</option><option value="alpha">Alpha排序</option><option value="name">名称</option></select></div>
             <div className="concept-stock-table">{visibleStocks.map(item => <StockRow key={item.tsCode} item={item} selected={stockLens?.tsCode === item.tsCode} onClick={() => void openStock(item.tsCode)} />)}</div>

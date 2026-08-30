@@ -1173,7 +1173,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.26",
+            "version": "concept-consensus-v1.27",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
