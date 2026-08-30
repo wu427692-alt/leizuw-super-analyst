@@ -1955,7 +1955,11 @@ class ConceptThemeService:
                 # With an intercept, ordinary residuals sum to zero by design.
                 # The useful window statistic is the intercept contribution
                 # compounded across the actually observed research window.
-                residual_return = round((math.exp(float(coefficients[0]) * observations) - 1.0) * 100, 2)
+                daily_alpha = float(coefficients[0])
+                # The regression uses arithmetic daily returns, so the window
+                # contribution must compound arithmetically. exp(alpha*n)
+                # assumes a log-return model and overstates large intercepts.
+                residual_return = round(((1.0 + daily_alpha) ** observations - 1.0) * 100, 2) if daily_alpha > -1 else None
                 r_squared = round(max(0.0, 1.0 - float(np.sum(residuals ** 2)) / total_ss), 4) if total_ss else 0.0
                 degrees_of_freedom = observations - x.shape[1]
                 if degrees_of_freedom > 0:
@@ -1996,8 +2000,10 @@ class ConceptThemeService:
                 "market": round(market_score, 1), "specificity": round(specificity, 1),
                 "catalog_count": len(meta["sources"]), "provider_count": source_count,
                 "provider_consensus_version": 1,
+                "window_alpha_compounding_version": 1,
                 "formula": "36%来源共识 + 29%业务证据 + 20%市场热度 + 15%题材专属性",
                 "regression": "个股日收益 = Alpha + Beta题材×剔除自身后的题材等权收益 + Beta市场×沪深300收益",
+                "window_alpha_formula": "窗口Alpha=(1+回归日截距)^有效样本数-1",
                 "beta_standard_error": beta_standard_error,
                 "beta_t_stat": beta_t_stat,
                 "beta_ci_low": beta_ci_low,
@@ -2100,6 +2106,40 @@ class ConceptThemeService:
                     exposure.components_json = json.dumps(components, ensure_ascii=False)
                     updated += 1
         return {"themes": len(canonicals), "exposures": updated}
+
+    def reconcile_window_alpha_compounding(self, *, limit: int = 1000) -> Dict[str, int]:
+        """Incrementally repair legacy window Alpha values without refetching prices."""
+        marker = '%"window_alpha_compounding_version": 1%'
+        limit = max(1, min(int(limit), 5000))
+        with self.db.session_scope() as session:
+            rows = session.execute(select(ConceptExposureRecord).where(
+                or_(
+                    ConceptExposureRecord.components_json.is_(None),
+                    ~ConceptExposureRecord.components_json.like(marker),
+                ),
+            ).order_by(ConceptExposureRecord.id.asc()).limit(limit)).scalars().all()
+            updated = 0
+            skipped = 0
+            for exposure in rows:
+                annual_alpha = exposure.alpha_annualized
+                observations = int(exposure.observations or 0)
+                components = _json(exposure.components_json, {})
+                if annual_alpha is not None and observations > 0:
+                    daily_alpha = float(annual_alpha) / 252.0 / 100.0
+                    exposure.residual_return = (
+                        round(((1.0 + daily_alpha) ** observations - 1.0) * 100.0, 2)
+                        if daily_alpha > -1.0 else None
+                    )
+                    components["legacy_alpha_reconciled_from"] = "alpha_annualized/252"
+                    updated += 1
+                else:
+                    skipped += 1
+                components.update({
+                    "window_alpha_compounding_version": 1,
+                    "window_alpha_formula": "窗口Alpha=(1+回归日截距)^有效样本数-1",
+                })
+                exposure.components_json = json.dumps(components, ensure_ascii=False)
+        return {"examined": len(rows), "updated": updated, "skipped": skipped}
 
     def backfill_multi_horizon_profiles(
         self, *, stock_limit: int = 2, themes_per_stock: int = 3,
@@ -2373,7 +2413,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.63",
+            "version": "concept-consensus-v1.64",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import json
 import math
 
+from sqlalchemy import select
+
 from src.services.concept_theme_service import (
     ConceptThemeService,
     _classify_unique_driver,
@@ -299,6 +301,7 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
     assert exposure["beta"] is not None
     assert exposure["beta_interpretation"]
     assert exposure["components"]["regression"].startswith("个股日收益")
+    assert exposure["components"]["window_alpha_formula"].startswith("窗口Alpha=(1+回归日截距)")
     assert exposure["components"]["beta_ci_low"] < exposure["beta"] < exposure["components"]["beta_ci_high"]
     assert abs(exposure["components"]["beta_t_stat"]) >= 1
     assert exposure["components"]["local_corpus_evidence_count"] == 1
@@ -308,6 +311,23 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
     assert detail["institution_corpus"]["total"] == 1
     assert detail["institution_corpus"]["bullish"] == 1
     assert detail["institution_corpus"]["score"] > 0
+
+    with service.db.session_scope() as session:
+        legacy = session.execute(select(ConceptExposureRecord).where(
+            ConceptExposureRecord.ts_code == "300308.SZ",
+            ConceptExposureRecord.canonical_name == "CPO/共封装光学",
+        )).scalar_one()
+        legacy.components_json = "{}"
+        legacy.residual_return = 999.0
+    repair = service.reconcile_window_alpha_compounding(limit=10)
+    assert repair["updated"] >= 1
+    repaired = service.stock_lens("300308.SZ", refresh_if_empty=False, horizon_days=60)["themes"][0]
+    expected = round(
+        ((1 + float(repaired["alpha_annualized"]) / 252 / 100) ** int(repaired["observations"]) - 1) * 100,
+        2,
+    )
+    assert repaired["residual_return"] == expected
+    assert repaired["components"]["window_alpha_compounding_version"] == 1
 
 
 def test_complete_membership_refresh_deactivates_vanished_stock_without_deleting_history(tmp_path) -> None:

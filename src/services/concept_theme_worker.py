@@ -113,6 +113,7 @@ class ConceptThemeWorker:
             startup_result["normalization"] = service.normalize_catalog_names()
             startup_result["snapshot_seed"] = service.backfill_current_snapshots()
             startup_result["provider_consensus"] = service.reconcile_exposure_provider_counts(limit=160)
+            startup_result["window_alpha"] = service.reconcile_window_alpha_compounding(limit=3000)
             startup_result["multi_horizon"] = service.backfill_multi_horizon_profiles(stock_limit=2, themes_per_stock=3)
         except Exception as exc:  # noqa: BLE001 - startup repair must not kill recurring updates.
             logger.exception("[concept-theme] startup normalization failed")
@@ -134,6 +135,7 @@ class ConceptThemeWorker:
                     result["watchlist"] = {"completed": 0, "failed": 0, "deferred": 1}
                 result["progressive"] = self._refresh_progressive_batch(service)
                 result["provider_consensus"] = service.reconcile_exposure_provider_counts(limit=80)
+                result["window_alpha"] = service.reconcile_window_alpha_compounding(limit=1000)
                 result["multi_horizon"] = service.backfill_multi_horizon_profiles(stock_limit=2, themes_per_stock=3)
                 with self._lock:
                     self._last_cycle_at = time.time()
