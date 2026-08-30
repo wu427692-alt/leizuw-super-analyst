@@ -2348,7 +2348,10 @@ class ConceptThemeService:
             recent_changes = [point["pct_change"] for point in points[-5:] if point["pct_change"] is not None]
             latest_change = float(latest["pct_change"] or 0.0)
             # Never label a partial history window as five-day momentum.
-            momentum_5d = round(sum(recent_changes), 3) if len(recent_changes) == 5 else None
+            momentum_5d = round(
+                (math.prod(1.0 + change / 100.0 for change in recent_changes) - 1.0) * 100.0,
+                3,
+            ) if len(recent_changes) == 5 else None
             heat = float(latest["heat_score"] or 45.0)
             source_count = int(latest["source_count"] or 0)
             rotation_score = max(0.0, min(100.0,
@@ -2367,9 +2370,9 @@ class ConceptThemeService:
         items.sort(key=lambda item: (-item["rotation_score"], -item["source_count"], item["canonical_name"]))
         return {
             "items": items[:row_limit], "total": len(items), "window_days": window,
-            "available_dates": len(all_dates),
+            "available_dates": min(window, len(all_dates)),
             "latest_date": max(all_dates).isoformat() if all_dates else None,
-            "method": "同一规范题材按来源日涨跌中位数聚合；轮动分由当日涨跌、来源数和热度构成，不是收益预测。",
+            "method": "同一规范题材按来源日涨跌中位数聚合，5日动量按每日收益复利累计；轮动分由当日涨跌、来源数和热度构成，不是收益预测。",
         }
 
     def backfill_current_snapshots(self) -> Dict[str, int]:
@@ -2531,7 +2534,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.66",
+            "version": "concept-consensus-v1.67",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

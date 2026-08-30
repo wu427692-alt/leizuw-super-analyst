@@ -462,6 +462,22 @@ def test_rotation_uses_cross_source_daily_median_and_rejects_partial_5d_window(t
     assert item["history_days"] == 2
 
 
+def test_rotation_compounds_five_daily_returns_instead_of_adding_percentages(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 8, 28), close=10.0, data_source="test"))
+        for offset in range(5):
+            session.add(ConceptThemeSnapshotRecord(
+                source="ths", source_code=f"885001-{offset}", canonical_name="CPO/共封装光学",
+                theme_type="concept", market_date=date(2026, 8, 24) + timedelta(days=offset),
+                pct_change=1.0, heat_score=70.0, captured_at=now,
+            ))
+    item = service.rotation(days=5, limit=8)["items"][0]
+    assert item["momentum_5d"] == round(((1.01 ** 5) - 1) * 100, 3)
+    assert "复利累计" in service.rotation(days=5, limit=8)["method"]
+
+
 def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:
     service = _service(tmp_path)
     now = utc_naive_now()
