@@ -806,6 +806,7 @@ class ConceptThemeService:
                     latest_exposure_day = select(func.max(ConceptExposureRecord.as_of_date)).scalar_subquery()
                     attributed_names = select(ConceptExposureRecord.canonical_name).where(
                         ConceptExposureRecord.as_of_date == latest_exposure_day,
+                        ConceptExposureRecord.horizon_days == 60,
                     ).distinct()
                     filters.append(ConceptThemeRecord.canonical_name.in_(attributed_names))
                     if readiness == "researchable":
@@ -2672,7 +2673,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.68",
+            "version": "concept-consensus-v1.77",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
