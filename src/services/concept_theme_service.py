@@ -217,6 +217,8 @@ class ConceptThemeService:
     _market_date_lock = threading.Lock()
     _market_date_value: Optional[date] = None
     _market_date_checked_at: Optional[datetime] = None
+    _taxonomy_lock = threading.Lock()
+    _taxonomy_cache: Dict[int, Tuple[datetime, Dict[str, Any]]] = {}
 
     def __init__(self, *, gateway: Optional[TushareGatewayService] = None, db: Optional[DatabaseManager] = None):
         self.gateway = gateway or TushareGatewayService()
@@ -230,6 +232,42 @@ class ConceptThemeService:
             yield session
         finally:
             session.close()
+
+    def _taxonomy_index(self) -> Dict[str, Any]:
+        """Build the semantic hierarchy once per process instead of on every page click."""
+        cache_key = id(self.db)
+        now = utc_naive_now()
+        cached = self.__class__._taxonomy_cache.get(cache_key)
+        if cached and (now - cached[0]).total_seconds() < 300:
+            return cached[1]
+        with self.__class__._taxonomy_lock:
+            cached = self.__class__._taxonomy_cache.get(cache_key)
+            if cached and (now - cached[0]).total_seconds() < 300:
+                return cached[1]
+            with self._read_scope() as session:
+                rows = session.execute(select(
+                    ConceptThemeRecord.id, ConceptThemeRecord.name, ConceptThemeRecord.theme_type,
+                )).all()
+            by_id: Dict[int, Tuple[str, str]] = {}
+            family_counts: Dict[str, int] = defaultdict(int)
+            cluster_families: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+            for theme_id, name, kind in rows:
+                canonical = canonicalize_theme(name)
+                family_name = theme_family(canonical, kind)
+                cluster_name = theme_cluster(canonical, family_name)
+                by_id[int(theme_id)] = (family_name, cluster_name)
+                family_counts[family_name] += 1
+                cluster_families[family_name][cluster_name] += 1
+            value = {
+                "by_id": by_id,
+                "family_counts": dict(sorted(family_counts.items(), key=lambda item: -item[1])),
+                "cluster_families": {
+                    family_name: dict(sorted(values.items(), key=lambda item: -item[1]))
+                    for family_name, values in cluster_families.items()
+                },
+            }
+            self.__class__._taxonomy_cache[cache_key] = (now, value)
+            return value
 
     def latest_market_date(self) -> date:
         now = datetime.now()
@@ -451,6 +489,7 @@ class ConceptThemeService:
         page = max(1, page)
         page_size = max(12, min(page_size, 200))
         stock_matches: List[Dict[str, Any]] = []
+        taxonomy = self._taxonomy_index()
         with self._read_scope() as session:
             statement = select(ConceptThemeRecord)
             count_stmt = select(func.count(ConceptThemeRecord.id))
@@ -467,6 +506,10 @@ class ConceptThemeService:
                 filters.append(ConceptThemeRecord.theme_type == theme_type)
             if source:
                 filters.append(ConceptThemeRecord.source == source)
+            if family or cluster:
+                matching_ids = [theme_id for theme_id, (family_name, cluster_name) in taxonomy["by_id"].items()
+                                if (not family or family_name == family) and (not cluster or cluster_name == cluster)]
+                filters.append(ConceptThemeRecord.id.in_(matching_ids) if matching_ids else ConceptThemeRecord.id < 0)
             if filters:
                 statement = statement.where(and_(*filters))
                 count_stmt = count_stmt.where(and_(*filters))
@@ -478,23 +521,9 @@ class ConceptThemeService:
                 statement = statement.order_by(desc(ConceptThemeRecord.pct_change), desc(ConceptThemeRecord.heat_score))
             else:
                 statement = statement.order_by(desc(ConceptThemeRecord.heat_score), desc(ConceptThemeRecord.market_date), ConceptThemeRecord.name.asc())
-            if family or cluster:
-                # Family is a deterministic semantic classification rather than
-                # a provider field. Filter before pagination so the total and
-                # every page remain correct instead of filtering a random slice.
-                candidate_rows = session.execute(statement).scalars().all()
-                family_items = [self._theme_dict(row) for row in candidate_rows]
-                if family:
-                    family_items = [item for item in family_items if item["family"] == family]
-                if cluster:
-                    family_items = [item for item in family_items if item["cluster"] == cluster]
-                total = len(family_items)
-                items = family_items[(page - 1) * page_size:page * page_size]
-                rows = []
-            else:
-                rows = session.execute(statement.offset((page - 1) * page_size).limit(page_size)).scalars().all()
-                total = int(session.execute(count_stmt).scalar_one())
-                items = [self._theme_dict(row) for row in rows]
+            rows = session.execute(statement.offset((page - 1) * page_size).limit(page_size)).scalars().all()
+            total = int(session.execute(count_stmt).scalar_one())
+            items = [self._theme_dict(row) for row in rows]
             latest_run = session.execute(select(ConceptSyncRunRecord).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
             source_counts = dict(session.execute(
                 select(ConceptThemeRecord.source, func.count(ConceptThemeRecord.id)).group_by(ConceptThemeRecord.source)
@@ -534,15 +563,8 @@ class ConceptThemeService:
                     "ts_code": code, "name": name or code,
                     "theme_count": int(theme_count or 0), "source_count": int(source_count or 0),
                 } for code, name, theme_count, source_count in matched_stocks]
-        family_counts: Dict[str, int] = defaultdict(int)
-        cluster_families: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        with self._read_scope() as session:
-            family_rows = session.execute(select(ConceptThemeRecord.name, ConceptThemeRecord.theme_type)).all()
-        for name, kind in family_rows:
-            canonical = canonicalize_theme(name)
-            family_name = theme_family(canonical, kind)
-            family_counts[family_name] += 1
-            cluster_families[family_name][theme_cluster(canonical, family_name)] += 1
+        family_counts = taxonomy["family_counts"]
+        cluster_families = taxonomy["cluster_families"]
         theme_total = sum(source_counts.values())
         classified_count = max(0, theme_total - family_counts.get("其他市场题材", 0))
         return {
@@ -557,9 +579,8 @@ class ConceptThemeService:
                 "failed_themes": failed_theme_count,
                 "scan_coverage_pct": round(attempted_theme_count / max(1, sum(source_counts.values())) * 100, 1),
                 "membership_coverage_pct": round(membered_theme_count / max(1, sum(source_counts.values())) * 100, 1),
-                "sources": source_counts, "types": type_counts, "families": dict(sorted(family_counts.items(), key=lambda x: -x[1])),
-                "cluster_families": {family_name: dict(sorted(values.items(), key=lambda item: -item[1]))
-                                     for family_name, values in cluster_families.items()},
+                "sources": source_counts, "types": type_counts, "families": family_counts,
+                "cluster_families": cluster_families,
                 "market_date": latest_market_date.isoformat() if latest_market_date else "",
             },
             "sync": self._run_dict(latest_run) if latest_run else None,
@@ -1129,7 +1150,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.20",
+            "version": "concept-consensus-v1.21",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
@@ -1211,6 +1232,8 @@ class ConceptThemeService:
                             if value is not None or key not in {"heat_score", "pct_change", "fund_flow"}:
                                 setattr(snapshot, key, value)
                 saved += 1
+        with self.__class__._taxonomy_lock:
+            self.__class__._taxonomy_cache.pop(id(self.db), None)
         return saved
 
     def _fetch_theme_members(self, theme: Dict[str, Any]) -> List[Dict[str, Any]]:
