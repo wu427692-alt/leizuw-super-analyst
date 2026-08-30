@@ -897,6 +897,25 @@ class ConceptThemeService:
             )).scalar_one())
             exposure_count = int(session.execute(select(func.count(ConceptExposureRecord.id))).scalar_one())
             latest_exposure_date = session.execute(select(func.max(ConceptExposureRecord.as_of_date))).scalar_one_or_none()
+            current_exposure_filter = [
+                ConceptExposureRecord.horizon_days == 60,
+                ConceptExposureRecord.as_of_date == latest_exposure_date,
+            ] if latest_exposure_date else [ConceptExposureRecord.id < 0]
+            exposure_theme_count = int(session.execute(select(
+                func.count(func.distinct(ConceptExposureRecord.canonical_name)),
+            ).where(*current_exposure_filter)).scalar_one())
+            exposure_stock_count = int(session.execute(select(
+                func.count(func.distinct(ConceptExposureRecord.ts_code)),
+            ).where(*current_exposure_filter)).scalar_one())
+            consensus_theme_names = select(ConceptThemeRecord.canonical_name).group_by(
+                ConceptThemeRecord.canonical_name,
+            ).having(func.count(func.distinct(_provider_sql(ConceptThemeRecord.source))) >= 2)
+            researchable_theme_count = int(session.execute(select(
+                func.count(func.distinct(ConceptExposureRecord.canonical_name)),
+            ).where(
+                *current_exposure_filter,
+                ConceptExposureRecord.canonical_name.in_(consensus_theme_names),
+            )).scalar_one())
             latest_market_date = session.execute(select(func.max(ConceptThemeRecord.market_date))).scalar_one_or_none()
             if query.strip():
                 stock_term = f"%{query.strip()}%"
@@ -953,6 +972,8 @@ class ConceptThemeService:
             "stock_matches": stock_matches,
             "summary": {
                 "themes": theme_total, "memberships": membership_count, "exposures": exposure_count,
+                "exposure_themes": exposure_theme_count, "exposure_stocks": exposure_stock_count,
+                "researchable_themes": researchable_theme_count,
                 "classified_themes": classified_count,
                 "semantic_coverage_pct": round(classified_count / max(1, theme_total) * 100, 1),
                 "membered_themes": membered_theme_count,

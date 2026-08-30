@@ -253,6 +253,9 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
     assert filtered["summary"]["quality"]["catalog_date"] == "2026-08-28"
     assert filtered["summary"]["quality"]["fresh_catalogs"] == 1
     assert filtered["summary"]["quality"]["total_catalogs"] == 6
+    assert filtered["summary"]["exposure_themes"] == 0
+    assert filtered["summary"]["exposure_stocks"] == 0
+    assert filtered["summary"]["researchable_themes"] == 0
     assert recalled["total"] == 1
     assert recalled["items"][0]["canonical_name"] == "CPO/共封装光学"
     assert recalled["stock_matches"] == [{

@@ -63,6 +63,9 @@ export type ConceptOverview = {
     scanCoveragePct: number;
     membershipCoveragePct: number;
     exposures: number;
+    exposureThemes: number;
+    exposureStocks: number;
+    researchableThemes: number;
     sources: Record<string, number>;
     sourceHealth: Record<string, {
       catalogNodes: number;
