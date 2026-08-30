@@ -51,6 +51,7 @@ export type ConceptOverview = {
   total: number;
   page: number;
   pageSize: number;
+  view?: 'canonical' | 'source';
   summary: {
     themes: number;
     classifiedThemes: number;
@@ -243,6 +244,7 @@ type OverviewParams = {
   family?: string;
   cluster?: string;
   minSources?: number;
+  view?: 'canonical' | 'source';
   sortBy?: 'heat' | 'name' | 'size' | 'change';
   page?: number;
   pageSize?: number;
@@ -291,6 +293,7 @@ export const conceptThemesApi = {
           family: params.family || undefined,
           cluster: params.cluster || undefined,
           min_sources: params.minSources && params.minSources > 1 ? params.minSources : undefined,
+          view: params.view ?? 'canonical',
           sort_by: params.sortBy ?? 'heat',
           page: params.page ?? 1,
           page_size: params.pageSize ?? 80,

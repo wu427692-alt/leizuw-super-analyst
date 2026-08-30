@@ -104,6 +104,18 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
         "ts_code": "300308.SZ", "name": "中际旭创", "theme_count": 1, "source_count": 1,
     }]
     assert strict_consensus["total"] == 0
+    with service.db.session_scope() as session:
+        session.add(ConceptThemeRecord(
+            source="dc_theme", source_code="000286.DC", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+        ))
+    canonical_view = service.overview(query="CPO", view="canonical", page_size=12)
+    source_view = service.overview(query="CPO", view="source", page_size=12)
+    assert canonical_view["total"] == 1
+    assert canonical_view["items"][0]["canonical_source_count"] == 2
+    assert canonical_view["items"][0]["constituent_count"] == 1
+    assert source_view["total"] == 2
 
 
 def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> None:

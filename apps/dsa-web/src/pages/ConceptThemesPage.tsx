@@ -260,6 +260,7 @@ export default function ConceptThemesPage() {
   const [family, setFamily] = useState('');
   const [cluster, setCluster] = useState('');
   const [minSources, setMinSources] = useState(1);
+  const [catalogView, setCatalogView] = useState<'canonical' | 'source'>('canonical');
   const [sortBy, setSortBy] = useState<'heat' | 'name' | 'size' | 'change'>('heat');
   const [page, setPage] = useState(1);
   const [horizonDays, setHorizonDays] = useState<20 | 60 | 120>(60);
@@ -277,7 +278,7 @@ export default function ConceptThemesPage() {
     const sequence = ++requestSequence.current;
     try {
       const responsivePageSize = typeof window !== 'undefined' && window.innerWidth <= 720 ? 12 : 48;
-      const value = await conceptThemesApi.overview({ query: debouncedQuery, themeType, source, family, cluster, minSources, sortBy, page, pageSize: responsivePageSize });
+      const value = await conceptThemesApi.overview({ query: debouncedQuery, themeType, source, family, cluster, minSources, sortBy, view: catalogView, page, pageSize: responsivePageSize });
       if (sequence !== requestSequence.current) return;
       setOverview(value);
       setStatus(`${value.summary.marketDate || '最新交易日'} · ${number(value.summary.themes)} 个源题材 · ${number(value.summary.memberships)} 条成分关系`);
@@ -286,7 +287,7 @@ export default function ConceptThemesPage() {
       if (sequence !== requestSequence.current) return;
       setStatus(error instanceof Error ? error.message : '题材库暂时不可用，系统会静默重试');
     } finally { if (sequence === requestSequence.current) setLoading(false); }
-  }, [cluster, debouncedQuery, family, minSources, page, sortBy, source, themeType]);
+  }, [catalogView, cluster, debouncedQuery, family, minSources, page, sortBy, source, themeType]);
   const loadRotation = useCallback(async () => {
     try { setRotation(await conceptThemesApi.rotation(20, 18)); }
     catch { /* keep the last successful rotation snapshot while the upstream refreshes */ }
@@ -305,7 +306,7 @@ export default function ConceptThemesPage() {
     conceptThemesApi.cluster(family, cluster, horizonDays).then(value => { if (active) setClusterDetail(value); }).catch(() => { if (active) setClusterDetail(null); });
     return () => { active = false; };
   }, [cluster, family, horizonDays]);
-  useEffect(() => { setPage(1); }, [cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
+  useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
   const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders()]); }, [loadLeaders, loadOverview, loadRotation]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
@@ -391,6 +392,7 @@ export default function ConceptThemesPage() {
         <select value={themeType} onChange={event => setThemeType(event.target.value)} aria-label="题材类型"><option value="">全部层级</option><option value="theme">市场题材</option><option value="concept">概念</option><option value="industry">行业</option><option value="region">地域</option><option value="style">风格</option></select>
         <select value={source} onChange={event => setSource(event.target.value)} aria-label="数据来源"><option value="">全部来源</option>{overview?.methodology.sources.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</select>
         <select value={minSources} onChange={event => setMinSources(Number(event.target.value))} aria-label="共识门槛"><option value={1}>全部共识层级</option><option value={2}>至少 2 个来源</option><option value={3}>至少 3 个来源</option><option value={4}>至少 4 个来源</option></select>
+        <select value={catalogView} onChange={event => setCatalogView(event.target.value as typeof catalogView)} aria-label="题材展示口径"><option value="canonical">规范题材 · 去重</option><option value="source">全部源节点</option></select>
         <select value={sortBy} onChange={event => setSortBy(event.target.value as typeof sortBy)} aria-label="排序"><option value="heat">市场热度</option><option value="change">当日涨跌</option><option value="size">成分规模</option><option value="name">名称</option></select>
       </section>
       {debouncedQuery && overview?.stockMatches?.length ? <section className="concept-stock-direct" aria-label="股票题材画像直达">
@@ -427,7 +429,7 @@ export default function ConceptThemesPage() {
         </aside>
 
         <main className="concept-universe">
-          <div className="concept-section-head"><div><span>THEME UNIVERSE</span><h2>{family || '全市场题材宇宙'}</h2></div><p>当前召回 {number(overview?.total)} 个源节点 · 点击进入成分与归因</p></div>
+          <div className="concept-section-head"><div><span>THEME UNIVERSE</span><h2>{family || '全市场题材宇宙'}</h2></div><p>当前召回 {number(overview?.total)} 个{catalogView === 'canonical' ? '规范题材' : '源节点'} · 点击进入成分与归因</p></div>
           {clusters.length ? <div className="concept-clusters"><button type="button" className={!cluster ? 'is-active' : ''} onClick={() => setCluster('')}>全部二级主题</button>{clusters.map(([name, count]) => <button type="button" className={cluster === name ? 'is-active' : ''} onClick={() => setCluster(name)} key={name}>{name}<b>{count}</b></button>)}</div> : null}
           {clusterDetail ? <ClusterAggregate value={clusterDetail} onOpen={tsCode => void openStock(tsCode)} /> : null}
           <div className="concept-grid">

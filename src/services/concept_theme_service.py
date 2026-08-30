@@ -484,7 +484,7 @@ class ConceptThemeService:
 
     def overview(
         self, *, query: str = "", theme_type: str = "", source: str = "", family: str = "", cluster: str = "",
-        min_sources: int = 1, sort_by: str = "heat", page: int = 1, page_size: int = 80,
+        min_sources: int = 1, sort_by: str = "heat", view: str = "source", page: int = 1, page_size: int = 80,
     ) -> Dict[str, Any]:
         page = max(1, page)
         page_size = max(12, min(page_size, 200))
@@ -526,8 +526,17 @@ class ConceptThemeService:
                 statement = statement.order_by(desc(ConceptThemeRecord.pct_change), desc(ConceptThemeRecord.heat_score))
             else:
                 statement = statement.order_by(desc(ConceptThemeRecord.heat_score), desc(ConceptThemeRecord.market_date), ConceptThemeRecord.name.asc())
-            rows = session.execute(statement.offset((page - 1) * page_size).limit(page_size)).scalars().all()
-            total = int(session.execute(count_stmt).scalar_one())
+            if view == "canonical":
+                source_rows = session.execute(statement).scalars().all()
+                grouped_rows: Dict[str, ConceptThemeRecord] = {}
+                for row in source_rows:
+                    grouped_rows.setdefault(row.canonical_name, row)
+                grouped_values = list(grouped_rows.values())
+                total = len(grouped_values)
+                rows = grouped_values[(page - 1) * page_size:page * page_size]
+            else:
+                rows = session.execute(statement.offset((page - 1) * page_size).limit(page_size)).scalars().all()
+                total = int(session.execute(count_stmt).scalar_one())
             items = [self._theme_dict(row) for row in rows]
             page_canonicals = {item["canonical_name"] for item in items}
             canonical_coverage = {
@@ -540,10 +549,21 @@ class ConceptThemeService:
                     ConceptThemeRecord.canonical_name.in_(page_canonicals),
                 ).group_by(ConceptThemeRecord.canonical_name)).all()
             } if page_canonicals else {}
+            canonical_stock_counts = dict(session.execute(select(
+                ConceptThemeRecord.canonical_name,
+                func.count(func.distinct(ConceptMembershipRecord.ts_code)),
+            ).join(
+                ConceptMembershipRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(
+                ConceptThemeRecord.canonical_name.in_(page_canonicals),
+                ConceptMembershipRecord.active.is_(True),
+            ).group_by(ConceptThemeRecord.canonical_name)).all()) if view == "canonical" and page_canonicals else {}
             for item in items:
                 coverage = canonical_coverage.get(item["canonical_name"], {})
                 item["canonical_source_count"] = int(coverage.get("source_count", 0))
                 item["canonical_node_count"] = int(coverage.get("node_count", 0))
+                if view == "canonical":
+                    item["constituent_count"] = int(canonical_stock_counts.get(item["canonical_name"], 0) or 0)
             latest_run = session.execute(select(ConceptSyncRunRecord).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
             source_counts = dict(session.execute(
                 select(ConceptThemeRecord.source, func.count(ConceptThemeRecord.id)).group_by(ConceptThemeRecord.source)
@@ -618,6 +638,7 @@ class ConceptThemeService:
             }
         return {
             "items": items, "total": total, "page": page, "page_size": page_size,
+            "view": "canonical" if view == "canonical" else "source",
             "stock_matches": stock_matches,
             "summary": {
                 "themes": theme_total, "memberships": membership_count, "exposures": exposure_count,
@@ -1414,7 +1435,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.37",
+            "version": "concept-consensus-v1.38",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
