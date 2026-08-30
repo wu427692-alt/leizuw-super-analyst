@@ -140,6 +140,10 @@ export type ConceptLeaders = {
     radarScore: number;
     totalThemeCount: number;
     consensusThemeCount: number;
+    independentClusterCount: number;
+    themeOverlapRate: number;
+    dominantCluster?: string | null;
+    dominantClusterShare: number;
     positiveAlphaCount: number;
     sourceBreadth: number;
     averageWeight: number;
@@ -250,11 +254,34 @@ export type StockThemeLens = {
     date?: string;
     importance?: number;
     url?: string;
+    category: string;
+    direction: 'positive' | 'negative' | 'neutral';
   }>;
+  uniqueDriverSummary: {
+    categories: Record<string, number>;
+    directions: Record<string, number>;
+    method: string;
+  };
+  overlapAudit: {
+    independentClusterCount: number;
+    overlapRate: number;
+    dominantClusterShare: number;
+    dominantCluster?: string | null;
+    clusters: Array<{
+      family: string;
+      cluster: string;
+      themeCount: number;
+      themes: string[];
+      weightShare: number;
+    }>;
+    method: string;
+  };
   summary: {
     themeCount: number;
     sourceCount: number;
     consensusCount: number;
+    independentClusterCount: number;
+    themeOverlapRate: number;
     alphaPositiveCount: number;
     stableBetaCount: number;
     persistentAlphaCount: number;

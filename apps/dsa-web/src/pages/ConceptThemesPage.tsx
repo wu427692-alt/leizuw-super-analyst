@@ -136,15 +136,15 @@ function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
   onMode: (mode: ConceptLeaders['mode']) => void;
   onOpen: (tsCode: string) => void;
 }) {
-  const modes: Array<[ConceptLeaders['mode'], string]> = [['consensus', '多题材共识'], ['beta', '高弹性'], ['alpha', '独立强势'], ['specificity', '独特题材']];
+  const modes: Array<[ConceptLeaders['mode'], string]> = [['consensus', '独立主线共识'], ['beta', '高弹性'], ['alpha', '独立强势'], ['specificity', '独特题材']];
   return <section className="concept-market-radar">
     <header><div><span><Target /> CROSS-THEME STOCK RADAR</span><h2>跨题材股票雷达</h2><p>不是按单个概念涨跌排名，而是在同一归因截止日比较股票的多源题材覆盖、Beta 与独特 Alpha。</p></div><div>{modes.map(([key, label]) => <button type="button" className={mode === key ? 'is-active' : ''} onClick={() => onMode(key)} key={key}>{label}</button>)}</div></header>
     <div className="concept-market-radar__grid">
       {value?.items.slice(0, 12).map((item, index) => { const focus = mode === 'alpha' ? item.alphaFocus : mode === 'beta' ? item.betaFocus : mode === 'specificity' ? item.specificityFocus : item.primaryThemes[0]; return <button type="button" key={item.tsCode} onClick={() => onOpen(item.tsCode)}>
         <i>{String(index + 1).padStart(2, '0')}</i><div><strong>{item.name}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><code>{item.tsCode}</code></div>
-        <b>{mode === 'alpha' ? signed(focus?.residualReturn) : mode === 'beta' ? `β ${metric(focus?.beta)}` : mode === 'specificity' ? metric(focus?.specificityScore, 0) : `${item.consensusThemeCount}题材`}</b>
+        <b>{mode === 'alpha' ? signed(focus?.residualReturn) : mode === 'beta' ? `β ${metric(focus?.beta)}` : mode === 'specificity' ? metric(focus?.specificityScore, 0) : `${item.independentClusterCount}主线`}</b>
         <p>{focus?.canonicalName || item.primaryThemes.map(theme => theme.canonicalName).slice(0, 2).join(' · ') || '待补充归因'}</p>
-        <span>W{metric(item.averageWeight, 0)} · 最宽 {item.sourceBreadth} 方 · 雷达 {metric(item.radarScore, 0)}</span><ChevronRight />
+        <span>W{metric(item.averageWeight, 0)} · {item.consensusThemeCount}标签 · 重叠{metric(item.themeOverlapRate, 0)}% · 雷达 {metric(item.radarScore, 0)}</span><ChevronRight />
       </button>; })}
       {!value?.items.length ? <p className="concept-market-radar__empty">跨题材归因正在随成分扫描自动扩展；不会用单源题材凑榜。</p> : null}
     </div>
@@ -180,6 +180,7 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
     weight: item.weightScore,
     beta: item.beta ?? 0,
   }));
+  const driverCategories = Object.entries(value.uniqueDriverSummary?.categories || {}).slice(0, 5);
   return <aside className="concept-stock-lens">
     <div className="concept-stock-lens__head">
       <div><span>STOCK EXPOSURE LENS</span><h2>{value.name || value.tsCode}</h2><p>{value.tsCode} · 截止 {value.asOfDate || '最新入库交易日'}</p></div>
@@ -189,10 +190,18 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
       <div><strong>{value.summary.themeCount}</strong><span>归属题材</span></div>
       <div><strong>{value.summary.sourceCount}</strong><span>独立提供方</span></div>
       <div><strong>{value.summary.consensusCount}</strong><span>多源共识</span></div>
+      <div><strong>{value.summary.independentClusterCount}</strong><span>独立题材主线</span></div>
+      <div><strong>{metric(value.summary.themeOverlapRate, 0)}%</strong><span>相近标签重叠</span></div>
       <div><strong>{value.summary.alphaPositiveCount}</strong><span>正向窗口Alpha</span></div>
       <div><strong>{value.summary.stableBetaCount}</strong><span>跨周期稳定 Beta</span></div>
       <div><strong>{value.summary.persistentAlphaCount}</strong><span>至少双窗正 Alpha</span></div>
     </div>
+    <section className="concept-overlap-audit">
+      <header><div><strong>题材重叠审计</strong><small>{value.overlapAudit?.method}</small></div><span>{value.overlapAudit?.dominantCluster || '待归类'} · {metric(value.overlapAudit?.dominantClusterShare, 0)}%</span></header>
+      <div>{value.overlapAudit?.clusters.slice(0, 6).map(item => <article key={`${item.family}-${item.cluster}`}>
+        <span><strong>{item.cluster}</strong><small>{item.themeCount} 个相近标签</small></span><b>{metric(item.weightShare, 0)}%</b><p>{item.themes.slice(0, 4).join(' · ')}</p>
+      </article>)}</div>
+    </section>
     <div className="concept-lens-chart">
       <ResponsiveContainer width="100%" height={230}>
         <BarChart data={chart} layout="vertical" margin={{ left: 8, right: 24 }}>
@@ -242,8 +251,13 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
     </section>
     <section className="concept-alpha-evidence">
       <header><Sparkles /><div><h3>公司独特 Alpha 线索</h3><p>与题材共振分开呈现，仅列本地事实库可回溯证据</p></div></header>
+      {value.uniqueDrivers.length ? <div className="concept-driver-summary">
+        <div>{driverCategories.map(([name, count]) => <span key={name}><b>{name}</b><em>{count}</em></span>)}</div>
+        <p><i data-tone="positive">正向措辞 {value.uniqueDriverSummary?.directions.positive || 0}</i><i data-tone="neutral">中性 {value.uniqueDriverSummary?.directions.neutral || 0}</i><i data-tone="negative">风险措辞 {value.uniqueDriverSummary?.directions.negative || 0}</i></p>
+        <small>{value.uniqueDriverSummary?.method}</small>
+      </div> : null}
       {value.uniqueDrivers.slice(0, 8).map((item, index) => <a href={item.url || '#'} key={`${item.kind}-${item.title}-${index}`}>
-        <span>{item.source}</span><strong>{item.title}</strong><p>{item.summary}</p>
+        <span>{item.category} · {item.source}</span><em data-tone={item.direction}>{item.direction === 'positive' ? '正向措辞' : item.direction === 'negative' ? '风险措辞' : '中性事实'}</em><strong>{item.title}</strong><p>{item.summary}</p>
       </a>)}
       {!value.uniqueDrivers.length ? <p className="concept-muted">近半年尚未检出可单独归因的公司事件。</p> : null}
     </section>

@@ -97,6 +97,38 @@ def _independent_source_strength(sources: Iterable[Any]) -> float:
 def _provider_sql(column: Any) -> Any:
     return case((column.in_(("dc_board", "dc_theme")), "东方财富"), else_=column)
 
+
+DRIVER_CATEGORY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
+    ("业绩与预期", ("业绩", "利润", "营收", "收入", "预增", "预亏", "目标价", "盈利预测")),
+    ("订单与客户", ("订单", "中标", "客户", "供应商", "合作", "框架协议")),
+    ("产品与技术", ("产品", "技术", "研发", "专利", "验证", "投产", "扩产", "产能")),
+    ("资本与治理", ("回购", "增持", "减持", "股东", "并购", "重组", "定增", "股权")),
+    ("风险与监管", ("处罚", "诉讼", "监管", "风险", "终止", "问询", "立案")),
+    ("行业供需", ("供需", "涨价", "降价", "价格", "景气", "库存")),
+)
+
+
+def _classify_unique_driver(title: Any, summary: Any) -> Tuple[str, str]:
+    title_text = str(title or "").lower()
+    summary_text = str(summary or "").lower()
+    text = f"{title_text} {summary_text}"
+    # 标题是编辑者给出的主事件，权重高于摘要中的背景词；同分时保留规则优先级，
+    # 避免“新产品完成客户验证”被摘要里的“客户”误判为订单事件。
+    best_score = 0
+    category = "其他公司事实"
+    for name, keywords in DRIVER_CATEGORY_RULES:
+        score = (
+            sum(2 for word in keywords if word.lower() in title_text)
+            + sum(1 for word in keywords if word.lower() in summary_text)
+        )
+        if score > best_score:
+            best_score = score
+            category = name
+    positive = sum(word in text for word in ("超预期", "增长", "上调", "中标", "回购", "增持", "突破", "落地", "投产", "扩产"))
+    negative = sum(word in text for word in ("不及预期", "低于预期", "下滑", "亏损", "减持", "处罚", "诉讼", "终止", "下调", "风险", "问询"))
+    direction = "positive" if positive > negative else "negative" if negative > positive else "neutral"
+    return category, direction
+
 THS_TYPE_MAP = {
     "N": ("concept", 3),
     "I": ("industry", 1),
@@ -283,6 +315,8 @@ class ConceptThemeService:
                     ConceptThemeRecord.id, ConceptThemeRecord.name, ConceptThemeRecord.theme_type,
                 )).all()
             by_id: Dict[int, Tuple[str, str]] = {}
+            by_canonical: Dict[str, Tuple[str, str]] = {}
+            type_by_canonical: Dict[str, str] = {}
             family_counts: Dict[str, int] = defaultdict(int)
             cluster_families: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
             for theme_id, name, kind in rows:
@@ -290,10 +324,14 @@ class ConceptThemeService:
                 family_name = theme_family(canonical, kind)
                 cluster_name = theme_cluster(canonical, family_name)
                 by_id[int(theme_id)] = (family_name, cluster_name)
+                by_canonical.setdefault(canonical, (family_name, cluster_name))
+                type_by_canonical.setdefault(canonical, kind)
                 family_counts[family_name] += 1
                 cluster_families[family_name][cluster_name] += 1
             value = {
                 "by_id": by_id,
+                "by_canonical": by_canonical,
+                "type_by_canonical": type_by_canonical,
                 "family_counts": dict(sorted(family_counts.items(), key=lambda item: -item[1])),
                 "cluster_families": {
                     family_name: dict(sorted(values.items(), key=lambda item: -item[1]))
@@ -309,6 +347,7 @@ class ConceptThemeService:
         cached_value = self.__class__._market_date_value
         if cached_value is not None and cached_at is not None and (now - cached_at).total_seconds() < 1800:
             return cached_value
+
         with self.__class__._market_date_lock:
             cached_at = self.__class__._market_date_checked_at
             cached_value = self.__class__._market_date_value
@@ -345,6 +384,58 @@ class ConceptThemeService:
             self.__class__._market_date_value = resolved
             self.__class__._market_date_checked_at = now
             return resolved
+
+    def _semantic_cluster_for(self, canonical_name: str, taxonomy: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+        """Resolve a canonical theme to one independent economic narrative.
+
+        Several vendors may label the same driver as CPO, optical modules or
+        optical communication. These remain separate auditable catalog nodes,
+        but must not be counted as independent stock narratives.
+        """
+        taxonomy = taxonomy or self._taxonomy_index()
+        mapped = taxonomy.get("by_canonical", {}).get(canonical_name)
+        if mapped:
+            return mapped
+        family_name = theme_family(canonical_name, "concept")
+        return family_name, theme_cluster(canonical_name, family_name)
+
+    @staticmethod
+    def _overlap_profile(themes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        groups: Dict[str, Dict[str, Any]] = {}
+        for theme in themes:
+            family_name = str(theme.get("family") or "其他市场题材")
+            cluster_name = str(theme.get("cluster") or family_name)
+            key = f"{family_name}::{cluster_name}"
+            group = groups.setdefault(key, {
+                "family": family_name, "cluster": cluster_name, "themes": [],
+                "weight_sum": 0.0, "effective_weight": 0.0, "representative": None,
+            })
+            group["themes"].append(str(theme.get("canonical_name") or ""))
+            weight = float(theme.get("weight_score") or 0)
+            group["weight_sum"] += weight
+            group["effective_weight"] = max(float(group["effective_weight"]), weight)
+            representative = group["representative"]
+            if representative is None or weight > float(representative.get("weight_score") or 0):
+                group["representative"] = theme
+        ranked = sorted(groups.values(), key=lambda item: -float(item["effective_weight"]))
+        raw_count = len(themes)
+        independent_count = len(ranked)
+        total_weight = sum(float(item["effective_weight"]) for item in ranked)
+        dominant_share = float(ranked[0]["effective_weight"]) / total_weight if ranked and total_weight else 0.0
+        overlap_rate = (raw_count - independent_count) / raw_count if raw_count else 0.0
+        return {
+            "independent_cluster_count": independent_count,
+            "overlap_rate": round(overlap_rate * 100, 1),
+            "dominant_cluster_share": round(dominant_share * 100, 1),
+            "dominant_cluster": ranked[0]["cluster"] if ranked else None,
+            "clusters": [{
+                "family": item["family"], "cluster": item["cluster"],
+                "theme_count": len(item["themes"]), "themes": item["themes"],
+                "weight_share": round((float(item["effective_weight"]) / total_weight * 100) if total_weight else 0.0, 1),
+            } for item in ranked],
+            "representatives": [item["representative"] for item in ranked if item["representative"] is not None],
+            "method": "同一语义簇内的相近标签只计作一条独立主线；原始标签仍完整保留用于审计。",
+        }
 
     def sync_catalog(self, *, market_date: Optional[date] = None) -> Dict[str, Any]:
         if not self.gateway.available:
@@ -955,6 +1046,10 @@ class ConceptThemeService:
             themes.append(values)
         themes.sort(key=lambda value: (-value["weight_score"], -value["source_count"]))
         consensus_themes = [item for item in themes if item["source_count"] >= 2]
+        narrative_consensus = [item for item in consensus_themes
+                               if item.get("theme_type") not in {"region", "style", "feature", "broad"}]
+        overlap_profile = self._overlap_profile(narrative_consensus or consensus_themes)
+        primary_themes = list(overlap_profile.pop("representatives"))[:5]
         unique_themes = sorted([
             item for item in themes
             if item["source_count"] == 1
@@ -964,17 +1059,30 @@ class ConceptThemeService:
             -(value.get("specificity_score") or 0),
             -(value.get("residual_return") or -999),
         ))[:6]
-        drivers = self._unique_driver_evidence(code)
+        drivers = self._unique_driver_evidence(code, stock_name)
+        driver_categories: Dict[str, int] = defaultdict(int)
+        driver_directions: Dict[str, int] = defaultdict(int)
+        for driver in drivers:
+            driver_categories[str(driver.get("category") or "其他公司事实")] += 1
+            driver_directions[str(driver.get("direction") or "neutral")] += 1
         return {
             "ts_code": code, "name": stock_name, "as_of_date": latest_date.isoformat() if latest_date else None,
-            "themes": themes, "primary_themes": consensus_themes[:5], "unique_themes": unique_themes,
+            "themes": themes, "primary_themes": primary_themes, "unique_themes": unique_themes,
+            "overlap_audit": overlap_profile,
             "unique_drivers": drivers,
+            "unique_driver_summary": {
+                "categories": dict(sorted(driver_categories.items(), key=lambda item: (-item[1], item[0]))),
+                "directions": dict(driver_directions),
+                "method": "按公司事实标题与摘要做可审计语义归类；方向只描述证据措辞，不等于股价方向或因果 Alpha。",
+            },
             "horizon_days": horizon,
             "summary": {
                 "theme_count": len(themes), "source_count": _independent_source_count(
                     source for item in themes for source in item["sources"]
                 ),
                 "consensus_count": sum(1 for item in themes if item["source_count"] >= 2),
+                "independent_cluster_count": overlap_profile["independent_cluster_count"],
+                "theme_overlap_rate": overlap_profile["overlap_rate"],
                 "alpha_positive_count": sum(1 for item in themes if (item.get("alpha_annualized") or 0) > 0),
                 "stable_beta_count": sum(1 for item in themes if item.get("beta_stability") == "stable"),
                 "persistent_alpha_count": sum(1 for item in themes if sum(
@@ -999,6 +1107,7 @@ class ConceptThemeService:
         horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
         mode = mode if mode in {"consensus", "alpha", "beta", "specificity"} else "consensus"
         limit = max(8, min(int(limit), 60))
+        taxonomy = self._taxonomy_index()
         with self._read_scope() as session:
             latest_date = session.execute(select(func.max(ConceptExposureRecord.as_of_date)).where(
                 ConceptExposureRecord.horizon_days == horizon,
@@ -1019,17 +1128,37 @@ class ConceptThemeService:
             valid_consensus = [row for row in valid if int(row.source_count or 0) >= 2]
             if not consensus and mode != "specificity":
                 continue
-            primary = (consensus or values)[:4]
+            cluster_candidates = consensus or values
+            narrative_candidates = [row for row in cluster_candidates
+                                    if taxonomy.get("type_by_canonical", {}).get(row.canonical_name, "concept")
+                                    not in {"region", "style", "feature", "broad"}]
+            cluster_candidates = narrative_candidates or cluster_candidates
+            overlap_input = []
+            for row in cluster_candidates:
+                family_name, cluster_name = self._semantic_cluster_for(row.canonical_name, taxonomy)
+                overlap_input.append({
+                    "canonical_name": row.canonical_name, "family": family_name,
+                    "cluster": cluster_name, "weight_score": float(row.weight_score or 0),
+                })
+            overlap_profile = self._overlap_profile(overlap_input)
+            row_by_name = {row.canonical_name: row for row in values}
+            primary = [row_by_name[item["canonical_name"]] for item in overlap_profile.pop("representatives")[:4]]
             beta_focus = max(valid_consensus or valid, key=lambda row: abs(float(row.beta or 0)), default=None)
             alpha_focus = max(valid_consensus or valid, key=lambda row: float(row.residual_return or -999), default=None)
             divergence_focus = min(valid_consensus or valid, key=lambda row: float(row.residual_return or 999), default=None)
             specificity_focus = max(values, key=lambda row: float(row.specificity_score or 0), default=None)
-            top_weights = [float(row.weight_score or 0) for row in (consensus or values)[:4]]
+            top_weights = [float(row.weight_score or 0) for row in primary]
             average_weight = statistics.mean(top_weights) if top_weights else 0.0
             consensus_count = len(consensus)
-            positive_alpha_count = sum(1 for row in valid_consensus if float(row.residual_return or 0) > 0)
+            representative_names = {row.canonical_name for row in primary}
+            positive_alpha_count = sum(1 for row in valid_consensus
+                                       if row.canonical_name in representative_names and float(row.residual_return or 0) > 0)
             source_breadth = max((int(row.source_count or 0) for row in values), default=0)
-            score = min(100.0, average_weight * 0.55 + min(consensus_count, 6) * 5.0 + min(source_breadth, 6) * 2.5)
+            independent_clusters = int(overlap_profile["independent_cluster_count"])
+            score = min(100.0, max(0.0,
+                average_weight * 0.55 + min(independent_clusters, 6) * 5.0
+                + min(source_breadth, 6) * 2.5 - float(overlap_profile["overlap_rate"]) * 0.08
+            ))
             if mode == "alpha" and alpha_focus is None:
                 continue
             if mode == "beta" and beta_focus is None:
@@ -1041,6 +1170,10 @@ class ConceptThemeService:
                 "radar_score": round(score, 1),
                 "total_theme_count": len(values),
                 "consensus_theme_count": consensus_count,
+                "independent_cluster_count": independent_clusters,
+                "theme_overlap_rate": overlap_profile["overlap_rate"],
+                "dominant_cluster": overlap_profile["dominant_cluster"],
+                "dominant_cluster_share": overlap_profile["dominant_cluster_share"],
                 "positive_alpha_count": positive_alpha_count,
                 "source_breadth": source_breadth,
                 "average_weight": round(average_weight, 1),
@@ -1052,16 +1185,16 @@ class ConceptThemeService:
             }
             items.append(item)
         sort_key = {
-            "alpha": lambda item: (-float((item["alpha_focus"] or {}).get("residual_return") or -999), -item["consensus_theme_count"], -item["radar_score"]),
-            "beta": lambda item: (-abs(float((item["beta_focus"] or {}).get("beta") or 0)), -item["consensus_theme_count"], -item["radar_score"]),
+            "alpha": lambda item: (-float((item["alpha_focus"] or {}).get("residual_return") or -999), -item["independent_cluster_count"], -item["radar_score"]),
+            "beta": lambda item: (-abs(float((item["beta_focus"] or {}).get("beta") or 0)), -item["independent_cluster_count"], -item["radar_score"]),
             "specificity": lambda item: (-float((item["specificity_focus"] or {}).get("specificity_score") or 0), -item["radar_score"]),
-            "consensus": lambda item: (-item["consensus_theme_count"], -item["radar_score"], -item["source_breadth"]),
+            "consensus": lambda item: (-item["independent_cluster_count"], -item["radar_score"], -item["source_breadth"]),
         }[mode]
         items.sort(key=sort_key)
         return {
             "items": items[:limit], "total_candidates": len(items), "mode": mode,
             "horizon_days": horizon, "as_of_date": latest_date.isoformat() if latest_date else None,
-            "method": "同一归因截止日聚合；共识榜要求题材至少两个独立来源，Beta/Alpha榜要求回归置信度达到中或高。",
+            "method": "同一归因截止日聚合；共识榜按独立语义簇而非相近标签数量排序，Beta/Alpha榜还要求回归置信度达到中或高。",
         }
 
     def cluster_detail(
@@ -1664,7 +1797,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.44",
+            "version": "concept-consensus-v1.47",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
@@ -1838,7 +1971,7 @@ class ConceptThemeService:
         movement = min(100.0, max(changes, default=0.0) * 14.0)
         return max(20.0, min(100.0, heat * 0.72 + movement * 0.28))
 
-    def _unique_driver_evidence(self, code: str) -> List[Dict[str, Any]]:
+    def _unique_driver_evidence(self, code: str, stock_name: str = "") -> List[Dict[str, Any]]:
         cutoff = utc_naive_now() - timedelta(days=180)
         compact = code[:6]
         items: List[Dict[str, Any]] = []
@@ -1870,6 +2003,7 @@ class ConceptThemeService:
                 "kind": "event", "title": event.title, "summary": event.summary,
                 "source": event.source_name, "date": event.event_at.isoformat() if event.event_at else None,
                 "importance": event.importance_score, "url": event.url,
+                "symbol_count": len(set(re.findall(r"\d{6}", str(event.symbol_codes or "")))),
             })
         ai_topic_ids = {note.topic_id for note, _analysis in ai_notes}
         for note in notes:
@@ -1880,6 +2014,7 @@ class ConceptThemeService:
                 "summary": (note.content or "")[:240], "source": note.group_name or "知识星球",
                 "date": note.created_at.isoformat() if note.created_at else None,
                 "importance": 60, "url": f"/essay-radar/feed?topic={note.topic_id}",
+                "symbol_count": len(set(re.findall(r"\d{6}", str(note.symbol_codes or "")))),
             })
         for note, analysis in ai_notes:
             catalysts = _json(analysis.catalysts_json, [])
@@ -1893,6 +2028,7 @@ class ConceptThemeService:
                 "date": note.created_at.isoformat() if note.created_at else None,
                 "importance": analysis.importance_score or 55,
                 "url": f"/essay-radar/feed?topic={note.topic_id}",
+                "symbol_count": len(set(re.findall(r"\d{6}", str(note.symbol_codes or "")))),
             })
         items.sort(key=lambda value: (
             value.get("importance") or 0,
@@ -1901,11 +2037,33 @@ class ConceptThemeService:
         ), reverse=True)
         deduplicated: List[Dict[str, Any]] = []
         seen_links: set[str] = set()
+        seen_titles: set[str] = set()
         for item in items:
             key = str(item.get("url") or f"{item.get('kind')}:{item.get('title')}")
-            if key in seen_links:
+            title_key = re.sub(r"[^\w\u4e00-\u9fff]", "", str(item.get("title") or "").lower())[:80]
+            if key in seen_links or (title_key and title_key in seen_titles):
                 continue
             seen_links.add(key)
+            if title_key:
+                seen_titles.add(title_key)
+            category, direction = _classify_unique_driver(item.get("title"), item.get("summary"))
+            title_text = str(item.get("title") or "")
+            title_has_company = bool((stock_name and stock_name in title_text) or compact in title_text)
+            source_text = str(item.get("source") or "").lower()
+            if any(marker in title_text for marker in (" 开盘 ", " 收盘 ", "筹码与资金快照", "实时行情")):
+                continue
+            is_corpus_signal = item.get("kind") in {"institution_note", "ai_institution_signal"} or any(
+                marker in source_text for marker in ("知识星球", "机构段子", "研判", "deepseek", "录音纪要")
+            )
+            if is_corpus_signal:
+                # Sector roundups and market recaps may mention a stock once, but
+                # that is not a company-specific Alpha driver. Keep them in the
+                # institution corpus, not in this stricter company evidence rail.
+                if not title_has_company:
+                    continue
+            item["category"] = category
+            item["direction"] = direction
+            item.pop("symbol_count", None)
             deduplicated.append(item)
         return deduplicated[:16]
 
