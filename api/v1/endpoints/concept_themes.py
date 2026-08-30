@@ -148,6 +148,14 @@ def leaders(
     return result
 
 
+@router.get("/institution-radar", summary="从机构语料发现新兴题材与股票线索")
+def institution_radar(
+    days: int = Query(default=30, ge=7, le=90),
+    limit: int = Query(default=16, ge=8, le=40),
+):
+    return ConceptThemeService().institution_theme_radar(days=days, limit=limit)
+
+
 @router.get("/cluster-detail", summary="读取二级题材簇的聚合成分")
 def cluster_detail(
     request: Request,

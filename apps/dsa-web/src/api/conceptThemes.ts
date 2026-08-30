@@ -161,6 +161,27 @@ export type ConceptLeaders = {
   method: string;
 };
 
+export type InstitutionThemeRadar = {
+  items: Array<{
+    canonicalName: string;
+    status: 'provider_consensus' | 'provider_single' | 'corpus_candidate';
+    providerCount: number;
+    providerSources: string[];
+    noteCount: number;
+    recent7D: number;
+    accelerationPct: number;
+    discoveryScore: number;
+    sentiment: { bullish: number; neutral: number; bearish: number };
+    stocks: Array<{ tsCode: string; name: string; mentions: number }>;
+    latestAt?: string | null;
+    samples: Array<{ title: string; topicId: string; date: string; url: string }>;
+  }>;
+  totalCandidates: number;
+  windowDays: number;
+  asOfAt?: string | null;
+  method: string;
+};
+
 export type ConceptClusterDetail = {
   family: string;
   cluster: string;
@@ -374,6 +395,16 @@ export const conceptThemesApi = {
       return toCamelCase<ConceptLeaders>(response.data);
     },
     { freshMs: 30_000, staleMs: 5 * 60_000 },
+  ),
+  institutionRadar: async (days = 30, limit = 16): Promise<InstitutionThemeRadar> => cachedQuery(
+    `concept:institution-radar:${days}:${limit}`,
+    async () => {
+      const response = await apiClient.get('/api/v1/concept-themes/institution-radar', {
+        params: { days, limit }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<InstitutionThemeRadar>(response.data);
+    },
+    { freshMs: 60_000, staleMs: 10 * 60_000 },
   ),
   cluster: async (family: string, cluster: string, horizonDays = 60, limit = 80): Promise<ConceptClusterDetail> => cachedQuery(
     `concept:cluster:${family}:${cluster}:${horizonDays}:${limit}`,

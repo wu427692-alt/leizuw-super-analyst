@@ -8,7 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
-import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
+import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
@@ -152,6 +152,33 @@ function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
   </section>;
 }
 
+function InstitutionDiscoveryRadar({ value, onTheme, onOpen }: {
+  value: InstitutionThemeRadar | null;
+  onTheme: (name: string) => void;
+  onOpen: (tsCode: string) => void;
+}) {
+  const statusLabel = {
+    provider_consensus: '多源已确认', provider_single: '单源待交叉', corpus_candidate: '语料新候选',
+  } as const;
+  return <section className="concept-institution-radar">
+    <header><div><span><BrainCircuit /> LOCAL CORPUS DISCOVERY</span><h2>机构语料新兴题材雷达</h2><p>从本地机构段子提取正在加速的主题与明确提及股票；AI 候选不会自动升级为市场共识。</p></div><div><strong>{number(value?.totalCandidates)}</strong><small>{value?.windowDays || 30} 日有效候选</small></div></header>
+    <div className="concept-institution-radar__track">
+      {value?.items.slice(0, 8).map(item => {
+        const totalTone = Math.max(1, item.sentiment.bullish + item.sentiment.neutral + item.sentiment.bearish);
+        return <article key={item.canonicalName} data-status={item.status}>
+          <div className="concept-institution-radar__title"><button type="button" onClick={() => onTheme(item.canonicalName)}><strong>{item.canonicalName}</strong><ChevronRight /></button><span>{statusLabel[item.status]}</span></div>
+          <div className="concept-institution-radar__metrics"><b>{item.noteCount}<small>篇语料</small></b><b>{item.recent7D}<small>近7日</small></b><b data-tone={item.accelerationPct >= 0 ? 'up' : 'down'}>{signed(item.accelerationPct)}<small>提及加速度</small></b><b>{metric(item.discoveryScore, 0)}<small>发现分</small></b></div>
+          <div className="concept-institution-radar__tone" title={`看多 ${item.sentiment.bullish} · 中性 ${item.sentiment.neutral} · 看空 ${item.sentiment.bearish}`}><i data-tone="bullish" style={{ width: `${item.sentiment.bullish / totalTone * 100}%` }} /><i data-tone="neutral" style={{ width: `${item.sentiment.neutral / totalTone * 100}%` }} /><i data-tone="bearish" style={{ width: `${item.sentiment.bearish / totalTone * 100}%` }} /></div>
+          <div className="concept-institution-radar__stocks">{item.stocks.slice(0, 4).map(stock => <button type="button" key={`${item.canonicalName}-${stock.tsCode || stock.name}`} onClick={() => stock.tsCode ? onOpen(stock.tsCode) : undefined} disabled={!stock.tsCode}><span>{stock.name}</span><b>{stock.mentions}</b></button>)}{!item.stocks.length ? <em>暂无明确股票提及</em> : null}</div>
+          <footer>{item.providerCount ? `${item.providerCount} 个独立供应商已有同名题材` : '尚无供应商同名题材，需人工核验'} · {item.latestAt?.slice(0, 10) || '近期'}</footer>
+        </article>;
+      })}
+      {!value?.items.length ? <p>机构语料候选正在从已完成 AI 结构化结果中聚合；无证据时不生成虚假题材。</p> : null}
+    </div>
+    <footer>{value?.method || '机构语料只负责发现线索，供应商目录负责定义市场共识，两套口径不会混算。'}</footer>
+  </section>;
+}
+
 function ClusterAggregate({ value, onOpen }: { value: ConceptClusterDetail; onOpen: (tsCode: string) => void }) {
   return <section className="concept-cluster-aggregate">
     <header><div><span>LEVEL 2 AGGREGATE</span><h3>{value.cluster}</h3><p>{value.themeNodes} 个原始节点 · {value.canonicalThemes} 个规范题材 · {value.totalStocks} 只去重股票 · {value.sourceCount} 个独立提供方</p></div><b>{value.asOfDate || '最新快照'}</b></header>
@@ -268,6 +295,7 @@ export default function ConceptThemesPage() {
   const [overview, setOverview] = useState<ConceptOverview | null>(null);
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
+  const [institutionRadar, setInstitutionRadar] = useState<InstitutionThemeRadar | null>(null);
   const [leaderMode, setLeaderMode] = useState<ConceptLeaders['mode']>('consensus');
   const [clusterDetail, setClusterDetail] = useState<ConceptClusterDetail | null>(null);
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
@@ -316,6 +344,10 @@ export default function ConceptThemesPage() {
     try { setLeaders(await conceptThemesApi.leaders(horizonDays, leaderMode, 24)); }
     catch { /* keep the last successful market radar while attribution catches up */ }
   }, [horizonDays, leaderMode]);
+  const loadInstitutionRadar = useCallback(async () => {
+    try { setInstitutionRadar(await conceptThemesApi.institutionRadar(30, 16)); }
+    catch { /* keep the last successful corpus discovery snapshot while analysis catches up */ }
+  }, []);
   const loadCluster = useCallback(async () => {
     if (!family || !cluster) return;
     try { setClusterDetail(await conceptThemesApi.cluster(family, cluster, horizonDays)); }
@@ -325,10 +357,11 @@ export default function ConceptThemesPage() {
   useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
   useEffect(() => { void loadRotation(); }, [loadRotation]);
   useEffect(() => { void loadLeaders(); }, [loadLeaders]);
+  useEffect(() => { void loadInstitutionRadar(); }, [loadInstitutionRadar]);
   useEffect(() => { setClusterDetail(null); void loadCluster(); }, [loadCluster]);
   useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadCluster()]); }, [loadCluster, loadLeaders, loadOverview, loadRotation]);
+  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadOverview, loadRotation]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
@@ -442,6 +475,8 @@ export default function ConceptThemesPage() {
         </div>
         <footer>{rotation?.method || '每日保留各来源原始快照后再聚合；数据不足时不外推历史。'}</footer>
       </section>
+
+      <InstitutionDiscoveryRadar value={institutionRadar} onTheme={setQuery} onOpen={tsCode => void openStock(tsCode)} />
 
       <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
 

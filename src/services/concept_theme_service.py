@@ -1023,6 +1023,136 @@ class ConceptThemeService:
             "method": "只统计AI已结构化且主题字段明确命中的机构段子；情绪是语料观点，不等于事实或投资建议。",
         }
 
+    def institution_theme_radar(self, *, days: int = 30, limit: int = 16) -> Dict[str, Any]:
+        """Discover emerging narratives in the user's institution corpus.
+
+        AI-derived topics never become provider consensus automatically. They
+        are exposed as a separate candidate layer and carry their note, stock
+        and provider evidence so a researcher can decide whether to promote or
+        reject them.
+        """
+        window = max(7, min(int(days), 90))
+        output_limit = max(8, min(int(limit), 40))
+        cutoff = utc_naive_now() - timedelta(days=window)
+        recent_cutoff = utc_naive_now() - timedelta(days=min(7, window))
+        with self._read_scope() as session:
+            provider_rows = session.execute(select(
+                ConceptThemeRecord.canonical_name, ConceptThemeRecord.source,
+            )).all()
+            stock_identity_rows = session.execute(select(
+                ConceptMembershipRecord.stock_name, ConceptMembershipRecord.ts_code,
+            ).where(
+                ConceptMembershipRecord.active.is_(True),
+                ConceptMembershipRecord.stock_name.is_not(None),
+            ).distinct()).all()
+            rows = session.execute(select(ResearchNote, EssayAnalysisRecord).join(
+                EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id,
+            ).where(
+                ResearchNote.created_at >= cutoff,
+                EssayAnalysisRecord.status == "completed",
+            ).order_by(desc(ResearchNote.created_at)).limit(5000)).all()
+        provider_sources: Dict[str, set[str]] = defaultdict(set)
+        for canonical_name, source_name in provider_rows:
+            provider_sources[canonicalize_theme(str(canonical_name or ""))].add(str(source_name or ""))
+        stock_code_by_name = {
+            str(stock_name).strip(): _ts_code(ts_code)
+            for stock_name, ts_code in stock_identity_rows if str(stock_name or "").strip() and _ts_code(ts_code)
+        }
+        stock_name_by_code = {
+            _ts_code(ts_code): str(stock_name).strip()
+            for stock_name, ts_code in stock_identity_rows if str(stock_name or "").strip() and _ts_code(ts_code)
+        }
+        ignored = {"信息不足", "其他", "其他主题", "无", "未知", "行业", "公司", "股票", "市场"}
+        stats: Dict[str, Dict[str, Any]] = {}
+        for note, analysis in rows:
+            created_at = note.created_at or utc_naive_now()
+            raw_themes = _json(analysis.themes_json, [])
+            if not isinstance(raw_themes, list):
+                continue
+            themes = [canonicalize_theme(str(value).strip()) for value in raw_themes if str(value).strip()]
+            mentions = _json(analysis.stock_mentions_json, [])
+            note_stocks: List[Tuple[str, str]] = []
+            for mention in mentions if isinstance(mentions, list) else []:
+                if not isinstance(mention, dict):
+                    continue
+                if float(mention.get("confidence") or .5) < .35:
+                    continue
+                code = _ts_code(mention.get("ts_code") or mention.get("code"))
+                name = str(mention.get("name") or code).strip()
+                code = code or stock_code_by_name.get(name, "")
+                name = stock_name_by_code.get(code, name)
+                if code or name:
+                    note_stocks.append((code, name))
+            for canonical_name in dict.fromkeys(themes):
+                if canonical_name in ignored or not 2 <= len(canonical_name) <= 36:
+                    continue
+                item = stats.setdefault(canonical_name, {
+                    "canonical_name": canonical_name, "note_ids": set(), "recent_7d": 0,
+                    "prior_count": 0, "importance_sum": 0.0, "bullish": 0, "bearish": 0,
+                    "neutral": 0, "stocks": defaultdict(int), "latest_at": None, "samples": [],
+                })
+                if note.topic_id in item["note_ids"]:
+                    continue
+                item["note_ids"].add(note.topic_id)
+                if created_at >= recent_cutoff:
+                    item["recent_7d"] += 1
+                else:
+                    item["prior_count"] += 1
+                sentiment = str(analysis.sentiment or "neutral").lower()
+                sentiment_key = sentiment if sentiment in {"bullish", "bearish"} else "neutral"
+                item[sentiment_key] += 1
+                importance = float(analysis.importance_score or 50)
+                confidence = float(analysis.confidence_score or .5)
+                item["importance_sum"] += importance * max(.2, min(confidence, 1.0))
+                for stock in note_stocks:
+                    item["stocks"][stock] += 1
+                if item["latest_at"] is None or created_at > item["latest_at"]:
+                    item["latest_at"] = created_at
+                if len(item["samples"]) < 3:
+                    item["samples"].append({
+                        "title": str(note.title or "")[:100],
+                        "topic_id": note.topic_id,
+                        "date": created_at.isoformat(),
+                        "url": f"/essay-radar/feed?topic={note.topic_id}",
+                    })
+        items = []
+        for canonical_name, item in stats.items():
+            note_count = len(item["note_ids"])
+            if note_count < 2:
+                continue
+            sources = provider_sources.get(canonical_name, set())
+            provider_count = _independent_source_count(sources)
+            recent = int(item["recent_7d"])
+            baseline_days = max(1, window - min(7, window))
+            prior_week_equivalent = float(item["prior_count"]) / baseline_days * 7
+            acceleration = ((recent - prior_week_equivalent) / max(1.0, prior_week_equivalent)) * 100
+            average_evidence = float(item["importance_sum"]) / note_count
+            discovery_score = min(100.0,
+                math.log1p(note_count) * 16 + min(recent, 20) * 1.7
+                + min(provider_count, 5) * 5 + average_evidence * .18
+            )
+            ranked_stocks = sorted(item["stocks"].items(), key=lambda value: (-value[1], value[0]))[:6]
+            items.append({
+                "canonical_name": canonical_name,
+                "status": "provider_consensus" if provider_count >= 2 else "provider_single" if provider_count == 1 else "corpus_candidate",
+                "provider_count": provider_count,
+                "provider_sources": sorted(sources),
+                "note_count": note_count,
+                "recent_7d": recent,
+                "acceleration_pct": round(acceleration, 1),
+                "discovery_score": round(discovery_score, 1),
+                "sentiment": {"bullish": item["bullish"], "neutral": item["neutral"], "bearish": item["bearish"]},
+                "stocks": [{"ts_code": code, "name": name, "mentions": count} for (code, name), count in ranked_stocks],
+                "latest_at": item["latest_at"].isoformat() if item["latest_at"] else None,
+                "samples": item["samples"],
+            })
+        items.sort(key=lambda value: (-value["discovery_score"], -value["recent_7d"], -value["note_count"], value["canonical_name"]))
+        return {
+            "items": items[:output_limit], "total_candidates": len(items), "window_days": window,
+            "as_of_at": max((item["latest_at"] for item in items if item["latest_at"]), default=None),
+            "method": "近窗机构段子 AI 主题与明确股票提及聚合；供应商未确认的主题只进入候选层，不自动计入市场共识或题材权重。",
+        }
+
     def stock_lens(self, ts_code: str, *, refresh_if_empty: bool = True, horizon_days: int = 60) -> Dict[str, Any]:
         code = _ts_code(ts_code)
         horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
@@ -1869,7 +1999,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.48",
+            "version": "concept-consensus-v1.49",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

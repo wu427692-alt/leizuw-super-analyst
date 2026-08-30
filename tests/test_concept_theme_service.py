@@ -514,3 +514,51 @@ def test_cluster_detail_aggregates_theme_nodes_without_inventing_cluster_beta(tm
     assert result["items"][0]["theme_count"] == 2
     assert result["items"][0]["dominant_exposure"]["canonical_name"] == "CPO/共封装光学"
     assert "不冒充二级主题回归" in result["method"]
+
+
+def test_institution_radar_keeps_ai_candidates_separate_from_provider_consensus(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add_all([
+            ConceptThemeRecord(
+                source="ths", source_code="885001.TI", name="CPO概念",
+                canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+                market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+            ),
+            ConceptThemeRecord(
+                source="dc_theme", source_code="000699.DC", name="CPO概念",
+                canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+                market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+            ),
+        ])
+        for index in range(2):
+            topic_id = f"institution-radar-{index}"
+            session.add(ResearchNote(
+                topic_id=topic_id, group_id="g1", group_name="调研纪要",
+                title=f"中际旭创新技术跟踪{index}", content="讨论CPO与自研新主题。",
+                symbol_codes="300308.SZ", content_hash=f"institution-radar-content-{index}",
+                created_at=now - timedelta(days=index + 1),
+            ))
+            session.flush()
+            session.add(EssayAnalysisRecord(
+                topic_id=topic_id, status="completed", model="test-model", prompt_version="test-v1",
+                input_hash=f"institution-radar-analysis-{index}", summary="明确公司与新技术主题。",
+                sentiment="bullish" if index == 0 else "neutral", importance_score=80,
+                confidence_score=.9, themes_json=json.dumps(["CPO", "自研新主题"], ensure_ascii=False),
+                stock_mentions_json=json.dumps([{
+                    "ts_code": "300308.SZ", "name": "中际旭创", "confidence": .9,
+                }], ensure_ascii=False), completed_at=now, updated_at=now,
+            ))
+
+    radar = service.institution_theme_radar(days=30, limit=16)
+    by_name = {item["canonical_name"]: item for item in radar["items"]}
+
+    assert by_name["CPO/共封装光学"]["status"] == "provider_consensus"
+    assert by_name["CPO/共封装光学"]["provider_count"] == 2
+    assert by_name["自研新主题"]["status"] == "corpus_candidate"
+    assert by_name["自研新主题"]["provider_count"] == 0
+    assert by_name["自研新主题"]["stocks"][0] == {
+        "ts_code": "300308.SZ", "name": "中际旭创", "mentions": 2,
+    }
+    assert "不自动计入市场共识" in radar["method"]
