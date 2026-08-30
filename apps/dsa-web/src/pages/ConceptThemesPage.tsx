@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   Activity, ArrowRight, Binary, Boxes, BrainCircuit, ChevronRight, CircleDot,
-  Clock3, Database, Download, GitBranch, Layers3, Network, RefreshCw, Scale, Search, ShieldCheck,
+  Clock3, Database, Download, GitBranch, Layers3, Link2, Network, RefreshCw, Scale, Search, ShieldCheck,
   Sparkles, Star, Target, TrendingUp, X,
 } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
@@ -424,6 +424,12 @@ function StockLensPanel({ value, onClose, onExport }: { value: StockThemeLens; o
 }
 
 export default function ConceptThemesPage() {
+  const initialParams = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search);
+  const initialThemeValue = Number(initialParams?.get('theme') || 0);
+  const initialThemeId = Number.isInteger(initialThemeValue) && initialThemeValue > 0 ? initialThemeValue : null;
+  const initialWindowValue = Number(initialParams?.get('window') || 60);
+  const initialHorizon = ([20, 60, 120].includes(initialWindowValue) ? initialWindowValue : 60) as 20 | 60 | 120;
+  const directThemeRef = useRef(initialThemeId != null);
   const [overview, setOverview] = useState<ConceptOverview | null>(null);
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
@@ -448,8 +454,8 @@ export default function ConceptThemesPage() {
   const [catalogView, setCatalogView] = useState<'canonical' | 'source'>('canonical');
   const [sortBy, setSortBy] = useState<'heat' | 'name' | 'size' | 'change'>('heat');
   const [page, setPage] = useState(1);
-  const [horizonDays, setHorizonDays] = useState<20 | 60 | 120>(60);
-  const [selectedTheme, setSelectedTheme] = useState<number | null>(null);
+  const [horizonDays, setHorizonDays] = useState<20 | 60 | 120>(initialHorizon);
+  const [selectedTheme, setSelectedTheme] = useState<number | null>(initialThemeId);
   const [stockQuery, setStockQuery] = useState('');
   const [stockSort, setStockSort] = useState<'weight' | 'beta' | 'alpha' | 'name'>('weight');
   const [watchlistOnly, setWatchlistOnly] = useState(false);
@@ -467,7 +473,7 @@ export default function ConceptThemesPage() {
       if (sequence !== requestSequence.current) return;
       setOverview(value);
       setStatus(`${value.summary.marketDate || '最新交易日'} · ${number(value.summary.themes)} 个源题材 · ${number(value.summary.memberships)} 条成分关系`);
-      setSelectedTheme(current => value.items.some(item => item.id === current) ? current : value.items.find(item => item.canonicalSourceCount >= 3 && item.constituentCount > 0)?.id ?? value.items.find(item => item.canonicalSourceCount >= 2 && item.constituentCount > 0)?.id ?? value.items[0]?.id ?? null);
+      setSelectedTheme(current => (directThemeRef.current && current != null) || value.items.some(item => item.id === current) ? current : value.items.find(item => item.canonicalSourceCount >= 3 && item.constituentCount > 0)?.id ?? value.items.find(item => item.canonicalSourceCount >= 2 && item.constituentCount > 0)?.id ?? value.items[0]?.id ?? null);
     } catch (error) {
       if (sequence !== requestSequence.current) return;
       setStatus(error instanceof Error ? error.message : '题材库暂时不可用，系统会静默重试');
@@ -571,6 +577,14 @@ export default function ConceptThemesPage() {
     catch (error) { setStatus(error instanceof Error ? error.message : '股票题材透镜读取失败'); }
     finally { setDetailLoading(false); }
   };
+  const copyThemeLink = async () => {
+    if (!detail) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('theme', String(detail.theme.id));
+    url.searchParams.set('window', String(horizonDays));
+    await navigator.clipboard.writeText(url.toString());
+    setStatus(`已复制 ${detail.theme.canonicalName} 的可复现研究链接`);
+  };
   const toggleCompare = (value: ThemeDetail) => setCompareThemes(current => {
     const exists = current.some(item => item.theme.canonicalName === value.theme.canonicalName);
     if (exists) return current.filter(item => item.theme.canonicalName !== value.theme.canonicalName);
@@ -672,7 +686,7 @@ export default function ConceptThemesPage() {
           {clusters.length ? <div className="concept-clusters"><button type="button" className={!cluster ? 'is-active' : ''} onClick={() => setCluster('')}>全部二级主题</button>{clusters.map(([name, count]) => <button type="button" className={cluster === name ? 'is-active' : ''} onClick={() => setCluster(name)} key={name}>{name}<b>{count}</b></button>)}</div> : null}
           {clusterDetail ? <ClusterAggregate value={clusterDetail} onOpen={tsCode => void openStock(tsCode)} /> : null}
           <div className="concept-grid">
-            {visibleThemes.map(item => <ThemeCard key={item.id} item={item} active={selectedTheme === item.id} onClick={() => setSelectedTheme(item.id)} />)}
+            {visibleThemes.map(item => <ThemeCard key={item.id} item={item} active={selectedTheme === item.id} onClick={() => { directThemeRef.current = false; setSelectedTheme(item.id); }} />)}
           </div>
           {overview && overview.total > overview.pageSize ? <nav className="concept-pagination" aria-label="题材分页"><button type="button" disabled={page <= 1 || loading} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><span>第 {page} / {Math.max(1, Math.ceil(overview.total / overview.pageSize))} 页</span><button type="button" disabled={page >= Math.ceil(overview.total / overview.pageSize) || loading} onClick={() => setPage(value => value + 1)}>下一页</button></nav> : null}
           {!loading && !visibleThemes.length ? <EmptyState title="没有命中题材" description="调整关键词或层级筛选；后台目录会按最新交易日自动更新。" /> : null}
@@ -680,7 +694,7 @@ export default function ConceptThemesPage() {
 
         <aside className="concept-detail">
           {detail ? <>
-            <header className="concept-detail__head"><span>{detail.theme.family}</span><h2>{detail.theme.canonicalName}</h2><p>{detail.totalStocks} 只股票 · {detail.consensusStocks} 只获得多源确认 · {detail.attributionReady} 只已完成归因</p><div className="concept-detail-actions"><div className="concept-horizon" aria-label="归因窗口">{([20, 60, 120] as const).map(days => <button type="button" className={horizonDays === days ? 'is-active' : ''} onClick={() => setHorizonDays(days)} key={days}>{days}日</button>)}</div><button type="button" className={compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? 'is-active' : ''} onClick={() => toggleCompare(detail)}><Scale />{compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? '移出对照' : '加入对照'}</button><button type="button" onClick={() => void conceptThemesApi.exportTheme(detail.theme.id, horizonDays)}><Download />导出 CSV</button></div></header>
+            <header className="concept-detail__head"><span>{detail.theme.family}</span><h2>{detail.theme.canonicalName}</h2><p>{detail.totalStocks} 只股票 · {detail.consensusStocks} 只获得多源确认 · {detail.attributionReady} 只已完成归因</p><div className="concept-detail-actions"><div className="concept-horizon" aria-label="归因窗口">{([20, 60, 120] as const).map(days => <button type="button" className={horizonDays === days ? 'is-active' : ''} onClick={() => setHorizonDays(days)} key={days}>{days}日</button>)}</div><button type="button" className={compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? 'is-active' : ''} onClick={() => toggleCompare(detail)}><Scale />{compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? '移出对照' : '加入对照'}</button><button type="button" onClick={() => void copyThemeLink()}><Link2 />复制研究链接</button><button type="button" onClick={() => void conceptThemesApi.exportTheme(detail.theme.id, horizonDays)}><Download />导出 CSV</button></div></header>
             <section className="concept-consensus-meter"><ScoreRing value={detail.totalStocks ? detail.consensusStocks / detail.totalStocks * 100 : 0} label="多源率" /><div><strong>市场共识不是 AI 猜测</strong><p>来源成分表独立保留；相同规范题材下合并投票，文字入选原因单独进入业务相关性评分。</p></div></section>
             <ThemeHistoryPulse value={detail.history} />
             {detail.institutionCorpus ? <InstitutionCorpusPulse value={detail.institutionCorpus} /> : null}
