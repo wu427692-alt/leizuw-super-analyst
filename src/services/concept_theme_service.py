@@ -107,6 +107,51 @@ DRIVER_CATEGORY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
     ("行业供需", ("供需", "涨价", "降价", "价格", "景气", "库存")),
 )
 
+STRUCTURAL_FAMILY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
+    ("区域与地理", (
+        "华东", "华南", "华北", "华中", "西南", "西北", "东北", "城市群", "都市圈",
+        "京津冀", "长三角", "珠三角", "海峡西岸", "深圳特区", "一体化",
+        "北京市", "上海市", "天津市", "重庆市", "杭州市", "苏州市", "广州市", "深圳市",
+        "南京市", "成都市", "无锡市", "宁波市", "合肥市", "长沙市", "绍兴市", "武汉市", "常州市",
+        "台州市", "厦门市", "嘉兴市", "青岛市", "西安市", "地方国企广东省",
+        "长江三角",
+    )),
+    ("公司治理与资本事件", (
+        "股权转让", "控制权变更", "回购", "增持", "减持", "定增", "股权激励", "股权分散",
+        "并购重组", "重组预案", "可转债", "转债标的", "含H股", "AH股", "关税战", "员工持股",
+        "整体上市", "股权集中", "参股新三板", "参股新股", "摘帽", "SPAC", "主营变更",
+    )),
+    ("国资与所有制", ("地方国企", "地方国资", "央企", "国资控股", "国资入股")),
+    ("宏观与跨境", ("人民币贬值", "贬值受益", "海外业务", "中概股", "红筹股", "俄乌冲突", "出口管制", "对日反制")),
+    ("行业供需与价格", ("涨价", "降价", "库存周期", "供给收缩")),
+    ("业绩与财务特征", (
+        "中报预增", "中报首亏", "中报预减", "中报扭亏", "一季报预增", "三季报预增", "业绩预升", "连续亏损", "扣非亏损",
+        "亏损股", "微利股", "绩优股", "高应收款", "商誉减值", "久不分红", "自由现金流",
+        "预计转亏", "高负债率",
+    )),
+    ("机构持仓与资金偏好", (
+        "机构重仓", "QFII", "基金重仓", "社保重仓", "社保新进", "私募重仓", "私募新进",
+        "券商重仓", "北上重仓", "陆股通重仓", "金仓", "密集调研", "明星股", "知名公司",
+        "基金增仓", "基金减仓", "基金独门",
+    )),
+    ("指数与交易风格", (
+        "创业板综", "富时罗素", "标准普尔", "MSCI", "中证500", "上证380", "上证180", "沪深300",
+        "HS300", "深成500", "宽基ETF", "大盘股", "中盘股", "小盘股", "微盘股", "成长", "价值",
+        "高股息", "高分红", "高市盈率", "低市盈率", "高市净率", "低市净率", "低价股", "百元股",
+        "破增发价", "破发行价", "破发股", "破净", "趋势股", "强势", "高振幅", "超跌", "周期股",
+        "非周期股", "行业龙头", "次新", "ST股", "活跃小盘", "活跃股", "低安全分", "专项贷款",
+        "微盘精选", "最近多板", "两年新股", "近已解禁", "科技风格", "先进制造风格", "红利股",
+        "热股", "高贝塔", "户数增加", "户数减少", "送转潜力", "创业成份", "深证100", "中特估",
+        "漂亮100", "通达信88", "高融资盘", "昨日涨停", "昨日高换手", "风险提示", "含B股", "AB股",
+        "机构吸筹", "即将解禁", "题材股", "活跃ETF", "WSB",
+    )),
+)
+
+NON_NARRATIVE_FAMILIES = {
+    "市场风格与宽基", "指数与交易风格", "机构持仓与资金偏好",
+    "业绩与财务特征", "公司治理与资本事件", "区域与地理",
+}
+
 
 def _classify_unique_driver(title: Any, summary: Any) -> Tuple[str, str]:
     title_text = str(title or "").lower()
@@ -154,6 +199,18 @@ FAMILY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
     ("生态环保", ("环保", "节能", "固废", "垃圾分类", "土壤修复", "核污染防治", "碳中和", "碳交易", "净水", "污水", "再生资源")),
     ("金融地产", ("银行", "证券", "保险", "金融", "地产", "房地产", "创投", "独角兽", "租售同权", "物业管理", "融资融券", "沪股通", "深股通", "参股券商", "证金持股", "举牌")),
     ("政策改革与区域", ("国企改革", "一带一路", "自贸", "新区", "区域", "振兴", "政策", "共同富裕", "中俄贸易", "统一大市场", "西部大开发", "海峡两岸", "粤港澳", "自由贸易港", "海洋经济", "中字头", "知识产权")),
+    ("AI算力与数字基础设施", ("华为", "阿里", "字节跳动", "蚂蚁集团", "稳定币", "工业互联", "互联网服务", "通信技术", "信息安全", "人脸识别", "词元", "数字政务", "国产操作系统")),
+    ("新能源与电力系统", ("风能", "BIPV", "雅江水电", "雅下水电", "超临界发电")),
+    ("医药健康", ("口罩", "病原体", "生育", "三胎", "人脑工程", "基因", "体外诊断", "细胞免疫")),
+    ("消费与品牌", ("IP经济", "谷子经济", "内贸流通", "体育", "家用电器", "味蕾经济", "犒赏经济", "线上送礼物", "现代服务业")),
+    ("基础设施与交通物流", ("新型城镇", "智能交通", "装配建筑", "绿色建筑")),
+    ("汽车与智能驾驶", ("智能座舱", "毫米波雷达", "两轮车")),
+    ("半导体与先进电子", ("中芯国际", "中芯")),
+    ("新能源与电力系统", ("柔性直流输电", "西藏水电")),
+    ("生态环保", ("降解塑料", "可降解塑料")),
+    ("金融地产", ("物业投资", "期货", "财产管理", "化债AMC")),
+    ("资源与周期", ("氟",)),
+    ("政策改革与区域", ("反内卷", "出海", "新质生产力", "数字乡村")),
 )
 
 CLUSTER_RULES: Sequence[Tuple[str, Sequence[str]]] = (
@@ -263,6 +320,13 @@ def theme_family(name: str, theme_type: str) -> str:
     if theme_type in {"style", "feature", "broad"}:
         return "市场风格与宽基"
     upper = name.upper()
+    if upper == "ST":
+        return "指数与交易风格"
+    if upper == "MR":
+        return "半导体与先进电子"
+    for family, keywords in STRUCTURAL_FAMILY_RULES:
+        if any(keyword.upper() in upper for keyword in keywords):
+            return family
     for family, keywords in FAMILY_RULES:
         if any(keyword.upper() in upper for keyword in keywords):
             return family
@@ -405,7 +469,10 @@ class ConceptThemeService:
         for theme in themes:
             family_name = str(theme.get("family") or "其他市场题材")
             cluster_name = str(theme.get("cluster") or family_name)
-            key = f"{family_name}::{cluster_name}"
+            # Named industrial clusters are stronger identities than their
+            # broader family. If two upstream labels land in the same named
+            # cluster through different family heuristics, count them once.
+            key = cluster_name if cluster_name != family_name else f"{family_name}::{cluster_name}"
             group = groups.setdefault(key, {
                 "family": family_name, "cluster": cluster_name, "themes": [],
                 "weight_sum": 0.0, "effective_weight": 0.0, "representative": None,
@@ -1047,7 +1114,8 @@ class ConceptThemeService:
         themes.sort(key=lambda value: (-value["weight_score"], -value["source_count"]))
         consensus_themes = [item for item in themes if item["source_count"] >= 2]
         narrative_consensus = [item for item in consensus_themes
-                               if item.get("theme_type") not in {"region", "style", "feature", "broad"}]
+                               if item.get("theme_type") not in {"region", "style", "feature", "broad"}
+                               and item.get("family") not in NON_NARRATIVE_FAMILIES]
         overlap_profile = self._overlap_profile(narrative_consensus or consensus_themes)
         primary_themes = list(overlap_profile.pop("representatives"))[:5]
         unique_themes = sorted([
@@ -1129,9 +1197,13 @@ class ConceptThemeService:
             if not consensus and mode != "specificity":
                 continue
             cluster_candidates = consensus or values
-            narrative_candidates = [row for row in cluster_candidates
-                                    if taxonomy.get("type_by_canonical", {}).get(row.canonical_name, "concept")
-                                    not in {"region", "style", "feature", "broad"}]
+            narrative_candidates = []
+            for row in cluster_candidates:
+                family_name, _cluster_name = self._semantic_cluster_for(row.canonical_name, taxonomy)
+                if (taxonomy.get("type_by_canonical", {}).get(row.canonical_name, "concept")
+                        not in {"region", "style", "feature", "broad"}
+                        and family_name not in NON_NARRATIVE_FAMILIES):
+                    narrative_candidates.append(row)
             cluster_candidates = narrative_candidates or cluster_candidates
             overlap_input = []
             for row in cluster_candidates:
@@ -1797,7 +1869,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.47",
+            "version": "concept-consensus-v1.48",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

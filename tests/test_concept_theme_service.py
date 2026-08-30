@@ -44,6 +44,11 @@ def test_theme_hierarchy_merges_market_synonyms_without_losing_subtheme() -> Non
     family = theme_family("CPO/共封装光学", "theme")
     assert family == "AI算力与数字基础设施"
     assert theme_cluster("CPO/共封装光学", family) == "光通信产业链"
+    assert theme_family("2026中报预增", "concept") == "业绩与财务特征"
+    assert theme_family("QFII重仓", "concept") == "机构持仓与资金偏好"
+    assert theme_family("长江三角", "concept") == "区域与地理"
+    assert theme_family("地方国企", "theme") == "国资与所有制"
+    assert theme_family("中际旭创", "industry") == "申万/市场行业体系"
     assert theme_cluster("NPO高速光模块", family) == "光通信产业链"
 
 
