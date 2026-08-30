@@ -108,6 +108,17 @@ function BetaAlphaMap({ stocks, horizonDays }: { stocks: ConceptStock[]; horizon
   </section>;
 }
 
+function ThemeResearchQueue({ stocks, onOpen }: { stocks: ConceptStock[]; onOpen: (tsCode: string) => void }) {
+  const take = (values: ConceptStock[]) => values.slice(0, 6);
+  const groups = [
+    { key: 'consensus', title: '多源核心', note: '来源≥2且权重靠前', values: take([...stocks].filter(item => item.sourceCount >= 2).sort((a, b) => b.weightScore - a.weightScore)) },
+    { key: 'elastic', title: '高 Beta 弹性', note: 'Beta≥1且样本有效', values: take([...stocks].filter(item => (item.beta ?? -99) >= 1 && item.confidence !== 'insufficient').sort((a, b) => (b.beta ?? 0) - (a.beta ?? 0))) },
+    { key: 'alpha', title: '独立正 Alpha', note: 'Beta<0.8且窗口Alpha>0', values: take([...stocks].filter(item => (item.beta ?? 99) < .8 && (item.residualReturn ?? 0) > 0).sort((a, b) => (b.residualReturn ?? 0) - (a.residualReturn ?? 0))) },
+    { key: 'divergence', title: '负 Alpha 背离', note: 'Beta≥0.8但窗口Alpha<0', values: take([...stocks].filter(item => (item.beta ?? -99) >= .8 && (item.residualReturn ?? 0) < 0).sort((a, b) => (a.residualReturn ?? 0) - (b.residualReturn ?? 0))) },
+  ];
+  return <section className="concept-research-queue"><header><div><strong>题材研究优先队列</strong><small>由来源共识与归因结果生成，用于决定先核验谁，不构成买卖信号</small></div><Target /></header><div>{groups.map(group => <article key={group.key} data-kind={group.key}><h3>{group.title}</h3><p>{group.note}</p>{group.values.map(item => <button type="button" key={item.tsCode} title={item.betaInterpretation} onClick={() => onOpen(item.tsCode)}><span>{item.name}<small>{item.tsCode}</small></span><b>{group.key === 'consensus' ? `${item.sourceCount}源 · W${metric(item.weightScore, 0)}` : group.key === 'elastic' ? `β ${metric(item.beta)}` : signed(item.residualReturn)}</b></button>)}{!group.values.length ? <em>当前无满足条件的成分</em> : null}</article>)}</div></section>;
+}
+
 function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: boolean; onClick: () => void }) {
   return <button type="button" className={`concept-stock-row ${selected ? 'is-active' : ''}`} onClick={onClick}>
     <span className="concept-stock-name"><strong>{item.name || item.tsCode}</strong><small>{item.tsCode}</small></span>
@@ -365,6 +376,7 @@ export default function ConceptThemesPage() {
             <SourceRail themes={detail.sourceNodes} />
             <ConsensusMatrix stocks={detail.stocks} />
             <BetaAlphaMap stocks={detail.stocks} horizonDays={horizonDays} />
+            <ThemeResearchQueue stocks={detail.stocks} onOpen={tsCode => void openStock(tsCode)} />
             <div className="concept-stock-table-head"><span>成分股 / 权重 / Beta / {horizonDays}日 Alpha</span><span>点击展开股票题材透镜</span></div>
             <div className="concept-stock-tools"><label><Search /><input value={stockQuery} onChange={event => setStockQuery(event.target.value)} placeholder="搜索成分股名称或代码" /></label><select value={stockSort} onChange={event => setStockSort(event.target.value as typeof stockSort)} aria-label="成分股排序"><option value="weight">题材权重</option><option value="beta">Beta弹性</option><option value="alpha">Alpha排序</option><option value="name">名称</option></select></div>
             <div className="concept-stock-table">{visibleStocks.map(item => <StockRow key={item.tsCode} item={item} selected={stockLens?.tsCode === item.tsCode} onClick={() => void openStock(item.tsCode)} />)}</div>
