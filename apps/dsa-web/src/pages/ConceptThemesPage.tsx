@@ -23,7 +23,7 @@ const TYPE_LABEL: Record<string, string> = {
   concept: '概念', theme: '题材', industry: '行业', region: '地域', style: '风格', feature: '特色', broad: '宽基',
 };
 
-const number = (value?: number | null) => new Intl.NumberFormat('zh-CN').format(value ?? 0);
+const number = (value?: number | null) => value == null ? '—' : new Intl.NumberFormat('zh-CN').format(value);
 const metric = (value?: number | null, digits = 2) => value == null ? '—' : Number(value).toFixed(digits);
 const signed = (value?: number | null, suffix = '%') => value == null ? '—' : `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}${suffix}`;
 
@@ -296,19 +296,19 @@ export default function ConceptThemesPage() {
     try { setLeaders(await conceptThemesApi.leaders(horizonDays, leaderMode, 24)); }
     catch { /* keep the last successful market radar while attribution catches up */ }
   }, [horizonDays, leaderMode]);
+  const loadCluster = useCallback(async () => {
+    if (!family || !cluster) return;
+    try { setClusterDetail(await conceptThemesApi.cluster(family, cluster, horizonDays)); }
+    catch { /* keep the last successful cluster aggregate during a transient refresh */ }
+  }, [cluster, family, horizonDays]);
 
   useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
   useEffect(() => { void loadRotation(); }, [loadRotation]);
   useEffect(() => { void loadLeaders(); }, [loadLeaders]);
-  useEffect(() => {
-    if (!family || !cluster) { setClusterDetail(null); return; }
-    let active = true;
-    conceptThemesApi.cluster(family, cluster, horizonDays).then(value => { if (active) setClusterDetail(value); }).catch(() => { if (active) setClusterDetail(null); });
-    return () => { active = false; };
-  }, [cluster, family, horizonDays]);
+  useEffect(() => { setClusterDetail(null); void loadCluster(); }, [loadCluster]);
   useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders()]); }, [loadLeaders, loadOverview, loadRotation]);
+  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadCluster()]); }, [loadCluster, loadLeaders, loadOverview, loadRotation]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
