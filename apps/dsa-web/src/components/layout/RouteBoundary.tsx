@@ -51,7 +51,7 @@ export const PageLoadingFallback: React.FC<PageLoadingFallbackProps> = ({
 const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> = ({ children, routeKey }) => {
   const [preparing, setPreparing] = useState(true);
   const [progress, setProgress] = useState(8);
-  const [status, setStatus] = useState('正在初始化页面组件');
+  const [showProgress, setShowProgress] = useState(false);
   const sessionRef = useRef(0);
   const finishingRef = useRef(false);
 
@@ -80,7 +80,6 @@ const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> 
         if (finishingRef.current) return;
         finishingRef.current = true;
         setProgress(100);
-        setStatus(pageShellReady && current.pending > 0 ? '页面已就绪，数据继续加载' : '本页数据已完成');
         revealTimer = window.setTimeout(() => {
           finishRouteLoad(current.sessionId);
           setPreparing(false);
@@ -90,15 +89,12 @@ const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> 
 
       if (current.started === 0) {
         setProgress(Math.min(24, 8 + elapsed / 90));
-        setStatus('正在初始化页面组件');
         return;
       }
+      if (elapsed >= 180 && current.pending > 0) setShowProgress(true);
       const completedRatio = current.completed / Math.max(1, current.started);
       const nextProgress = Math.min(94, 24 + completedRatio * 62 + Math.min(8, elapsed / 1_500));
       setProgress(nextProgress);
-      setStatus(current.pending > 0
-        ? `正在加载本页数据（${current.completed}/${current.started}）`
-        : '正在整理并校验本页数据');
     };
     const interval = window.setInterval(tick, 100);
     const kickoff = window.setTimeout(tick, 0);
@@ -110,8 +106,15 @@ const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> 
   }, [preparing, routeKey]);
 
   return <div className="relative min-h-[420px]">
-    <div className={preparing ? 'pointer-events-none' : ''} style={preparing ? { visibility: 'hidden' } : undefined} aria-hidden={preparing || undefined}>{children}</div>
-    {preparing ? <div className="absolute inset-0 z-30 bg-background"><PageLoadingFallback fullPage={false} progress={progress} status={status} detail="正在等待当前页面的核心接口全部返回；页内刷新会保留现有数据，不再反复遮挡或弹出失败层。" /></div> : null}
+    {children}
+    {preparing && showProgress ? <div
+      className="pointer-events-none absolute inset-x-0 top-0 z-40 h-0.5 overflow-hidden bg-transparent"
+      role="progressbar"
+      aria-label="后台加载进度"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(progress)}
+    ><div className="h-full bg-cyan transition-[width] duration-200 ease-out" style={{ width: `${Math.max(3, Math.min(100, progress))}%` }} /></div> : null}
   </div>;
 };
 

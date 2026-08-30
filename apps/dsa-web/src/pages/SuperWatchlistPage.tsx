@@ -324,11 +324,11 @@ export default function SuperWatchlistPage() {
   const [params, setParams] = useSearchParams(); const navigate = useNavigate();
   const requestInFlight = useRef(false);
   useEffect(() => { document.title = '自选股超级看板 - 乐子乌超级价值'; }, []);
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (requestInFlight.current) return;
     requestInFlight.current = true;
     setLoading(true); setError('');
-    try { setData(await investmentMonitorApi.superWatchlist(183)); }
+    try { setData(await investmentMonitorApi.superWatchlist(183, force)); }
     catch (err) { setError(err instanceof Error ? err.message : '加载失败'); }
     finally { requestInFlight.current = false; setLoading(false); }
   }, []);
@@ -351,7 +351,7 @@ export default function SuperWatchlistPage() {
     const symbol = rawSymbol.trim();
     if (!symbol || busy) return;
     setBusy(true); setError('');
-    try { await systemConfigApi.addToWatchlist(symbol); setNewSymbol(''); await load(); }
+    try { await systemConfigApi.addToWatchlist(symbol); setNewSymbol(''); await load(true); }
     catch (err) { setError(err instanceof Error ? err.message : '添加失败'); }
     finally { setBusy(false); }
   };
@@ -369,18 +369,18 @@ export default function SuperWatchlistPage() {
         const next = remaining[0];
         setParams(next ? { symbol: next.symbol } : {}, { replace: true });
       }
-      await load();
+      await load(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除失败');
     } finally {
       setDeletingSymbol(null);
     }
   };
-  const retry = async () => { if (!active) return; setBusy(true); try { await investmentMonitorApi.backfillWatchlist(active.symbol); await load(); } finally { setBusy(false); } };
+  const retry = async () => { if (!active) return; setBusy(true); try { await investmentMonitorApi.backfillWatchlist(active.symbol); await load(true); } finally { setBusy(false); } };
   const refreshShared = async () => {
     if (refreshingShared) return;
     setRefreshingShared(true); setError('');
-    try { await investmentMonitorApi.refreshSuperWatchlist(); await load(); }
+    try { await investmentMonitorApi.refreshSuperWatchlist(); await load(true); }
     catch (err) { setError(err instanceof Error ? err.message : '共享数据刷新失败'); }
     finally { setRefreshingShared(false); }
   };

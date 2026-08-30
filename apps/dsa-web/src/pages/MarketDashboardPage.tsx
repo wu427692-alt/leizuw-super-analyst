@@ -181,7 +181,6 @@ const MarketDashboardPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const [selectedIndexCode, setSelectedIndexCode] = useState('000001.SH');
-  const refreshProbeTimers = useRef<number[]>([]);
   const load = useCallback(async (force = false, refresh = false) => {
     const hasExistingData = dataRef.current != null;
     if (force) setRefreshing(true); else if (!hasExistingData) setLoading(true);
@@ -200,17 +199,12 @@ const MarketDashboardPage = () => {
     finally { setLoading(false); setRefreshing(false); }
   }, []);
   const refreshVisiblePage = useCallback(async () => {
-    await load(false, true);
-    refreshProbeTimers.current.forEach(timer => window.clearTimeout(timer));
-    refreshProbeTimers.current = [5_000, 15_000, 30_000].map(delay => window.setTimeout(() => {
-      void load(false, false);
-    }, delay));
+    // The background worker already keeps the shared store current. Re-entering
+    // the dashboard should read that store once, not synchronously wake every
+    // upstream source and schedule three more duplicate probes.
+    await load(false, false);
   }, [load]);
   usePageActivationRefresh(refreshVisiblePage, { intervalMs: 60_000, minIntervalMs: 10_000 });
-  useEffect(() => () => {
-    refreshProbeTimers.current.forEach(timer => window.clearTimeout(timer));
-    refreshProbeTimers.current = [];
-  }, []);
   useEffect(() => {
     if (!error) return undefined;
     const timer = window.setTimeout(() => void load(), 8_000);

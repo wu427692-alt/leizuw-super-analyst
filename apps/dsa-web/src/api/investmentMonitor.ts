@@ -1,6 +1,7 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
 import type { AnnouncementCategoryList, AnnouncementSyncRequest, CloudKnowledgeStatus, DragonTigerDaily, DragonTigerHistory, DragonTigerSyncResult, EssayConsensusAnalysis, IntelligenceDashboard, InvestmentMonitorDashboard, MonitorEvent, MonitorEventList, MonitorStatus, MonitorSymbolDetail, ResearchCenterOverview, SourceBI, StockWorkspace, SuperWatchlistDashboard, WatchlistBackfillJob } from '../types/investmentMonitor';
+import { cachedQuery, invalidateCachedQueries } from './requestCache';
 
 export const investmentMonitorApi = {
   dashboard: async (days = 7): Promise<InvestmentMonitorDashboard> => {
@@ -8,8 +9,10 @@ export const investmentMonitorApi = {
     return toCamelCase<InvestmentMonitorDashboard>(response.data);
   },
   intelligenceDashboard: async (days = 14): Promise<IntelligenceDashboard> => {
-    const response = await apiClient.get('/api/v1/investment-monitor/intelligence-dashboard', { params: { days } });
-    return toCamelCase<IntelligenceDashboard>(response.data);
+    return cachedQuery(`monitor:intelligence:${days}`, async () => {
+      const response = await apiClient.get('/api/v1/investment-monitor/intelligence-dashboard', { params: { days } });
+      return toCamelCase<IntelligenceDashboard>(response.data);
+    }, { freshMs: 8_000, staleMs: 60_000 });
   },
   sourceBI: async (days = 30): Promise<SourceBI> => {
     const response = await apiClient.get('/api/v1/investment-monitor/source-bi', { params: { days } });
@@ -42,9 +45,11 @@ export const investmentMonitorApi = {
     const response = await apiClient.get(`/api/v1/investment-monitor/symbols/${encodeURIComponent(symbol)}`, { params: { days } });
     return toCamelCase<MonitorSymbolDetail>(response.data);
   },
-  superWatchlist: async (days = 365): Promise<SuperWatchlistDashboard> => {
-    const response = await apiClient.get('/api/v1/investment-monitor/super-watchlist', { params: { days } });
-    return toCamelCase<SuperWatchlistDashboard>(response.data);
+  superWatchlist: async (days = 365, force = false): Promise<SuperWatchlistDashboard> => {
+    return cachedQuery(`monitor:super-watchlist:${days}`, async () => {
+      const response = await apiClient.get('/api/v1/investment-monitor/super-watchlist', { params: { days } });
+      return toCamelCase<SuperWatchlistDashboard>(response.data);
+    }, { freshMs: 8_000, staleMs: 120_000, force });
   },
   stockWorkspace: async (symbol: string, days = 365, refresh = false): Promise<StockWorkspace> => {
     const response = await apiClient.get(`/api/v1/investment-monitor/stock-workspace/${encodeURIComponent(symbol)}`, {
@@ -53,11 +58,14 @@ export const investmentMonitorApi = {
     return toCamelCase<StockWorkspace>(response.data);
   },
   researchCenter: async (): Promise<ResearchCenterOverview> => {
-    const response = await apiClient.get('/api/v1/investment-monitor/research-center', { timeout: 45000 });
-    return toCamelCase<ResearchCenterOverview>(response.data);
+    return cachedQuery('monitor:research-center', async () => {
+      const response = await apiClient.get('/api/v1/investment-monitor/research-center', { timeout: 45000 });
+      return toCamelCase<ResearchCenterOverview>(response.data);
+    }, { freshMs: 15_000, staleMs: 300_000 });
   },
   refreshSuperWatchlist: async (): Promise<unknown> => {
     const response = await apiClient.post('/api/v1/investment-monitor/super-watchlist/refresh', undefined, { timeout: 60000 });
+    invalidateCachedQueries('monitor:super-watchlist:');
     return toCamelCase(response.data);
   },
   backfillWatchlist: async (symbol: string): Promise<WatchlistBackfillJob> => {
@@ -73,16 +81,21 @@ export const investmentMonitorApi = {
     return toCamelCase(response.data);
   },
   status: async (): Promise<MonitorStatus> => {
-    const response = await apiClient.get('/api/v1/investment-monitor/status');
-    return toCamelCase<MonitorStatus>(response.data);
+    return cachedQuery('monitor:status', async () => {
+      const response = await apiClient.get('/api/v1/investment-monitor/status');
+      return toCamelCase<MonitorStatus>(response.data);
+    }, { freshMs: 3_000, staleMs: 20_000 });
   },
   events: async (params: { days?: number; perspective?: string; query?: string; symbol?: string; sourceKey?: string; channel?: string; evidenceLevel?: string; pageSize?: number }): Promise<MonitorEventList> => {
-    const response = await apiClient.get('/api/v1/investment-monitor/events', { params: {
-      days: params.days, perspective: params.perspective, query: params.query, symbol: params.symbol,
-      source_key: params.sourceKey, channel: params.channel, evidence_level: params.evidenceLevel,
-      page_size: params.pageSize,
-    } });
-    return toCamelCase<MonitorEventList>(response.data);
+    const cacheKey = `monitor:events:${JSON.stringify(params)}`;
+    return cachedQuery(cacheKey, async () => {
+      const response = await apiClient.get('/api/v1/investment-monitor/events', { params: {
+        days: params.days, perspective: params.perspective, query: params.query, symbol: params.symbol,
+        source_key: params.sourceKey, channel: params.channel, evidence_level: params.evidenceLevel,
+        page_size: params.pageSize,
+      } });
+      return toCamelCase<MonitorEventList>(response.data);
+    }, { freshMs: 3_000, staleMs: 20_000 });
   },
   event: async (eventId: number): Promise<MonitorEvent> => {
     const response = await apiClient.get(`/api/v1/investment-monitor/events/${eventId}`);
@@ -90,10 +103,12 @@ export const investmentMonitorApi = {
   },
   sync: async (): Promise<unknown> => {
     const response = await apiClient.post('/api/v1/investment-monitor/sync', { categories: null });
+    invalidateCachedQueries('monitor:');
     return toCamelCase(response.data);
   },
   syncSource: async (sourceKey: string): Promise<unknown> => {
     const response = await apiClient.post(`/api/v1/investment-monitor/sources/${encodeURIComponent(sourceKey)}/sync`);
+    invalidateCachedQueries('monitor:');
     return toCamelCase(response.data);
   },
   startWorker: async (): Promise<unknown> => {

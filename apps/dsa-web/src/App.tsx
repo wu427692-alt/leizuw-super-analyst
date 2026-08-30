@@ -14,6 +14,7 @@ import { UiLanguageProvider } from './contexts/UiLanguageContext';
 import { useAgentChatStore } from './stores/agentChatStore';
 import { WEB_BUILD_INFO } from './utils/constants';
 import { chunkRetryKey, isChunkLoadError, reloadWithFreshFrontend } from './utils/chunkRecovery';
+import { canPreloadRoutes, preloadRoute } from './utils/routePreload';
 import LandingPage from './pages/LandingPage';
 import './App.css';
 
@@ -77,29 +78,15 @@ const IndustryResearchPage = lazyRoute(() => import('./pages/IndustryResearchPag
 const DragonTigerPage = lazyRoute(() => import('./pages/DragonTigerPage'), 'dragon-tiger');
 const AdminConsolePage = lazyRoute(() => import('./pages/AdminConsolePage'), 'admin-console');
 
-// The desktop build serves these files locally. Loading route chunks after the
-// first paint removes the fragile "click, then fetch component" gap without
-// delaying the initial server health check or first screen.
-const HOME_ROUTE_PRELOADER = () => import('./pages/MarketDashboardPage');
-const APP_ROUTE_PRELOADERS = [
-  () => import('./pages/InvestmentMonitorOverviewPage'),
-  () => import('./pages/SuperWatchlistPage'),
-  () => import('./pages/EssayRadarPage'),
-  () => import('./pages/EssayQuantPage'),
-  () => import('./pages/ChatPage'),
-  () => import('./pages/ResearchCenterPage'),
-  () => import('./pages/IndustryResearchPage'),
+const APP_ROUTE_PRELOAD_PATHS = [
+  '/investment-monitor',
+  '/super-watchlist',
+  '/essay-radar',
+  '/essay-quant',
+  '/chat',
+  '/research-center',
+  '/industry-research',
 ];
-
-type NetworkInformationLike = {
-  effectiveType?: string;
-  saveData?: boolean;
-};
-
-function canWarmRouteChunks() {
-  const connection = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
-  return !connection?.saveData && connection?.effectiveType !== 'slow-2g' && connection?.effectiveType !== '2g';
-}
 
 /**
  * Warm only the next useful pages after the current screen is fully usable.
@@ -114,31 +101,31 @@ const RoutePreloadController = () => {
   const location = useLocation();
 
   useEffect(() => {
-    if (!canWarmRouteChunks()) return undefined;
+    if (!canPreloadRoutes()) return undefined;
 
     let cancelled = false;
     let interval: number | null = null;
     let cursor = 0;
     let inFlight = false;
-    const preloaders = location.pathname === '/'
-      ? [HOME_ROUTE_PRELOADER]
+    const preloadPaths = location.pathname === '/'
+      ? ['/app']
       : location.pathname === '/app'
-        ? APP_ROUTE_PRELOADERS
-        : [HOME_ROUTE_PRELOADER];
+        ? APP_ROUTE_PRELOAD_PATHS
+        : ['/app'];
     const preloadNext = async () => {
-      if (cancelled || inFlight || cursor >= preloaders.length || document.visibilityState === 'hidden') return;
+      if (cancelled || inFlight || cursor >= preloadPaths.length || document.visibilityState === 'hidden') return;
       inFlight = true;
-      const loader = preloaders[cursor++];
-      try { await loader?.(); } catch { /* lazyRoute performs recovery when the route is actually opened */ }
+      const path = preloadPaths[cursor++];
+      try { await preloadRoute(path ?? '/app'); } catch { /* lazyRoute performs recovery when the route is actually opened */ }
       finally { inFlight = false; }
     };
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       void preloadNext();
-      if (preloaders.length > 1) {
+      if (preloadPaths.length > 1) {
         interval = window.setInterval(() => void preloadNext(), 2_500);
       }
-    }, location.pathname === '/' ? 2_500 : 8_000);
+    }, location.pathname === '/' ? 2_500 : 2_000);
 
     return () => {
       cancelled = true;

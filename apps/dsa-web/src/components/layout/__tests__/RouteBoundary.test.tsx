@@ -27,7 +27,7 @@ vi.mock('../../../stores/agentChatStore', () => {
 describe('RouteOutletBoundary', () => {
   beforeEach(() => resetRouteLoadTrackerForTests());
 
-  it('keeps a route hidden behind a determinate progress bar until initial requests settle', async () => {
+  it('shows the route immediately while initial requests settle in the background', async () => {
     const DataPage = () => {
       useEffect(() => {
         const token = startRouteRequest();
@@ -47,10 +47,8 @@ describe('RouteOutletBoundary', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('progressbar', { name: '页面加载进度' })).toBeInTheDocument();
-    expect(screen.getByTestId('data-page')).not.toBeVisible();
-    await waitFor(() => expect(screen.getByTestId('data-page')).toBeVisible(), { timeout: 2_000 });
-    expect(screen.queryByRole('progressbar', { name: '页面加载进度' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('data-page')).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole('progressbar', { name: '后台加载进度' })).not.toBeInTheDocument(), { timeout: 2_000 });
   });
 
   it('reveals the page shell when an ancillary request is slow instead of freezing navigation', async () => {
@@ -71,8 +69,7 @@ describe('RouteOutletBoundary', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId('slow-page')).not.toBeVisible();
-    await waitFor(() => expect(screen.getByTestId('slow-page')).toBeVisible(), { timeout: 2_000 });
+    expect(screen.getByTestId('slow-page')).toBeVisible();
   });
 
   it('catches rejected lazy route imports inside the shell and resets on navigation', async () => {

@@ -6,6 +6,7 @@ import { useAgentChatStore } from '../../stores/agentChatStore';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import type { UiTextKey } from '../../i18n/uiText';
 import { cn } from '../../utils/cn';
+import { preloadRoute } from '../../utils/routePreload';
 import { StatusDot } from '../common/StatusDot';
 import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { ThemeToggle } from '../theme/ThemeToggle';
@@ -122,6 +123,9 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
             to={to}
             end={exact}
             onClick={onNavigate}
+            onMouseEnter={() => void preloadRoute(to).catch(() => undefined)}
+            onFocus={() => void preloadRoute(to).catch(() => undefined)}
+            onTouchStart={() => void preloadRoute(to).catch(() => undefined)}
             aria-label={label}
             className={({ isActive }) =>
               cn(
@@ -174,6 +178,9 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
       <NavLink
           to="/admin"
           onClick={onNavigate}
+          onMouseEnter={() => void preloadRoute('/admin').catch(() => undefined)}
+          onFocus={() => void preloadRoute('/admin').catch(() => undefined)}
+          onTouchStart={() => void preloadRoute('/admin').catch(() => undefined)}
           className={cn(
             itemInteractiveClass,
             'shrink-0',

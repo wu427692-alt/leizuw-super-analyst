@@ -3,6 +3,7 @@ import { AudioLines, Download, Home, Menu, Star } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { cn } from '../../utils/cn';
+import { preloadRoute } from '../../utils/routePreload';
 
 type MobileBottomNavProps = {
   onOpenMore: () => void;
@@ -29,6 +30,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ onOpenMore }) 
           key={to}
           to={to}
           end={exact}
+          onTouchStart={() => void preloadRoute(to).catch(() => undefined)}
+          onFocus={() => void preloadRoute(to).catch(() => undefined)}
           className={({ isActive }) => cn('mobile-bottom-nav__item', isActive && 'is-active')}
           aria-label={t(labelKey)}
         >

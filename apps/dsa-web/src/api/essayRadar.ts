@@ -1,6 +1,7 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
 import type { EssayAnalysis, EssayAnalysisList, EssayAudioAnalysisCapability, EssayAudioAnalysisTask, EssayAudioBatchTask, EssayAudioDownloadProgress, EssayAudioFileList, EssayAudioTranscript, EssayCountBackfillResponse, EssayDailyReportList, EssayDashboard, EssayDeepInsights, EssayHistoricalBacklog, EssayInsights, EssayStatus, EssayWordCloud, EssayWorkerStatus, ResearchNoteDetail } from '../types/essayRadar';
+import { cachedQuery } from './requestCache';
 
 export type EssayFilters = {
   days?: number;
@@ -19,32 +20,41 @@ export type EssayFilters = {
 
 export const essayRadarApi = {
   status: async (days = 30): Promise<EssayStatus> => {
-    const response = await apiClient.get('/api/v1/essay-radar/status', { params: { days } });
-    return toCamelCase<EssayStatus>(response.data);
+    return cachedQuery(`essay:status:${days}`, async () => {
+      const response = await apiClient.get('/api/v1/essay-radar/status', { params: { days } });
+      return toCamelCase<EssayStatus>(response.data);
+    }, { freshMs: 8_000, staleMs: 60_000 });
   },
   dashboard: async (days = 30): Promise<EssayDashboard> => {
-    const response = await apiClient.get('/api/v1/essay-radar/dashboard', { params: { days } });
-    return toCamelCase<EssayDashboard>(response.data);
+    return cachedQuery(`essay:dashboard:${days}`, async () => {
+      const response = await apiClient.get('/api/v1/essay-radar/dashboard', { params: { days } });
+      return toCamelCase<EssayDashboard>(response.data);
+    }, { freshMs: 15_000, staleMs: 120_000 });
   },
   insights: async (days = 30, trendDays = 14): Promise<EssayInsights> => {
-    const response = await apiClient.get('/api/v1/essay-radar/insights', { params: { days, trend_days: trendDays } });
-    return toCamelCase<EssayInsights>(response.data);
+    return cachedQuery(`essay:insights:${days}:${trendDays}`, async () => {
+      const response = await apiClient.get('/api/v1/essay-radar/insights', { params: { days, trend_days: trendDays } });
+      return toCamelCase<EssayInsights>(response.data);
+    }, { freshMs: 15_000, staleMs: 120_000 });
   },
   deepInsights: async (params: {
     days?: number; trendDays?: number; horizon?: 'short' | 'medium' | 'long' | 'custom';
     startDate?: string; endDate?: string;
   } = {}): Promise<EssayDeepInsights> => {
-    const response = await apiClient.get('/api/v1/essay-radar/deep-insights', {
-      params: {
-        days: params.days ?? 30,
-        trend_days: params.trendDays ?? 14,
-        horizon: params.horizon,
-        start_date: params.startDate,
-        end_date: params.endDate,
-      },
-      timeout: 120000,
-    });
-    return toCamelCase<EssayDeepInsights>(response.data);
+    const key = `essay:deep:${JSON.stringify(params)}`;
+    return cachedQuery(key, async () => {
+      const response = await apiClient.get('/api/v1/essay-radar/deep-insights', {
+        params: {
+          days: params.days ?? 30,
+          trend_days: params.trendDays ?? 14,
+          horizon: params.horizon,
+          start_date: params.startDate,
+          end_date: params.endDate,
+        },
+        timeout: 120000,
+      });
+      return toCamelCase<EssayDeepInsights>(response.data);
+    }, { freshMs: 30_000, staleMs: 600_000 });
   },
   interpretMarketImpact: async (payload: {
     tsCode: string; horizon: 'short' | 'medium' | 'long' | 'custom'; startDate?: string; endDate?: string;
@@ -61,12 +71,16 @@ export const essayRadarApi = {
     return toCamelCase(response.data);
   },
   wordCloud: async (period: 'day' | 'week' | 'month', kind: 'stocks' | 'tags' | 'themes' = 'stocks'): Promise<EssayWordCloud> => {
-    const response = await apiClient.get('/api/v1/essay-radar/word-cloud', { params: { period, kind } });
-    return toCamelCase<EssayWordCloud>(response.data);
+    return cachedQuery(`essay:word-cloud:${period}:${kind}`, async () => {
+      const response = await apiClient.get('/api/v1/essay-radar/word-cloud', { params: { period, kind } });
+      return toCamelCase<EssayWordCloud>(response.data);
+    }, { freshMs: 15_000, staleMs: 120_000 });
   },
   dailyReports: async (): Promise<EssayDailyReportList> => {
-    const response = await apiClient.get('/api/v1/essay-radar/daily-reports', { params: { limit: 30 } });
-    return toCamelCase<EssayDailyReportList>(response.data);
+    return cachedQuery('essay:daily-reports', async () => {
+      const response = await apiClient.get('/api/v1/essay-radar/daily-reports', { params: { limit: 30 } });
+      return toCamelCase<EssayDailyReportList>(response.data);
+    }, { freshMs: 30_000, staleMs: 300_000 });
   },
   runDailyReports: async (): Promise<unknown> => {
     const response = await apiClient.post('/api/v1/essay-radar/daily-reports/run', { force: false }, { timeout: 300000 });

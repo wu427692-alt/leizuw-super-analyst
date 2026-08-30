@@ -2,6 +2,7 @@ import type React from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { userAuthApi, type FrontUser } from '../api/userAuth';
+import { clearRequestCache } from '../api/requestCache';
 
 type ActionResult = { success: boolean; pending?: boolean; error?: ParsedApiError };
 
@@ -58,6 +59,7 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
   const login = useCallback(async (name: string, password: string): Promise<ActionResult> => {
     try {
       await userAuthApi.login(name, password);
+      clearRequestCache();
       await refresh();
       return { success: true };
     } catch (error) {
@@ -67,6 +69,7 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
 
   const logout = useCallback(async () => {
     await userAuthApi.logout();
+    clearRequestCache();
     setLoggedIn(false);
     setUser(null);
     setAuthMethod(null);

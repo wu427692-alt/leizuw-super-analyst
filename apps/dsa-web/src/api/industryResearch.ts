@@ -1,15 +1,19 @@
 import apiClient, { BACKGROUND_ROUTE_HEADERS } from './index';
 import { toCamelCase } from './utils';
 import type { IndustryResearchBlueprint, IndustryResearchProject } from '../types/industryResearch';
+import { cachedQuery } from './requestCache';
 
 export const industryResearchApi = {
   blueprint: async (topic: string, lookbackDays = 730): Promise<IndustryResearchBlueprint> => {
-    const response = await apiClient.get('/api/v1/industry-research/blueprint', {
-      params: { topic, lookback_days: lookbackDays },
-      headers: BACKGROUND_ROUTE_HEADERS,
-      timeout: 60_000,
-    });
-    return toCamelCase<IndustryResearchBlueprint>(response.data);
+    const normalizedTopic = topic.trim();
+    return cachedQuery(`industry:blueprint:${normalizedTopic}:${lookbackDays}`, async () => {
+      const response = await apiClient.get('/api/v1/industry-research/blueprint', {
+        params: { topic: normalizedTopic, lookback_days: lookbackDays },
+        headers: BACKGROUND_ROUTE_HEADERS,
+        timeout: 60_000,
+      });
+      return toCamelCase<IndustryResearchBlueprint>(response.data);
+    }, { freshMs: 10 * 60_000, staleMs: 24 * 60 * 60_000 });
   },
   createProject: async (payload: {
     topic: string; researchType: 'industry' | 'company'; objective: string; lookbackDays: number; queryTerms?: string[];
@@ -34,4 +38,3 @@ export const industryResearchApi = {
     return toCamelCase<IndustryResearchProject>(response.data);
   },
 };
-
