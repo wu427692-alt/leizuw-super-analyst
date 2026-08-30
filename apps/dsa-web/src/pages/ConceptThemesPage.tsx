@@ -244,7 +244,7 @@ export default function ConceptThemesPage() {
       </header>
 
       <section className="concept-kpis">
-        <div><Database /><span>源题材节点</span><strong>{number(overview?.summary.themes)}</strong><small>六套数据独立保留</small></div>
+        <div><Database /><span>源题材节点</span><strong>{number(overview?.summary.themes)}</strong><small>语义分层 {metric(overview?.summary.semanticCoveragePct, 1)}% · 六套原始口径保留</small></div>
         <div><GitBranch /><span>成分关系</span><strong>{number(overview?.summary.memberships)}</strong><small>已扫描 {number(overview?.summary.attemptedThemes)} 个节点 · {metric(overview?.summary.scanCoveragePct, 1)}% · {number(overview?.summary.memberedThemes)} 个有成分</small></div>
         <div><Binary /><span>归因结果</span><strong>{number(overview?.summary.exposures)}</strong><small>60日双因子回归</small></div>
         <div><ShieldCheck /><span>最新交易日</span><strong>{overview?.summary.marketDate || '—'}</strong><small>{overview?.sync?.stage || '共享题材库'}</small></div>

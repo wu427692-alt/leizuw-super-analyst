@@ -50,6 +50,8 @@ export type ConceptOverview = {
   pageSize: number;
   summary: {
     themes: number;
+    classifiedThemes: number;
+    semanticCoveragePct: number;
     memberships: number;
     memberedThemes: number;
     attemptedThemes: number;
