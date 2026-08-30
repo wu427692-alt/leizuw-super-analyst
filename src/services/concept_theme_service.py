@@ -484,7 +484,7 @@ class ConceptThemeService:
 
     def overview(
         self, *, query: str = "", theme_type: str = "", source: str = "", family: str = "", cluster: str = "",
-        sort_by: str = "heat", page: int = 1, page_size: int = 80,
+        min_sources: int = 1, sort_by: str = "heat", page: int = 1, page_size: int = 80,
     ) -> Dict[str, Any]:
         page = max(1, page)
         page_size = max(12, min(page_size, 200))
@@ -506,6 +506,11 @@ class ConceptThemeService:
                 filters.append(ConceptThemeRecord.theme_type == theme_type)
             if source:
                 filters.append(ConceptThemeRecord.source == source)
+            if int(min_sources) > 1:
+                consensus_names = select(ConceptThemeRecord.canonical_name).group_by(
+                    ConceptThemeRecord.canonical_name,
+                ).having(func.count(func.distinct(ConceptThemeRecord.source)) >= min(6, int(min_sources)))
+                filters.append(ConceptThemeRecord.canonical_name.in_(consensus_names))
             if family or cluster:
                 matching_ids = [theme_id for theme_id, (family_name, cluster_name) in taxonomy["by_id"].items()
                                 if (not family or family_name == family) and (not cluster or cluster_name == cluster)]
@@ -1188,7 +1193,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.29",
+            "version": "concept-consensus-v1.30",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",

@@ -92,6 +92,7 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
 
     filtered = service.overview(family="AI算力与数字基础设施", page_size=12)
     recalled = service.overview(query="中际旭创", page_size=12)
+    strict_consensus = service.overview(min_sources=2, page_size=12)
 
     assert filtered["total"] == 1
     assert filtered["items"][0]["cluster"] == "光通信产业链"
@@ -102,6 +103,7 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
     assert recalled["stock_matches"] == [{
         "ts_code": "300308.SZ", "name": "中际旭创", "theme_count": 1, "source_count": 1,
     }]
+    assert strict_consensus["total"] == 0
 
 
 def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> None:

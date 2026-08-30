@@ -157,6 +157,7 @@ type OverviewParams = {
   source?: string;
   family?: string;
   cluster?: string;
+  minSources?: number;
   sortBy?: 'heat' | 'name' | 'size' | 'change';
   page?: number;
   pageSize?: number;
@@ -204,6 +205,7 @@ export const conceptThemesApi = {
           source: params.source || undefined,
           family: params.family || undefined,
           cluster: params.cluster || undefined,
+          min_sources: params.minSources && params.minSources > 1 ? params.minSources : undefined,
           sort_by: params.sortBy ?? 'heat',
           page: params.page ?? 1,
           page_size: params.pageSize ?? 80,
