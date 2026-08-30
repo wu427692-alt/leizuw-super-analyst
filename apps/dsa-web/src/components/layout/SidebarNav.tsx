@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
+import { BarChart3, BookOpen, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
 import { useAgentChatStore } from '../../stores/agentChatStore';
@@ -37,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'investment-monitor', labelKey: 'layout.nav.investmentMonitor', to: '/investment-monitor', icon: RadioTower },
   { key: 'super-watchlist', labelKey: 'layout.nav.superWatchlist', to: '/super-watchlist', icon: Star },
   { key: 'data-acquisition', labelKey: 'layout.nav.dataAcquisition', to: '/data-acquisition', icon: DatabaseZap },
+  { key: 'guide', labelKey: 'layout.nav.guide', to: '/guide', icon: BookOpen },
   { key: 'screening', labelKey: 'layout.nav.screening', to: '/screening', icon: Search },
 ];
 

@@ -19,6 +19,7 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: /不是概念图。/ })).toBeInTheDocument();
     expect(screen.getByAltText('乐子乌超级价值市场总览真实页面')).toHaveAttribute('src', '/landing/screens/market-overview.jpg');
     expect(screen.getByRole('link', { name: /进入研究平台/ })).toHaveAttribute('href', '/app');
+    expect(screen.getAllByRole('link', { name: '使用手册' })[0]).toHaveAttribute('href', '/guide');
     expect(screen.getByRole('link', { name: '注册' })).toHaveAttribute('href', '/access?mode=register&redirect=%2Fapp');
     expect(screen.getAllByRole('link', { name: '管理员' })[0]).toHaveAttribute('href', '/admin');
   });

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowDown, ArrowRight, BarChart3, Building2, CheckCircle2, DatabaseZap,
+  ArrowDown, ArrowRight, BarChart3, BookOpen, Building2, CheckCircle2, DatabaseZap,
   Download, FileSearch, FileText, FlaskConical, Landmark, LineChart,
   LockKeyhole, MessageCircleMore, Mic2, Radar, Search, ShieldCheck,
   Sparkles, Star, UserRoundPlus, Waves,
@@ -130,7 +130,7 @@ const LandingPage = () => {
     <div className="landing-scroll-progress" aria-hidden="true"><i /></div>
     <header className="landing-header">
       <Link className="landing-brand" to="/" aria-label="乐子乌超级价值首页"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link>
-      <nav aria-label="首页栏目"><a href="#real-product">真实界面</a><a href="#research-flow">研究流程</a><a href="#data-sources">数据来源</a></nav>
+      <nav aria-label="首页栏目"><a href="#real-product">真实界面</a><a href="#research-flow">研究流程</a><a href="#data-sources">数据来源</a><Link to="/guide">使用手册</Link></nav>
       <div className="landing-header-actions">
         <Link className="landing-register-enter" to="/access?mode=register&redirect=%2Fapp"><UserRoundPlus aria-hidden="true" />注册</Link>
         <Link className="landing-admin-enter" to="/admin"><LockKeyhole aria-hidden="true" />管理员</Link>
@@ -144,7 +144,7 @@ const LandingPage = () => {
         <div className="landing-proof-label"><CheckCircle2 aria-hidden="true" />以下功能均为已上线真实页面</div>
         <h1 id="landing-title">让市场信息，<span>成为可验证的研究优势。</span></h1>
         <p>一套面向中国股票研究的事实与证据工作台。连接行情、公告、研报、机构段子与录音、企业事实、公开股评和量化研究；每个页面明确显示时间、来源与原文入口。</p>
-        <div className="landing-actions"><Link className="landing-enter" to="/app">进入研究平台<ArrowRight aria-hidden="true" /></Link><a className="landing-discover" href="#real-product">查看真实界面<ArrowDown aria-hidden="true" /></a></div>
+        <div className="landing-actions"><Link className="landing-enter" to="/app">进入研究平台<ArrowRight aria-hidden="true" /></Link><Link className="landing-discover" to="/guide"><BookOpen aria-hidden="true" />查看使用手册</Link><a className="landing-discover" href="#real-product">查看真实界面<ArrowDown aria-hidden="true" /></a></div>
       </div>
       <figure className="landing-hero-screen" data-landing-reveal>
         <div className="landing-window-bar"><i /><i /><i /><span>市场总览 · 实机截图</span></div>
@@ -209,7 +209,7 @@ const LandingPage = () => {
       <div><Link className="landing-final-enter" to="/access?mode=register&redirect=%2Fapp"><UserRoundPlus aria-hidden="true" />申请使用</Link><Link className="landing-final-secondary" to="/app">已有账号，进入平台<ArrowRight aria-hidden="true" /></Link></div>
     </section>
 
-    <footer className="landing-footer"><Link className="landing-brand" to="/"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link><p>截图和功能说明基于 2026-08-31 当前版本</p><div><Link to="/app">研究平台</Link><Link to="/admin">管理员</Link></div></footer>
+    <footer className="landing-footer"><Link className="landing-brand" to="/"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link><p>截图和功能说明基于 2026-08-31 当前版本</p><div><Link to="/guide">使用手册</Link><Link to="/app">研究平台</Link><Link to="/admin">管理员</Link></div></footer>
   </main>;
 };
 

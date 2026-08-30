@@ -20,6 +20,7 @@ const ROUTE_LOADERS: Array<{ match: (pathname: string) => boolean; load: () => R
   { match: (path) => path.startsWith('/investment-monitor/dragon-tiger'), load: () => import('../pages/DragonTigerPage') },
   { match: (path) => path.startsWith('/super-watchlist'), load: () => import('../pages/SuperWatchlistPage') },
   { match: (path) => path.startsWith('/data-acquisition'), load: () => import('../pages/DataAcquisitionPage') },
+  { match: (path) => path === '/guide', load: () => import('../pages/UserGuidePage') },
   { match: (path) => path.startsWith('/screening'), load: () => import('../pages/StockScreeningPage') },
   { match: (path) => path.startsWith('/settings'), load: () => import('../pages/SettingsPage') },
   { match: (path) => path === '/admin' || path.startsWith('/admin/'), load: () => import('../pages/AdminConsolePage') },

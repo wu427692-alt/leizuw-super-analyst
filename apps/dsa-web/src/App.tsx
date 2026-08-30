@@ -78,6 +78,7 @@ const ResearchCenterPage = lazyRoute(() => import('./pages/ResearchCenterPage'),
 const IndustryResearchPage = lazyRoute(() => import('./pages/IndustryResearchPage'), 'industry-research');
 const DragonTigerPage = lazyRoute(() => import('./pages/DragonTigerPage'), 'dragon-tiger');
 const AdminConsolePage = lazyRoute(() => import('./pages/AdminConsolePage'), 'admin-console');
+const UserGuidePage = lazyRoute(() => import('./pages/UserGuidePage'), 'user-guide');
 
 const APP_ROUTE_PRELOAD_PATHS = [
   '/investment-monitor',
@@ -290,9 +291,9 @@ const RoutedApplication: React.FC = () => {
   return (
     <>
       <RoutePreloadController />
-      {location.pathname === '/' ? (
+      {location.pathname === '/' || location.pathname === '/guide' ? (
         <StandaloneRouteBoundary>
-          <LandingPage />
+          {location.pathname === '/guide' ? <UserGuidePage /> : <LandingPage />}
         </StandaloneRouteBoundary>
       ) : (
         <AuthProvider initialize={needsAdminAuth}>
