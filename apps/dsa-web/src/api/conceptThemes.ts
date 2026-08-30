@@ -89,7 +89,7 @@ export type ConceptMethodology = {
   betaFormula: string;
   windows: number[];
   minimumObservations: number;
-  sources: Array<{ key: string; name: string; reliability: number }>;
+  sources: Array<{ key: string; name: string; provider: string; reliability: number }>;
   licenseNote: string;
 };
 

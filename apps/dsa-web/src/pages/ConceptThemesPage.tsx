@@ -55,7 +55,7 @@ function ThemeCard({ item, active, onClick }: { item: ConceptTheme; active: bool
       <span><b>{metric(item.heatScore, 0)}</b>热度</span>
       <span data-tone={(item.pctChange ?? 0) >= 0 ? 'up' : 'down'}><b>{signed(item.pctChange)}</b>当日</span>
     </div>
-    <div className="concept-theme-card__foot"><span>{TYPE_LABEL[item.themeType] ?? item.themeType} · L{item.level} · {item.canonicalSourceCount || 1}源/{item.canonicalNodeCount || 1}节点</span><ChevronRight /></div>
+    <div className="concept-theme-card__foot"><span>{TYPE_LABEL[item.themeType] ?? item.themeType} · L{item.level} · {item.canonicalSourceCount || 1}方/{item.canonicalNodeCount || 1}节点</span><ChevronRight /></div>
   </button>;
 }
 
@@ -144,7 +144,7 @@ function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
         <i>{String(index + 1).padStart(2, '0')}</i><div><strong>{item.name}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><code>{item.tsCode}</code></div>
         <b>{mode === 'alpha' ? signed(focus?.residualReturn) : mode === 'beta' ? `β ${metric(focus?.beta)}` : mode === 'specificity' ? metric(focus?.specificityScore, 0) : `${item.consensusThemeCount}题材`}</b>
         <p>{focus?.canonicalName || item.primaryThemes.map(theme => theme.canonicalName).slice(0, 2).join(' · ') || '待补充归因'}</p>
-        <span>W{metric(item.averageWeight, 0)} · 最宽 {item.sourceBreadth} 源 · 雷达 {metric(item.radarScore, 0)}</span><ChevronRight />
+        <span>W{metric(item.averageWeight, 0)} · 最宽 {item.sourceBreadth} 方 · 雷达 {metric(item.radarScore, 0)}</span><ChevronRight />
       </button>; })}
       {!value?.items.length ? <p className="concept-market-radar__empty">跨题材归因正在随成分扫描自动扩展；不会用单源题材凑榜。</p> : null}
     </div>
@@ -154,9 +154,9 @@ function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
 
 function ClusterAggregate({ value, onOpen }: { value: ConceptClusterDetail; onOpen: (tsCode: string) => void }) {
   return <section className="concept-cluster-aggregate">
-    <header><div><span>LEVEL 2 AGGREGATE</span><h3>{value.cluster}</h3><p>{value.themeNodes} 个原始节点 · {value.canonicalThemes} 个规范题材 · {value.totalStocks} 只去重股票 · {value.sourceCount} 个来源</p></div><b>{value.asOfDate || '最新快照'}</b></header>
+    <header><div><span>LEVEL 2 AGGREGATE</span><h3>{value.cluster}</h3><p>{value.themeNodes} 个原始节点 · {value.canonicalThemes} 个规范题材 · {value.totalStocks} 只去重股票 · {value.sourceCount} 个独立提供方</p></div><b>{value.asOfDate || '最新快照'}</b></header>
     <div>{value.items.slice(0, 12).map(item => <button type="button" onClick={() => onOpen(item.tsCode)} key={item.tsCode}>
-      <span><strong>{item.name}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><code>{item.tsCode}</code></span><b>{metric(item.clusterScore, 0)}</b><small>{item.themeCount} 题材 · {item.sourceCount} 源</small><p>{item.dominantExposure?.canonicalName || item.themes.slice(0, 2).join(' · ')}</p>
+      <span><strong>{item.name}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><code>{item.tsCode}</code></span><b>{metric(item.clusterScore, 0)}</b><small>{item.themeCount} 题材 · {item.sourceCount} 方</small><p>{item.dominantExposure?.canonicalName || item.themes.slice(0, 2).join(' · ')}</p>
     </button>)}</div>
     <footer>{value.method}</footer>
   </section>;
@@ -168,7 +168,7 @@ function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: b
     <span><strong>{item.weightScore ? item.weightScore.toFixed(1) : '待算'}</strong><small>题材权重</small></span>
     <span title={item.betaInterpretation}><strong>{metric(item.beta)}</strong><small>题材 Beta · {item.confidence === 'high' ? '高' : item.confidence === 'medium' ? '中' : '低'}置信</small></span>
     <span data-tone={(item.residualReturn ?? 0) >= 0 ? 'up' : 'down'}><strong>{signed(item.residualReturn)}</strong><small>窗口 Alpha</small></span>
-    <span><strong>{item.sourceCount}</strong><small>独立来源</small></span>
+    <span><strong>{item.sourceCount}</strong><small>独立提供方</small></span>
     <span className="concept-stock-reason">{item.reasons?.[0] || '结构化来源已确认，尚无文字入选原因'}</span>
     <ChevronRight />
   </button>;
@@ -187,7 +187,7 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
     </div>
     <div className="concept-lens-summary">
       <div><strong>{value.summary.themeCount}</strong><span>归属题材</span></div>
-      <div><strong>{value.summary.sourceCount}</strong><span>覆盖来源</span></div>
+      <div><strong>{value.summary.sourceCount}</strong><span>独立提供方</span></div>
       <div><strong>{value.summary.consensusCount}</strong><span>多源共识</span></div>
       <div><strong>{value.summary.alphaPositiveCount}</strong><span>正向窗口Alpha</span></div>
     </div>

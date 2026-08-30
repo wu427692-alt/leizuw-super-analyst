@@ -15,7 +15,7 @@ import threading
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
-from sqlalchemy import and_, desc, func, or_, select, update
+from sqlalchemy import and_, case, desc, func, or_, select, update
 
 from src.services.financial_data_service import (
     FinancialDataUpstreamError,
@@ -62,6 +62,40 @@ SOURCE_RELIABILITY = {
     "ths": 0.82,
     "tdx": 0.74,
 }
+
+# Catalogs are auditable source nodes, while consensus votes must represent
+# independent providers.  The two Eastmoney catalogs are useful separate
+# taxonomies, but counting both as independent votes would inflate consensus.
+SOURCE_PROVIDERS = {
+    "ths": "同花顺",
+    "dc_board": "东方财富",
+    "dc_theme": "东方财富",
+    "kpl": "开盘啦",
+    "tdx": "通达信",
+    "sw": "申万",
+}
+
+
+def _source_provider(source: Any) -> str:
+    return SOURCE_PROVIDERS.get(str(source or ""), str(source or ""))
+
+
+def _independent_source_count(sources: Iterable[Any]) -> int:
+    return len({_source_provider(source) for source in sources if str(source or "").strip()})
+
+
+def _independent_source_strength(sources: Iterable[Any]) -> float:
+    """Use the strongest catalog within a provider, never double-count it."""
+    provider_weights: Dict[str, float] = {}
+    for source in sources:
+        key = str(source or "")
+        provider = _source_provider(key)
+        provider_weights[provider] = max(provider_weights.get(provider, 0.0), SOURCE_RELIABILITY.get(key, 0.7))
+    return sum(provider_weights.values())
+
+
+def _provider_sql(column: Any) -> Any:
+    return case((column.in_(("dc_board", "dc_theme")), "东方财富"), else_=column)
 
 THS_TYPE_MAP = {
     "N": ("concept", 3),
@@ -509,7 +543,7 @@ class ConceptThemeService:
             if int(min_sources) > 1:
                 consensus_names = select(ConceptThemeRecord.canonical_name).group_by(
                     ConceptThemeRecord.canonical_name,
-                ).having(func.count(func.distinct(ConceptThemeRecord.source)) >= min(6, int(min_sources)))
+                ).having(func.count(func.distinct(_provider_sql(ConceptThemeRecord.source))) >= min(5, int(min_sources)))
                 filters.append(ConceptThemeRecord.canonical_name.in_(consensus_names))
             if family or cluster:
                 matching_ids = [theme_id for theme_id, (family_name, cluster_name) in taxonomy["by_id"].items()
@@ -543,7 +577,7 @@ class ConceptThemeService:
                 canonical: {"source_count": int(source_count or 0), "node_count": int(node_count or 0)}
                 for canonical, source_count, node_count in session.execute(select(
                     ConceptThemeRecord.canonical_name,
-                    func.count(func.distinct(ConceptThemeRecord.source)),
+                    func.count(func.distinct(_provider_sql(ConceptThemeRecord.source))),
                     func.count(ConceptThemeRecord.id),
                 ).where(
                     ConceptThemeRecord.canonical_name.in_(page_canonicals),
@@ -601,7 +635,7 @@ class ConceptThemeService:
                     ConceptMembershipRecord.ts_code,
                     func.max(ConceptMembershipRecord.stock_name),
                     func.count(func.distinct(ConceptThemeRecord.canonical_name)),
-                    func.count(func.distinct(ConceptMembershipRecord.source)),
+                    func.count(func.distinct(_provider_sql(ConceptMembershipRecord.source))),
                 ).join(
                     ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
                 ).where(
@@ -611,7 +645,7 @@ class ConceptThemeService:
                         ConceptMembershipRecord.stock_name.like(stock_term),
                     ),
                 ).group_by(ConceptMembershipRecord.ts_code).order_by(
-                    desc(func.count(func.distinct(ConceptMembershipRecord.source))),
+                    desc(func.count(func.distinct(_provider_sql(ConceptMembershipRecord.source)))),
                     desc(func.count(func.distinct(ConceptThemeRecord.canonical_name))),
                 ).limit(8)).all()
                 stock_matches = [{
@@ -730,7 +764,7 @@ class ConceptThemeService:
             if membership.reason and membership.reason not in item["reasons"]:
                 item["reasons"].append(membership.reason)
         for code, item in stocks.items():
-            item["source_count"] = len(item["sources"])
+            item["source_count"] = _independent_source_count(item["sources"])
             exposure = exposure_by_stock.get(code)
             if exposure:
                 item.update(self._exposure_dict(exposure))
@@ -857,7 +891,7 @@ class ConceptThemeService:
         themes = []
         for canonical, item in grouped.items():
             exposure = exposure_map.get(canonical)
-            values = {**item, "source_count": len(item["sources"]), "reasons": item["reasons"][:4]}
+            values = {**item, "source_count": _independent_source_count(item["sources"]), "reasons": item["reasons"][:4]}
             if exposure:
                 values.update(self._exposure_dict(exposure))
             else:
@@ -882,7 +916,9 @@ class ConceptThemeService:
             "unique_drivers": drivers,
             "horizon_days": horizon,
             "summary": {
-                "theme_count": len(themes), "source_count": len({source for item in themes for source in item["sources"]}),
+                "theme_count": len(themes), "source_count": _independent_source_count(
+                    source for item in themes for source in item["sources"]
+                ),
                 "consensus_count": sum(1 for item in themes if item["source_count"] >= 2),
                 "alpha_positive_count": sum(1 for item in themes if (item.get("alpha_annualized") or 0) > 0),
             },
@@ -1015,7 +1051,7 @@ class ConceptThemeService:
             ranked_exposures = sorted(item["exposures"], key=lambda row: -float(row.weight_score or 0))
             weights = [float(row.weight_score or 0) for row in ranked_exposures[:3]]
             average_weight = statistics.mean(weights) if weights else 0.0
-            source_count = len(item["sources"])
+            source_count = _independent_source_count(item["sources"])
             theme_count = len(item["canonical_names"])
             dominant = ranked_exposures[0] if ranked_exposures else None
             cluster_score = min(100.0, average_weight * .65 + min(theme_count, 6) * 4 + min(source_count, 6) * 2.5)
@@ -1030,7 +1066,7 @@ class ConceptThemeService:
         return {
             "family": family, "cluster": cluster, "items": output[:max(12, min(int(limit), 200))],
             "total_stocks": len(output), "theme_nodes": len(theme_ids), "canonical_themes": len(canonical_names),
-            "source_count": len({theme.source for _, theme in rows}),
+            "source_count": _independent_source_count(theme.source for _, theme in rows),
             "as_of_date": latest_date.isoformat() if latest_date else None, "horizon_days": horizon,
             "method": "聚合二级主题下的全部原始节点和成分关系；综合分用于研究排序，Beta/Alpha仅引用股票权重最高的代表题材，不冒充二级主题回归。",
         }
@@ -1161,14 +1197,14 @@ class ConceptThemeService:
                         beta_t_stat = round(float(coefficients[1]) / raw_standard_error, 3)
                         beta_ci_low = round(float(coefficients[1]) - 1.96 * raw_standard_error, 4)
                         beta_ci_high = round(float(coefficients[1]) + 1.96 * raw_standard_error, 4)
-            source_count = len(meta["sources"])
+            source_count = _independent_source_count(meta["sources"])
             reason_count = len(meta["reasons"])
             longest_reason = max((len(reason) for reason in meta["reasons"]), default=0)
             provider_reason_score = min(100.0, 25.0 + min(50.0, longest_reason * 0.25) + min(25.0, reason_count * 8.0))
             corpus = local_evidence.get(code, {"count": 0, "score": 0.0, "items": []})
             local_evidence_score = float(corpus.get("score") or 0.0)
             reason_quality = min(100.0, provider_reason_score + 0.30 * local_evidence_score)
-            source_strength = sum(SOURCE_RELIABILITY.get(source, 0.7) for source in meta["sources"])
+            source_strength = _independent_source_strength(meta["sources"])
             consensus = min(100.0, 100.0 * (
                 0.55 * min(1.0, source_strength / 2.5) +
                 0.45 * min(1.0, source_count / 3.0)
@@ -1188,6 +1224,8 @@ class ConceptThemeService:
             components = {
                 "consensus": round(consensus, 1), "relevance": round(reason_quality, 1),
                 "market": round(market_score, 1), "specificity": round(specificity, 1),
+                "catalog_count": len(meta["sources"]), "provider_count": source_count,
+                "provider_consensus_version": 1,
                 "formula": "36%来源共识 + 29%业务证据 + 20%市场热度 + 15%题材专属性",
                 "regression": "个股日收益 = Alpha + Beta题材×剔除自身后的题材等权收益 + Beta市场×沪深300收益",
                 "beta_standard_error": beta_standard_error,
@@ -1233,6 +1271,65 @@ class ConceptThemeService:
                     for key, value in values.items():
                         setattr(existing, key, value)
         return len(records)
+
+    def reconcile_exposure_provider_counts(self, *, limit: int = 80) -> Dict[str, int]:
+        """Upgrade legacy exposure rows from catalog votes to provider votes.
+
+        This is deliberately incremental so a production restart never locks
+        the shared SQLite database for a long migration.  Each worker cycle
+        repairs a bounded set of canonical themes and records the method
+        version inside the existing component audit payload.
+        """
+        marker = '%"provider_consensus_version": 1%'
+        with self._read_scope() as session:
+            canonicals = session.execute(select(ConceptExposureRecord.canonical_name).where(
+                or_(ConceptExposureRecord.components_json.is_(None), ~ConceptExposureRecord.components_json.like(marker)),
+            ).distinct().limit(max(1, min(int(limit), 500)))).scalars().all()
+        updated = 0
+        for canonical in canonicals:
+            with self.db.session_scope() as session:
+                memberships = session.execute(select(
+                    ConceptMembershipRecord.ts_code, ConceptThemeRecord.source,
+                ).join(
+                    ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+                ).where(
+                    ConceptThemeRecord.canonical_name == canonical,
+                    ConceptMembershipRecord.active.is_(True),
+                )).all()
+                sources_by_stock: Dict[str, set[str]] = defaultdict(set)
+                for code, source in memberships:
+                    sources_by_stock[str(code)].add(str(source))
+                exposures = session.execute(select(ConceptExposureRecord).where(
+                    ConceptExposureRecord.canonical_name == canonical,
+                    or_(ConceptExposureRecord.components_json.is_(None), ~ConceptExposureRecord.components_json.like(marker)),
+                )).scalars().all()
+                for exposure in exposures:
+                    sources = sources_by_stock.get(exposure.ts_code, set())
+                    provider_count = _independent_source_count(sources)
+                    source_strength = _independent_source_strength(sources)
+                    consensus = min(100.0, 100.0 * (
+                        0.55 * min(1.0, source_strength / 2.5)
+                        + 0.45 * min(1.0, provider_count / 3.0)
+                    ))
+                    exposure.source_count = provider_count
+                    exposure.consensus_score = round(consensus, 1)
+                    exposure.weight_score = round(
+                        0.36 * consensus
+                        + 0.29 * float(exposure.relevance_score or 0)
+                        + 0.20 * float(exposure.market_score or 0)
+                        + 0.15 * float(exposure.specificity_score or 0),
+                        1,
+                    )
+                    components = _json(exposure.components_json, {})
+                    components.update({
+                        "consensus": round(consensus, 1),
+                        "catalog_count": len(sources),
+                        "provider_count": provider_count,
+                        "provider_consensus_version": 1,
+                    })
+                    exposure.components_json = json.dumps(components, ensure_ascii=False)
+                    updated += 1
+        return {"themes": len(canonicals), "exposures": updated}
 
     def _local_theme_evidence(
         self, canonical_name: str, by_stock: Dict[str, Dict[str, Any]],
@@ -1362,7 +1459,7 @@ class ConceptThemeService:
                     "date": market_date.isoformat(),
                     "pct_change": round(float(statistics.median(changes)), 3) if changes else None,
                     "heat_score": round(max(heats), 1) if heats else None,
-                    "source_count": len({value.source for value in values}),
+                    "source_count": _independent_source_count(value.source for value in values),
                 })
             if not points:
                 continue
@@ -1435,9 +1532,10 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.39",
+            "version": "concept-consensus-v1.40",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
+                "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
                 "业务证据只接受供应商入选理由，或本地机构语料中题材标签与股票明确提及的交叉命中。",
                 "Beta 使用剔除个股自身后的题材组合，并同时控制沪深300，避免机械自相关。",
@@ -1452,7 +1550,7 @@ class ConceptThemeService:
             "beta_formula": "r_stock = alpha + beta_theme × r_theme_leave_one_out + beta_market × r_CSI300 + epsilon",
             "windows": [20, 60, 120],
             "minimum_observations": 20,
-            "sources": [{"key": key, "name": value, "reliability": SOURCE_RELIABILITY[key]}
+            "sources": [{"key": key, "name": value, "provider": SOURCE_PROVIDERS[key], "reliability": SOURCE_RELIABILITY[key]}
                         for key, value in SOURCE_LABELS.items()],
             "license_note": "同花顺等第三方接口数据按其授权仅用于个人学习研究；不在此功能中转售原始数据。",
         }

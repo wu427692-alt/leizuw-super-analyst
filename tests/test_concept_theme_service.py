@@ -105,17 +105,72 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
     }]
     assert strict_consensus["total"] == 0
     with service.db.session_scope() as session:
-        session.add(ConceptThemeRecord(
-            source="dc_theme", source_code="000286.DC", name="CPO概念",
-            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
-            market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
-        ))
+        session.add_all([
+            ConceptThemeRecord(
+                source="dc_theme", source_code="000286.DC", name="CPO概念",
+                canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+                market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+            ),
+            ConceptThemeRecord(
+                source="dc_board", source_code="BK1200.DC", name="CPO板块",
+                canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+                market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+            ),
+        ])
     canonical_view = service.overview(query="CPO", view="canonical", page_size=12)
     source_view = service.overview(query="CPO", view="source", page_size=12)
     assert canonical_view["total"] == 1
+    # Two Eastmoney catalogs remain separate audit nodes, but count as one
+    # independent provider together with Tonghuashun for consensus.
     assert canonical_view["items"][0]["canonical_source_count"] == 2
+    assert canonical_view["items"][0]["canonical_node_count"] == 3
     assert canonical_view["items"][0]["constituent_count"] == 1
-    assert source_view["total"] == 2
+    assert source_view["total"] == 3
+
+
+def test_two_catalogs_from_same_provider_do_not_create_false_consensus(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        board = ConceptThemeRecord(
+            source="dc_board", source_code="BK1200.DC", name="光模块板块",
+            canonical_name="光通信/光模块", theme_type="theme", level=3,
+            market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+        )
+        theme = ConceptThemeRecord(
+            source="dc_theme", source_code="000287.DC", name="光模块概念",
+            canonical_name="光通信/光模块", theme_type="theme", level=3,
+            market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+        )
+        session.add_all([board, theme]); session.flush()
+        for source_node in (board, theme):
+            session.add(ConceptMembershipRecord(
+                theme_id=source_node.id, source=source_node.source,
+                ts_code="300308.SZ", stock_name="中际旭创", active=True,
+                first_seen_at=now, last_seen_at=now, updated_at=now,
+            ))
+        session.add(ConceptExposureRecord(
+            ts_code="300308.SZ", stock_name="中际旭创", canonical_name="光通信/光模块",
+            as_of_date=date(2026, 8, 28), horizon_days=60, source_count=2,
+            consensus_score=100, relevance_score=50, market_score=50, specificity_score=50,
+            weight_score=68, components_json=json.dumps({"consensus": 100}), calculated_at=now,
+        ))
+
+    audited = service.overview(query="光模块", view="canonical", page_size=12)
+    strict = service.overview(query="光模块", view="canonical", min_sources=2, page_size=12)
+    assert audited["items"][0]["canonical_node_count"] == 2
+    assert audited["items"][0]["canonical_source_count"] == 1
+    assert strict["total"] == 0
+    repaired = service.reconcile_exposure_provider_counts()
+    assert repaired == {"themes": 1, "exposures": 1}
+    with service.db.session_scope() as session:
+        exposure = session.query(ConceptExposureRecord).one()
+        components = json.loads(exposure.components_json)
+        assert exposure.source_count == 1
+        assert exposure.consensus_score < 50
+        assert exposure.weight_score < 50
+        assert components["catalog_count"] == 2
+        assert components["provider_count"] == 1
 
 
 def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> None:
