@@ -166,6 +166,14 @@ def watchlist_map(
     )
 
 
+@router.get("/membership-changes", summary="读取供应商题材成分新增与退出账本")
+def membership_changes(
+    days: int = Query(default=7, ge=1, le=30),
+    limit: int = Query(default=24, ge=8, le=60),
+):
+    return ConceptThemeService().membership_change_ledger(days=days, limit=limit)
+
+
 @router.get("/cluster-detail", summary="读取二级题材簇的聚合成分")
 def cluster_detail(
     request: Request,

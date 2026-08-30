@@ -218,6 +218,28 @@ export type WatchlistThemeMap = {
   method: string;
 };
 
+export type ConceptMembershipChanges = {
+  items: Array<{
+    state: 'added' | 'removed';
+    tsCode: string;
+    name: string;
+    canonicalName: string;
+    family: string;
+    cluster: string;
+    sources: string[];
+    sourceCount: number;
+    eventAt: string;
+    marketDate?: string | null;
+    reasons: string[];
+  }>;
+  added: number;
+  removed: number;
+  baselineIgnored: number;
+  windowDays: number;
+  cutoffAt: string;
+  method: string;
+};
+
 export type ConceptClusterDetail = {
   family: string;
   cluster: string;
@@ -466,6 +488,16 @@ export const conceptThemesApi = {
       return toCamelCase<WatchlistThemeMap>(response.data);
     },
     { freshMs: 30_000, staleMs: 5 * 60_000 },
+  ),
+  membershipChanges: async (days = 7, limit = 24): Promise<ConceptMembershipChanges> => cachedQuery(
+    `concept:membership-changes:${days}:${limit}`,
+    async () => {
+      const response = await apiClient.get('/api/v1/concept-themes/membership-changes', {
+        params: { days, limit }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<ConceptMembershipChanges>(response.data);
+    },
+    { freshMs: 60_000, staleMs: 10 * 60_000 },
   ),
   cluster: async (family: string, cluster: string, horizonDays = 60, limit = 80): Promise<ConceptClusterDetail> => cachedQuery(
     `concept:cluster:${family}:${cluster}:${horizonDays}:${limit}`,

@@ -1340,6 +1340,79 @@ class ConceptThemeService:
             "method": "只聚合当前用户自选股在各自最新归因日的多源业务主线；相近标签按独立语义簇去重，地域、风格和宽基不计入集中度。集中度按股票数量等权，不读取或推断持仓金额。",
         }
 
+    def membership_change_ledger(self, *, days: int = 7, limit: int = 24) -> Dict[str, Any]:
+        """Show source membership changes without mislabeling baseline imports as market events."""
+        window = max(1, min(int(days), 30))
+        output_limit = max(8, min(int(limit), 60))
+        cutoff = utc_naive_now() - timedelta(days=window)
+        candidate_limit = max(800, min(6_000, output_limit * 120))
+        with self._read_scope() as session:
+            rows = session.execute(select(
+                ConceptMembershipRecord, ConceptThemeRecord,
+            ).join(
+                ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(or_(
+                ConceptMembershipRecord.first_seen_at >= cutoff,
+                and_(
+                    ConceptMembershipRecord.active.is_(False),
+                    ConceptMembershipRecord.updated_at >= cutoff,
+                ),
+            )).order_by(desc(ConceptMembershipRecord.updated_at)).limit(candidate_limit)).all()
+        taxonomy = self._taxonomy_index()
+        grouped: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        baseline_ignored = 0
+        for membership, theme in rows:
+            state = "removed" if not membership.active and membership.updated_at >= cutoff else "added"
+            event_at = membership.updated_at if state == "removed" else membership.first_seen_at
+            # A constituent captured shortly after a new source theme is first
+            # created is the initial baseline, not evidence of a market change.
+            if state == "added" and abs((membership.first_seen_at - theme.first_seen_at).total_seconds()) < 6 * 3600:
+                baseline_ignored += 1
+                continue
+            family, cluster = self._semantic_cluster_for(theme.canonical_name, taxonomy)
+            key = (state, membership.ts_code, theme.canonical_name)
+            item = grouped.setdefault(key, {
+                "state": state,
+                "ts_code": membership.ts_code,
+                "name": membership.stock_name or membership.ts_code,
+                "canonical_name": theme.canonical_name,
+                "family": family,
+                "cluster": cluster,
+                "sources": set(),
+                "event_at": event_at,
+                "market_dates": set(),
+                "reasons": [],
+            })
+            item["sources"].add(membership.source)
+            if membership.market_date:
+                item["market_dates"].add(membership.market_date.isoformat())
+            if membership.reason and membership.reason not in item["reasons"]:
+                item["reasons"].append(membership.reason)
+            if event_at > item["event_at"]:
+                item["event_at"] = event_at
+        items = []
+        for item in grouped.values():
+            sources = sorted(item.pop("sources"))
+            dates = sorted(item.pop("market_dates"), reverse=True)
+            item.update({
+                "sources": sources,
+                "source_count": _independent_source_count(sources),
+                "event_at": item["event_at"].isoformat(),
+                "market_date": dates[0] if dates else None,
+                "reasons": item["reasons"][:3],
+            })
+            items.append(item)
+        items.sort(key=lambda item: (int(item["source_count"]), str(item["event_at"])), reverse=True)
+        return {
+            "items": items[:output_limit],
+            "added": sum(1 for item in items if item["state"] == "added"),
+            "removed": sum(1 for item in items if item["state"] == "removed"),
+            "baseline_ignored": baseline_ignored,
+            "window_days": window,
+            "cutoff_at": cutoff.isoformat(),
+            "method": "只显示旧题材目录后续捕获的新增/退出成分；题材首次建库六小时内的基线成分不计作市场变化。时间表示平台供应商成分入库时间，不等于公司公告日。",
+        }
+
     def stock_lens(self, ts_code: str, *, refresh_if_empty: bool = True, horizon_days: int = 60) -> Dict[str, Any]:
         code = _ts_code(ts_code)
         horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
@@ -2186,7 +2259,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.55",
+            "version": "concept-consensus-v1.56",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

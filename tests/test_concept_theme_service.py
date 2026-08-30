@@ -645,3 +645,47 @@ def test_watchlist_theme_map_isolates_codes_and_deduplicates_narratives(tmp_path
     assert result["concentration"]["top_coverage_pct"] == 100.0
     assert result["concentration"]["covered_stock_count"] == 2
     assert "不代表持仓市值权重" in result["concentration"]["interpretation"]
+
+
+def test_membership_change_ledger_excludes_initial_baseline(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        old_theme = ConceptThemeRecord(
+            source="ths", source_code="T-OLD", name="光模块", canonical_name="光通信/光模块",
+            theme_type="concept", level=3, first_seen_at=now - timedelta(days=20),
+            last_seen_at=now, updated_at=now,
+        )
+        new_theme = ConceptThemeRecord(
+            source="kpl", source_code="T-NEW", name="机器人", canonical_name="机器人",
+            theme_type="theme", level=3, first_seen_at=now - timedelta(days=1),
+            last_seen_at=now, updated_at=now,
+        )
+        session.add_all([old_theme, new_theme])
+        session.flush()
+        session.add_all([
+            ConceptMembershipRecord(
+                theme_id=old_theme.id, source="ths", ts_code="300308.SZ", stock_name="中际旭创",
+                active=True, first_seen_at=now - timedelta(days=1), last_seen_at=now,
+                updated_at=now, market_date=date(2026, 8, 28),
+            ),
+            ConceptMembershipRecord(
+                theme_id=old_theme.id, source="ths", ts_code="300502.SZ", stock_name="新易盛",
+                active=False, first_seen_at=now - timedelta(days=10), last_seen_at=now - timedelta(days=1),
+                updated_at=now - timedelta(hours=4), market_date=date(2026, 8, 28),
+            ),
+            ConceptMembershipRecord(
+                theme_id=new_theme.id, source="kpl", ts_code="688017.SH", stock_name="绿的谐波",
+                active=True, first_seen_at=now - timedelta(days=1), last_seen_at=now,
+                updated_at=now, market_date=date(2026, 8, 28),
+            ),
+        ])
+
+    result = service.membership_change_ledger(days=7, limit=12)
+
+    assert {(item["state"], item["ts_code"]) for item in result["items"]} == {
+        ("added", "300308.SZ"), ("removed", "300502.SZ"),
+    }
+    assert result["baseline_ignored"] == 1
+    assert result["added"] == 1
+    assert result["removed"] == 1

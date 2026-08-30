@@ -8,7 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
-import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail, type WatchlistThemeMap } from '../api/conceptThemes';
+import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptMembershipChanges, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail, type WatchlistThemeMap } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
@@ -231,6 +231,26 @@ function WatchlistExposureMap({ value, onOpen, onCluster }: {
   </section>;
 }
 
+function MembershipChangeLedger({ value, onOpen, onTheme }: {
+  value: ConceptMembershipChanges | null;
+  onOpen: (tsCode: string) => void;
+  onTheme: (name: string) => void;
+}) {
+  return <section className="concept-change-ledger">
+    <header><div><span><Activity /> PROVIDER MEMBERSHIP LEDGER</span><h2>题材成分变化账本</h2><p>跟踪供应商后续新增与退出；首次建库成分不会伪装成市场变化。</p></div><div><b>{number(value?.added)}</b><small>新增归属</small><b>{number(value?.removed)}</b><small>退出归属</small></div></header>
+    <div className="concept-change-ledger__track">
+      {value?.items.slice(0, 12).map(item => <article data-state={item.state} key={`${item.state}-${item.tsCode}-${item.canonicalName}`}>
+        <header><span>{item.state === 'added' ? '新增归属' : '退出归属'}</span><time>{item.eventAt.slice(5, 16).replace('T', ' ')}</time></header>
+        <button type="button" onClick={() => onOpen(item.tsCode)}><strong>{item.name}</strong><code>{item.tsCode}</code><ChevronRight /></button>
+        <button type="button" onClick={() => onTheme(item.canonicalName)}><b>{item.canonicalName}</b><small>{item.cluster}</small></button>
+        <p>{item.sourceCount} 个独立供应商 · {item.sources.map(source => SOURCE_LABEL[source] || source).join(' / ')}</p>
+      </article>)}
+      {!value?.items.length ? <div className="concept-change-ledger__empty"><ShieldCheck /><strong>近 {value?.windowDays || 7} 日暂无可确认的后续成分变化</strong><p>系统已忽略 {number(value?.baselineIgnored)} 条首次建库基线，不会为了填满页面生成假事件。</p></div> : null}
+    </div>
+    <footer>{value?.method || '供应商变更账本自动刷新；无事实时保持空白。'}</footer>
+  </section>;
+}
+
 function ClusterAggregate({ value, onOpen }: { value: ConceptClusterDetail; onOpen: (tsCode: string) => void }) {
   return <section className="concept-cluster-aggregate">
     <header><div><span>LEVEL 2 AGGREGATE</span><h3>{value.cluster}</h3><p>{value.themeNodes} 个原始节点 · {value.canonicalThemes} 个规范题材 · {value.totalStocks} 只去重股票 · {value.sourceCount} 个独立提供方</p></div><b>{value.asOfDate || '最新快照'}</b></header>
@@ -350,6 +370,7 @@ export default function ConceptThemesPage() {
   const [institutionRadar, setInstitutionRadar] = useState<InstitutionThemeRadar | null>(null);
   const [institutionCandidate, setInstitutionCandidate] = useState<InstitutionThemeRadar['items'][number] | null>(null);
   const [watchlistMap, setWatchlistMap] = useState<WatchlistThemeMap | null>(null);
+  const [membershipChanges, setMembershipChanges] = useState<ConceptMembershipChanges | null>(null);
   const [leaderMode, setLeaderMode] = useState<ConceptLeaders['mode']>('consensus');
   const [clusterDetail, setClusterDetail] = useState<ConceptClusterDetail | null>(null);
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
@@ -406,6 +427,10 @@ export default function ConceptThemesPage() {
     try { setWatchlistMap(await conceptThemesApi.watchlistMap(horizonDays)); }
     catch { /* a user without a watchlist should not block the market workspace */ }
   }, [horizonDays]);
+  const loadMembershipChanges = useCallback(async () => {
+    try { setMembershipChanges(await conceptThemesApi.membershipChanges(7, 24)); }
+    catch { /* keep the last successful provider change ledger */ }
+  }, []);
   const loadCluster = useCallback(async () => {
     if (!family || !cluster) return;
     try { setClusterDetail(await conceptThemesApi.cluster(family, cluster, horizonDays)); }
@@ -417,10 +442,11 @@ export default function ConceptThemesPage() {
   useEffect(() => { void loadLeaders(); }, [loadLeaders]);
   useEffect(() => { void loadInstitutionRadar(); }, [loadInstitutionRadar]);
   useEffect(() => { void loadWatchlistMap(); }, [loadWatchlistMap]);
+  useEffect(() => { void loadMembershipChanges(); }, [loadMembershipChanges]);
   useEffect(() => { setClusterDetail(null); void loadCluster(); }, [loadCluster]);
   useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadWatchlistMap(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadOverview, loadRotation, loadWatchlistMap]);
+  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadWatchlistMap(), loadMembershipChanges(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadMembershipChanges, loadOverview, loadRotation, loadWatchlistMap]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
@@ -538,6 +564,8 @@ export default function ConceptThemesPage() {
       <InstitutionDiscoveryRadar value={institutionRadar} onSelect={item => { setStockLens(null); setInstitutionCandidate(item); }} onOpen={tsCode => void openStock(tsCode)} />
 
       <WatchlistExposureMap value={watchlistMap} onOpen={tsCode => void openStock(tsCode)} onCluster={(nextFamily, nextCluster) => { setFamily(nextFamily); setCluster(nextCluster); }} />
+
+      <MembershipChangeLedger value={membershipChanges} onOpen={tsCode => void openStock(tsCode)} onTheme={name => { setQuery(name); setPage(1); }} />
 
       <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
 
