@@ -9,7 +9,7 @@ import { AppPage, ConfirmDialog, Drawer, EmptyState, EvidenceRail } from '../com
 import { eventTime } from '../components/investmentMonitor/investmentMonitorMeta';
 import { MarketTimeframeChart } from '../components/market';
 import { StockAutocomplete } from '../components/StockAutocomplete/StockAutocomplete';
-import type { EssayConsensusAnalysis, MonitorEvent, SuperWatchlistDashboard, SuperWatchlistStock, WatchlistBackfillJob } from '../types/investmentMonitor';
+import type { EssayConsensusAnalysis, MonitorEvent, SuperWatchlistDashboard, SuperWatchlistStock } from '../types/investmentMonitor';
 import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type { RealtimeQuote } from '../api/realtimeQuotes';
@@ -25,26 +25,6 @@ const SECTIONS: Array<{ key: Section; label: string }> = [
   { key: 'messages', label: '消息渠道' }, { key: 'comments', label: '股评监控' },
   { key: 'evidence', label: '全部证据' },
 ];
-const CHANNEL_LABELS: Record<string, string> = {
-  tushare_market: 'Tushare 行情', tushare_fundamental: 'Tushare 财务',
-  tushare_capital: 'Tushare 资金', tushare_research: '券商研报',
-  tushare_news: '财经新闻', cninfo: '巨潮公告', zsxq: '知识星球',
-  tianyancha: '天眼查', external_feeds: '外部消息源',
-  tushareMarket: 'Tushare 行情', tushareFundamental: 'Tushare 财务',
-  tushareCapital: 'Tushare 资金', tushareResearch: '券商研报',
-  tushareNews: '财经新闻', externalFeeds: '外部消息源',
-  akshareStockComments: '千股千评指标', stockComments: '公开股评',
-};
-const STATUS_LABELS: Record<string, string> = {
-  pending: '等待中', running: '进行中', completed: '已完成', partial: '部分完成',
-  failed: '失败', not_supported: '无历史接口', empty: '无数据',
-};
-const COVERAGE_LABELS: Record<string, string> = {
-  market: '行情技术', fundamental: '财务业绩', capital: '资金席位', institution: '机构研报',
-  company: '公告治理', ownership: '股权事项', enterprise: '企业风险', essay: '知识星球',
-  comment: '股评监控',
-};
-const DEFAULT_CHANNEL_KEYS = ['tushareMarket', 'tushareFundamental', 'tushareCapital', 'tushareResearch', 'tushareNews', 'cninfo', 'zsxq', 'tianyancha', 'stockComments', 'externalFeeds'];
 
 function number(value: unknown, digits = 2) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '—';
@@ -158,35 +138,6 @@ function EssayOriginalDrawer({ event, onClose }: { event: MonitorEvent; onClose:
       {event.url ? <div className="border-t border-border/70 pt-4"><a href={event.url} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 border border-border/70 px-3 font-semibold text-[#155EEF] hover:bg-hover">在知识星球打开<ExternalLink className="h-3.5 w-3.5" /></a></div> : null}
     </div>
   </Drawer>;
-}
-
-function BackfillRail({ job, coverage, onRetry, busy }: { job?: WatchlistBackfillJob; coverage?: SuperWatchlistStock['coverage']; onRetry: () => void; busy: boolean }) {
-  const rows: Array<[string, { status: string; created?: number; received?: number }]> = Object.entries(job?.channels ?? {});
-  return <aside className="super-channel-rail border-l border-[#D8DADF] bg-[#F8F9FB] p-4">
-    <div className="flex items-center justify-between"><h2 className="text-[13px] font-bold">共享数据状态</h2><span className="font-mono text-[10px] text-[#62666D]">{coverage?.filter(row => row.available).length ?? 0}/{coverage?.length ?? 0}</span></div>
-    <div className="mt-3 border border-[#D8DADF] bg-white">
-      {(coverage ?? []).map(row => <div key={row.name} className="grid grid-cols-[1fr_42px_48px] gap-2 border-t border-[#E5E7EB] px-3 py-2 first:border-t-0">
-        <span className="truncate text-[10px] text-[#344054]">{COVERAGE_LABELS[row.name] ?? row.name}</span>
-        <span className="text-right font-mono text-[10px] text-[#62666D]">{row.count}</span>
-        <span className={`text-right text-[10px] ${row.freshnessStatus === 'fresh' ? 'text-[#027A48]' : row.freshnessStatus === 'empty' ? 'text-[#B42318]' : 'text-[#B54708]'}`}>{row.freshnessStatus === 'fresh' ? '新鲜' : row.freshnessStatus === 'empty' ? '缺失' : '陈旧'}</span>
-      </div>)}
-    </div>
-    <div className="mt-5 flex items-center justify-between"><h2 className="text-[12px] font-bold">首次历史回填</h2><span className="font-mono text-[10px] text-[#62666D]">{job?.progress ?? 0}%</span></div>
-    <div className="mt-2 h-1.5 bg-[#D8DADF]"><div className="h-full bg-[#155EEF] transition-all" style={{ width: `${job?.progress ?? 0}%` }} /></div>
-    <p className="mt-2 text-[10px] leading-4 text-[#6B7078]">近半年回填：{STATUS_LABELS[job?.status ?? 'pending'] ?? job?.status ?? '未开始'}</p>
-    <div className="mt-4 border border-[#D8DADF] bg-white">
-      {(rows.length ? rows : DEFAULT_CHANNEL_KEYS.map(key => [key, { status: 'pending' }] as [string, { status: string; created?: number; received?: number }])).map(([key, value]) => {
-        const tone = value.status === 'completed' ? 'text-[#027A48]' : value.status === 'failed' ? 'text-[#B42318]' : 'text-[#B54708]';
-        return <div key={key} className="grid grid-cols-[1fr_64px_44px] gap-2 border-t border-[#E5E7EB] px-3 py-2 first:border-t-0">
-          <span className="truncate text-[10px] text-[#344054]">{CHANNEL_LABELS[key] ?? key}</span>
-          <span className={`text-[10px] ${tone}`}>{STATUS_LABELS[value.status] ?? value.status}</span>
-          <span className="text-right font-mono text-[10px] text-[#62666D]">{value.received ?? value.created ?? 0}</span>
-        </div>;
-      })}
-    </div>
-    {job?.error ? <p className="mt-3 line-clamp-3 text-[10px] leading-4 text-[#B42318]">{job.error}</p> : null}
-    <button disabled={busy || job?.status === 'running'} onClick={onRetry} className="mt-4 h-8 w-full border border-[#155EEF] bg-white text-[11px] font-semibold text-[#155EEF] disabled:opacity-40">补齐最近半年</button>
-  </aside>;
 }
 
 function Metric({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
@@ -346,7 +297,6 @@ export default function SuperWatchlistPage() {
   const activeLiveQuote = active ? liveQuotes.get(quoteKey(active.symbol)) : undefined;
   const hasActiveLiveQuote = Boolean(active && activeLiveQuote && activeLiveQuote.currentPrice > 0
     && shouldPreferQuote(activeLiveQuote.updateTime, data?.stocks.find(row => row.symbol === active.symbol)?.market.updatedAt, Boolean(activeLiveQuote.isStale)));
-  const job = data?.backfillJobs.find(row => row.symbol === active?.symbol);
   const submitStock = async (rawSymbol: string) => {
     const symbol = rawSymbol.trim();
     if (!symbol || busy) return;
@@ -376,7 +326,6 @@ export default function SuperWatchlistPage() {
       setDeletingSymbol(null);
     }
   };
-  const retry = async () => { if (!active) return; setBusy(true); try { await investmentMonitorApi.backfillWatchlist(active.symbol); await load(true); } finally { setBusy(false); } };
   const refreshShared = async () => {
     if (refreshingShared) return;
     setRefreshingShared(true); setError('');
@@ -410,25 +359,22 @@ export default function SuperWatchlistPage() {
   };
   const openModel = () => { if (!active) return; const evidence = active.timeline.slice(0, 12).map(row => `[${row.id}] ${row.sourceName}｜${row.title}`).join('\n'); navigate(`/chat?prompt=${encodeURIComponent(`请对${active.name}（${active.symbol}）基于以下事实证据做多空、催化、风险和证伪条件分析，不得补造数据。\n${evidence}`)}`); };
   return <AppPage className="super-watchlist-page max-w-[1900px]"><div className="super-watchlist-shell border border-[#C9CCD2] bg-white text-[#17181A]">
-    <header className="super-watchlist-header flex h-14 flex-wrap items-center justify-between gap-3 border-b border-[#D8DADF] px-5 py-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan">共享行情库 · 统一事实库 · 后台增量更新</p><h1 className="mt-1 text-[20px] font-bold tracking-[-0.03em]">自选股超级看板</h1></div><div className="flex flex-wrap items-center gap-3 text-[10px] text-[#62666D]"><span>首次回填：{STATUS_LABELS[job?.status ?? 'pending'] ?? '未开始'} {job ? `(${job.progress}%)` : ''}</span><button disabled={!active || busy} onClick={() => void retry()} className="super-backfill-button h-8 rounded-lg border border-[#155EEF] px-3 font-semibold text-[#155EEF] disabled:opacity-40">补齐最近半年</button><button onClick={() => void refreshShared()} disabled={refreshingShared} aria-label="刷新共享行情并唤醒到期数据源" className="super-refresh-button inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/70 px-2.5 text-[10px] font-semibold disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${refreshingShared || loading ? 'animate-spin' : ''}`} />共享刷新</button></div></header>
+    <header className="super-watchlist-header flex h-14 flex-wrap items-center justify-between gap-3 border-b border-[#D8DADF] px-5 py-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan">共享行情库 · 统一事实库 · 后台增量更新</p><h1 className="mt-1 text-[20px] font-bold tracking-[-0.03em]">自选股超级看板</h1></div><button onClick={() => void refreshShared()} disabled={refreshingShared} aria-label="刷新共享行情并唤醒到期数据源" className="super-refresh-button inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/70 px-2.5 text-[10px] font-semibold disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${refreshingShared || loading ? 'animate-spin' : ''}`} />刷新行情与情报</button></header>
     <EvidenceRail className="super-evidence-rail" items={[
       { label: '当前标的', value: active ? `${active.name} · ${active.symbol}` : '等待选择', note: active ? eventTime(active.market.updatedAt) : '加入自选后自动建档', tone: active ? 'verified' : 'warning' },
       { label: '行情口径', value: hasActiveLiveQuote ? '实时快照' : '最近事实快照', note: active?.market.source || '来源等待同步', tone: hasActiveLiveQuote ? 'live' : 'default' },
       { label: '证据规模', value: active ? `${active.evidence.rawEventCount} 条` : '—', note: active ? `原文覆盖 ${active.evidence.originalLinkCoverage}%` : '公告、研报、段子、股评', tone: active?.evidence.rawEventCount ? 'verified' : 'warning' },
-      { label: '历史回填', value: job ? `${job.progress}%` : '等待任务', note: STATUS_LABELS[job?.status ?? 'pending'] ?? '未开始', tone: job?.status === 'completed' ? 'verified' : job?.status === 'failed' ? 'warning' : 'default' },
     ]} />
     {error ? <div className="border-b border-[#FDA29B] bg-[#FEF3F2] px-4 py-2 text-[11px] text-[#B42318]">{error}</div> : null}
     <div className={`super-watchlist-grid grid grid-cols-1 ${section === 'consensus' ? 'is-consensus' : ''}`}>
       <aside className="super-watchlist-sidebar border-b border-r border-[#D8DADF] bg-[#FAFBFC] xl:border-b-0">
-        <form onSubmit={addStock} className="border-b border-[#D8DADF] p-3"><div className="flex"><div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy} placeholder="输入股票名称或代码" className="h-8 rounded-none border-[#C9CCD2] px-2 text-[11px] focus:border-[#155EEF]" /></div><button type="submit" disabled={busy || !newSymbol.trim()} aria-label="加入自选股" className="flex h-8 w-8 shrink-0 items-center justify-center bg-[#155EEF] text-white disabled:opacity-40"><Plus className="h-4 w-4" /></button></div><p className="mt-1.5 text-[9px] text-[#7B7F87]">支持中文名称、拼音简称和股票代码；选择候选后自动加入并补齐最近半年</p></form>
+        <form onSubmit={addStock} className="border-b border-[#D8DADF] p-3"><div className="flex"><div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy} placeholder="输入股票名称或代码" className="h-8 rounded-none border-[#C9CCD2] px-2 text-[11px] focus:border-[#155EEF]" /></div><button type="submit" disabled={busy || !newSymbol.trim()} aria-label="加入自选股" className="flex h-8 w-8 shrink-0 items-center justify-center bg-[#155EEF] text-white disabled:opacity-40"><Plus className="h-4 w-4" /></button></div><p className="mt-1.5 text-[9px] text-[#7B7F87]">支持中文名称、拼音简称和股票代码；加入后自动建立行情与全渠道信息档案</p></form>
         <div className="super-watchlist-stock-rail">{stocks.map(stock => {
           const selected = stock.symbol === active?.symbol;
-          const stockJob = data?.backfillJobs.find(row => row.symbol === stock.symbol);
           return <div key={stock.symbol} className={`super-watchlist-item flex border-b border-[#D8DADF] ${selected ? 'is-selected bg-[#EEF4FF]' : ''}`}>
             <button type="button" onClick={() => setParams({ symbol: stock.symbol }, { replace: true })} className="super-watchlist-select min-w-0 flex-1 p-3 text-left hover:bg-white">
               <div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-bold">{stock.name}</span><span className={`shrink-0 font-mono text-[12px] font-bold ${(stock.market.changePct ?? 0) >= 0 ? 'text-[#B42318]' : 'text-[#027A48]'}`}>{number(stock.market.price)}</span></div>
               <div className="mt-1 flex justify-between font-mono text-[9px] text-[#62666D]"><span>{stock.symbol}</span><span>{percent(stock.market.changePct)}</span></div>
-              <div className="mt-3 flex items-center gap-2"><div className="h-1 flex-1 bg-[#D8DADF]"><div className="h-full bg-[#155EEF]" style={{ width: `${stockJob?.progress ?? 0}%` }} /></div><span className="font-mono text-[9px] text-[#62666D]">{stockJob?.progress ?? 0}%</span></div>
             </button>
             <button type="button" onClick={() => setPendingDelete(stock)} disabled={deletingSymbol === stock.symbol} aria-label={`删除自选股 ${stock.name}`} className="super-watchlist-delete m-2 ml-0 inline-flex w-8 shrink-0 items-center justify-center self-stretch rounded-lg text-[#7B7F87] hover:bg-[#FEF3F2] hover:text-[#B42318] disabled:cursor-wait disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>;
@@ -440,8 +386,7 @@ export default function SuperWatchlistPage() {
         <nav className="super-detail-nav flex h-10 border-b border-[#D8DADF] px-2">{SECTIONS.map(item => <button key={item.key} onClick={() => setSection(item.key)} className={`border-b-2 px-4 text-[11px] font-semibold ${section === item.key ? 'border-[#155EEF] text-[#155EEF]' : 'border-transparent text-[#62666D]'}`}>{item.label}</button>)}</nav>
         <DetailSection section={section} stock={activeForDetail ?? active} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} onAnalyzeConsensus={() => void analyzeConsensus()} analyzingConsensus={analyzingConsensus} consensusMessage={consensusMessage} />
         {section !== 'consensus' ? <section className="overflow-x-auto border-t border-[#D8DADF]"><div className="flex items-center justify-between px-3 py-2"><h3 className="text-[12px] font-bold">事实时间线</h3><Link to={`/investment-monitor/feed?symbol=${encodeURIComponent(active.symbol)}`} className="text-[10px] font-semibold text-[#155EEF]">查看全部证据</Link></div>{active.timeline.slice(0, 6).map(event => <EvidenceRow key={event.id} event={event} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} />)}</section> : null}
-      </> : !loading ? <EmptyState title="暂无自选股" description="在左侧输入股票名称或代码加入，自选后会自动触发半年回填。" /> : null}</main>
-      {section !== 'consensus' ? <BackfillRail job={job} coverage={active?.coverage} onRetry={() => void retry()} busy={busy} /> : null}
+      </> : !loading ? <EmptyState title="暂无自选股" description="在左侧输入股票名称或代码加入，系统会自动建立行情与全渠道信息档案。" /> : null}</main>
     </div>
     {selectedEssay ? <EssayOriginalDrawer key={selectedEssay.externalId} event={selectedEssay} onClose={() => setSelectedEssay(null)} /> : null}
     {selectedForumPost ? <ForumPostDrawer key={selectedForumPost.id} event={selectedForumPost} onClose={() => setSelectedForumPost(null)} /> : null}
