@@ -39,10 +39,12 @@ export type ConceptStock = {
   confidence: string;
   betaInterpretation?: string;
   components?: Record<string, number | string | null>;
+  evidence?: Array<string | { kind?: string; title?: string; summary?: string; source?: string; topicId?: string }>;
 };
 
 export type ConceptOverview = {
   items: ConceptTheme[];
+  stockMatches: Array<{ tsCode: string; name: string; themeCount: number; sourceCount: number }>;
   total: number;
   page: number;
   pageSize: number;

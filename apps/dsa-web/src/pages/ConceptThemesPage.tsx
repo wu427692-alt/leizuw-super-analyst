@@ -114,13 +114,15 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
         <dl><div><dt>题材 Beta</dt><dd>{metric(item.beta)}</dd></div><div><dt>{value.horizonDays}日 Alpha</dt><dd>{signed(item.residualReturn)}</dd></div><div><dt>拟合度 R²</dt><dd>{metric(item.rSquared)}</dd></div></dl>
         <div className="concept-weight-decomp" aria-label="题材权重分项">
           <span><i style={{ width: `${Number(item.components?.consensus) || 0}%` }} /><b>{metric(Number(item.components?.consensus) || 0, 0)}</b><small>来源共识 · 36%</small></span>
-          <span><i style={{ width: `${Number(item.components?.relevance) || 0}%` }} /><b>{metric(Number(item.components?.relevance) || 0, 0)}</b><small>业务证据 · 29%</small></span>
+          <span title={`供应商理由 ${metric(Number(item.components?.providerReasonScore) || 0, 0)} · 本地机构语料 ${metric(Number(item.components?.localCorpusScore) || 0, 0)}`}><i style={{ width: `${Number(item.components?.relevance) || 0}%` }} /><b>{metric(Number(item.components?.relevance) || 0, 0)}</b><small>业务证据 · 29%{Number(item.components?.localCorpusEvidenceCount) > 0 ? ` · 机构${Number(item.components?.localCorpusEvidenceCount)}篇` : ''}</small></span>
           <span><i style={{ width: `${Number(item.components?.market) || 0}%` }} /><b>{metric(Number(item.components?.market) || 0, 0)}</b><small>市场热度 · 20%</small></span>
           <span><i style={{ width: `${Number(item.components?.specificity) || 0}%` }} /><b>{metric(Number(item.components?.specificity) || 0, 0)}</b><small>题材专属性 · 15%</small></span>
         </div>
         <small className="concept-beta-audit">{hasInterval ? `Beta 95%区间 ${ciLow.toFixed(2)} ~ ${ciHigh.toFixed(2)}` : 'Beta区间待足够样本'} · {item.observations ?? 0}个交易日样本</small>
         <p>{item.betaInterpretation || '样本不足，暂不解释 Beta。'} · {item.reasons?.[0] || '该题材由结构化成分表确认，暂无文字证据。'}</p>
+        {item.evidence?.find(entry => typeof entry === 'object' && entry.kind === 'institution_corpus') ? <p className="concept-corpus-proof">本地语料交叉证据 · {(() => { const entry = item.evidence?.find(value => typeof value === 'object' && value.kind === 'institution_corpus'); return typeof entry === 'object' ? `${entry.title || ''} ${entry.summary || ''}`.trim() : ''; })()}</p> : null}
       </article>;})}
+      {!value.primaryThemes.length ? <p className="concept-muted concept-no-consensus">当前没有达到两个独立来源的主线题材；下方单源线索不会冒充市场共识。</p> : null}
     </div>
     <section className="concept-unique-themes">
       <header><GitBranch /><div><h3>非共识题材线索</h3><p>单一来源且专属性较高，只作为待核验 Alpha 方向，不计作市场共识</p></div></header>
@@ -244,6 +246,12 @@ export default function ConceptThemesPage() {
         <select value={source} onChange={event => setSource(event.target.value)} aria-label="数据来源"><option value="">全部来源</option>{overview?.methodology.sources.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</select>
         <select value={sortBy} onChange={event => setSortBy(event.target.value as typeof sortBy)} aria-label="排序"><option value="heat">市场热度</option><option value="change">当日涨跌</option><option value="size">成分规模</option><option value="name">名称</option></select>
       </section>
+      {debouncedQuery && overview?.stockMatches?.length ? <section className="concept-stock-direct" aria-label="股票题材画像直达">
+        <span><Target /> 股票画像直达</span>
+        <div>{overview.stockMatches.map(item => <button type="button" key={item.tsCode} onClick={() => void openStock(item.tsCode)}>
+          <strong>{item.name}</strong><code>{item.tsCode}</code><small>{item.themeCount} 个题材 · {item.sourceCount} 个来源</small><ChevronRight />
+        </button>)}</div>
+      </section> : null}
 
       <div className="concept-workspace">
         <aside className="concept-families">

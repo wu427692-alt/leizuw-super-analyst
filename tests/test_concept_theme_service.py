@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
+import json
 import math
 
 from src.services.concept_theme_service import (
@@ -13,7 +14,9 @@ from src.storage import (
     ConceptMembershipRecord,
     ConceptThemeRecord,
     DatabaseManager,
+    EssayAnalysisRecord,
     MarketIndexBar,
+    ResearchNote,
     StockDaily,
     utc_naive_now,
 )
@@ -87,6 +90,9 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
     assert filtered["items"][0]["cluster"] == "光通信产业链"
     assert recalled["total"] == 1
     assert recalled["items"][0]["canonical_name"] == "CPO/共封装光学"
+    assert recalled["stock_matches"] == [{
+        "ts_code": "300308.SZ", "name": "中际旭创", "theme_count": 1, "source_count": 1,
+    }]
 
 
 def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> None:
@@ -105,6 +111,24 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
                 theme_id=theme.id, source="ths", ts_code=code, stock_name=code,
                 active=True, first_seen_at=now, last_seen_at=now, updated_at=now,
             ))
+        session.add(ResearchNote(
+            topic_id="theme-evidence-1", group_id="g1", group_name="调研纪要",
+            title="CPO产业链跟踪", content="明确讨论中际旭创的CPO业务与客户进展。",
+            symbol_codes="300308.SZ", content_hash="theme-evidence-hash-1",
+            created_at=datetime(2026, 8, 20, 10, 0),
+        ))
+        session.flush()
+        session.add(EssayAnalysisRecord(
+            topic_id="theme-evidence-1", status="completed", model="test-model",
+            prompt_version="test-v1", input_hash="theme-analysis-hash-1",
+            summary="中际旭创受益于CPO和高速光模块需求。", importance_score=82,
+            confidence_score=0.86, themes_json=json.dumps(["CPO", "光模块"], ensure_ascii=False),
+            stock_mentions_json=json.dumps([{
+                "ts_code": "300308.SZ", "name": "中际旭创", "confidence": 0.9,
+                "rationale": "CPO客户验证与高速光模块交付形成直接业务证据。",
+            }], ensure_ascii=False),
+            completed_at=datetime(2026, 8, 20, 10, 5), updated_at=datetime(2026, 8, 20, 10, 5),
+        ))
 
         prices = {code: 100.0 for code in ("300308", "300001", "300002", "300003")}
         market_price = 1000.0
@@ -141,6 +165,9 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
     assert exposure["components"]["regression"].startswith("个股日收益")
     assert exposure["components"]["beta_ci_low"] < exposure["beta"] < exposure["components"]["beta_ci_high"]
     assert abs(exposure["components"]["beta_t_stat"]) >= 1
+    assert exposure["components"]["local_corpus_evidence_count"] == 1
+    assert exposure["components"]["local_corpus_score"] > 0
+    assert exposure["evidence"][-1]["kind"] == "institution_corpus"
 
 
 def test_complete_membership_refresh_deactivates_vanished_stock_without_deleting_history(tmp_path) -> None:

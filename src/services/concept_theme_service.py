@@ -446,6 +446,7 @@ class ConceptThemeService:
     ) -> Dict[str, Any]:
         page = max(1, page)
         page_size = max(12, min(page_size, 200))
+        stock_matches: List[Dict[str, Any]] = []
         with self._read_scope() as session:
             statement = select(ConceptThemeRecord)
             count_stmt = select(func.count(ConceptThemeRecord.id))
@@ -506,6 +507,29 @@ class ConceptThemeService:
             )).scalar_one())
             exposure_count = int(session.execute(select(func.count(ConceptExposureRecord.id))).scalar_one())
             latest_market_date = session.execute(select(func.max(ConceptThemeRecord.market_date))).scalar_one_or_none()
+            if query.strip():
+                stock_term = f"%{query.strip()}%"
+                matched_stocks = session.execute(select(
+                    ConceptMembershipRecord.ts_code,
+                    func.max(ConceptMembershipRecord.stock_name),
+                    func.count(func.distinct(ConceptThemeRecord.canonical_name)),
+                    func.count(func.distinct(ConceptMembershipRecord.source)),
+                ).join(
+                    ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+                ).where(
+                    ConceptMembershipRecord.active.is_(True),
+                    or_(
+                        ConceptMembershipRecord.ts_code.like(stock_term),
+                        ConceptMembershipRecord.stock_name.like(stock_term),
+                    ),
+                ).group_by(ConceptMembershipRecord.ts_code).order_by(
+                    desc(func.count(func.distinct(ConceptMembershipRecord.source))),
+                    desc(func.count(func.distinct(ConceptThemeRecord.canonical_name))),
+                ).limit(8)).all()
+                stock_matches = [{
+                    "ts_code": code, "name": name or code,
+                    "theme_count": int(theme_count or 0), "source_count": int(source_count or 0),
+                } for code, name, theme_count, source_count in matched_stocks]
         family_counts: Dict[str, int] = defaultdict(int)
         cluster_families: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         with self._read_scope() as session:
@@ -517,6 +541,7 @@ class ConceptThemeService:
             cluster_families[family_name][theme_cluster(canonical, family_name)] += 1
         return {
             "items": items, "total": total, "page": page, "page_size": page_size,
+            "stock_matches": stock_matches,
             "summary": {
                 "themes": sum(source_counts.values()), "memberships": membership_count, "exposures": exposure_count,
                 "membered_themes": membered_theme_count,
@@ -686,6 +711,7 @@ class ConceptThemeService:
                                "r_squared": None, "confidence": "insufficient"})
             themes.append(values)
         themes.sort(key=lambda value: (-value["weight_score"], -value["source_count"]))
+        consensus_themes = [item for item in themes if item["source_count"] >= 2]
         unique_themes = sorted([
             item for item in themes
             if item["source_count"] == 1
@@ -698,7 +724,7 @@ class ConceptThemeService:
         drivers = self._unique_driver_evidence(code)
         return {
             "ts_code": code, "name": stock_name, "as_of_date": latest_date.isoformat() if latest_date else None,
-            "themes": themes, "primary_themes": themes[:5], "unique_themes": unique_themes,
+            "themes": themes, "primary_themes": consensus_themes[:5], "unique_themes": unique_themes,
             "unique_drivers": drivers,
             "horizon_days": horizon,
             "summary": {
@@ -775,6 +801,7 @@ class ConceptThemeService:
             values = [series[day] for series in returns.values() if day in series and abs(series[day]) < 0.25]
             if len(values) >= 3:
                 theme_daily[day] = (float(np.mean(values)), len(values))
+        local_evidence = self._local_theme_evidence(canonical_name, by_stock)
         records: List[Dict[str, Any]] = []
         for code, meta in by_stock.items():
             if only_stock and code != _ts_code(only_stock):
@@ -823,7 +850,10 @@ class ConceptThemeService:
             source_count = len(meta["sources"])
             reason_count = len(meta["reasons"])
             longest_reason = max((len(reason) for reason in meta["reasons"]), default=0)
-            reason_quality = min(100.0, 25.0 + min(50.0, longest_reason * 0.25) + min(25.0, reason_count * 8.0))
+            provider_reason_score = min(100.0, 25.0 + min(50.0, longest_reason * 0.25) + min(25.0, reason_count * 8.0))
+            corpus = local_evidence.get(code, {"count": 0, "score": 0.0, "items": []})
+            local_evidence_score = float(corpus.get("score") or 0.0)
+            reason_quality = min(100.0, provider_reason_score + 0.30 * local_evidence_score)
             source_strength = sum(SOURCE_RELIABILITY.get(source, 0.7) for source in meta["sources"])
             consensus = min(100.0, 100.0 * (
                 0.55 * min(1.0, source_strength / 2.5) +
@@ -854,7 +884,12 @@ class ConceptThemeService:
                 "theme_scarcity": round(theme_scarcity, 1),
                 "stock_focus": round(stock_focus, 1),
                 "stock_theme_breadth": stock_theme_breadth,
+                "provider_reason_score": round(provider_reason_score, 1),
+                "local_corpus_score": round(local_evidence_score, 1),
+                "local_corpus_evidence_count": int(corpus.get("count") or 0),
+                "local_corpus_window_days": 365,
             }
+            evidence_items = [*meta["reasons"][:6], *list(corpus.get("items") or [])[:4]]
             records.append({
                 "ts_code": code, "stock_name": meta["name"], "canonical_name": canonical_name,
                 "as_of_date": as_of, "horizon_days": horizon, "weight_score": weight,
@@ -862,9 +897,10 @@ class ConceptThemeService:
                 "market_score": market_score, "specificity_score": specificity,
                 "beta": beta, "market_beta": market_beta, "alpha_annualized": alpha,
                 "residual_return": residual_return, "r_squared": r_squared, "observations": observations,
-                "confidence": confidence, "source_count": source_count, "evidence_count": len(meta["reasons"]),
+                "confidence": confidence, "source_count": source_count,
+                "evidence_count": len(meta["reasons"]) + int(corpus.get("count") or 0),
                 "components_json": json.dumps(components, ensure_ascii=False),
-                "evidence_json": json.dumps(meta["reasons"][:8], ensure_ascii=False),
+                "evidence_json": json.dumps(evidence_items, ensure_ascii=False),
                 "unique_drivers_json": "[]", "calculated_at": utc_naive_now(),
             })
         if not records:
@@ -883,6 +919,92 @@ class ConceptThemeService:
                     for key, value in values.items():
                         setattr(existing, key, value)
         return len(records)
+
+    def _local_theme_evidence(
+        self, canonical_name: str, by_stock: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Map recent AI-structured institution notes to explicit stock/theme pairs.
+
+        A note contributes only when its AI theme/tag fields mention the current
+        canonical theme and its stock_mentions field explicitly identifies a
+        member stock.  This deliberately avoids treating a generic industry
+        paragraph as evidence for every constituent.
+        """
+        if not by_stock:
+            return {}
+        tokens = [item.strip() for item in re.split(r"[/、|]", canonical_name) if len(item.strip()) >= 2]
+        tokens = list(dict.fromkeys([canonical_name, *tokens]))[:6]
+        clauses = []
+        for token in tokens:
+            pattern = f"%{token}%"
+            clauses.extend((
+                EssayAnalysisRecord.themes_json.like(pattern),
+                EssayAnalysisRecord.tags_json.like(pattern),
+                EssayAnalysisRecord.industries_json.like(pattern),
+            ))
+        if not clauses:
+            return {}
+        cutoff = utc_naive_now() - timedelta(days=365)
+        with self._read_scope() as session:
+            rows = session.execute(select(
+                EssayAnalysisRecord.topic_id,
+                EssayAnalysisRecord.stock_mentions_json,
+                EssayAnalysisRecord.confidence_score,
+                EssayAnalysisRecord.importance_score,
+                EssayAnalysisRecord.summary,
+                ResearchNote.title,
+            ).join(
+                ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id,
+            ).where(
+                EssayAnalysisRecord.status == "completed",
+                EssayAnalysisRecord.updated_at >= cutoff,
+                or_(*clauses),
+            ).order_by(
+                desc(EssayAnalysisRecord.importance_score), desc(EssayAnalysisRecord.updated_at),
+            ).limit(800)).all()
+        code_lookup = {code[:6]: code for code in by_stock}
+        name_lookup = {
+            re.sub(r"\s+", "", str(meta.get("name") or "")): code
+            for code, meta in by_stock.items() if meta.get("name")
+        }
+        mapped: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+            "topic_ids": set(), "confidence": [], "importance": [], "items": [],
+        })
+        for topic_id, mentions_json, confidence, importance, summary, title in rows:
+            mentions = _json(mentions_json, [])
+            if not isinstance(mentions, list):
+                continue
+            for mention in mentions:
+                if not isinstance(mention, dict):
+                    continue
+                raw_code = _ts_code(mention.get("ts_code") or mention.get("code") or "")
+                code = raw_code if raw_code in by_stock else code_lookup.get(raw_code[:6])
+                if not code:
+                    code = name_lookup.get(re.sub(r"\s+", "", str(mention.get("name") or "")))
+                if not code or topic_id in mapped[code]["topic_ids"]:
+                    continue
+                mapped[code]["topic_ids"].add(topic_id)
+                mention_confidence = _safe_float(mention.get("confidence"))
+                mapped[code]["confidence"].append(mention_confidence if mention_confidence is not None else (_safe_float(confidence) or 0.5))
+                mapped[code]["importance"].append(_safe_float(importance) or 50.0)
+                rationale = str(mention.get("rationale") or "").strip()
+                excerpt = rationale or str(summary or "").strip()[:180]
+                mapped[code]["items"].append({
+                    "kind": "institution_corpus", "topic_id": topic_id,
+                    "title": str(title or "机构语料题材证据")[:120],
+                    "summary": excerpt[:240], "source": "机构段子 AI 结构化标签",
+                })
+        result: Dict[str, Dict[str, Any]] = {}
+        for code, value in mapped.items():
+            count = len(value["topic_ids"])
+            average_confidence = statistics.mean(value["confidence"] or [0.5])
+            average_importance = statistics.mean(value["importance"] or [50.0])
+            score = min(100.0, count * 11.0 + average_confidence * 35.0 + average_importance * 0.22)
+            result[code] = {
+                "count": count, "score": round(score, 1),
+                "items": value["items"][:8],
+            }
+        return result
 
     def sync_status(self) -> Dict[str, Any]:
         with self._read_scope() as session:
@@ -917,10 +1039,11 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.14",
+            "version": "concept-consensus-v1.16",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
+                "业务证据只接受供应商入选理由，或本地机构语料中题材标签与股票明确提及的交叉命中。",
                 "Beta 使用剔除个股自身后的题材组合，并同时控制沪深300，避免机械自相关。",
                 "Beta 置信度同时检查样本数、来源数、R²及回归系数t统计量，并展示95%区间。",
                 "Alpha 分为统计残差与可核验证据两层；证据只做归因线索，不声称因果。",
