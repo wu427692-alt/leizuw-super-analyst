@@ -98,3 +98,15 @@ def test_progressive_batch_allocates_capacity_across_sources(tmp_path) -> None:
     assert all(sum(1 for _, value in rows if value == source) == 2 for source in {value for _, value in rows})
 
     DatabaseManager.reset_instance()
+
+
+def test_new_watchlist_trigger_bypasses_periodic_defer(monkeypatch) -> None:
+    worker = ConceptThemeWorker()
+    worker._last_watchlist_refresh_at = 123.0
+    monkeypatch.setattr(worker, "trigger", lambda: {"running": True, "refresh_requested": True})
+
+    result = worker.trigger_watchlist_refresh()
+
+    assert worker._last_watchlist_refresh_at is None
+    assert result["watchlist_refresh_requested"] is True
+    assert result["refresh_requested"] is True

@@ -76,6 +76,17 @@ class ConceptThemeWorker:
         self._wake_event.set()
         return {**self.status(), "refresh_requested": True}
 
+    def trigger_watchlist_refresh(self) -> Dict[str, Any]:
+        """Wake the worker and bypass the periodic watchlist defer once.
+
+        New symbols should not wait for the normal six-hour audit cadence. The
+        actual refresh remains asynchronous so adding a watchlist item never
+        blocks the user-facing request.
+        """
+        with self._lock:
+            self._last_watchlist_refresh_at = None
+        return {**self.trigger(), "watchlist_refresh_requested": True}
+
     def status(self) -> Dict[str, Any]:
         with self._lock:
             return {
