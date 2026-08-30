@@ -78,6 +78,36 @@ def test_family_rules_do_not_confuse_consumer_electronics_words_with_semiconduct
     assert canonicalize_theme("飞行汽车(eVTOL)") == "eVTOL/飞行汽车"
 
 
+def test_theme_lifecycle_only_joins_real_semantic_cluster_intersections(tmp_path) -> None:
+    service = _service(tmp_path)
+    service.rotation = lambda **_kwargs: {  # type: ignore[method-assign]
+        "items": [{
+            "canonical_name": "ChatGPT", "family": "AI算力与数字基础设施",
+            "cluster": "AI算力与数字基础设施", "market_date": "2026-08-28",
+            "momentum_5d": 4.2, "pct_change": 1.1, "source_count": 3,
+            "rotation_score": 78,
+        }],
+        "latest_date": "2026-08-28",
+    }
+    service.institution_theme_radar = lambda **_kwargs: {  # type: ignore[method-assign]
+        "items": [
+            {"canonical_name": "ChatGPT", "recent_7d": 12, "note_count": 20,
+             "acceleration_pct": 80, "discovery_score": 82},
+            {"canonical_name": "创新药", "recent_7d": 9, "note_count": 18,
+             "acceleration_pct": 60, "discovery_score": 75},
+        ],
+        "as_of_at": "2026-08-31T06:00:00",
+    }
+
+    result = service.theme_lifecycle(days=30, limit=12)
+
+    assert result["total"] == 1
+    assert result["items"][0]["cluster"] == "ChatGPT"
+    assert result["items"][0]["stage"] == "共识扩张"
+    assert result["items"][0]["market_themes"] == ["ChatGPT"]
+    assert result["items"][0]["corpus_themes"] == ["ChatGPT"]
+
+
 def test_latest_market_date_never_uses_weekend_fact_row(tmp_path) -> None:
     service = _service(tmp_path)
     with service.db.session_scope() as session:

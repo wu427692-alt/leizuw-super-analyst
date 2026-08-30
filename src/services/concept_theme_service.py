@@ -1236,6 +1236,96 @@ class ConceptThemeService:
             "method": "近窗机构段子 AI 主题与明确股票提及聚合；供应商未确认的主题只进入候选层，不自动计入市场共识或题材权重。",
         }
 
+    def theme_lifecycle(self, *, days: int = 30, limit: int = 12) -> Dict[str, Any]:
+        """Join provider rotation and AI-structured institution corpus by semantic cluster.
+
+        This is deliberately rule based and descriptive: it only labels a stage
+        when a real market cluster exists on both sides. Corpus-only candidates
+        remain in the discovery radar and never become market consensus here.
+        """
+        window = max(14, min(int(days), 60))
+        row_limit = max(4, min(int(limit), 20))
+        rotation = self.rotation(days=min(60, window), limit=60)
+        corpus = self.institution_theme_radar(days=window, limit=40)
+        market_groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        corpus_groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+
+        def lifecycle_key(canonical_name: str, family: str, cluster: str) -> Tuple[str, str]:
+            # Broad family buckets such as "医药健康" or "消费与品牌" are
+            # navigation aids, not proof that two narratives are the same.
+            # Only a specific industry cluster or an exact canonical name may
+            # join market and corpus evidence.
+            if cluster and cluster != family and cluster != "其他市场题材":
+                return ("cluster", f"{family}\x1f{cluster}")
+            return ("exact", canonicalize_theme(canonical_name))
+
+        for item in rotation["items"]:
+            family = str(item.get("family") or "")
+            cluster = str(item.get("cluster") or "")
+            canonical_name = str(item.get("canonical_name") or "")
+            if family in NON_NARRATIVE_FAMILIES or not canonical_name:
+                continue
+            market_groups[lifecycle_key(canonical_name, family, cluster)].append(item)
+        for item in corpus["items"]:
+            canonical_name = str(item.get("canonical_name") or "")
+            family = theme_family(canonical_name, "theme")
+            cluster = theme_cluster(canonical_name, family)
+            if family in NON_NARRATIVE_FAMILIES or not canonical_name:
+                continue
+            corpus_groups[lifecycle_key(canonical_name, family, cluster)].append(item)
+        items: List[Dict[str, Any]] = []
+        for match_key in sorted(set(market_groups) & set(corpus_groups)):
+            market_items = sorted(market_groups[match_key], key=lambda value: -float(value.get("rotation_score") or 0))
+            corpus_items = sorted(corpus_groups[match_key], key=lambda value: -float(value.get("discovery_score") or 0))
+            representative = market_items[0]
+            family = str(representative.get("family") or "")
+            cluster = str(representative.get("cluster") or "") if match_key[0] == "cluster" else str(representative.get("canonical_name") or "")
+            momentum = float(representative.get("momentum_5d") or 0)
+            recent = sum(int(value.get("recent_7d") or 0) for value in corpus_items)
+            note_count = sum(int(value.get("note_count") or 0) for value in corpus_items)
+            acceleration_values = [
+                (float(value["acceleration_pct"]), max(1, int(value.get("note_count") or 0)))
+                for value in corpus_items if value.get("acceleration_pct") is not None
+            ]
+            acceleration = (
+                sum(value * weight for value, weight in acceleration_values) / sum(weight for _, weight in acceleration_values)
+                if acceleration_values else None
+            )
+            if acceleration is not None and acceleration >= 25 and momentum > 0:
+                stage, interpretation = "共识扩张", "机构讨论加速且价格窗口同步转强，下一步核验成分扩散与成交确认。"
+            elif acceleration is not None and acceleration >= 25:
+                stage, interpretation = "语料先行", "机构讨论先加速但价格窗口尚未确认，只作为待验证线索。"
+            elif momentum > 0 and recent <= 2:
+                stage, interpretation = "价格驱动", "价格窗口走强但近期机构语料较少，需排查事件或交易性因素。"
+            elif momentum < 0 and recent >= 3:
+                stage, interpretation = "分歧退潮", "讨论仍有密度但价格窗口转弱，重点核验预期是否已被交易。"
+            else:
+                stage, interpretation = "交叉观察", "市场与语料已有真实交集，但尚不足以归入更明确阶段。"
+            lifecycle_score = max(0.0, min(100.0,
+                float(representative.get("rotation_score") or 0) * .55
+                + float(corpus_items[0].get("discovery_score") or 0) * .45
+            ))
+            items.append({
+                "family": family, "cluster": cluster, "stage": stage,
+                "score": round(lifecycle_score, 1),
+                "market_date": representative.get("market_date"),
+                "market_momentum_5d": round(momentum, 2),
+                "market_change": representative.get("pct_change"),
+                "market_source_count": max(int(value.get("source_count") or 0) for value in market_items),
+                "corpus_notes": note_count, "corpus_recent_7d": recent,
+                "corpus_acceleration_pct": round(acceleration, 1) if acceleration is not None else None,
+                "market_themes": [value["canonical_name"] for value in market_items[:5]],
+                "corpus_themes": [value["canonical_name"] for value in corpus_items[:5]],
+                "interpretation": interpretation,
+            })
+        stage_priority = {"共识扩张": 5, "语料先行": 4, "分歧退潮": 3, "价格驱动": 2, "交叉观察": 1}
+        items.sort(key=lambda value: (-stage_priority[value["stage"]], -value["score"], value["cluster"]))
+        return {
+            "items": items[:row_limit], "total": len(items), "window_days": window,
+            "market_date": rotation.get("latest_date"), "corpus_as_of_at": corpus.get("as_of_at"),
+            "method": "只在供应商市场题材与AI结构化机构语料名称精确一致，或共同落入明确产业簇时交叉分期；宽泛家族不参与拼接，阶段为可复核规则而非收益预测。",
+        }
+
     def watchlist_theme_map(self, stock_codes: Iterable[str], *, horizon_days: int = 60) -> Dict[str, Any]:
         """Aggregate user watchlist exposures without mixing users or dates."""
         codes = list(dict.fromkeys(_ts_code(code) for code in stock_codes if _ts_code(code)))
@@ -2259,7 +2349,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.60",
+            "version": "concept-consensus-v1.61",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

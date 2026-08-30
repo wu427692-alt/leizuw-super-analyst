@@ -183,6 +183,30 @@ export type InstitutionThemeRadar = {
   method: string;
 };
 
+export type ConceptLifecycle = {
+  items: Array<{
+    family: string;
+    cluster: string;
+    stage: '共识扩张' | '语料先行' | '价格驱动' | '分歧退潮' | '交叉观察';
+    score: number;
+    marketDate?: string | null;
+    marketMomentum5D: number;
+    marketChange?: number | null;
+    marketSourceCount: number;
+    corpusNotes: number;
+    corpusRecent7D: number;
+    corpusAccelerationPct?: number | null;
+    marketThemes: string[];
+    corpusThemes: string[];
+    interpretation: string;
+  }>;
+  total: number;
+  windowDays: number;
+  marketDate?: string | null;
+  corpusAsOfAt?: string | null;
+  method: string;
+};
+
 export type WatchlistThemeMap = {
   stocks: Array<{
     tsCode: string;
@@ -478,6 +502,16 @@ export const conceptThemesApi = {
         params: { days, limit }, headers: BACKGROUND_ROUTE_HEADERS,
       });
       return toCamelCase<InstitutionThemeRadar>(response.data);
+    },
+    { freshMs: 60_000, staleMs: 10 * 60_000 },
+  ),
+  lifecycle: async (days = 30, limit = 12): Promise<ConceptLifecycle> => cachedQuery(
+    `concept:lifecycle:${days}:${limit}`,
+    async () => {
+      const response = await apiClient.get('/api/v1/concept-themes/lifecycle', {
+        params: { days, limit }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<ConceptLifecycle>(response.data);
     },
     { freshMs: 60_000, staleMs: 10 * 60_000 },
   ),

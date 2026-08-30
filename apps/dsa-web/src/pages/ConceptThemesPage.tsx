@@ -8,7 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
-import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptMembershipChanges, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail, type WatchlistThemeMap } from '../api/conceptThemes';
+import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptLifecycle, type ConceptMembershipChanges, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail, type WatchlistThemeMap } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
@@ -26,6 +26,7 @@ const TYPE_LABEL: Record<string, string> = {
 const number = (value?: number | null) => value == null ? '—' : new Intl.NumberFormat('zh-CN').format(value);
 const metric = (value?: number | null, digits = 2) => value == null ? '—' : Number(value).toFixed(digits);
 const signed = (value?: number | null, suffix = '%') => value == null ? '—' : `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}${suffix}`;
+const growthMultiple = (value?: number | null) => value == null ? 'NEW' : `${Math.max(0, 1 + value / 100).toFixed(1)}×`;
 
 function ScoreRing({ value, label }: { value: number; label: string }) {
   const safe = Math.max(0, Math.min(100, value || 0));
@@ -188,6 +189,26 @@ function InstitutionDiscoveryRadar({ value, onSelect, onOpen }: {
       {!value?.items.length ? <p>机构语料候选正在从已完成 AI 结构化结果中聚合；无证据时不生成虚假题材。</p> : null}
     </div>
     <footer>{value?.method || '机构语料只负责发现线索，供应商目录负责定义市场共识，两套口径不会混算。'}</footer>
+  </section>;
+}
+
+function ThemeLifecycleBoard({ value, onTheme }: { value: ConceptLifecycle | null; onTheme: (name: string) => void }) {
+  const stageNote: Record<ConceptLifecycle['items'][number]['stage'], string> = {
+    共识扩张: '语料与价格同向', 语料先行: '讨论先于价格确认', 价格驱动: '价格强于语料', 分歧退潮: '讨论仍热但价格转弱', 交叉观察: '已有交集待确认',
+  };
+  return <section className="concept-lifecycle" id="concept-lifecycle">
+    <header><div><span><GitBranch /> MARKET × CORPUS LIFECYCLE</span><h2>题材生命周期交叉台</h2><p>把供应商题材轮动与机构段子 AI 结构化主题放到同一语义簇比较；只呈现真实交集。</p></div><div><strong>{value?.total || 0}</strong><small>个可交叉主题簇</small></div></header>
+    <div className="concept-lifecycle__grid">
+      {value?.items.map(item => <button type="button" data-stage={item.stage} key={`${item.family}-${item.cluster}`} onClick={() => onTheme(item.marketThemes[0] || item.cluster)}>
+        <header><span>{item.stage}</span><b>{metric(item.score, 0)}</b></header>
+        <h3>{item.cluster}</h3><p>{stageNote[item.stage]}</p>
+        <dl><div><dt>5日市场动量</dt><dd data-tone={item.marketMomentum5D >= 0 ? 'up' : 'down'}>{signed(item.marketMomentum5D)}</dd></div><div><dt>语料相对前窗</dt><dd>{growthMultiple(item.corpusAccelerationPct)}</dd></div><div><dt>近期语料</dt><dd>{item.corpusRecent7D}/{item.corpusNotes}</dd></div><div><dt>市场来源</dt><dd>{item.marketSourceCount} 方</dd></div></dl>
+        <section><span>市场</span><p>{item.marketThemes.slice(0, 3).join(' · ')}</p><span>语料</span><p>{item.corpusThemes.slice(0, 3).join(' · ')}</p></section>
+        <footer>{item.interpretation}<ChevronRight /></footer>
+      </button>)}
+      {!value?.items.length ? <p className="concept-lifecycle__empty">市场题材与机构语料暂未形成可核验交集；候选仍保留在下方机构语料雷达，不强行归类。</p> : null}
+    </div>
+    <footer>{value?.marketDate || '最新交易日'} × {value?.corpusAsOfAt?.slice(0, 10) || '最新语料'} · {value?.method || '交叉阶段为描述性规则，不是交易信号。'}</footer>
   </section>;
 }
 
@@ -369,6 +390,7 @@ export default function ConceptThemesPage() {
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
   const [institutionRadar, setInstitutionRadar] = useState<InstitutionThemeRadar | null>(null);
+  const [lifecycle, setLifecycle] = useState<ConceptLifecycle | null>(null);
   const [institutionCandidate, setInstitutionCandidate] = useState<InstitutionThemeRadar['items'][number] | null>(null);
   const [watchlistMap, setWatchlistMap] = useState<WatchlistThemeMap | null>(null);
   const [membershipChanges, setMembershipChanges] = useState<ConceptMembershipChanges | null>(null);
@@ -424,6 +446,10 @@ export default function ConceptThemesPage() {
     try { setInstitutionRadar(await conceptThemesApi.institutionRadar(30, 16)); }
     catch { /* keep the last successful corpus discovery snapshot while analysis catches up */ }
   }, []);
+  const loadLifecycle = useCallback(async () => {
+    try { setLifecycle(await conceptThemesApi.lifecycle(30, 12)); }
+    catch { /* keep the last successful lifecycle cross-check */ }
+  }, []);
   const loadWatchlistMap = useCallback(async () => {
     try { setWatchlistMap(await conceptThemesApi.watchlistMap(horizonDays)); }
     catch { /* a user without a watchlist should not block the market workspace */ }
@@ -442,12 +468,13 @@ export default function ConceptThemesPage() {
   useEffect(() => { void loadRotation(); }, [loadRotation]);
   useEffect(() => { void loadLeaders(); }, [loadLeaders]);
   useEffect(() => { void loadInstitutionRadar(); }, [loadInstitutionRadar]);
+  useEffect(() => { void loadLifecycle(); }, [loadLifecycle]);
   useEffect(() => { void loadWatchlistMap(); }, [loadWatchlistMap]);
   useEffect(() => { void loadMembershipChanges(); }, [loadMembershipChanges]);
   useEffect(() => { setClusterDetail(null); void loadCluster(); }, [loadCluster]);
   useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadWatchlistMap(), loadMembershipChanges(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadMembershipChanges, loadOverview, loadRotation, loadWatchlistMap]);
+  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadLifecycle(), loadWatchlistMap(), loadMembershipChanges(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadLifecycle, loadMembershipChanges, loadOverview, loadRotation, loadWatchlistMap]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
@@ -542,6 +569,7 @@ export default function ConceptThemesPage() {
       <nav className="concept-section-nav" aria-label="概念题材研究导航">
         <span>研究路径</span>
         <a href="#concept-rotation">市场轮动</a>
+        <a href="#concept-lifecycle">生命周期</a>
         <a href="#concept-corpus-radar">机构语料</a>
         <a href="#concept-watchlist">自选暴露</a>
         <a href="#concept-changes">成分变化</a>
@@ -578,6 +606,8 @@ export default function ConceptThemesPage() {
         </div>
         <footer>{rotation?.method || '每日保留各来源原始快照后再聚合；数据不足时不外推历史。'}</footer>
       </section>
+
+      <ThemeLifecycleBoard value={lifecycle} onTheme={name => { setQuery(name); setPage(1); }} />
 
       <InstitutionDiscoveryRadar value={institutionRadar} onSelect={item => { setStockLens(null); setInstitutionCandidate(item); }} onOpen={tsCode => void openStock(tsCode)} />
 

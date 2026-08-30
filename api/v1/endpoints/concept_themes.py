@@ -200,6 +200,14 @@ def institution_radar(
     return ConceptThemeService().institution_theme_radar(days=days, limit=limit)
 
 
+@router.get("/lifecycle", summary="交叉分析题材市场轮动与机构语料生命周期")
+def lifecycle(
+    days: int = Query(default=30, ge=14, le=60),
+    limit: int = Query(default=12, ge=4, le=20),
+):
+    return ConceptThemeService().theme_lifecycle(days=days, limit=limit)
+
+
 @router.get("/watchlist-map", summary="读取当前用户自选股的题材暴露地图")
 def watchlist_map(
     request: Request,
