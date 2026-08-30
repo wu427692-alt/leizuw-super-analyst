@@ -564,3 +564,38 @@ def test_institution_radar_keeps_ai_candidates_separate_from_provider_consensus(
         "ts_code": "300308.SZ", "name": "中际旭创", "mentions": 2,
     }
     assert "不自动计入市场共识" in radar["method"]
+
+
+def test_related_theme_affinity_uses_real_constituent_jaccard(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        themes = {}
+        for index, canonical_name in enumerate(("CPO/共封装光学", "光通信/光模块", "液冷服务器")):
+            theme = ConceptThemeRecord(
+                source="ths", source_code=f"88510{index}.TI", name=canonical_name,
+                canonical_name=canonical_name, theme_type="theme", level=3,
+                market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+            )
+            session.add(theme); session.flush(); themes[canonical_name] = theme
+        memberships = {
+            "CPO/共封装光学": [("300308.SZ", "中际旭创"), ("300502.SZ", "新易盛"), ("300394.SZ", "天孚通信")],
+            "光通信/光模块": [("300308.SZ", "中际旭创"), ("300502.SZ", "新易盛"), ("600000.SH", "浦发银行")],
+            "液冷服务器": [("300308.SZ", "中际旭创"), ("000001.SZ", "平安银行")],
+        }
+        for canonical_name, stocks in memberships.items():
+            for code, name in stocks:
+                session.add(ConceptMembershipRecord(
+                    theme_id=themes[canonical_name].id, source="ths", ts_code=code, stock_name=name,
+                    active=True, first_seen_at=now, last_seen_at=now, updated_at=now,
+                ))
+
+    affinity = service._related_theme_affinity(
+        "CPO/共封装光学", ["300308.SZ", "300502.SZ", "300394.SZ"], limit=8,
+    )
+
+    assert affinity["target_total_stocks"] == 3
+    assert len(affinity["items"]) == 1
+    assert affinity["items"][0]["canonical_name"] == "光通信/光模块"
+    assert affinity["items"][0]["shared_stocks"] == 2
+    assert affinity["items"][0]["jaccard_pct"] == 50.0

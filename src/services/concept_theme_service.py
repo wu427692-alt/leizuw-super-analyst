@@ -959,8 +959,64 @@ class ConceptThemeService:
             "consensus_distribution": consensus_distribution,
             "attribution_ready": sum(1 for item in ordered if item["beta"] is not None),
             "institution_corpus": self._theme_corpus_consensus(canonical),
+            "related_themes": self._related_theme_affinity(canonical, list(stocks)),
             "horizon_days": horizon,
             "methodology": self.methodology(),
+        }
+
+    def _related_theme_affinity(self, canonical_name: str, stock_codes: Sequence[str], *, limit: int = 12) -> Dict[str, Any]:
+        """Measure real constituent overlap with adjacent canonical themes."""
+        codes = [code for code in dict.fromkeys(stock_codes) if code]
+        if not codes:
+            return {"items": [], "method": "当前题材没有可用于关系计算的有效成分。"}
+        with self._read_scope() as session:
+            shared_rows = session.execute(select(
+                ConceptThemeRecord.canonical_name,
+                func.max(ConceptThemeRecord.theme_type).label("theme_type"),
+                func.count(func.distinct(ConceptMembershipRecord.ts_code)).label("shared"),
+            ).join(
+                ConceptMembershipRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(
+                ConceptMembershipRecord.active.is_(True),
+                ConceptMembershipRecord.ts_code.in_(codes),
+                ConceptThemeRecord.canonical_name != canonical_name,
+            ).group_by(
+                ConceptThemeRecord.canonical_name,
+            ).order_by(desc("shared")).limit(max(24, int(limit) * 4))).all()
+            candidates = [name for name, _, _ in shared_rows]
+            total_rows = session.execute(select(
+                ConceptThemeRecord.canonical_name,
+                func.count(func.distinct(ConceptMembershipRecord.ts_code)),
+            ).join(
+                ConceptMembershipRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(
+                ConceptMembershipRecord.active.is_(True),
+                ConceptThemeRecord.canonical_name.in_(candidates),
+            ).group_by(ConceptThemeRecord.canonical_name)).all() if candidates else []
+        totals = {name: int(total or 0) for name, total in total_rows}
+        target_total = len(codes)
+        items = []
+        for name, related_type, shared_value in shared_rows:
+            shared = int(shared_value or 0)
+            other_total = totals.get(name, 0)
+            if shared < 2 or other_total <= 0:
+                continue
+            union = target_total + other_total - shared
+            family = theme_family(name, str(related_type or "theme"))
+            items.append({
+                "canonical_name": name,
+                "family": family,
+                "cluster": theme_cluster(name, family),
+                "shared_stocks": shared,
+                "target_coverage_pct": round(shared / max(1, target_total) * 100, 1),
+                "jaccard_pct": round(shared / max(1, union) * 100, 1),
+                "other_total_stocks": other_total,
+            })
+        items.sort(key=lambda value: (-value["jaccard_pct"], -value["shared_stocks"], value["canonical_name"]))
+        return {
+            "items": items[:max(4, min(int(limit), 20))],
+            "target_total_stocks": target_total,
+            "method": "按当前有效成分计算真实交集与 Jaccard；相近不等于因果，也不把同产业链标签自动合并为同一题材。",
         }
 
     def _theme_corpus_consensus(self, canonical_name: str, *, days: int = 90) -> Dict[str, Any]:
@@ -2003,7 +2059,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.50",
+            "version": "concept-consensus-v1.51",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

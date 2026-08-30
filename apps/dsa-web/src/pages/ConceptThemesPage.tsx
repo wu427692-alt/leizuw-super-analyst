@@ -80,6 +80,18 @@ function InstitutionCorpusPulse({ value }: { value: ThemeDetail['institutionCorp
   </section>;
 }
 
+function ThemeAffinityMap({ value, onTheme }: { value: ThemeDetail['relatedThemes']; onTheme: (name: string) => void }) {
+  if (!value?.items.length) return null;
+  const maxJaccard = Math.max(...value.items.map(item => item.jaccardPct), 1);
+  return <section className="concept-affinity-map">
+    <header><div><span><Network /> CONSTITUENT AFFINITY</span><strong>题材成分关系图</strong><small>寻找共同股票，也识别只是名字相近但成分不同的题材</small></div><b>{value.targetTotalStocks} 股基准</b></header>
+    <div>{value.items.slice(0, 10).map(item => <button type="button" key={item.canonicalName} onClick={() => onTheme(item.canonicalName)}>
+      <span><strong>{item.canonicalName}</strong><small>{item.family} · {item.cluster}</small></span><b>{metric(item.jaccardPct, 1)}%</b><i style={{ width: `${Math.max(4, item.jaccardPct / maxJaccard * 100)}%` }} /><p>{item.sharedStocks} 只共同成分 · 覆盖当前题材 {metric(item.targetCoveragePct, 1)}% · 对方共 {item.otherTotalStocks} 股</p><ChevronRight />
+    </button>)}</div>
+    <footer>{value.method}</footer>
+  </section>;
+}
+
 function ConsensusMatrix({ stocks }: { stocks: ConceptStock[] }) {
   const sources = ['ths', 'dc_board', 'dc_theme', 'kpl', 'tdx', 'sw'];
   const rows = [...stocks].sort((left, right) => right.sourceCount - left.sourceCount || right.weightScore - left.weightScore).slice(0, 12);
@@ -524,6 +536,7 @@ export default function ConceptThemesPage() {
             <header className="concept-detail__head"><span>{detail.theme.family}</span><h2>{detail.theme.canonicalName}</h2><p>{detail.totalStocks} 只股票 · {detail.consensusStocks} 只获得多源确认 · {detail.attributionReady} 只已完成归因</p><div className="concept-detail-actions"><div className="concept-horizon" aria-label="归因窗口">{([20, 60, 120] as const).map(days => <button type="button" className={horizonDays === days ? 'is-active' : ''} onClick={() => setHorizonDays(days)} key={days}>{days}日</button>)}</div><button type="button" className={compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? 'is-active' : ''} onClick={() => toggleCompare(detail)}><Scale />{compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? '移出对照' : '加入对照'}</button><button type="button" onClick={() => void conceptThemesApi.exportTheme(detail.theme.id, horizonDays)}><Download />导出 CSV</button></div></header>
             <section className="concept-consensus-meter"><ScoreRing value={detail.totalStocks ? detail.consensusStocks / detail.totalStocks * 100 : 0} label="多源率" /><div><strong>市场共识不是 AI 猜测</strong><p>来源成分表独立保留；相同规范题材下合并投票，文字入选原因单独进入业务相关性评分。</p></div></section>
             {detail.institutionCorpus ? <InstitutionCorpusPulse value={detail.institutionCorpus} /> : null}
+            {detail.relatedThemes ? <ThemeAffinityMap value={detail.relatedThemes} onTheme={setQuery} /> : null}
             <section className="concept-consensus-spectrum"><div><span>强共识 · 3+源</span><b>{consensusDistribution.strong}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.strong / detail.totalStocks * 100 : 0}%` }} /></div><div><span>交叉确认 · 2源</span><b>{consensusDistribution.confirmed}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.confirmed / detail.totalStocks * 100 : 0}%` }} /></div><div><span>单源待核验</span><b>{consensusDistribution.singleSource}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.singleSource / detail.totalStocks * 100 : 0}%` }} /></div></section>
             <SourceRail themes={detail.sourceNodes} />
             <ConsensusMatrix stocks={detail.stocks} />

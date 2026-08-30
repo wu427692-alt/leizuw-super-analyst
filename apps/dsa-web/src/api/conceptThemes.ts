@@ -240,6 +240,19 @@ export type ThemeDetail = {
     }>;
     method: string;
   };
+  relatedThemes: {
+    items: Array<{
+      canonicalName: string;
+      family: string;
+      cluster: string;
+      sharedStocks: number;
+      targetCoveragePct: number;
+      jaccardPct: number;
+      otherTotalStocks: number;
+    }>;
+    targetTotalStocks: number;
+    method: string;
+  };
   horizonDays: number;
   methodology: ConceptMethodology;
 };
