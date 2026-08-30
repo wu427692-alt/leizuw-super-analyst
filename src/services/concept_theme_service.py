@@ -524,6 +524,21 @@ class ConceptThemeService:
             rows = session.execute(statement.offset((page - 1) * page_size).limit(page_size)).scalars().all()
             total = int(session.execute(count_stmt).scalar_one())
             items = [self._theme_dict(row) for row in rows]
+            page_canonicals = {item["canonical_name"] for item in items}
+            canonical_coverage = {
+                canonical: {"source_count": int(source_count or 0), "node_count": int(node_count or 0)}
+                for canonical, source_count, node_count in session.execute(select(
+                    ConceptThemeRecord.canonical_name,
+                    func.count(func.distinct(ConceptThemeRecord.source)),
+                    func.count(ConceptThemeRecord.id),
+                ).where(
+                    ConceptThemeRecord.canonical_name.in_(page_canonicals),
+                ).group_by(ConceptThemeRecord.canonical_name)).all()
+            } if page_canonicals else {}
+            for item in items:
+                coverage = canonical_coverage.get(item["canonical_name"], {})
+                item["canonical_source_count"] = int(coverage.get("source_count", 0))
+                item["canonical_node_count"] = int(coverage.get("node_count", 0))
             latest_run = session.execute(select(ConceptSyncRunRecord).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
             source_counts = dict(session.execute(
                 select(ConceptThemeRecord.source, func.count(ConceptThemeRecord.id)).group_by(ConceptThemeRecord.source)
@@ -1173,7 +1188,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.28",
+            "version": "concept-consensus-v1.29",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",

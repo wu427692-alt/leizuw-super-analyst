@@ -95,6 +95,8 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
 
     assert filtered["total"] == 1
     assert filtered["items"][0]["cluster"] == "光通信产业链"
+    assert filtered["items"][0]["canonical_source_count"] == 1
+    assert filtered["items"][0]["canonical_node_count"] == 1
     assert recalled["total"] == 1
     assert recalled["items"][0]["canonical_name"] == "CPO/共封装光学"
     assert recalled["stock_matches"] == [{

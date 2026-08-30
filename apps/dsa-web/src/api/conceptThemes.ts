@@ -19,6 +19,8 @@ export type ConceptTheme = {
   fundFlow?: number | null;
   family: string;
   cluster: string;
+  canonicalSourceCount: number;
+  canonicalNodeCount: number;
   updatedAt?: string | null;
 };
 

@@ -55,7 +55,7 @@ function ThemeCard({ item, active, onClick }: { item: ConceptTheme; active: bool
       <span><b>{metric(item.heatScore, 0)}</b>热度</span>
       <span data-tone={(item.pctChange ?? 0) >= 0 ? 'up' : 'down'}><b>{signed(item.pctChange)}</b>当日</span>
     </div>
-    <div className="concept-theme-card__foot"><span>{TYPE_LABEL[item.themeType] ?? item.themeType} · L{item.level}</span><ChevronRight /></div>
+    <div className="concept-theme-card__foot"><span>{TYPE_LABEL[item.themeType] ?? item.themeType} · L{item.level} · {item.canonicalSourceCount || 1}源/{item.canonicalNodeCount || 1}节点</span><ChevronRight /></div>
   </button>;
 }
 
@@ -232,7 +232,7 @@ export default function ConceptThemesPage() {
       if (sequence !== requestSequence.current) return;
       setOverview(value);
       setStatus(`${value.summary.marketDate || '最新交易日'} · ${number(value.summary.themes)} 个源题材 · ${number(value.summary.memberships)} 条成分关系`);
-      setSelectedTheme(current => value.items.some(item => item.id === current) ? current : value.items[0]?.id ?? null);
+      setSelectedTheme(current => value.items.some(item => item.id === current) ? current : value.items.find(item => item.canonicalSourceCount >= 3 && item.constituentCount > 0)?.id ?? value.items.find(item => item.canonicalSourceCount >= 2 && item.constituentCount > 0)?.id ?? value.items[0]?.id ?? null);
     } catch (error) {
       if (sequence !== requestSequence.current) return;
       setStatus(error instanceof Error ? error.message : '题材库暂时不可用，系统会静默重试');
