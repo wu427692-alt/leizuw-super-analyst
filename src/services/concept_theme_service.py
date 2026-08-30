@@ -872,6 +872,20 @@ class ConceptThemeService:
                 ConceptExposureRecord.as_of_date == latest_date if latest_date else ConceptExposureRecord.id < 0,
                 ConceptExposureRecord.horizon_days == horizon,
             ).order_by(desc(ConceptExposureRecord.weight_score))).scalars().all()
+            latest_by_horizon = dict(session.execute(select(
+                ConceptExposureRecord.horizon_days, func.max(ConceptExposureRecord.as_of_date),
+            ).where(
+                ConceptExposureRecord.ts_code == code,
+                ConceptExposureRecord.horizon_days.in_((20, 60, 120)),
+            ).group_by(ConceptExposureRecord.horizon_days)).all())
+            profile_filters = [and_(
+                ConceptExposureRecord.horizon_days == window,
+                ConceptExposureRecord.as_of_date == profile_date,
+            ) for window, profile_date in latest_by_horizon.items() if profile_date]
+            profile_rows = session.execute(select(ConceptExposureRecord).where(
+                ConceptExposureRecord.ts_code == code,
+                or_(*profile_filters) if profile_filters else ConceptExposureRecord.id < 0,
+            )).scalars().all()
         grouped: Dict[str, Dict[str, Any]] = {}
         stock_name = ""
         for membership, theme in rows:
@@ -888,6 +902,19 @@ class ConceptThemeService:
             if membership.reason and membership.reason not in item["reasons"]:
                 item["reasons"].append(membership.reason)
         exposure_map = {row.canonical_name: row for row in exposures}
+        profile_map: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row in profile_rows:
+            profile_map[row.canonical_name].append({
+                "horizon_days": int(row.horizon_days),
+                "as_of_date": row.as_of_date.isoformat(),
+                "beta": row.beta,
+                "residual_return": row.residual_return,
+                "r_squared": row.r_squared,
+                "observations": int(row.observations or 0),
+                "confidence": row.confidence,
+            })
+        for values in profile_map.values():
+            values.sort(key=lambda item: item["horizon_days"])
         themes = []
         for canonical, item in grouped.items():
             exposure = exposure_map.get(canonical)
@@ -897,6 +924,17 @@ class ConceptThemeService:
             else:
                 values.update({"weight_score": 0.0, "beta": None, "alpha_annualized": None,
                                "r_squared": None, "confidence": "insufficient"})
+            profiles = profile_map.get(canonical, [])
+            valid_betas = [float(item["beta"]) for item in profiles
+                           if item["beta"] is not None and item["confidence"] in {"medium", "high"}]
+            if len(valid_betas) < 2:
+                stability = "insufficient"
+            elif max(valid_betas) - min(valid_betas) <= 0.35:
+                stability = "stable"
+            else:
+                stability = "shifting"
+            values["horizon_profile"] = profiles
+            values["beta_stability"] = stability
             themes.append(values)
         themes.sort(key=lambda value: (-value["weight_score"], -value["source_count"]))
         consensus_themes = [item for item in themes if item["source_count"] >= 2]
@@ -921,6 +959,12 @@ class ConceptThemeService:
                 ),
                 "consensus_count": sum(1 for item in themes if item["source_count"] >= 2),
                 "alpha_positive_count": sum(1 for item in themes if (item.get("alpha_annualized") or 0) > 0),
+                "stable_beta_count": sum(1 for item in themes if item.get("beta_stability") == "stable"),
+                "persistent_alpha_count": sum(1 for item in themes if sum(
+                    1 for point in item.get("horizon_profile", [])
+                    if point.get("residual_return") is not None and float(point["residual_return"]) > 0
+                    and point.get("confidence") in {"medium", "high"}
+                ) >= 2),
             },
             "methodology": self.methodology(),
         }
@@ -1532,7 +1576,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.40",
+            "version": "concept-consensus-v1.41",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
@@ -1542,6 +1586,7 @@ class ConceptThemeService:
                 "Beta 置信度同时检查样本数、来源数、R²及回归系数t统计量，并展示95%区间。",
                 "Alpha 分为统计残差与可核验证据两层；证据只做归因线索，不声称因果。",
                 "题材轮动保留每日来源快照后再聚合，不用当前值伪造历史，也不把轮动分解释为收益预测。",
+                "个股透镜同时读取20/60/120日独立快照，跨周期稳定性不混用不同窗口或日期。",
             ],
             "weight_formula": {
                 "source_consensus": 0.36, "business_evidence": 0.29,

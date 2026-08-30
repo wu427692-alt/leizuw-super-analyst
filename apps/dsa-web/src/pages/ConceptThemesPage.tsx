@@ -190,6 +190,8 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
       <div><strong>{value.summary.sourceCount}</strong><span>独立提供方</span></div>
       <div><strong>{value.summary.consensusCount}</strong><span>多源共识</span></div>
       <div><strong>{value.summary.alphaPositiveCount}</strong><span>正向窗口Alpha</span></div>
+      <div><strong>{value.summary.stableBetaCount}</strong><span>跨周期稳定 Beta</span></div>
+      <div><strong>{value.summary.persistentAlphaCount}</strong><span>至少双窗正 Alpha</span></div>
     </div>
     <div className="concept-lens-chart">
       <ResponsiveContainer width="100%" height={230}>
@@ -213,6 +215,10 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
         <div><h3>{item.canonicalName}</h3><span>{item.sources.map(source => SOURCE_LABEL[source] ?? source).join(' · ')}</span></div>
         <ScoreRing value={item.weightScore} label="权重" />
         <dl><div><dt>题材 Beta</dt><dd>{metric(item.beta)}</dd></div><div><dt>{value.horizonDays}日 Alpha</dt><dd>{signed(item.residualReturn)}</dd></div><div><dt>拟合度 R²</dt><dd>{metric(item.rSquared)}</dd></div></dl>
+        <div className="concept-horizon-profile">
+          <header><strong>跨周期归因</strong><span data-tone={item.betaStability}>{item.betaStability === 'stable' ? '稳定' : item.betaStability === 'shifting' ? '阶段切换' : '样本不足'}</span></header>
+          <div>{([20, 60, 120] as const).map(window => { const point = item.horizonProfile?.find(value => value.horizonDays === window); return <span key={window}><b>{window}日</b><small>β {metric(point?.beta)}</small><small>α {signed(point?.residualReturn)}</small><em>{point ? `${point.observations}样本 · ${point.confidence === 'high' ? '高' : point.confidence === 'medium' ? '中' : '低'}置信` : '待计算'}</em></span>; })}</div>
+        </div>
         <div className="concept-weight-decomp" aria-label="题材权重分项">
           <span><i style={{ width: `${Number(item.components?.consensus) || 0}%` }} /><b>{metric(Number(item.components?.consensus) || 0, 0)}</b><small>来源共识 · 36%</small></span>
           <span title={`供应商理由 ${metric(Number(item.components?.providerReasonScore) || 0, 0)} · 本地机构语料 ${metric(Number(item.components?.localCorpusScore) || 0, 0)}`}><i style={{ width: `${Number(item.components?.relevance) || 0}%` }} /><b>{metric(Number(item.components?.relevance) || 0, 0)}</b><small>业务证据 · 29%{Number(item.components?.localCorpusEvidenceCount) > 0 ? ` · 机构${Number(item.components?.localCorpusEvidenceCount)}篇` : ''}</small></span>

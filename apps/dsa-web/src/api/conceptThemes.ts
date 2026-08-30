@@ -221,6 +221,16 @@ export type StockThemeLens = {
     cluster: string;
     themeType: string;
     themeIds: number[];
+    betaStability: 'stable' | 'shifting' | 'insufficient';
+    horizonProfile: Array<{
+      horizonDays: number;
+      asOfDate: string;
+      beta?: number | null;
+      residualReturn?: number | null;
+      rSquared?: number | null;
+      observations: number;
+      confidence: string;
+    }>;
   }>;
   primaryThemes: StockThemeLens['themes'];
   uniqueThemes: StockThemeLens['themes'];
@@ -233,7 +243,14 @@ export type StockThemeLens = {
     importance?: number;
     url?: string;
   }>;
-  summary: { themeCount: number; sourceCount: number; consensusCount: number; alphaPositiveCount: number };
+  summary: {
+    themeCount: number;
+    sourceCount: number;
+    consensusCount: number;
+    alphaPositiveCount: number;
+    stableBetaCount: number;
+    persistentAlphaCount: number;
+  };
   methodology: ConceptMethodology;
 };
 

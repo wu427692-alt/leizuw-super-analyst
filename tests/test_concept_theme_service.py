@@ -324,13 +324,13 @@ def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:
             ConceptExposureRecord(
                 ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
                 as_of_date=date(2026, 8, 28), horizon_days=20, weight_score=81,
-                specificity_score=65, beta=1.2, observations=20, confidence="medium",
+                specificity_score=65, beta=1.2, residual_return=6.0, observations=20, confidence="medium",
                 source_count=1, calculated_at=now,
             ),
             ConceptExposureRecord(
                 ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
                 as_of_date=date(2026, 8, 27), horizon_days=60, weight_score=79,
-                specificity_score=66, beta=0.8, observations=52, confidence="medium",
+                specificity_score=66, beta=0.8, residual_return=10.0, observations=52, confidence="medium",
                 source_count=1, calculated_at=now,
             ),
         ])
@@ -342,6 +342,9 @@ def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:
     assert lens_20["themes"][0]["beta"] == 1.2
     assert lens_60["as_of_date"] == "2026-08-27"
     assert lens_60["themes"][0]["beta"] == 0.8
+    assert [point["horizon_days"] for point in lens_60["themes"][0]["horizon_profile"]] == [20, 60]
+    assert lens_60["themes"][0]["beta_stability"] == "shifting"
+    assert lens_60["summary"]["persistent_alpha_count"] == 1
 
 
 def test_market_consensus_leaders_require_cross_source_themes_and_one_snapshot(tmp_path) -> None:
