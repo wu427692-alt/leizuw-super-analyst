@@ -476,6 +476,10 @@ def test_rotation_compounds_five_daily_returns_instead_of_adding_percentages(tmp
     item = service.rotation(days=5, limit=8)["items"][0]
     assert item["momentum_5d"] == round(((1.01 ** 5) - 1) * 100, 3)
     assert "复利累计" in service.rotation(days=5, limit=8)["method"]
+    history = service._canonical_snapshot_history("CPO/共封装光学", days=5)
+    assert history["available_dates"] == 5
+    assert history["cumulative_return"] == round(((1.01 ** 5) - 1) * 100, 3)
+    assert history["points"][-1]["source_count"] == 1
 
 
 def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:
@@ -633,6 +637,7 @@ def test_unique_alpha_evidence_excludes_sector_roundups_and_price_snapshots(tmp_
 
     evidence = service._unique_driver_evidence("300308.SZ", "中际旭创")
     assert [item["title"] for item in evidence] == ["中际旭创盈利预测上调"]
+    assert evidence[0]["url"].startswith("/investment-monitor/feed?event=")
 
 
 def test_cluster_detail_aggregates_theme_nodes_without_inventing_cluster_beta(tmp_path) -> None:

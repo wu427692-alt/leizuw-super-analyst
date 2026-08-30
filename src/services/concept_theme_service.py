@@ -991,9 +991,48 @@ class ConceptThemeService:
             "consensus_distribution": consensus_distribution,
             "attribution_ready": sum(1 for item in ordered if item["beta"] is not None),
             "institution_corpus": self._theme_corpus_consensus(canonical),
+            "history": self._canonical_snapshot_history(canonical, days=20),
             "related_themes": self._related_theme_affinity(canonical, list(stocks)),
             "horizon_days": horizon,
             "methodology": self.methodology(),
+        }
+
+    def _canonical_snapshot_history(self, canonical_name: str, *, days: int = 20) -> Dict[str, Any]:
+        """Build a daily multi-provider history for one canonical theme."""
+        window = max(5, min(int(days), 60))
+        cutoff = self.latest_market_date() - timedelta(days=window * 3 + 20)
+        with self._read_scope() as session:
+            rows = session.execute(select(ConceptThemeSnapshotRecord).where(
+                ConceptThemeSnapshotRecord.canonical_name == canonical_name,
+                ConceptThemeSnapshotRecord.market_date >= cutoff,
+            ).order_by(ConceptThemeSnapshotRecord.market_date)).scalars().all()
+        grouped: Dict[date, List[ConceptThemeSnapshotRecord]] = defaultdict(list)
+        for row in rows:
+            grouped[row.market_date].append(row)
+        daily: List[Dict[str, Any]] = []
+        cumulative = 1.0
+        for market_date, values in sorted(grouped.items())[-window:]:
+            changes = [float(value.pct_change) for value in values if value.pct_change is not None]
+            if not changes:
+                continue
+            daily_change = float(statistics.median(changes))
+            cumulative *= 1.0 + daily_change / 100.0
+            daily.append({
+                "date": market_date.isoformat(),
+                "pct_change": round(daily_change, 3),
+                "cumulative_return": round((cumulative - 1.0) * 100.0, 3),
+                "source_count": _independent_source_count(value.source for value in values),
+                "heat_score": round(max(
+                    [float(value.heat_score) for value in values if value.heat_score is not None],
+                    default=0.0,
+                ), 1),
+            })
+        return {
+            "points": daily,
+            "available_dates": len(daily),
+            "latest_date": daily[-1]["date"] if daily else None,
+            "cumulative_return": daily[-1]["cumulative_return"] if daily else None,
+            "method": "日涨跌取独立供应商快照中位数，累计走势按日复利；没有历史日值时保持空白。",
         }
 
     def _related_theme_affinity(self, canonical_name: str, stock_codes: Sequence[str], *, limit: int = 12) -> Dict[str, Any]:
@@ -2534,7 +2573,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.67",
+            "version": "concept-consensus-v1.68",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",
@@ -2740,7 +2779,8 @@ class ConceptThemeService:
             items.append({
                 "kind": "event", "title": event.title, "summary": event.summary,
                 "source": event.source_name, "date": event.event_at.isoformat() if event.event_at else None,
-                "importance": event.importance_score, "url": event.url,
+                "importance": event.importance_score,
+                "url": f"/investment-monitor/feed?event={event.id}",
                 "symbol_count": len(set(re.findall(r"\d{6}", str(event.symbol_codes or "")))),
             })
         ai_topic_ids = {note.topic_id for note, _analysis in ai_notes}

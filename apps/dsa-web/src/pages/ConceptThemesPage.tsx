@@ -5,7 +5,7 @@ import {
   Clock3, Database, Download, GitBranch, Layers3, Network, RefreshCw, Scale, Search, ShieldCheck,
   Sparkles, Star, Target, TrendingUp, X,
 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
 import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptLifecycle, type ConceptMembershipChanges, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail, type WatchlistThemeMap } from '../api/conceptThemes';
@@ -129,6 +129,25 @@ function BetaAlphaMap({ stocks, horizonDays }: { stocks: ConceptStock[]; horizon
         <Scatter name="成分股" data={points} fill="#4e8cff" fillOpacity={0.66} stroke="#83bdff" />
       </ScatterChart>
     </ResponsiveContainer>
+  </section>;
+}
+
+function ThemeHistoryPulse({ value }: { value: ThemeDetail['history'] }) {
+  if (!value?.points.length) return <section className="concept-theme-history is-empty"><Activity /><div><strong>题材历史正在自动补齐</strong><p>没有真实日快照时不绘制走势，也不会用当前值倒推过去。</p></div></section>;
+  return <section className="concept-theme-history">
+    <header><div><span><TrendingUp /> 20D CONSENSUS TAPE</span><strong>多源题材走势</strong><small>{value.availableDates} 个真实交易日 · 截止 {value.latestDate}</small></div><b data-tone={(value.cumulativeReturn ?? 0) >= 0 ? 'up' : 'down'}>{signed(value.cumulativeReturn)}</b></header>
+    <ResponsiveContainer width="100%" height={175}>
+      <AreaChart data={value.points} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
+        <defs><linearGradient id="concept-history-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4e8cff" stopOpacity={0.36} /><stop offset="100%" stopColor="#4e8cff" stopOpacity={0.02} /></linearGradient></defs>
+        <CartesianGrid stroke="rgba(90,135,190,.10)" vertical={false} />
+        <XAxis dataKey="date" tickFormatter={date => String(date).slice(5)} interval="preserveStartEnd" tick={{ fill: '#6f86a5', fontSize: 9 }} axisLine={false} tickLine={false} />
+        <YAxis tickFormatter={value => `${value}%`} tick={{ fill: '#6f86a5', fontSize: 8 }} axisLine={false} tickLine={false} width={42} domain={['auto', 'auto']} />
+        <Tooltip contentStyle={{ background: '#071326', border: '1px solid #29476c', fontSize: 10 }} labelFormatter={date => `${date} · 多源中位`} formatter={(metricValue, name) => [typeof metricValue === 'number' ? `${metricValue.toFixed(2)}%` : metricValue, name]} />
+        <ReferenceLine y={0} stroke="rgba(130,170,220,.42)" strokeDasharray="4 4" />
+        <Area type="monotone" dataKey="cumulativeReturn" name="复合累计" stroke="#5aa7ff" strokeWidth={2} fill="url(#concept-history-fill)" dot={false} activeDot={{ r: 3 }} />
+      </AreaChart>
+    </ResponsiveContainer>
+    <footer><div>{value.points.slice(-5).map(point => <span key={point.date} data-tone={point.pctChange >= 0 ? 'up' : 'down'}><b>{point.date.slice(5)}</b><em>{signed(point.pctChange)}</em><small>{point.sourceCount}方</small></span>)}</div><p>{value.method}</p></footer>
   </section>;
 }
 
@@ -642,6 +661,7 @@ export default function ConceptThemesPage() {
           {detail ? <>
             <header className="concept-detail__head"><span>{detail.theme.family}</span><h2>{detail.theme.canonicalName}</h2><p>{detail.totalStocks} 只股票 · {detail.consensusStocks} 只获得多源确认 · {detail.attributionReady} 只已完成归因</p><div className="concept-detail-actions"><div className="concept-horizon" aria-label="归因窗口">{([20, 60, 120] as const).map(days => <button type="button" className={horizonDays === days ? 'is-active' : ''} onClick={() => setHorizonDays(days)} key={days}>{days}日</button>)}</div><button type="button" className={compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? 'is-active' : ''} onClick={() => toggleCompare(detail)}><Scale />{compareThemes.some(item => item.theme.canonicalName === detail.theme.canonicalName) ? '移出对照' : '加入对照'}</button><button type="button" onClick={() => void conceptThemesApi.exportTheme(detail.theme.id, horizonDays)}><Download />导出 CSV</button></div></header>
             <section className="concept-consensus-meter"><ScoreRing value={detail.totalStocks ? detail.consensusStocks / detail.totalStocks * 100 : 0} label="多源率" /><div><strong>市场共识不是 AI 猜测</strong><p>来源成分表独立保留；相同规范题材下合并投票，文字入选原因单独进入业务相关性评分。</p></div></section>
+            <ThemeHistoryPulse value={detail.history} />
             {detail.institutionCorpus ? <InstitutionCorpusPulse value={detail.institutionCorpus} /> : null}
             {detail.relatedThemes ? <ThemeAffinityMap value={detail.relatedThemes} onTheme={setQuery} /> : null}
             <section className="concept-consensus-spectrum"><div><span>强共识 · 3+源</span><b>{consensusDistribution.strong}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.strong / detail.totalStocks * 100 : 0}%` }} /></div><div><span>交叉确认 · 2源</span><b>{consensusDistribution.confirmed}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.confirmed / detail.totalStocks * 100 : 0}%` }} /></div><div><span>单源待核验</span><b>{consensusDistribution.singleSource}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.singleSource / detail.totalStocks * 100 : 0}%` }} /></div></section>

@@ -297,6 +297,13 @@ export type ThemeDetail = {
   consensusStocks: number;
   consensusDistribution?: { strong: number; confirmed: number; singleSource: number };
   attributionReady: number;
+  history: {
+    points: Array<{ date: string; pctChange: number; cumulativeReturn: number; sourceCount: number; heatScore: number }>;
+    availableDates: number;
+    latestDate?: string | null;
+    cumulativeReturn?: number | null;
+    method: string;
+  };
   institutionCorpus: {
     total: number;
     bullish: number;
