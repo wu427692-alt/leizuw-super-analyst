@@ -35,6 +35,7 @@ export type ConceptStock = {
   residualReturn?: number | null;
   rSquared?: number | null;
   observations?: number;
+  specificityScore?: number | null;
   confidence: string;
   betaInterpretation?: string;
   components?: Record<string, number | string | null>;
@@ -100,6 +101,7 @@ export type StockThemeLens = {
     themeIds: number[];
   }>;
   primaryThemes: StockThemeLens['themes'];
+  uniqueThemes: StockThemeLens['themes'];
   uniqueDrivers: Array<{
     kind: string;
     title: string;

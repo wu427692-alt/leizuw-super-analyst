@@ -90,10 +90,17 @@ class ConceptThemeWorker:
 
     def _run(self) -> None:
         service = ConceptThemeService()
-        self._bootstrap_membership_state()
+        startup_result: Dict[str, Any] = {}
+        try:
+            startup_result["legacy_ledger_rows"] = self._bootstrap_membership_state()
+            startup_result["normalization"] = service.normalize_catalog_names()
+        except Exception as exc:  # noqa: BLE001 - startup repair must not kill recurring updates.
+            logger.exception("[concept-theme] startup normalization failed")
+            startup_result["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"
         while not self._stop_event.is_set():
             try:
-                result: Dict[str, Any] = {}
+                result: Dict[str, Any] = {"startup": startup_result} if startup_result else {}
+                startup_result = {}
                 status = service.sync_status()
                 latest = status.get("latest_run") or {}
                 last_market_date = str(latest.get("market_date") or "")

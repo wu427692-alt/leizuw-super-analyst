@@ -9,6 +9,7 @@ from src.services.concept_theme_service import (
     theme_family,
 )
 from src.storage import (
+    ConceptExposureRecord,
     ConceptMembershipRecord,
     ConceptThemeRecord,
     DatabaseManager,
@@ -36,6 +37,18 @@ def test_theme_hierarchy_merges_market_synonyms_without_losing_subtheme() -> Non
     assert family == "AI算力与数字基础设施"
     assert theme_cluster("CPO/共封装光学", family) == "光通信产业链"
     assert theme_cluster("NPO高速光模块", family) == "光通信产业链"
+
+
+def test_family_rules_do_not_confuse_consumer_electronics_words_with_semiconductors() -> None:
+    assert theme_family("电子竞技", "concept") == "消费与品牌"
+    assert theme_family("电子商务", "concept") == "消费与品牌"
+    assert theme_family("电子烟", "concept") == "消费与品牌"
+    assert theme_family("电子身份证", "concept") == "AI算力与数字基础设施"
+    assert theme_family("汽车电子", "concept") == "半导体与先进电子"
+    assert theme_family("飞行汽车", "concept") == "低空经济与商业航天"
+    assert canonicalize_theme("CPO(共封装光学)") == "CPO/共封装光学"
+    assert canonicalize_theme("光通信模块") == "光通信/光模块"
+    assert canonicalize_theme("飞行汽车(eVTOL)") == "eVTOL/飞行汽车"
 
 
 def test_latest_market_date_never_uses_weekend_fact_row(tmp_path) -> None:
@@ -128,3 +141,69 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
     assert exposure["components"]["regression"].startswith("个股日收益")
     assert exposure["components"]["beta_ci_low"] < exposure["beta"] < exposure["components"]["beta_ci_high"]
     assert abs(exposure["components"]["beta_t_stat"]) >= 1
+
+
+def test_complete_membership_refresh_deactivates_vanished_stock_without_deleting_history(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        theme = ConceptThemeRecord(
+            source="ths", source_code="885001.TI", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+        )
+        session.add(theme); session.flush()
+        theme_id = theme.id
+        for code in ("300308.SZ", "300502.SZ"):
+            session.add(ConceptMembershipRecord(
+                theme_id=theme_id, source="ths", ts_code=code, stock_name=code,
+                active=True, first_seen_at=now, last_seen_at=now, updated_at=now,
+            ))
+
+    snapshot = {"id": theme_id, "source": "ths", "market_date": "20260828"}
+    service._upsert_memberships(
+        snapshot, [{"con_code": "300308.SZ", "con_name": "中际旭创"}], replace_existing=True,
+    )
+    with service.db.session_scope() as session:
+        rows = session.query(ConceptMembershipRecord).order_by(ConceptMembershipRecord.ts_code).all()
+        assert [(row.ts_code, row.active) for row in rows] == [
+            ("300308.SZ", True), ("300502.SZ", False),
+        ]
+
+
+def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        theme = ConceptThemeRecord(
+            source="ths", source_code="885001.TI", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+        )
+        session.add(theme); session.flush()
+        session.add(ConceptMembershipRecord(
+            theme_id=theme.id, source="ths", ts_code="300308.SZ", stock_name="中际旭创",
+            active=True, first_seen_at=now, last_seen_at=now, updated_at=now,
+        ))
+        session.add_all([
+            ConceptExposureRecord(
+                ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
+                as_of_date=date(2026, 8, 28), horizon_days=20, weight_score=81,
+                specificity_score=65, beta=1.2, observations=20, confidence="medium",
+                source_count=1, calculated_at=now,
+            ),
+            ConceptExposureRecord(
+                ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
+                as_of_date=date(2026, 8, 27), horizon_days=60, weight_score=79,
+                specificity_score=66, beta=0.8, observations=52, confidence="medium",
+                source_count=1, calculated_at=now,
+            ),
+        ])
+
+    lens_20 = service.stock_lens("300308.SZ", refresh_if_empty=False, horizon_days=20)
+    lens_60 = service.stock_lens("300308.SZ", refresh_if_empty=False, horizon_days=60)
+
+    assert lens_20["as_of_date"] == "2026-08-28"
+    assert lens_20["themes"][0]["beta"] == 1.2
+    assert lens_60["as_of_date"] == "2026-08-27"
+    assert lens_60["themes"][0]["beta"] == 0.8

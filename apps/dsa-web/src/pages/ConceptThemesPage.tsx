@@ -16,6 +16,9 @@ import './ConceptThemesPage.css';
 const SOURCE_COLOR: Record<string, string> = {
   ths: '#5AA7FF', dc_board: '#7C5CFC', dc_theme: '#00D4B8', kpl: '#FFB547', tdx: '#F06C9B', sw: '#98A2B3',
 };
+const SOURCE_LABEL: Record<string, string> = {
+  ths: '同花顺', dc_board: '东财板块', dc_theme: '东财题材', kpl: '开盘啦', tdx: '通达信', sw: '申万',
+};
 const TYPE_LABEL: Record<string, string> = {
   concept: '概念', theme: '题材', industry: '行业', region: '地域', style: '风格', feature: '特色', broad: '宽基',
 };
@@ -100,17 +103,34 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
     </div>
     <div className="concept-lens-list">
       {value.primaryThemes.map(item => {
-        const ciLow = Number(item.components?.betaCiLow);
-        const ciHigh = Number(item.components?.betaCiHigh);
-        const hasInterval = Number.isFinite(ciLow) && Number.isFinite(ciHigh);
+        const rawCiLow = item.components?.betaCiLow;
+        const rawCiHigh = item.components?.betaCiHigh;
+        const ciLow = typeof rawCiLow === 'number' ? rawCiLow : Number.NaN;
+        const ciHigh = typeof rawCiHigh === 'number' ? rawCiHigh : Number.NaN;
+        const hasInterval = Number.isFinite(ciLow) && Number.isFinite(ciHigh) && (item.observations ?? 0) >= 20;
         return <article key={item.canonicalName}>
-        <div><h3>{item.canonicalName}</h3><span>{item.sources.join(' · ')}</span></div>
+        <div><h3>{item.canonicalName}</h3><span>{item.sources.map(source => SOURCE_LABEL[source] ?? source).join(' · ')}</span></div>
         <ScoreRing value={item.weightScore} label="权重" />
         <dl><div><dt>题材 Beta</dt><dd>{metric(item.beta)}</dd></div><div><dt>{value.horizonDays}日 Alpha</dt><dd>{signed(item.residualReturn)}</dd></div><div><dt>拟合度 R²</dt><dd>{metric(item.rSquared)}</dd></div></dl>
+        <div className="concept-weight-decomp" aria-label="题材权重分项">
+          <span><i style={{ width: `${Number(item.components?.consensus) || 0}%` }} /><b>{metric(Number(item.components?.consensus) || 0, 0)}</b><small>来源共识 · 36%</small></span>
+          <span><i style={{ width: `${Number(item.components?.relevance) || 0}%` }} /><b>{metric(Number(item.components?.relevance) || 0, 0)}</b><small>业务证据 · 29%</small></span>
+          <span><i style={{ width: `${Number(item.components?.market) || 0}%` }} /><b>{metric(Number(item.components?.market) || 0, 0)}</b><small>市场热度 · 20%</small></span>
+          <span><i style={{ width: `${Number(item.components?.specificity) || 0}%` }} /><b>{metric(Number(item.components?.specificity) || 0, 0)}</b><small>题材专属性 · 15%</small></span>
+        </div>
         <small className="concept-beta-audit">{hasInterval ? `Beta 95%区间 ${ciLow.toFixed(2)} ~ ${ciHigh.toFixed(2)}` : 'Beta区间待足够样本'} · {item.observations ?? 0}个交易日样本</small>
         <p>{item.betaInterpretation || '样本不足，暂不解释 Beta。'} · {item.reasons?.[0] || '该题材由结构化成分表确认，暂无文字证据。'}</p>
       </article>;})}
     </div>
+    <section className="concept-unique-themes">
+      <header><GitBranch /><div><h3>非共识题材线索</h3><p>单一来源且专属性较高，只作为待核验 Alpha 方向，不计作市场共识</p></div></header>
+      {value.uniqueThemes?.map(item => <article key={item.canonicalName}>
+        <div><strong>{item.canonicalName}</strong><span>{SOURCE_LABEL[item.sources[0]] ?? item.sources[0] ?? '单一来源'}</span></div>
+        <b>{metric(item.specificityScore, 0)}</b>
+        <p>{item.reasons?.[0] || '来源成分表确认，尚缺少文字入选理由。'}</p>
+      </article>)}
+      {!value.uniqueThemes?.length ? <p className="concept-muted">当前没有同时满足“单源 + 高专属性 + 已归因”的题材。</p> : null}
+    </section>
     <section className="concept-alpha-evidence">
       <header><Sparkles /><div><h3>公司独特 Alpha 线索</h3><p>与题材共振分开呈现，仅列本地事实库可回溯证据</p></div></header>
       {value.uniqueDrivers.slice(0, 8).map((item, index) => <a href={item.url || '#'} key={`${item.kind}-${item.title}-${index}`}>
@@ -232,7 +252,7 @@ export default function ConceptThemesPage() {
           {families.map(([name, count], index) => <button type="button" className={family === name ? 'is-active' : ''} onClick={() => { setFamily(name); setCluster(''); }} key={name}>
             <i>{String(index + 1).padStart(2, '0')}</i><span>{name}</span><b>{count}</b>
           </button>)}
-          <section className="concept-source-legend"><h3>数据共识层</h3>{overview?.methodology.sources.map(item => <div key={item.key}><span style={{ background: SOURCE_COLOR[item.key] }} /><b>{item.name}</b><em>{Math.round(item.reliability * 100)}%</em></div>)}</section>
+          <section className="concept-source-legend"><h3>六源目录 · 权重透明</h3>{overview?.methodology.sources.map(item => <div key={item.key}><span style={{ background: SOURCE_COLOR[item.key] }} /><b>{item.name}</b><em>{number(overview?.summary.sources[item.key])} 节点 · W{Math.round(item.reliability * 100)}</em></div>)}</section>
         </aside>
 
         <main className="concept-universe">

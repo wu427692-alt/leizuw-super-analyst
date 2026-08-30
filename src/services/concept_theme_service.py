@@ -15,7 +15,7 @@ import threading
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select, update
 
 from src.services.financial_data_service import (
     FinancialDataUpstreamError,
@@ -73,14 +73,14 @@ THS_TYPE_MAP = {
 }
 
 FAMILY_RULES: Sequence[Tuple[str, Sequence[str]]] = (
-    ("AI算力与数字基础设施", ("AI", "人工智能", "算力", "光模块", "光通信", "CPO", "服务器", "数据中心", "液冷", "PCB", "铜缆", "硅光", "存储")),
-    ("半导体与先进电子", ("半导体", "芯片", "集成电路", "光刻", "封测", "消费电子", "电子", "元件", "先进封装")),
+    ("AI算力与数字基础设施", ("AI", "人工智能", "算力", "光模块", "光通信", "CPO", "服务器", "数据中心", "液冷", "PCB", "铜缆", "硅光", "存储", "数字身份", "电子身份证")),
+    ("半导体与先进电子", ("半导体", "芯片", "集成电路", "光刻", "封测", "消费电子", "电子元件", "汽车电子", "军工电子", "电子布", "电子特气", "电子纸", "电子后视镜", "电子车牌", "电子信息", "被动元件", "先进封装")),
     ("先进制造与机器人", ("机器人", "自动化", "工业母机", "数控", "智能制造", "机械", "设备", "人形")),
-    ("低空经济与商业航天", ("低空", "无人机", "eVTOL", "航空", "航天", "卫星", "军工", "大飞机")),
+    ("低空经济与商业航天", ("低空", "无人机", "eVTOL", "飞行汽车", "航空", "航天", "卫星", "军工", "大飞机")),
     ("汽车与智能驾驶", ("汽车", "车联网", "智能驾驶", "无人驾驶", "锂电", "充电桩", "一体化压铸")),
     ("新能源与电力系统", ("光伏", "风电", "储能", "电力", "电网", "核电", "氢能", "新能源", "电池")),
     ("医药健康", ("医药", "医疗", "创新药", "生物", "疫苗", "中药", "CXO", "器械")),
-    ("消费与品牌", ("消费", "白酒", "食品", "旅游", "零售", "家电", "电商", "传媒", "游戏")),
+    ("消费与品牌", ("消费", "白酒", "食品", "旅游", "零售", "家电", "电商", "电子商务", "传媒", "游戏", "电子竞技", "电子游戏", "电子烟")),
     ("资源与周期", ("有色", "煤炭", "钢铁", "化工", "稀土", "黄金", "石油", "金属", "资源")),
     ("金融地产", ("银行", "证券", "保险", "金融", "地产", "房地产")),
     ("政策改革与区域", ("国企改革", "一带一路", "自贸", "新区", "区域", "振兴", "政策", "共同富裕")),
@@ -104,13 +104,25 @@ CANONICAL_ALIASES = {
     "共封装光学CPO": "CPO/共封装光学",
     "CPO": "CPO/共封装光学",
     "CPO概念": "CPO/共封装光学",
+    "CPO(共封装光学)": "CPO/共封装光学",
     "光模块": "光通信/光模块",
     "光通信": "光通信/光模块",
+    "光通信模块": "光通信/光模块",
     "光通信设备": "光通信/光模块",
     "低空经济概念": "低空经济",
+    "飞行汽车": "eVTOL/飞行汽车",
+    "飞行汽车(eVTOL)": "eVTOL/飞行汽车",
+    "eVTOL": "eVTOL/飞行汽车",
     "人形机器人概念": "人形机器人",
     "AI算力": "AI算力",
     "算力概念": "AI算力",
+    "AIPC": "AI PC",
+    "AI PC概念": "AI PC",
+    "氢能源": "氢能",
+    "钠电池": "钠离子电池",
+    "核能核电": "核电",
+    "核电核能": "核电",
+    "HIT电池": "HJT电池",
 }
 
 
@@ -350,7 +362,10 @@ class ConceptThemeService:
                 raise ConceptThemeError("题材不存在")
             snapshot = self._theme_dict(theme)
         rows = self._fetch_theme_members(snapshot)
-        saved = self._upsert_memberships(snapshot, rows)
+        # Most component endpoints cap a single response at 2,000 or more rows.
+        # Only a non-empty response safely below that boundary can be treated as complete.
+        replace_existing = 0 < len(rows) < 1900
+        saved = self._upsert_memberships(snapshot, rows, replace_existing=replace_existing)
         exposures = self.calculate_canonical_exposures(snapshot["canonical_name"], horizon_days=60) if calculate else 0
         return {"theme_id": theme_id, "received": len(rows), "saved": saved, "exposures": exposures}
 
@@ -636,7 +651,9 @@ class ConceptThemeService:
                 .where(ConceptMembershipRecord.ts_code == code, ConceptMembershipRecord.active.is_(True))
             ).all()
             latest_date = session.execute(select(func.max(ConceptExposureRecord.as_of_date)).where(
-                ConceptExposureRecord.ts_code == code)).scalar_one_or_none()
+                ConceptExposureRecord.ts_code == code,
+                ConceptExposureRecord.horizon_days == horizon,
+            )).scalar_one_or_none()
             exposures = session.execute(select(ConceptExposureRecord).where(
                 ConceptExposureRecord.ts_code == code,
                 ConceptExposureRecord.as_of_date == latest_date if latest_date else ConceptExposureRecord.id < 0,
@@ -669,10 +686,20 @@ class ConceptThemeService:
                                "r_squared": None, "confidence": "insufficient"})
             themes.append(values)
         themes.sort(key=lambda value: (-value["weight_score"], -value["source_count"]))
+        unique_themes = sorted([
+            item for item in themes
+            if item["source_count"] == 1
+            and (item.get("specificity_score") or 0) >= 50
+            and (item.get("weight_score") or 0) > 0
+        ], key=lambda value: (
+            -(value.get("specificity_score") or 0),
+            -(value.get("residual_return") or -999),
+        ))[:6]
         drivers = self._unique_driver_evidence(code)
         return {
             "ts_code": code, "name": stock_name, "as_of_date": latest_date.isoformat() if latest_date else None,
-            "themes": themes, "primary_themes": themes[:5], "unique_drivers": drivers,
+            "themes": themes, "primary_themes": themes[:5], "unique_themes": unique_themes,
+            "unique_drivers": drivers,
             "horizon_days": horizon,
             "summary": {
                 "theme_count": len(themes), "source_count": len({source for item in themes for source in item["sources"]}),
@@ -719,6 +746,15 @@ class ConceptThemeService:
                 MarketIndexBar.timestamp >= datetime.combine(start, datetime.min.time()),
                 MarketIndexBar.timestamp <= datetime.combine(as_of, datetime.max.time()),
             ).order_by(MarketIndexBar.timestamp)).all()
+            theme_breadths = dict(session.execute(select(
+                ConceptMembershipRecord.ts_code,
+                func.count(func.distinct(ConceptThemeRecord.canonical_name)),
+            ).join(
+                ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(
+                ConceptMembershipRecord.ts_code.in_(codes), ConceptMembershipRecord.active.is_(True),
+                ConceptThemeRecord.theme_type.in_(("theme", "concept")),
+            ).group_by(ConceptMembershipRecord.ts_code)).all())
         price_map: Dict[str, Dict[date, float]] = defaultdict(dict)
         code_lookup = {code[:6]: code for code in codes}
         for code, day, close in prices:
@@ -794,7 +830,10 @@ class ConceptThemeService:
                 0.45 * min(1.0, source_count / 3.0)
             ))
             typical_size = statistics.median(meta["theme_counts"] or [500])
-            specificity = max(24.0, 100.0 - math.log10(max(2.0, typical_size)) * 27.0)
+            theme_scarcity = max(24.0, 100.0 - math.log10(max(2.0, typical_size)) * 27.0)
+            stock_theme_breadth = max(1, int(theme_breadths.get(code) or 1))
+            stock_focus = max(20.0, 100.0 - math.log2(stock_theme_breadth) * 10.0)
+            specificity = 0.65 * theme_scarcity + 0.35 * stock_focus
             market_score = self._canonical_market_score(canonical_name)
             weight = round(0.36 * consensus + 0.29 * reason_quality + 0.20 * market_score + 0.15 * specificity, 1)
             confidence = "high" if (
@@ -812,6 +851,9 @@ class ConceptThemeService:
                 "beta_ci_low": beta_ci_low,
                 "beta_ci_high": beta_ci_high,
                 "confidence_rule": "置信度同时约束样本数、来源数、R²与Beta t统计量",
+                "theme_scarcity": round(theme_scarcity, 1),
+                "stock_focus": round(stock_focus, 1),
+                "stock_theme_breadth": stock_theme_breadth,
             }
             records.append({
                 "ts_code": code, "stock_name": meta["name"], "canonical_name": canonical_name,
@@ -857,10 +899,25 @@ class ConceptThemeService:
             }
         return {"available": self.gateway.available, "latest_run": self._run_dict(latest) if latest else None, **counts}
 
+    def normalize_catalog_names(self) -> Dict[str, int]:
+        """Reapply the current ontology to stored source nodes without touching source facts."""
+        changed = 0
+        scanned = 0
+        with self.db.session_scope() as session:
+            rows = session.execute(select(ConceptThemeRecord)).scalars().all()
+            for row in rows:
+                scanned += 1
+                canonical = canonicalize_theme(row.name)
+                if row.canonical_name != canonical:
+                    row.canonical_name = canonical
+                    row.updated_at = utc_naive_now()
+                    changed += 1
+        return {"scanned": scanned, "changed": changed}
+
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.11",
+            "version": "concept-consensus-v1.14",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
@@ -934,18 +991,23 @@ class ConceptThemeService:
             return self.gateway.query("index_member_all", params=param)["rows"]
         return []
 
-    def _upsert_memberships(self, theme: Dict[str, Any], rows: Sequence[Dict[str, Any]], force_stock: Optional[str] = None) -> int:
+    def _upsert_memberships(
+        self, theme: Dict[str, Any], rows: Sequence[Dict[str, Any]],
+        force_stock: Optional[str] = None, replace_existing: bool = False,
+    ) -> int:
         now = utc_naive_now()
         market_date = theme.get("market_date")
         if isinstance(market_date, str):
             market_date = _parse_date(market_date)
         saved = 0
+        received_codes: set[str] = set()
         with self.db.session_scope() as session:
             theme_row = session.get(ConceptThemeRecord, int(theme["id"]))
             for row in rows:
                 code = _ts_code(force_stock or row.get("con_code") or row.get("ts_code"))
                 if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", code):
                     continue
+                received_codes.add(code)
                 name = str(row.get("con_name") or row.get("name") or "").strip()
                 reason = str(row.get("reason") or row.get("desc") or "").strip() or None
                 day = _parse_date(row.get("trade_date")) or market_date
@@ -969,8 +1031,15 @@ class ConceptThemeService:
                     for key, value in values.items():
                         setattr(existing, key, value)
                 saved += 1
+            if replace_existing and received_codes and force_stock is None:
+                session.execute(update(ConceptMembershipRecord).where(
+                    ConceptMembershipRecord.theme_id == int(theme["id"]),
+                    ConceptMembershipRecord.source == theme["source"],
+                    ConceptMembershipRecord.active.is_(True),
+                    ~ConceptMembershipRecord.ts_code.in_(received_codes),
+                ).values(active=False, updated_at=now))
             if theme_row is not None and saved:
-                theme_row.constituent_count = max(theme_row.constituent_count or 0, saved)
+                theme_row.constituent_count = saved if replace_existing else max(theme_row.constituent_count or 0, saved)
                 theme_row.last_seen_at = now
         return saved
 
