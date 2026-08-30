@@ -148,6 +148,30 @@ export type ConceptLeaders = {
   method: string;
 };
 
+export type ConceptClusterDetail = {
+  family: string;
+  cluster: string;
+  items: Array<{
+    tsCode: string;
+    name: string;
+    clusterScore: number;
+    themeCount: number;
+    sourceCount: number;
+    sources: string[];
+    themes: string[];
+    reasons: string[];
+    dominantExposure?: ConceptLeaderExposure | null;
+    inWatchlist?: boolean;
+  }>;
+  totalStocks: number;
+  themeNodes: number;
+  canonicalThemes: number;
+  sourceCount: number;
+  asOfDate?: string | null;
+  horizonDays: number;
+  method: string;
+};
+
 export type ThemeDetail = {
   theme: ConceptTheme;
   sourceNodes: ConceptTheme[];
@@ -269,6 +293,16 @@ export const conceptThemesApi = {
         params: { horizon_days: horizonDays, mode, limit }, headers: BACKGROUND_ROUTE_HEADERS,
       });
       return toCamelCase<ConceptLeaders>(response.data);
+    },
+    { freshMs: 30_000, staleMs: 5 * 60_000 },
+  ),
+  cluster: async (family: string, cluster: string, horizonDays = 60, limit = 80): Promise<ConceptClusterDetail> => cachedQuery(
+    `concept:cluster:${family}:${cluster}:${horizonDays}:${limit}`,
+    async () => {
+      const response = await apiClient.get('/api/v1/concept-themes/cluster-detail', {
+        params: { family, cluster, horizon_days: horizonDays, limit }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<ConceptClusterDetail>(response.data);
     },
     { freshMs: 30_000, staleMs: 5 * 60_000 },
   ),

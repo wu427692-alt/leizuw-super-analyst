@@ -885,6 +885,74 @@ class ConceptThemeService:
             "method": "同一归因截止日聚合；共识榜要求题材至少两个独立来源，Beta/Alpha榜要求回归置信度达到中或高。",
         }
 
+    def cluster_detail(
+        self, family: str, cluster: str, *, horizon_days: int = 60, limit: int = 80,
+    ) -> Dict[str, Any]:
+        """Aggregate the stocks below a semantic cluster while preserving source themes."""
+        family = str(family or "").strip()
+        cluster = str(cluster or "").strip()
+        if not family or not cluster:
+            raise ConceptThemeError("题材家族和二级主题不能为空")
+        horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
+        taxonomy = self._taxonomy_index()
+        theme_ids = [theme_id for theme_id, names in taxonomy["by_id"].items() if names == (family, cluster)]
+        if not theme_ids:
+            raise ConceptThemeError("二级主题不存在")
+        with self._read_scope() as session:
+            rows = session.execute(select(ConceptMembershipRecord, ConceptThemeRecord).join(
+                ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(
+                ConceptMembershipRecord.theme_id.in_(theme_ids), ConceptMembershipRecord.active.is_(True),
+            )).all()
+            canonical_names = sorted({theme.canonical_name for _, theme in rows})
+            latest_date = session.execute(select(func.max(ConceptExposureRecord.as_of_date)).where(
+                ConceptExposureRecord.horizon_days == horizon,
+                ConceptExposureRecord.canonical_name.in_(canonical_names),
+            )).scalar_one_or_none() if canonical_names else None
+            exposures = session.execute(select(ConceptExposureRecord).where(
+                ConceptExposureRecord.horizon_days == horizon,
+                ConceptExposureRecord.as_of_date == latest_date if latest_date else ConceptExposureRecord.id < 0,
+                ConceptExposureRecord.canonical_name.in_(canonical_names),
+            )).scalars().all() if canonical_names else []
+        exposure_map = {(row.ts_code, row.canonical_name): row for row in exposures}
+        stocks: Dict[str, Dict[str, Any]] = {}
+        for membership, theme in rows:
+            item = stocks.setdefault(membership.ts_code, {
+                "ts_code": membership.ts_code, "name": membership.stock_name or membership.ts_code,
+                "sources": set(), "canonical_names": set(), "reasons": [], "exposures": [],
+            })
+            item["sources"].add(theme.source)
+            item["canonical_names"].add(theme.canonical_name)
+            exposure = exposure_map.get((membership.ts_code, theme.canonical_name))
+            if exposure and exposure not in item["exposures"]:
+                item["exposures"].append(exposure)
+            if membership.reason and membership.reason not in item["reasons"]:
+                item["reasons"].append(membership.reason)
+        output = []
+        for item in stocks.values():
+            ranked_exposures = sorted(item["exposures"], key=lambda row: -float(row.weight_score or 0))
+            weights = [float(row.weight_score or 0) for row in ranked_exposures[:3]]
+            average_weight = statistics.mean(weights) if weights else 0.0
+            source_count = len(item["sources"])
+            theme_count = len(item["canonical_names"])
+            dominant = ranked_exposures[0] if ranked_exposures else None
+            cluster_score = min(100.0, average_weight * .65 + min(theme_count, 6) * 4 + min(source_count, 6) * 2.5)
+            output.append({
+                "ts_code": item["ts_code"], "name": item["name"],
+                "cluster_score": round(cluster_score, 1), "theme_count": theme_count,
+                "source_count": source_count, "sources": sorted(item["sources"]),
+                "themes": sorted(item["canonical_names"]), "reasons": item["reasons"][:3],
+                "dominant_exposure": self._leader_exposure(dominant),
+            })
+        output.sort(key=lambda item: (-item["cluster_score"], -item["source_count"], -item["theme_count"], item["name"]))
+        return {
+            "family": family, "cluster": cluster, "items": output[:max(12, min(int(limit), 200))],
+            "total_stocks": len(output), "theme_nodes": len(theme_ids), "canonical_themes": len(canonical_names),
+            "source_count": len({theme.source for _, theme in rows}),
+            "as_of_date": latest_date.isoformat() if latest_date else None, "horizon_days": horizon,
+            "method": "聚合二级主题下的全部原始节点和成分关系；综合分用于研究排序，Beta/Alpha仅引用股票权重最高的代表题材，不冒充二级主题回归。",
+        }
+
     @staticmethod
     def _leader_exposure(row: Optional[ConceptExposureRecord]) -> Optional[Dict[str, Any]]:
         if row is None:
@@ -1285,7 +1353,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.34",
+            "version": "concept-consensus-v1.35",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",

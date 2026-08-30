@@ -8,7 +8,7 @@ import {
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
 import { EmptyState } from '../components/common/EmptyState';
-import { conceptThemesApi, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
+import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptOverview, type ConceptRotation, type ConceptStock, type ConceptTheme, type StockThemeLens, type ThemeDetail } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './ConceptThemesPage.css';
@@ -141,6 +141,16 @@ function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
   </section>;
 }
 
+function ClusterAggregate({ value, onOpen }: { value: ConceptClusterDetail; onOpen: (tsCode: string) => void }) {
+  return <section className="concept-cluster-aggregate">
+    <header><div><span>LEVEL 2 AGGREGATE</span><h3>{value.cluster}</h3><p>{value.themeNodes} 个原始节点 · {value.canonicalThemes} 个规范题材 · {value.totalStocks} 只去重股票 · {value.sourceCount} 个来源</p></div><b>{value.asOfDate || '最新快照'}</b></header>
+    <div>{value.items.slice(0, 12).map(item => <button type="button" onClick={() => onOpen(item.tsCode)} key={item.tsCode}>
+      <span><strong>{item.name}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><code>{item.tsCode}</code></span><b>{metric(item.clusterScore, 0)}</b><small>{item.themeCount} 题材 · {item.sourceCount} 源</small><p>{item.dominantExposure?.canonicalName || item.themes.slice(0, 2).join(' · ')}</p>
+    </button>)}</div>
+    <footer>{value.method}</footer>
+  </section>;
+}
+
 function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: boolean; onClick: () => void }) {
   return <button type="button" className={`concept-stock-row ${selected ? 'is-active' : ''}`} onClick={onClick}>
     <span className="concept-stock-name"><strong>{item.name || item.tsCode}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><small>{item.tsCode}</small></span>
@@ -228,6 +238,7 @@ export default function ConceptThemesPage() {
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
   const [leaderMode, setLeaderMode] = useState<ConceptLeaders['mode']>('consensus');
+  const [clusterDetail, setClusterDetail] = useState<ConceptClusterDetail | null>(null);
   const [detail, setDetail] = useState<ThemeDetail | null>(null);
   const [stockLens, setStockLens] = useState<StockThemeLens | null>(null);
   const [compareThemes, setCompareThemes] = useState<ThemeDetail[]>([]);
@@ -276,6 +287,12 @@ export default function ConceptThemesPage() {
   useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
   useEffect(() => { void loadRotation(); }, [loadRotation]);
   useEffect(() => { void loadLeaders(); }, [loadLeaders]);
+  useEffect(() => {
+    if (!family || !cluster) { setClusterDetail(null); return; }
+    let active = true;
+    conceptThemesApi.cluster(family, cluster, horizonDays).then(value => { if (active) setClusterDetail(value); }).catch(() => { if (active) setClusterDetail(null); });
+    return () => { active = false; };
+  }, [cluster, family, horizonDays]);
   useEffect(() => { setPage(1); }, [cluster, debouncedQuery, family, minSources, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
   const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders()]); }, [loadLeaders, loadOverview, loadRotation]);
@@ -400,6 +417,7 @@ export default function ConceptThemesPage() {
         <main className="concept-universe">
           <div className="concept-section-head"><div><span>THEME UNIVERSE</span><h2>{family || '全市场题材宇宙'}</h2></div><p>当前召回 {number(overview?.total)} 个源节点 · 点击进入成分与归因</p></div>
           {clusters.length ? <div className="concept-clusters"><button type="button" className={!cluster ? 'is-active' : ''} onClick={() => setCluster('')}>全部二级主题</button>{clusters.map(([name, count]) => <button type="button" className={cluster === name ? 'is-active' : ''} onClick={() => setCluster(name)} key={name}>{name}<b>{count}</b></button>)}</div> : null}
+          {clusterDetail ? <ClusterAggregate value={clusterDetail} onOpen={tsCode => void openStock(tsCode)} /> : null}
           <div className="concept-grid">
             {visibleThemes.map(item => <ThemeCard key={item.id} item={item} active={selectedTheme === item.id} onClick={() => setSelectedTheme(item.id)} />)}
           </div>

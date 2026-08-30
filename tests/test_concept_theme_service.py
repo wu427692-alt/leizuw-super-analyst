@@ -312,3 +312,38 @@ def test_market_consensus_leaders_require_cross_source_themes_and_one_snapshot(t
     assert [item["canonical_name"] for item in radar["items"][0]["primary_themes"]] == [
         "CPO/共封装光学", "液冷服务器",
     ]
+
+
+def test_cluster_detail_aggregates_theme_nodes_without_inventing_cluster_beta(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        themes = []
+        for source, source_code, name, canonical in (
+            ("ths", "885001.TI", "CPO概念", "CPO/共封装光学"),
+            ("dc_theme", "000699.DC", "光纤", "光纤"),
+        ):
+            theme = ConceptThemeRecord(
+                source=source, source_code=source_code, name=name, canonical_name=canonical,
+                theme_type="theme", level=3, market_date=date(2026, 8, 28),
+                first_seen_at=now, last_seen_at=now, updated_at=now,
+            )
+            session.add(theme); session.flush(); themes.append(theme)
+            session.add(ConceptMembershipRecord(
+                theme_id=theme.id, source=source, ts_code="300308.SZ", stock_name="中际旭创",
+                active=True, first_seen_at=now, last_seen_at=now, updated_at=now,
+            ))
+        session.add(ConceptExposureRecord(
+            ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
+            as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=86,
+            beta=1.3, residual_return=11.0, observations=60, confidence="high",
+            source_count=2, calculated_at=now,
+        ))
+
+    result = service.cluster_detail("AI算力与数字基础设施", "光通信产业链", horizon_days=60)
+
+    assert result["theme_nodes"] == 2
+    assert result["total_stocks"] == 1
+    assert result["items"][0]["theme_count"] == 2
+    assert result["items"][0]["dominant_exposure"]["canonical_name"] == "CPO/共封装光学"
+    assert "不冒充二级主题回归" in result["method"]

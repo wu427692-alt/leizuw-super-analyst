@@ -147,6 +147,27 @@ def leaders(
     return result
 
 
+@router.get("/cluster-detail", summary="读取二级题材簇的聚合成分")
+def cluster_detail(
+    request: Request,
+    family: str = Query(min_length=1, max_length=80),
+    cluster: str = Query(min_length=1, max_length=80),
+    horizon_days: int = Query(default=60, ge=20, le=120),
+    limit: int = Query(default=80, ge=12, le=200),
+):
+    try:
+        result = ConceptThemeService().cluster_detail(
+            family, cluster, horizon_days=horizon_days, limit=limit,
+        )
+    except ConceptThemeError as exc:
+        raise _http_error(exc, 404 if "不存在" in str(exc) else 422)
+    watched = _watchlist_codes(request)
+    for item in result["items"]:
+        compact = str(item.get("ts_code") or "").split(".", 1)[0]
+        item["in_watchlist"] = compact in watched
+    return result
+
+
 @router.post("/sync/catalog", status_code=202, summary="唤醒题材库后台更新")
 def wake_catalog_sync():
     return ConceptThemeWorker.get_instance().trigger()
