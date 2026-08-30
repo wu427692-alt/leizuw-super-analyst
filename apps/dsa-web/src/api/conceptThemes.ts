@@ -338,6 +338,8 @@ export type StockThemeLens = {
       confidence: string;
     }>;
   }>;
+  themesTruncated?: boolean;
+  totalThemeCount?: number;
   primaryThemes: StockThemeLens['themes'];
   uniqueThemes: StockThemeLens['themes'];
   uniqueDrivers: Array<{
@@ -509,22 +511,30 @@ export const conceptThemesApi = {
     },
     { freshMs: 30_000, staleMs: 5 * 60_000 },
   ),
-  theme: async (themeId: number, refreshIfEmpty = true, horizonDays = 60): Promise<ThemeDetail> => {
-    const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}`, {
-      params: { refresh_if_empty: refreshIfEmpty, horizon_days: horizonDays },
-      headers: BACKGROUND_ROUTE_HEADERS,
-      timeout: 90_000,
-    });
-    return toCamelCase<ThemeDetail>(response.data);
-  },
-  stock: async (tsCode: string, refreshIfEmpty = true, horizonDays = 60): Promise<StockThemeLens> => {
-    const response = await apiClient.get(`/api/v1/concept-themes/stocks/${encodeURIComponent(tsCode)}`, {
-      params: { refresh_if_empty: refreshIfEmpty, horizon_days: horizonDays },
-      headers: BACKGROUND_ROUTE_HEADERS,
-      timeout: 90_000,
-    });
-    return toCamelCase<StockThemeLens>(response.data);
-  },
+  theme: async (themeId: number, refreshIfEmpty = true, horizonDays = 60): Promise<ThemeDetail> => cachedQuery(
+    `concept:theme:${themeId}:${horizonDays}`,
+    async () => {
+      const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}`, {
+        params: { refresh_if_empty: refreshIfEmpty, horizon_days: horizonDays },
+        headers: BACKGROUND_ROUTE_HEADERS,
+        timeout: 90_000,
+      });
+      return toCamelCase<ThemeDetail>(response.data);
+    },
+    { freshMs: 20_000, staleMs: 2 * 60_000 },
+  ),
+  stock: async (tsCode: string, refreshIfEmpty = true, horizonDays = 60): Promise<StockThemeLens> => cachedQuery(
+    `concept:stock:${tsCode}:${horizonDays}`,
+    async () => {
+      const response = await apiClient.get(`/api/v1/concept-themes/stocks/${encodeURIComponent(tsCode)}`, {
+        params: { refresh_if_empty: refreshIfEmpty, horizon_days: horizonDays },
+        headers: BACKGROUND_ROUTE_HEADERS,
+        timeout: 90_000,
+      });
+      return toCamelCase<StockThemeLens>(response.data);
+    },
+    { freshMs: 30_000, staleMs: 3 * 60_000 },
+  ),
   exportTheme: async (themeId: number, horizonDays = 60): Promise<void> => {
     const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}/export.csv`, {
       params: { horizon_days: horizonDays }, responseType: 'blob', timeout: 90_000,

@@ -109,11 +109,20 @@ def stock_lens(
     ts_code: str,
     refresh_if_empty: bool = Query(default=True),
     horizon_days: int = Query(default=60, ge=20, le=120),
+    include_all: bool = Query(default=False, description="是否返回全部长尾题材；前台默认只取高权重前40条"),
 ):
     try:
-        return ConceptThemeService().stock_lens(
+        result = ConceptThemeService().stock_lens(
             ts_code, refresh_if_empty=refresh_if_empty, horizon_days=horizon_days,
         )
+        total_themes = len(result.get("themes") or [])
+        if not include_all and total_themes > 40:
+            result["themes"] = result["themes"][:40]
+            result["themes_truncated"] = True
+        else:
+            result["themes_truncated"] = False
+        result["total_theme_count"] = total_themes
+        return result
     except ConceptThemeError as exc:
         raise _http_error(exc)
 
