@@ -392,6 +392,13 @@ export default function ConceptThemesPage() {
         <div><Binary /><span>归因结果</span><strong>{number(overview?.summary.exposures)}</strong><small>60日双因子回归</small></div>
         <div><ShieldCheck /><span>最新交易日</span><strong>{overview?.summary.marketDate || '—'}</strong><small>{overview?.sync?.stage || '共享题材库'}</small></div>
       </section>
+      <section className="concept-quality-strip" data-tone={overview?.summary.quality.warnings.length ? 'attention' : 'ready'} aria-label="题材数据质量与截止时间">
+        <div><span>目录交易日</span><strong>{overview?.summary.quality.catalogDate || '—'}</strong></div>
+        <div><span>独立目录就绪</span><strong>{overview ? `${overview.summary.quality.freshCatalogs}/${overview.summary.quality.totalCatalogs}` : '—'}</strong></div>
+        <div><span>成分扫描</span><strong>{metric(overview?.summary.scanCoveragePct, 1)}%</strong></div>
+        <div><span>归因截止</span><strong>{overview?.summary.quality.exposureDate || '—'}</strong></div>
+        <p>{overview?.summary.quality.warnings.join(' · ') || '目录、成分与归因截止时间一致；仍需结合原始证据核验。'}</p>
+      </section>
 
       <section className="concept-toolbar">
         <label className="concept-search"><Search /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索题材、行业、股票代码或源代码" /></label>

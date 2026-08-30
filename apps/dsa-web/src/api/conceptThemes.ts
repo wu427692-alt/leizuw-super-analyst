@@ -77,6 +77,14 @@ export type ConceptOverview = {
     families: Record<string, number>;
     clusterFamilies: Record<string, Record<string, number>>;
     marketDate?: string;
+    quality: {
+      catalogDate?: string | null;
+      exposureDate?: string | null;
+      freshCatalogs: number;
+      totalCatalogs: number;
+      failedThemes: number;
+      warnings: string[];
+    };
   };
   sync?: { status: string; progress: number; stage: string; marketDate?: string; sources?: Record<string, number> } | null;
   methodology: ConceptMethodology;

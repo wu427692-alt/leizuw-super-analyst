@@ -628,6 +628,7 @@ class ConceptThemeService:
                 ConceptMembershipSyncState.status == "failed",
             )).scalar_one())
             exposure_count = int(session.execute(select(func.count(ConceptExposureRecord.id))).scalar_one())
+            latest_exposure_date = session.execute(select(func.max(ConceptExposureRecord.as_of_date))).scalar_one_or_none()
             latest_market_date = session.execute(select(func.max(ConceptThemeRecord.market_date))).scalar_one_or_none()
             if query.strip():
                 stock_term = f"%{query.strip()}%"
@@ -670,6 +671,14 @@ class ConceptThemeService:
                 "scan_coverage_pct": round(attempted / max(1, catalog_nodes) * 100, 1),
                 "status": "fresh" if source_market_date and source_market_date == latest_market_date else "lagging",
             }
+        fresh_catalogs = sum(1 for item in source_health.values() if item["status"] == "fresh")
+        quality_warnings = []
+        if latest_exposure_date and latest_market_date and latest_exposure_date < latest_market_date:
+            quality_warnings.append(f"归因截止 {latest_exposure_date.isoformat()}，落后目录交易日")
+        if fresh_catalogs < len(SOURCE_LABELS):
+            quality_warnings.append(f"{len(SOURCE_LABELS) - fresh_catalogs} 套目录交易日滞后")
+        if failed_theme_count:
+            quality_warnings.append(f"{failed_theme_count} 个成分节点等待重试")
         return {
             "items": items, "total": total, "page": page, "page_size": page_size,
             "view": "canonical" if view == "canonical" else "source",
@@ -686,6 +695,14 @@ class ConceptThemeService:
                 "sources": source_counts, "source_health": source_health, "types": type_counts, "families": family_counts,
                 "cluster_families": cluster_families,
                 "market_date": latest_market_date.isoformat() if latest_market_date else "",
+                "quality": {
+                    "catalog_date": latest_market_date.isoformat() if latest_market_date else None,
+                    "exposure_date": latest_exposure_date.isoformat() if latest_exposure_date else None,
+                    "fresh_catalogs": fresh_catalogs,
+                    "total_catalogs": len(SOURCE_LABELS),
+                    "failed_themes": failed_theme_count,
+                    "warnings": quality_warnings,
+                },
             },
             "sync": self._run_dict(latest_run) if latest_run else None,
             "methodology": self.methodology(),
@@ -1375,6 +1392,77 @@ class ConceptThemeService:
                     updated += 1
         return {"themes": len(canonicals), "exposures": updated}
 
+    def backfill_multi_horizon_profiles(
+        self, *, stock_limit: int = 2, themes_per_stock: int = 3,
+    ) -> Dict[str, int]:
+        """Incrementally add 20/120-day profiles for priority research stocks."""
+        stock_limit = max(1, min(int(stock_limit), 10))
+        themes_per_stock = max(1, min(int(themes_per_stock), 8))
+        market_date = self.latest_market_date()
+        with self._read_scope() as session:
+            watchlist_codes = [_ts_code(code) for code in session.execute(
+                select(UserWatchlistItem.symbol).distinct().limit(stock_limit * 3)
+            ).scalars().all()]
+            ranked_codes = [str(code) for code, _ in session.execute(select(
+                ConceptExposureRecord.ts_code, func.max(ConceptExposureRecord.weight_score),
+            ).where(
+                ConceptExposureRecord.horizon_days == 60,
+                ConceptExposureRecord.source_count >= 2,
+            ).group_by(ConceptExposureRecord.ts_code).order_by(
+                desc(func.max(ConceptExposureRecord.weight_score)),
+            ).limit(stock_limit * 3)).all()]
+        priority_codes = list(dict.fromkeys([*watchlist_codes, *ranked_codes]))
+        attempted = completed = exposures_saved = failed = processed_stocks = 0
+        for code in priority_codes:
+            if processed_stocks >= stock_limit:
+                break
+            with self._read_scope() as session:
+                latest_60 = session.execute(select(func.max(ConceptExposureRecord.as_of_date)).where(
+                    ConceptExposureRecord.ts_code == code,
+                    ConceptExposureRecord.horizon_days == 60,
+                )).scalar_one_or_none()
+                primary_rows = session.execute(select(ConceptExposureRecord).where(
+                    ConceptExposureRecord.ts_code == code,
+                    ConceptExposureRecord.horizon_days == 60,
+                    ConceptExposureRecord.as_of_date == latest_60 if latest_60 else ConceptExposureRecord.id < 0,
+                    ConceptExposureRecord.source_count >= 2,
+                ).order_by(desc(ConceptExposureRecord.weight_score)).limit(themes_per_stock)).scalars().all()
+                canonicals = [row.canonical_name for row in primary_rows]
+                existing = {
+                    (str(canonical), int(window)): profile_date
+                    for canonical, window, profile_date in session.execute(select(
+                        ConceptExposureRecord.canonical_name,
+                        ConceptExposureRecord.horizon_days,
+                        func.max(ConceptExposureRecord.as_of_date),
+                    ).where(
+                        ConceptExposureRecord.ts_code == code,
+                        ConceptExposureRecord.canonical_name.in_(canonicals) if canonicals else ConceptExposureRecord.id < 0,
+                        ConceptExposureRecord.horizon_days.in_((20, 120)),
+                    ).group_by(
+                        ConceptExposureRecord.canonical_name, ConceptExposureRecord.horizon_days,
+                    )).all()
+                }
+            if not canonicals:
+                continue
+            processed_stocks += 1
+            for canonical in canonicals:
+                for window in (20, 120):
+                    if existing.get((canonical, window)) == market_date:
+                        continue
+                    attempted += 1
+                    try:
+                        exposures_saved += self.calculate_canonical_exposures(
+                            canonical, horizon_days=window, only_stock=code,
+                        )
+                        completed += 1
+                    except Exception as exc:  # One profile must not block the next.
+                        failed += 1
+                        logger.debug("concept multi-horizon backfill failed for %s %s %s: %s", code, canonical, window, exc)
+        return {
+            "stocks": processed_stocks, "attempted": attempted,
+            "completed": completed, "failed": failed, "exposures": exposures_saved,
+        }
+
     def _local_theme_evidence(
         self, canonical_name: str, by_stock: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Dict[str, Any]]:
@@ -1576,7 +1664,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.41",
+            "version": "concept-consensus-v1.44",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "六套目录用于审计；东方财富板块与题材库同属一个提供方，共识计票只算一票。",

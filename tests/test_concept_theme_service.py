@@ -19,6 +19,8 @@ from src.storage import (
     MarketIndexBar,
     ResearchNote,
     StockDaily,
+    UserAccount,
+    UserWatchlistItem,
     utc_naive_now,
 )
 
@@ -98,6 +100,9 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
     assert filtered["items"][0]["cluster"] == "光通信产业链"
     assert filtered["items"][0]["canonical_source_count"] == 1
     assert filtered["items"][0]["canonical_node_count"] == 1
+    assert filtered["summary"]["quality"]["catalog_date"] == "2026-08-28"
+    assert filtered["summary"]["quality"]["fresh_catalogs"] == 1
+    assert filtered["summary"]["quality"]["total_catalogs"] == 6
     assert recalled["total"] == 1
     assert recalled["items"][0]["canonical_name"] == "CPO/共封装光学"
     assert recalled["stock_matches"] == [{
@@ -345,6 +350,44 @@ def test_stock_lens_keeps_exposure_dates_isolated_by_horizon(tmp_path) -> None:
     assert [point["horizon_days"] for point in lens_60["themes"][0]["horizon_profile"]] == [20, 60]
     assert lens_60["themes"][0]["beta_stability"] == "shifting"
     assert lens_60["summary"]["persistent_alpha_count"] == 1
+
+
+def test_multi_horizon_backfill_prioritizes_consensus_leaders_without_blocking(monkeypatch, tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 8, 28), close=10.0, data_source="test"))
+        user = UserAccount(
+            display_name="测试用户", normalized_name="测试用户", password_salt="salt",
+            password_hash="hash", status="approved", created_at=now, updated_at=now,
+        )
+        session.add(user); session.flush()
+        # Watchlists store both compact and suffixed forms in real migrated data.
+        session.add(UserWatchlistItem(user_id=user.id, symbol="300308", created_at=now))
+        session.add(ConceptExposureRecord(
+            ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
+            as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=88,
+            source_count=3, confidence="high", observations=60, calculated_at=now,
+        ))
+        session.add(ConceptExposureRecord(
+            ts_code="600371.SH", stock_name="万向德农", canonical_name="农业种植",
+            as_of_date=date(2026, 8, 28), horizon_days=60, weight_score=99,
+            source_count=4, confidence="high", observations=60, calculated_at=now,
+        ))
+    calls = []
+
+    def fake_calculate(canonical_name, *, horizon_days, only_stock=None):
+        calls.append((canonical_name, horizon_days, only_stock))
+        return 1
+
+    monkeypatch.setattr(service, "calculate_canonical_exposures", fake_calculate)
+    result = service.backfill_multi_horizon_profiles(stock_limit=1, themes_per_stock=1)
+
+    assert result == {"stocks": 1, "attempted": 2, "completed": 2, "failed": 0, "exposures": 2}
+    assert calls == [
+        ("CPO/共封装光学", 20, "300308.SZ"),
+        ("CPO/共封装光学", 120, "300308.SZ"),
+    ]
 
 
 def test_market_consensus_leaders_require_cross_source_themes_and_one_snapshot(tmp_path) -> None:
