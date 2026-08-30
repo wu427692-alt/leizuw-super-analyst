@@ -528,6 +528,21 @@ class ConceptThemeService:
             source_counts = dict(session.execute(
                 select(ConceptThemeRecord.source, func.count(ConceptThemeRecord.id)).group_by(ConceptThemeRecord.source)
             ).all())
+            source_catalog_rows = session.execute(select(
+                ConceptThemeRecord.source,
+                func.max(ConceptThemeRecord.market_date),
+                func.max(ConceptThemeRecord.updated_at),
+            ).group_by(ConceptThemeRecord.source)).all()
+            membered_by_source = dict(session.execute(select(
+                ConceptThemeRecord.source, func.count(func.distinct(ConceptMembershipRecord.theme_id)),
+            ).join(
+                ConceptMembershipRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(ConceptMembershipRecord.active.is_(True)).group_by(ConceptThemeRecord.source)).all())
+            attempted_by_source = dict(session.execute(select(
+                ConceptThemeRecord.source, func.count(func.distinct(ConceptMembershipSyncState.theme_id)),
+            ).join(
+                ConceptMembershipSyncState, ConceptMembershipSyncState.theme_id == ConceptThemeRecord.id,
+            ).group_by(ConceptThemeRecord.source)).all())
             type_counts = dict(session.execute(
                 select(ConceptThemeRecord.theme_type, func.count(ConceptThemeRecord.id)).group_by(ConceptThemeRecord.theme_type)
             ).all())
@@ -567,6 +582,20 @@ class ConceptThemeService:
         cluster_families = taxonomy["cluster_families"]
         theme_total = sum(source_counts.values())
         classified_count = max(0, theme_total - family_counts.get("其他市场题材", 0))
+        source_health = {}
+        for source_name, source_market_date, source_updated_at in source_catalog_rows:
+            catalog_nodes = int(source_counts.get(source_name, 0) or 0)
+            attempted = int(attempted_by_source.get(source_name, 0) or 0)
+            membered = int(membered_by_source.get(source_name, 0) or 0)
+            source_health[source_name] = {
+                "catalog_nodes": catalog_nodes,
+                "market_date": source_market_date.isoformat() if source_market_date else None,
+                "updated_at": source_updated_at.isoformat() if source_updated_at else None,
+                "attempted_themes": attempted,
+                "membered_themes": membered,
+                "scan_coverage_pct": round(attempted / max(1, catalog_nodes) * 100, 1),
+                "status": "fresh" if source_market_date and source_market_date == latest_market_date else "lagging",
+            }
         return {
             "items": items, "total": total, "page": page, "page_size": page_size,
             "stock_matches": stock_matches,
@@ -579,7 +608,7 @@ class ConceptThemeService:
                 "failed_themes": failed_theme_count,
                 "scan_coverage_pct": round(attempted_theme_count / max(1, sum(source_counts.values())) * 100, 1),
                 "membership_coverage_pct": round(membered_theme_count / max(1, sum(source_counts.values())) * 100, 1),
-                "sources": source_counts, "types": type_counts, "families": family_counts,
+                "sources": source_counts, "source_health": source_health, "types": type_counts, "families": family_counts,
                 "cluster_families": cluster_families,
                 "market_date": latest_market_date.isoformat() if latest_market_date else "",
             },
@@ -1150,7 +1179,7 @@ class ConceptThemeService:
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.21",
+            "version": "concept-consensus-v1.23",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",

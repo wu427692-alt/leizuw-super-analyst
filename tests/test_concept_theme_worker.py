@@ -77,3 +77,24 @@ def test_legacy_memberships_are_bootstrapped_into_durable_scan_ledger(tmp_path) 
         assert state.last_success_at is not None
 
     DatabaseManager.reset_instance()
+
+
+def test_progressive_batch_allocates_capacity_across_sources(tmp_path) -> None:
+    DatabaseManager.reset_instance()
+    db = DatabaseManager(db_url=f"sqlite:///{tmp_path / 'concept-worker-fairness.db'}")
+    now = utc_naive_now()
+    with db.session_scope() as session:
+        for source in ("ths", "dc_board", "dc_theme", "kpl", "tdx", "sw"):
+            for index in range(3):
+                session.add(ConceptThemeRecord(
+                    source=source, source_code=f"{source}-{index}", name=f"{source}主题{index}",
+                    canonical_name=f"{source}主题{index}", theme_type="theme", level=3,
+                    market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+                ))
+
+    rows = ConceptThemeWorker._next_progressive_theme_ids(db, 12)
+    assert len(rows) == 12
+    assert {source for _, source in rows} == {"ths", "dc_board", "dc_theme", "kpl", "tdx", "sw"}
+    assert all(sum(1 for _, value in rows if value == source) == 2 for source in {value for _, value in rows})
+
+    DatabaseManager.reset_instance()

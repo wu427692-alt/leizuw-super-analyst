@@ -60,6 +60,15 @@ export type ConceptOverview = {
     membershipCoveragePct: number;
     exposures: number;
     sources: Record<string, number>;
+    sourceHealth: Record<string, {
+      catalogNodes: number;
+      marketDate?: string | null;
+      updatedAt?: string | null;
+      attemptedThemes: number;
+      memberedThemes: number;
+      scanCoveragePct: number;
+      status: 'fresh' | 'lagging';
+    }>;
     types: Record<string, number>;
     families: Record<string, number>;
     clusterFamilies: Record<string, Record<string, number>>;
@@ -154,6 +163,7 @@ type OverviewParams = {
 type RawConceptOverview = {
   summary?: {
     sources?: Record<string, number>;
+    source_health?: Record<string, unknown>;
     types?: Record<string, number>;
     families?: Record<string, number>;
     cluster_families?: Record<string, Record<string, number>>;
@@ -170,6 +180,9 @@ export function normalizeConceptOverview(data: unknown): ConceptOverview {
   const raw = data as RawConceptOverview;
   if (raw.summary) {
     normalized.summary.sources = raw.summary.sources ?? {};
+    if (raw.summary.source_health) {
+      normalized.summary.sourceHealth = Object.fromEntries(Object.entries(raw.summary.source_health).map(([key, value]) => [key, toCamelCase(value)])) as ConceptOverview['summary']['sourceHealth'];
+    }
     normalized.summary.types = raw.summary.types ?? {};
     normalized.summary.families = raw.summary.families ?? {};
     normalized.summary.clusterFamilies = raw.summary.cluster_families ?? {};

@@ -24,6 +24,8 @@ from src.storage import (
 
 logger = logging.getLogger(__name__)
 
+PROGRESSIVE_SOURCES = ("ths", "dc_board", "dc_theme", "kpl", "tdx", "sw")
+
 
 class ConceptThemeWorker:
     """Refresh catalogs daily and progressively fill memberships without blocking pages."""
@@ -161,28 +163,25 @@ class ConceptThemeWorker:
 
     def _refresh_progressive_batch(self, service: ConceptThemeService) -> Dict[str, int]:
         db = DatabaseManager.get_instance()
-        with db.session_scope() as session:
-            rows = session.execute(
-                select(ConceptThemeRecord.id)
-                .outerjoin(ConceptMembershipSyncState, ConceptMembershipSyncState.theme_id == ConceptThemeRecord.id)
-                .order_by(asc(ConceptMembershipSyncState.last_attempt_at), asc(ConceptThemeRecord.id))
-                .limit(self.batch_size)
-            ).all()
+        rows = self._next_progressive_theme_ids(db, self.batch_size)
         if not rows:
-            return {"completed": 0, "failed": 0, "attempted_themes": 0}
+            return {"completed": 0, "failed": 0, "attempted_themes": 0, "sources": {}}
         completed = failed = 0
-        for (theme_id,) in rows:
+        source_breakdown: Dict[str, int] = {}
+        for theme_id, source in rows:
             if self._stop_event.is_set():
                 break
             try:
                 result = service.refresh_theme(int(theme_id), calculate=False)
                 completed += 1
+                source_breakdown[source] = source_breakdown.get(source, 0) + 1
                 self._record_membership_attempt(
                     db, int(theme_id), status="completed",
                     received=int(result.get("received") or 0), saved=int(result.get("saved") or 0),
                 )
             except Exception as exc:  # noqa: BLE001
                 failed += 1
+                source_breakdown[source] = source_breakdown.get(source, 0) + 1
                 self._record_membership_attempt(db, int(theme_id), status="failed", error=exc)
                 logger.debug("[concept-theme] progressive theme %s failed: %s", theme_id, exc)
             # Stay below Tushare's documented per-minute component limit and
@@ -190,7 +189,45 @@ class ConceptThemeWorker:
             time.sleep(0.42)
         with db.session_scope() as session:
             attempted = len(session.execute(select(ConceptMembershipSyncState.theme_id)).all())
-        return {"completed": completed, "failed": failed, "attempted_themes": attempted}
+        return {"completed": completed, "failed": failed, "attempted_themes": attempted, "sources": source_breakdown}
+
+    @staticmethod
+    def _next_progressive_theme_ids(db: DatabaseManager, batch_size: int) -> list[tuple[int, str]]:
+        """Reserve a fair share for every source before filling spare batch slots."""
+        limit = max(1, int(batch_size))
+        per_source = max(1, limit // len(PROGRESSIVE_SOURCES))
+        selected: list[tuple[int, str]] = []
+        selected_ids: set[int] = set()
+        with db.session_scope() as session:
+            for source in PROGRESSIVE_SOURCES:
+                if len(selected) >= limit:
+                    break
+                source_rows = session.execute(select(
+                    ConceptThemeRecord.id, ConceptThemeRecord.source,
+                ).outerjoin(
+                    ConceptMembershipSyncState, ConceptMembershipSyncState.theme_id == ConceptThemeRecord.id,
+                ).where(
+                    ConceptThemeRecord.source == source,
+                ).order_by(
+                    asc(ConceptMembershipSyncState.last_attempt_at), asc(ConceptThemeRecord.id),
+                ).limit(min(per_source, limit - len(selected)))).all()
+                for theme_id, source_name in source_rows:
+                    numeric_id = int(theme_id)
+                    if numeric_id not in selected_ids:
+                        selected.append((numeric_id, str(source_name)))
+                        selected_ids.add(numeric_id)
+            if len(selected) < limit:
+                fill_rows = session.execute(select(
+                    ConceptThemeRecord.id, ConceptThemeRecord.source,
+                ).outerjoin(
+                    ConceptMembershipSyncState, ConceptMembershipSyncState.theme_id == ConceptThemeRecord.id,
+                ).where(
+                    ConceptThemeRecord.id.notin_(selected_ids) if selected_ids else ConceptThemeRecord.id > 0,
+                ).order_by(
+                    asc(ConceptMembershipSyncState.last_attempt_at), asc(ConceptThemeRecord.id),
+                ).limit(limit - len(selected))).all()
+                selected.extend((int(theme_id), str(source_name)) for theme_id, source_name in fill_rows)
+        return selected
 
     @staticmethod
     def _record_membership_attempt(

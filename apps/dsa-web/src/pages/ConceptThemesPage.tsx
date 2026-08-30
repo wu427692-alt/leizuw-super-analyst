@@ -284,7 +284,7 @@ export default function ConceptThemesPage() {
           {families.map(([name, count], index) => <button type="button" className={family === name ? 'is-active' : ''} onClick={() => { setFamily(name); setCluster(''); }} key={name}>
             <i>{String(index + 1).padStart(2, '0')}</i><span>{name}</span><b>{count}</b>
           </button>)}
-          <section className="concept-source-legend"><h3>六源目录 · 权重透明</h3>{overview?.methodology.sources.map(item => <div key={item.key}><span style={{ background: SOURCE_COLOR[item.key] }} /><b>{item.name}</b><em>{number(overview?.summary.sources[item.key])} 节点 · W{Math.round(item.reliability * 100)}</em></div>)}</section>
+          <section className="concept-source-legend"><h3>六源目录 · 更新与覆盖透明</h3>{overview?.methodology.sources.map(item => { const health = overview.summary.sourceHealth?.[item.key]; return <div key={item.key}><span style={{ background: SOURCE_COLOR[item.key] }} /><b>{item.name}<small>{health?.marketDate || '待更新'} · {metric(health?.scanCoveragePct, 0)}%已扫描</small></b><em data-tone={health?.status === 'fresh' ? 'fresh' : 'lagging'}>{number(overview?.summary.sources[item.key])} 节点 · W{Math.round(item.reliability * 100)}</em></div>; })}</section>
         </aside>
 
         <main className="concept-universe">
