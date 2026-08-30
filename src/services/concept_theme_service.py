@@ -24,6 +24,7 @@ from src.services.financial_data_service import (
 from src.storage import (
     ConceptExposureRecord,
     ConceptMembershipRecord,
+    ConceptMembershipSyncState,
     ConceptSyncRunRecord,
     ConceptThemeRecord,
     DatabaseManager,
@@ -484,6 +485,10 @@ class ConceptThemeService:
             membership_count = int(session.execute(select(func.count(ConceptMembershipRecord.id)).where(ConceptMembershipRecord.active.is_(True))).scalar_one())
             membered_theme_count = int(session.execute(select(func.count(func.distinct(ConceptMembershipRecord.theme_id))).where(
                 ConceptMembershipRecord.active.is_(True))).scalar_one())
+            attempted_theme_count = int(session.execute(select(func.count(ConceptMembershipSyncState.id))).scalar_one())
+            failed_theme_count = int(session.execute(select(func.count(ConceptMembershipSyncState.id)).where(
+                ConceptMembershipSyncState.status == "failed",
+            )).scalar_one())
             exposure_count = int(session.execute(select(func.count(ConceptExposureRecord.id))).scalar_one())
             latest_market_date = session.execute(select(func.max(ConceptThemeRecord.market_date))).scalar_one_or_none()
         family_counts: Dict[str, int] = defaultdict(int)
@@ -500,6 +505,9 @@ class ConceptThemeService:
             "summary": {
                 "themes": sum(source_counts.values()), "memberships": membership_count, "exposures": exposure_count,
                 "membered_themes": membered_theme_count,
+                "attempted_themes": attempted_theme_count,
+                "failed_themes": failed_theme_count,
+                "scan_coverage_pct": round(attempted_theme_count / max(1, sum(source_counts.values())) * 100, 1),
                 "membership_coverage_pct": round(membered_theme_count / max(1, sum(source_counts.values())) * 100, 1),
                 "sources": source_counts, "types": type_counts, "families": dict(sorted(family_counts.items(), key=lambda x: -x[1])),
                 "cluster_families": {family_name: dict(sorted(values.items(), key=lambda item: -item[1]))
@@ -749,6 +757,7 @@ class ConceptThemeService:
                 y_values.append(stock_ret)
                 x_values.append([1.0, leave_one_out, market_returns[day]])
             beta = market_beta = alpha = residual_return = r_squared = None
+            beta_standard_error = beta_t_stat = beta_ci_low = beta_ci_high = None
             observations = len(y_values)
             if observations >= 20:
                 x = np.asarray(x_values, dtype=float)
@@ -765,6 +774,16 @@ class ConceptThemeService:
                 # compounded across the actually observed research window.
                 residual_return = round((math.exp(float(coefficients[0]) * observations) - 1.0) * 100, 2)
                 r_squared = round(max(0.0, 1.0 - float(np.sum(residuals ** 2)) / total_ss), 4) if total_ss else 0.0
+                degrees_of_freedom = observations - x.shape[1]
+                if degrees_of_freedom > 0:
+                    residual_variance = float(np.sum(residuals ** 2)) / degrees_of_freedom
+                    covariance = residual_variance * np.linalg.pinv(x.T @ x)
+                    raw_standard_error = math.sqrt(max(0.0, float(covariance[1, 1])))
+                    if raw_standard_error > 0:
+                        beta_standard_error = round(raw_standard_error, 4)
+                        beta_t_stat = round(float(coefficients[1]) / raw_standard_error, 3)
+                        beta_ci_low = round(float(coefficients[1]) - 1.96 * raw_standard_error, 4)
+                        beta_ci_high = round(float(coefficients[1]) + 1.96 * raw_standard_error, 4)
             source_count = len(meta["sources"])
             reason_count = len(meta["reasons"])
             longest_reason = max((len(reason) for reason in meta["reasons"]), default=0)
@@ -778,13 +797,21 @@ class ConceptThemeService:
             specificity = max(24.0, 100.0 - math.log10(max(2.0, typical_size)) * 27.0)
             market_score = self._canonical_market_score(canonical_name)
             weight = round(0.36 * consensus + 0.29 * reason_quality + 0.20 * market_score + 0.15 * specificity, 1)
-            confidence = "high" if observations >= 55 and source_count >= 2 and (r_squared or 0) >= 0.15 else \
-                "medium" if observations >= 35 and source_count >= 1 else "low" if observations >= 20 else "insufficient"
+            confidence = "high" if (
+                observations >= 55 and source_count >= 2 and (r_squared or 0) >= 0.15 and abs(beta_t_stat or 0) >= 2.0
+            ) else "medium" if (
+                observations >= 35 and source_count >= 1 and (r_squared or 0) >= 0.05 and abs(beta_t_stat or 0) >= 1.0
+            ) else "low" if observations >= 20 else "insufficient"
             components = {
                 "consensus": round(consensus, 1), "relevance": round(reason_quality, 1),
                 "market": round(market_score, 1), "specificity": round(specificity, 1),
                 "formula": "36%来源共识 + 29%业务证据 + 20%市场热度 + 15%题材专属性",
                 "regression": "个股日收益 = Alpha + Beta题材×剔除自身后的题材等权收益 + Beta市场×沪深300收益",
+                "beta_standard_error": beta_standard_error,
+                "beta_t_stat": beta_t_stat,
+                "beta_ci_low": beta_ci_low,
+                "beta_ci_high": beta_ci_high,
+                "confidence_rule": "置信度同时约束样本数、来源数、R²与Beta t统计量",
             }
             records.append({
                 "ts_code": code, "stock_name": meta["name"], "canonical_name": canonical_name,
@@ -823,17 +850,22 @@ class ConceptThemeService:
                 "memberships": int(session.execute(select(func.count(ConceptMembershipRecord.id))).scalar_one()),
                 "exposures": int(session.execute(select(func.count(ConceptExposureRecord.id))).scalar_one()),
                 "stocks": int(session.execute(select(func.count(func.distinct(ConceptMembershipRecord.ts_code)))).scalar_one()),
+                "membership_themes_attempted": int(session.execute(select(func.count(ConceptMembershipSyncState.id))).scalar_one()),
+                "membership_themes_failed": int(session.execute(select(func.count(ConceptMembershipSyncState.id)).where(
+                    ConceptMembershipSyncState.status == "failed",
+                )).scalar_one()),
             }
         return {"available": self.gateway.available, "latest_run": self._run_dict(latest) if latest else None, **counts}
 
     @staticmethod
     def methodology() -> Dict[str, Any]:
         return {
-            "version": "concept-consensus-v1.10",
+            "version": "concept-consensus-v1.11",
             "principles": [
                 "不同数据源的原始题材分别保留，规范名只用于聚合，不覆盖原始归属。",
                 "题材权重是可解释的市场共识评分，不等于指数公司法定权重，也不是收益预测。",
                 "Beta 使用剔除个股自身后的题材组合，并同时控制沪深300，避免机械自相关。",
+                "Beta 置信度同时检查样本数、来源数、R²及回归系数t统计量，并展示95%区间。",
                 "Alpha 分为统计残差与可核验证据两层；证据只做归因线索，不声称因果。",
             ],
             "weight_formula": {

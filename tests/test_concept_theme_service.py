@@ -126,3 +126,5 @@ def test_beta_uses_leave_one_out_theme_return_and_market_control(tmp_path) -> No
     assert exposure["beta"] is not None
     assert exposure["beta_interpretation"]
     assert exposure["components"]["regression"].startswith("个股日收益")
+    assert exposure["components"]["beta_ci_low"] < exposure["beta"] < exposure["components"]["beta_ci_high"]
+    assert abs(exposure["components"]["beta_t_stat"]) >= 1

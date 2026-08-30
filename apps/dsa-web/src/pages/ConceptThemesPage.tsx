@@ -99,12 +99,17 @@ function StockLensPanel({ value, onClose }: { value: StockThemeLens; onClose: ()
       </ResponsiveContainer>
     </div>
     <div className="concept-lens-list">
-      {value.primaryThemes.map(item => <article key={item.canonicalName}>
+      {value.primaryThemes.map(item => {
+        const ciLow = Number(item.components?.betaCiLow);
+        const ciHigh = Number(item.components?.betaCiHigh);
+        const hasInterval = Number.isFinite(ciLow) && Number.isFinite(ciHigh);
+        return <article key={item.canonicalName}>
         <div><h3>{item.canonicalName}</h3><span>{item.sources.join(' · ')}</span></div>
         <ScoreRing value={item.weightScore} label="权重" />
         <dl><div><dt>题材 Beta</dt><dd>{metric(item.beta)}</dd></div><div><dt>{value.horizonDays}日 Alpha</dt><dd>{signed(item.residualReturn)}</dd></div><div><dt>拟合度 R²</dt><dd>{metric(item.rSquared)}</dd></div></dl>
+        <small className="concept-beta-audit">{hasInterval ? `Beta 95%区间 ${ciLow.toFixed(2)} ~ ${ciHigh.toFixed(2)}` : 'Beta区间待足够样本'} · {item.observations ?? 0}个交易日样本</small>
         <p>{item.betaInterpretation || '样本不足，暂不解释 Beta。'} · {item.reasons?.[0] || '该题材由结构化成分表确认，暂无文字证据。'}</p>
-      </article>)}
+      </article>;})}
     </div>
     <section className="concept-alpha-evidence">
       <header><Sparkles /><div><h3>公司独特 Alpha 线索</h3><p>与题材共振分开呈现，仅列本地事实库可回溯证据</p></div></header>
@@ -208,7 +213,7 @@ export default function ConceptThemesPage() {
 
       <section className="concept-kpis">
         <div><Database /><span>源题材节点</span><strong>{number(overview?.summary.themes)}</strong><small>六套数据独立保留</small></div>
-        <div><GitBranch /><span>成分关系</span><strong>{number(overview?.summary.memberships)}</strong><small>已扫描 {number(overview?.summary.memberedThemes)} 个节点 · {metric(overview?.summary.membershipCoveragePct, 1)}%</small></div>
+        <div><GitBranch /><span>成分关系</span><strong>{number(overview?.summary.memberships)}</strong><small>已扫描 {number(overview?.summary.attemptedThemes)} 个节点 · {metric(overview?.summary.scanCoveragePct, 1)}% · {number(overview?.summary.memberedThemes)} 个有成分</small></div>
         <div><Binary /><span>归因结果</span><strong>{number(overview?.summary.exposures)}</strong><small>60日双因子回归</small></div>
         <div><ShieldCheck /><span>最新交易日</span><strong>{overview?.summary.marketDate || '—'}</strong><small>{overview?.sync?.stage || '共享题材库'}</small></div>
       </section>

@@ -803,6 +803,27 @@ class ConceptMembershipRecord(Base):
     )
 
 
+class ConceptMembershipSyncState(Base):
+    """Durable per-theme membership refresh state used by the resumable worker."""
+
+    __tablename__ = "concept_membership_sync_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    theme_id = Column(Integer, ForeignKey("concept_themes.id"), nullable=False, unique=True, index=True)
+    status = Column(String(16), nullable=False, default="pending", index=True)
+    members_received = Column(Integer, nullable=False, default=0)
+    members_saved = Column(Integer, nullable=False, default=0)
+    attempts = Column(Integer, nullable=False, default=0)
+    error = Column(Text)
+    last_attempt_at = Column(DateTime, index=True)
+    last_success_at = Column(DateTime, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_concept_membership_sync_status_attempt", "status", "last_attempt_at"),
+    )
+
+
 class ConceptExposureRecord(Base):
     """Explainable stock-to-canonical-theme exposure and return attribution."""
 

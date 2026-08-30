@@ -34,9 +34,10 @@ export type ConceptStock = {
   alphaAnnualized?: number | null;
   residualReturn?: number | null;
   rSquared?: number | null;
+  observations?: number;
   confidence: string;
   betaInterpretation?: string;
-  components?: Record<string, number | string>;
+  components?: Record<string, number | string | null>;
 };
 
 export type ConceptOverview = {
@@ -48,6 +49,9 @@ export type ConceptOverview = {
     themes: number;
     memberships: number;
     memberedThemes: number;
+    attemptedThemes: number;
+    failedThemes: number;
+    scanCoveragePct: number;
     membershipCoveragePct: number;
     exposures: number;
     sources: Record<string, number>;
@@ -120,6 +124,33 @@ type OverviewParams = {
   pageSize?: number;
 };
 
+type RawConceptOverview = {
+  summary?: {
+    sources?: Record<string, number>;
+    types?: Record<string, number>;
+    families?: Record<string, number>;
+    cluster_families?: Record<string, Record<string, number>>;
+  };
+  sync?: { sources?: Record<string, number> } | null;
+};
+
+/**
+ * API 字段名需要转成 camelCase，但题材名和来源代码本身是业务数据，不能改写。
+ * camelcase-keys 的 deep 模式会把 “AI算力…” 误改为 “ai算力…”，继而让筛选条件失配。
+ */
+export function normalizeConceptOverview(data: unknown): ConceptOverview {
+  const normalized = toCamelCase<ConceptOverview>(data);
+  const raw = data as RawConceptOverview;
+  if (raw.summary) {
+    normalized.summary.sources = raw.summary.sources ?? {};
+    normalized.summary.types = raw.summary.types ?? {};
+    normalized.summary.families = raw.summary.families ?? {};
+    normalized.summary.clusterFamilies = raw.summary.cluster_families ?? {};
+  }
+  if (normalized.sync && raw.sync?.sources) normalized.sync.sources = raw.sync.sources;
+  return normalized;
+}
+
 export const conceptThemesApi = {
   overview: async (params: OverviewParams = {}): Promise<ConceptOverview> => {
     const key = `concept:overview:${JSON.stringify(params)}`;
@@ -137,7 +168,7 @@ export const conceptThemesApi = {
         },
         headers: BACKGROUND_ROUTE_HEADERS,
       });
-      return toCamelCase<ConceptOverview>(response.data);
+      return normalizeConceptOverview(response.data);
     }, { freshMs: 20_000, staleMs: 5 * 60_000 });
   },
   theme: async (themeId: number, refreshIfEmpty = true, horizonDays = 60): Promise<ThemeDetail> => {

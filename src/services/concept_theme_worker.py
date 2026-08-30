@@ -13,7 +13,14 @@ from typing import Any, Dict, Optional
 from sqlalchemy import asc, select
 
 from src.services.concept_theme_service import ConceptThemeService
-from src.storage import ConceptThemeRecord, DatabaseManager, UserWatchlistItem
+from src.storage import (
+    ConceptMembershipRecord,
+    ConceptMembershipSyncState,
+    ConceptThemeRecord,
+    DatabaseManager,
+    UserWatchlistItem,
+    utc_naive_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +46,6 @@ class ConceptThemeWorker:
             3600,
             min(int(os.getenv("CONCEPT_THEME_WATCHLIST_INTERVAL_SEC", "21600")), 86400),
         )
-        self._cursor = 0
 
     @classmethod
     def get_instance(cls) -> "ConceptThemeWorker":
@@ -77,12 +83,14 @@ class ConceptThemeWorker:
                 "last_cycle_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self._last_cycle_at)) if self._last_cycle_at else None,
                 "last_result": self._last_result,
                 "last_error": self._last_error,
-                "cursor": self._cursor,
+                "cursor": None,
+                "resume_mode": "oldest-attempt-first",
                 "watchlist_interval_seconds": self.watchlist_interval_seconds,
             }
 
     def _run(self) -> None:
         service = ConceptThemeService()
+        self._bootstrap_membership_state()
         while not self._stop_event.is_set():
             try:
                 result: Dict[str, Any] = {}
@@ -125,29 +133,76 @@ class ConceptThemeWorker:
                 logger.warning("[concept-theme] watchlist refresh failed for %s: %s", code, exc)
         return {"completed": completed, "failed": failed}
 
+    @staticmethod
+    def _bootstrap_membership_state() -> int:
+        """Mark legacy membered themes as known so deployments prioritize genuinely unseen nodes."""
+        db = DatabaseManager.get_instance()
+        now = utc_naive_now()
+        with db.session_scope() as session:
+            existing = set(session.execute(select(ConceptMembershipSyncState.theme_id)).scalars().all())
+            membered = set(session.execute(select(ConceptMembershipRecord.theme_id).distinct()).scalars().all())
+            missing = sorted(membered - existing)
+            session.add_all([
+                ConceptMembershipSyncState(
+                    theme_id=int(theme_id), status="completed", members_received=0, members_saved=0,
+                    attempts=1, last_attempt_at=now, last_success_at=now, updated_at=now,
+                )
+                for theme_id in missing
+            ])
+        return len(missing)
+
     def _refresh_progressive_batch(self, service: ConceptThemeService) -> Dict[str, int]:
         db = DatabaseManager.get_instance()
         with db.session_scope() as session:
             rows = session.execute(
                 select(ConceptThemeRecord.id)
-                .order_by(asc(ConceptThemeRecord.id))
-                .offset(self._cursor).limit(self.batch_size)
+                .outerjoin(ConceptMembershipSyncState, ConceptMembershipSyncState.theme_id == ConceptThemeRecord.id)
+                .order_by(asc(ConceptMembershipSyncState.last_attempt_at), asc(ConceptThemeRecord.id))
+                .limit(self.batch_size)
             ).all()
-        if not rows and self._cursor:
-            self._cursor = 0
-            return {"completed": 0, "failed": 0, "remaining_cursor": 0}
+        if not rows:
+            return {"completed": 0, "failed": 0, "attempted_themes": 0}
         completed = failed = 0
         for (theme_id,) in rows:
             if self._stop_event.is_set():
                 break
             try:
-                service.refresh_theme(int(theme_id), calculate=False)
+                result = service.refresh_theme(int(theme_id), calculate=False)
                 completed += 1
+                self._record_membership_attempt(
+                    db, int(theme_id), status="completed",
+                    received=int(result.get("received") or 0), saved=int(result.get("saved") or 0),
+                )
             except Exception as exc:  # noqa: BLE001
                 failed += 1
+                self._record_membership_attempt(db, int(theme_id), status="failed", error=exc)
                 logger.debug("[concept-theme] progressive theme %s failed: %s", theme_id, exc)
             # Stay below Tushare's documented per-minute component limit and
             # leave CPU/network headroom for user-facing requests.
             time.sleep(0.42)
-        self._cursor += len(rows)
-        return {"completed": completed, "failed": failed, "remaining_cursor": self._cursor}
+        with db.session_scope() as session:
+            attempted = len(session.execute(select(ConceptMembershipSyncState.theme_id)).all())
+        return {"completed": completed, "failed": failed, "attempted_themes": attempted}
+
+    @staticmethod
+    def _record_membership_attempt(
+        db: DatabaseManager, theme_id: int, *, status: str,
+        received: int = 0, saved: int = 0, error: Optional[Exception] = None,
+    ) -> None:
+        now = utc_naive_now()
+        with db.session_scope() as session:
+            state = session.execute(select(ConceptMembershipSyncState).where(
+                ConceptMembershipSyncState.theme_id == theme_id,
+            )).scalar_one_or_none()
+            if state is None:
+                state = ConceptMembershipSyncState(theme_id=theme_id)
+                session.add(state)
+            state.status = status
+            state.members_received = received
+            state.members_saved = saved
+            state.attempts = int(state.attempts or 0) + 1
+            state.error = f"{type(error).__name__}: {str(error)[:500]}" if error else None
+            state.last_attempt_at = now
+            if status == "completed":
+                state.last_success_at = now
+            state.updated_at = now
