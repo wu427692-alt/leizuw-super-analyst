@@ -86,6 +86,41 @@ class ResearchNoteRepository:
                 select(ResearchNote).where(ResearchNote.topic_id == topic_id).limit(1)
             ).scalar_one_or_none()
 
+    def delete_duplicate_audio_memos(self, *, keep_topic_id: str, source_signature: str) -> int:
+        """Delete legacy task-id copies that reference the same recording set."""
+        removed = 0
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(ResearchNote).where(ResearchNote.group_id == "ai-audio-memo")
+            ).scalars().all()
+            for row in rows:
+                if row.topic_id == keep_topic_id:
+                    continue
+                files = self._json_list(row.files_json)
+                if self._audio_source_signature(files) != source_signature:
+                    continue
+                session.delete(row)
+                removed += 1
+            if removed:
+                session.commit()
+        return removed
+
+    @staticmethod
+    def _audio_source_signature(files: Iterable[Any]) -> str:
+        identities = set()
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            file_id = str(item.get("file_id") or "").strip()
+            if file_id:
+                identities.add(f"file:{file_id}")
+                continue
+            topic_id = str(item.get("source_topic_id") or item.get("topic_id") or "").strip()
+            filename = str(item.get("name") or item.get("filename") or "").strip()
+            if topic_id or filename:
+                identities.add(f"fallback:{topic_id}:{filename}")
+        return "\n".join(sorted(identities))
+
     def list_notes(
         self,
         *,

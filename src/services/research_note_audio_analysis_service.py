@@ -34,7 +34,7 @@ from src.request_identity import current_owner_id
 from src.services.financial_data_service import FinancialDataValidationError, ResearchNoteService
 from src.services.run_diagnostics import sanitize_diagnostic_text
 from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncService
-from src.storage import persist_llm_usage
+from src.storage import persist_llm_usage, to_utc_naive_datetime
 
 
 logger = logging.getLogger(__name__)
@@ -1333,9 +1333,14 @@ class ResearchNoteAudioAnalysisTaskService:
         if not self._should_index:
             return None
         try:
-            digest = hashlib.sha1(task_id.encode("utf-8")).hexdigest()[:20]
+            source_signature = self._audio_source_signature(result.get("source_files") or [])
+            # A task id changes on every retry.  The source recordings do not,
+            # so the library identity must be derived from the recordings.
+            identity = source_signature or f"legacy-task:{task_id}"
+            digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:20]
             topic_id = f"audio-memo-{digest}"
             generated = datetime.now(timezone.utc).replace(tzinfo=None)
+            recorded_at = self._audio_source_timestamp(result.get("source_files") or []) or generated
             title = str(result.get("title") or "AI录音纪要")[:500]
             symbols = sorted({
                 self._normalize_symbol(str(item.get("ts_code") or ""))
@@ -1354,7 +1359,8 @@ class ResearchNoteAudioAnalysisTaskService:
                 files=files,
                 images=[],
             )
-            ResearchNoteRepository().upsert_notes([{
+            note_repository = ResearchNoteRepository()
+            note_repository.upsert_notes([{
                 "topic_id": topic_id,
                 "group_id": "ai-audio-memo",
                 "group_name": "AI录音纪要",
@@ -1372,15 +1378,16 @@ class ResearchNoteAudioAnalysisTaskService:
                 "counts_json": "{}",
                 "raw_payload": json.dumps({"task_id": task_id, "result": result}, ensure_ascii=False, default=str),
                 "content_hash": content_hash,
-                "created_at": generated,
-                "modified_at": generated,
+                "created_at": recorded_at,
+                "modified_at": recorded_at,
                 "synced_at": generated,
             }])
-            InvestmentMonitorRepository().upsert_events([{
+            monitor_repository = InvestmentMonitorRepository()
+            monitor_repository.upsert_events([{
                 "source_key": "audio.memo.ai",
                 "source_name": "AI录音纪要",
                 "source_type": "essay",
-                "external_id": task_id,
+                "external_id": topic_id,
                 "event_type": "audio_memo",
                 "perspective": "institution",
                 "title": title,
@@ -1393,13 +1400,69 @@ class ResearchNoteAudioAnalysisTaskService:
                 "actors": [str(item.get("name")) for item in (result.get("company_mentions") or []) if isinstance(item, dict) and item.get("name")],
                 "metrics": {"channel": "audio_memo", "evidence_level": "ai_transcript", "library_topic_id": topic_id},
                 "raw_payload": {"task_id": task_id, "result": result},
-                "event_at": generated,
+                "event_at": recorded_at,
                 "ingested_at": generated,
             }])
+            if source_signature:
+                removed_notes = note_repository.delete_duplicate_audio_memos(
+                    keep_topic_id=topic_id,
+                    source_signature=source_signature,
+                )
+                removed_events = monitor_repository.delete_duplicate_audio_memo_events(
+                    keep_external_id=topic_id,
+                    source_signature=source_signature,
+                )
+                if removed_notes or removed_events:
+                    logger.info(
+                        "Consolidated duplicate audio memos source=%s notes=%s events=%s",
+                        source_signature[:16],
+                        removed_notes,
+                        removed_events,
+                    )
             return topic_id
         except Exception:  # noqa: BLE001 - report generation must survive an index outage.
             logger.exception("Could not index completed audio memo task_id=%s", task_id)
             return None
+
+    @staticmethod
+    def _audio_source_signature(source_files: Iterable[Dict[str, Any]]) -> str:
+        """Return an order-independent identity for one recording selection."""
+        identities = set()
+        for item in source_files:
+            if not isinstance(item, dict):
+                continue
+            file_id = str(item.get("file_id") or "").strip()
+            if file_id:
+                # ZSXQ file ids are stable even if a generated memo is later
+                # selected as the parent topic for the same recording.
+                identities.add(f"file:{file_id}")
+                continue
+            topic_id = str(item.get("topic_id") or item.get("source_topic_id") or "").strip()
+            filename = str(item.get("filename") or item.get("name") or "").strip()
+            if topic_id or filename:
+                identities.add(f"fallback:{topic_id}:{filename}")
+        return "\n".join(sorted(identities))
+
+    @staticmethod
+    def _audio_source_timestamp(source_files: Iterable[Dict[str, Any]]) -> Optional[datetime]:
+        """Use the latest selected source-recording timestamp, never task time."""
+        timestamps: List[datetime] = []
+        for item in source_files:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("created_at") or item.get("recorded_at")
+            if isinstance(value, datetime):
+                timestamps.append(to_utc_naive_datetime(value))
+                continue
+            raw = str(value or "").strip()
+            if not raw:
+                continue
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            timestamps.append(to_utc_naive_datetime(parsed))
+        return max(timestamps) if timestamps else None
 
     @staticmethod
     def _normalize_symbol(value: str) -> str:

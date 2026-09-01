@@ -7,7 +7,11 @@ from zipfile import ZipFile
 
 import pytest
 import requests
+from sqlalchemy import func, select
 
+from src.config import Config
+from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
+from src.repositories.research_note_repo import ResearchNoteRepository
 from src.request_identity import reset_current_user_id, set_current_user_id
 from src.services.research_note_audio_analysis_service import (
     AliyunDashScopeAudioTranscriber,
@@ -15,6 +19,7 @@ from src.services.research_note_audio_analysis_service import (
     ResearchNoteAudioAnalysisError,
     ResearchNoteAudioAnalysisTaskService,
 )
+from src.storage import DatabaseManager, MonitoringEventRecord, ResearchNote
 
 
 class _FakeResearchNoteService:
@@ -56,6 +61,62 @@ def _fake_analyzer(transcripts, title, focus):
         "transcript_quality": "专有名词需回听",
         "model": "fake-model",
     }
+
+
+def test_audio_memo_is_unique_per_source_and_uses_source_timestamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "audio-memo-index.db"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    Config.reset_instance()
+    DatabaseManager.reset_instance()
+    try:
+        service = object.__new__(ResearchNoteAudioAnalysisTaskService)
+        service._should_index = True
+        source_files = [{
+            "filename": "华懋科技20260826.mp3",
+            "topic_id": "source-topic-1",
+            "file_id": "stable-audio-file-1",
+            "created_at": "2026-08-26T09:30:00+08:00",
+        }]
+        first = {
+            "title": "华懋科技 · 深度研究录音纪要",
+            "executive_summary": "第一次生成",
+            "source_files": source_files,
+            "company_mentions": [{"name": "华懋科技", "ts_code": "603306.SH"}],
+        }
+        second = {
+            **first,
+            "executive_summary": "重试后的同源纪要",
+            "source_files": [{**source_files[0], "topic_id": "audio-memo-legacy-parent"}],
+        }
+
+        first_topic = service._index_completed_memo("audio-analysis-first", first, "第一版正文")
+        second_topic = service._index_completed_memo("audio-analysis-retry", second, "第二版正文")
+
+        assert first_topic == second_topic
+        note_repository = ResearchNoteRepository()
+        notes, total = note_repository.list_notes(group_id="ai-audio-memo", page_size=100)
+        assert total == 1
+        assert notes[0].topic_id == first_topic
+        assert notes[0].created_at.isoformat() == "2026-08-26T01:30:00"
+        events, event_total = InvestmentMonitorRepository().list_events(
+            days=3650,
+            source_key="audio.memo.ai",
+            page_size=100,
+        )
+        assert event_total == 1
+        assert events[0]["external_id"] == first_topic
+        assert events[0]["event_at"].startswith("2026-08-26T01:30:00")
+
+        db = DatabaseManager.get_instance()
+        with db.get_session() as session:
+            assert session.scalar(select(func.count(ResearchNote.id))) == 1
+            assert session.scalar(select(func.count(MonitoringEventRecord.id))) == 1
+    finally:
+        DatabaseManager.reset_instance()
+        Config.reset_instance()
 
 
 def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path) -> None:

@@ -600,6 +600,50 @@ class InvestmentMonitorRepository:
             session.commit()
         return {"created": created, "updated": updated, "received": len(normalized)}
 
+    def delete_duplicate_audio_memo_events(
+        self,
+        *,
+        keep_external_id: str,
+        source_signature: str,
+    ) -> int:
+        """Remove old task-id events for an already indexed recording set."""
+        removed = 0
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(MonitoringEventRecord).where(
+                    MonitoringEventRecord.source_key == "audio.memo.ai"
+                )
+            ).scalars().all()
+            for row in rows:
+                if row.external_id == keep_external_id:
+                    continue
+                payload = _load(row.raw_payload, {})
+                result = payload.get("result") if isinstance(payload, dict) else {}
+                source_files = result.get("source_files") if isinstance(result, dict) else []
+                if self._audio_source_signature(source_files or []) != source_signature:
+                    continue
+                session.delete(row)
+                removed += 1
+            if removed:
+                session.commit()
+        return removed
+
+    @staticmethod
+    def _audio_source_signature(files: Iterable[Any]) -> str:
+        identities = set()
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            file_id = str(item.get("file_id") or "").strip()
+            if file_id:
+                identities.add(f"file:{file_id}")
+                continue
+            topic_id = str(item.get("topic_id") or item.get("source_topic_id") or "").strip()
+            filename = str(item.get("filename") or item.get("name") or "").strip()
+            if topic_id or filename:
+                identities.add(f"fallback:{topic_id}:{filename}")
+        return "\n".join(sorted(identities))
+
     def list_events(
         self,
         *,
