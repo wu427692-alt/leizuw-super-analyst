@@ -62,10 +62,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-> For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
+> For user-friendly release highlights, see the [GitHub Releases](https://github.com/wu427692-alt/leizuw-super-analyst/releases) page.
 
 ## [Unreleased]
 
+- [文档] GitHub 首页按“今日决策 → 机会发现 → 个股决策 → 深度研究 → 任务与验证”重写，新增六张当前产品实机图、数据证据分层、技术架构、正确仓库地址与共建入口；同步整理文档索引、Issue 模板、CODEOWNERS 和许可证修改声明，并移除未引用的旧演示、旧品牌、赞助素材与遗留定时分析工作流。
 - [改进] 登录前首页适配新版产品架构：由八个并列功能改为“今日变化 → 机会候选 → 个股判断 → 深度研究 → 验证复盘”决策闭环；投资情报台与研究决策台退出一级展示，机构段子、数据获取、问股和选股收敛为研究工具，所有按钮继续指向当前已上线的真实页面。
 - [改进] 登录前首页升级为动态金融编辑式证据链：用可切换的“市场异动 → 原文证据 → AI 研判 → 历史验证”替代平铺流程，八类研究任务改为单图按需加载工作台，并以 2026-09-01 生产环境重新采集全部八张真实界面和同步更新功能说明。
 - [改进] 登录前首页增加金融数据带、市场坐标网格、研究账本与克制的界面动效，在保持白底橙色清晰度的同时强化机构研究终端质感。

@@ -1,38 +1,40 @@
 ---
-name: 功能建议 / Feature Request
-about: 提出新功能或改进建议 / Suggest a new feature or improvement
+name: 功能与研究方法建议
+about: 提议新的数据源、研究流程、分析方法或产品改进
 title: '[Feature] '
 labels: enhancement
 assignees: ''
 ---
 
-<!--
-中文用户请直接填写下方表单。
-English users: fill in the English fields below.
--->
+## 想解决的投资研究问题
 
-## 功能描述 / Feature Description
+请先描述用户要做出的判断，以及现有流程为什么不能完成。不要只描述一个按钮或页面。
 
-简明扼要地描述你希望增加的功能。  
-Briefly describe the feature you would like added.
+## 使用场景
 
-## 使用场景 / Use Case
+- 使用者：
+- 触发时机：
+- 输入数据：
+- 期望输出：
+- 如何用于后续研究或交易决策：
 
-描述在什么情况下需要这个功能。  
-Describe the situation where this feature would be useful.
+## 数据与证据
 
-## 期望实现 / Proposed Solution
+请列出需要的数据源、时间范围、更新频率、原文能力和授权边界。若为新接口，请附官方文档链接。
 
-描述你期望这个功能如何工作。  
-Describe how you would expect this feature to work.
+## 建议流程
 
-## 备选方案 / Alternatives Considered
+请说明从数据获取、清洗、分析、核验到结果展示的完整路径，以及失败或缺失数据时应如何降级。
 
-描述你考虑过的其他替代方案。  
-Describe any alternative solutions you have considered.
+## 验收标准
 
-## 相关信息 / Additional Context
+- [ ] 结果可回到来源和时间
+- [ ] 不用模拟数据代替真实结果
+- [ ] 页面说明数据口径和更新时间
+- [ ] 后台任务可查看进度、结果和失败原因
+- [ ] 多用户数据按账号隔离（如适用）
+- [ ] 有可复现的测试或验收步骤
 
-- 是否愿意贡献代码实现 / Willing to implement: [Yes / No]
-- 参考链接 / Reference links:
-- 其他说明 / Other notes:
+## 其他参考
+
+可附产品截图、研究方法、竞品链接或愿意贡献的实现范围。请勿提交密钥、账号、数据库或无权公开的原始内容。

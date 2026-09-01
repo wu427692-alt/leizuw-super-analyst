@@ -404,15 +404,15 @@ The image uses prebuilt frontend assets under `/app/static` at runtime, so the r
 
 Official image registries:
 
-- GHCR: `ghcr.io/zhulinsen/daily_stock_analysis:<tag>`
-- Docker Hub: `<DOCKERHUB_USERNAME>/daily_stock_analysis:<tag>` (driven by the publisher's `DOCKERHUB_USERNAME` secret; the official release uses `zhulinsen/daily_stock_analysis`)
+- GHCR: `ghcr.io/wu427692-alt/leizuw-super-analyst:<tag>`
+- Docker Hub: when a maintainer configures `DOCKERHUB_USERNAME`, the image name follows that release configuration; GHCR is the primary repository image entry point.
 
 ### Quick Start
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/ZhuLinsen/daily_stock_analysis.git
-cd daily_stock_analysis
+git clone https://github.com/wu427692-alt/leizuw-super-analyst.git
+cd leizuw-super-analyst
 
 # 2. Configure environment variables
 cp .env.example .env
@@ -438,7 +438,7 @@ If you do not want to keep the source tree on the target machine, you can run th
 
 ```bash
 # Web/API mode
-docker pull zhulinsen/daily_stock_analysis:latest
+docker pull ghcr.io/wu427692-alt/leizuw-super-analyst:latest
 docker run -d \
   --name dsa-server \
   --env-file .env \
@@ -446,7 +446,7 @@ docker run -d \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   -v "$(pwd)/reports:/app/reports" \
-  zhulinsen/daily_stock_analysis:latest \
+  ghcr.io/wu427692-alt/leizuw-super-analyst:latest \
   python main.py --serve-only --host 0.0.0.0 --port 8000
 
 # Scheduled-task mode
@@ -456,7 +456,7 @@ docker run -d \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   -v "$(pwd)/reports:/app/reports" \
-  zhulinsen/daily_stock_analysis:latest
+  ghcr.io/wu427692-alt/leizuw-super-analyst:latest
 ```
 
 For pinned deployments or easier rollback, replace `latest` with a concrete version tag such as `v3.13.0`.
@@ -1560,4 +1560,4 @@ Technical indicator rules use daily-close edge triggers only. Partial-bar handli
 
 ---
 
-For more questions, please [submit an Issue](https://github.com/ZhuLinsen/daily_stock_analysis/issues)
+For more questions, please [submit an Issue](https://github.com/wu427692-alt/leizuw-super-analyst/issues)

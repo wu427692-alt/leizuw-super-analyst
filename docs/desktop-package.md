@@ -125,7 +125,7 @@ ls -1 dist/*.yml dist/*.blockmap 2>/dev/null || true
 
 ```bash
 RELEASE_TAG="v$(node -p \"require('./package.json').version\")"
-REPO="ZhuLinsen/daily_stock_analysis"
+REPO="wu427692-alt/leizuw-super-analyst"
 
 for f in dist/*latest.yml dist/*.blockmap dist/daily-stock-analysis-windows-installer-*.exe; do
   [ -f \"$f\" ] && echo \"[FOUND] $f\"

@@ -16,7 +16,7 @@
 
 打开发布页：
 
-<https://github.com/ZhuLinsen/daily_stock_analysis/releases/latest>
+<https://github.com/wu427692-alt/leizuw-super-analyst/releases/latest>
 
 在页面下方 `Assets`（附件）里下载：
 

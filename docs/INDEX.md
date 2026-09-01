@@ -1,83 +1,72 @@
-# 文档中心
+# 乐子乌超级价值 · 文档中心
 
-这里是项目文档入口。README 负责项目概览和快速开始；更完整的配置、部署、功能说明和排障内容从这里进入。
+这里收录当前产品、数据、部署和开发文档。第一次使用请先看 [GitHub 首页](../README.md) 和 [在线使用手册](https://app.leziwu.com/guide)；页面操作以在线手册为准，工程配置与接口契约以本目录为准。
 
-## 按场景选择
+## 先按目标找文档
 
-| 我想要 | 先看 | 继续看 |
+| 你的目标 | 入口 |
+| --- | --- |
+| 了解整套产品与决策闭环 | [项目首页](../README.md) · [在线使用手册](https://app.leziwu.com/guide) |
+| 跑通本地或云端服务 | [完整配置指南](full-guide.md) · [部署指南](DEPLOY.md) · [云端 Web 部署](deploy-webui-cloud.md) |
+| 运维生产服务器 | [云端运维手册](cloud-operations.md) · [运行诊断](run-diagnostics-p3.md) |
+| 配置模型与调用路由 | [LLM 配置](LLM_CONFIG_GUIDE.md) · [模型服务商](llm-providers.md) |
+| 接入 Tushare 与统一数据 API | [统一财经数据 API](financial-data-api.md) · [Tushare 股票列表](TUSHARE_STOCK_LIST_GUIDE.md) |
+| 检索、筛选与导出数据 | [数据一站式获取](data-acquisition.md) |
+| 调研公司或行业 | [行业与公司调研](industry-research.md) |
+| 研究题材、成分股与 Alpha/Beta | [概念题材共识引擎](concept-theme-consensus.md) |
+| 用机构语料做事件研究 | [机构语料量化研究](essay-quant.md) |
+| 理解行情口径与降级 | [行情数据](market-data.md) · [市场支持](market-support.md) · [数据源稳定性](data-source-stability.md) |
+| 参与开发 | [贡献指南](CONTRIBUTING.md) · [API 规格](architecture/api_spec.json) |
+
+## 产品工作区
+
+| 工作区 | 说明 | 相关文档 |
 | --- | --- | --- |
-| 快速了解项目能做什么 | [README](../README.md) | [完整配置与部署指南](full-guide.md) |
-| 第一次把项目跑起来 | [小白客户端安装与配置](beginner-client-setup.md) | [完整配置与部署指南](full-guide.md) |
-| 配置大模型渠道 | [LLM 配置指南](LLM_CONFIG_GUIDE.md) | [LLM 服务商配置指南](llm-providers.md) |
-| 配置推送通知 | [通知能力基线](notifications.md) | [完整配置与部署指南](full-guide.md) |
-| 部署到服务器或云平台 | [部署指南](DEPLOY.md) | [云端 WebUI 部署](deploy-webui-cloud.md)、[Zeabur 部署](docker/zeabur-deployment.md) |
-| 使用 Bot / IM 接入 | [Bot 命令与接入](bot-command.md) | [Bot 平台配置](bot/) |
-| 排查运行问题 | [FAQ](FAQ.md) | [更新日志](CHANGELOG.md) |
-| 处理数据源失败或降级 | [数据源稳定性与故障处理图示](data-source-stability.md) | [FAQ](FAQ.md) |
-| 统一调用 Tushare 与知识星球调研纪要 | [统一财经数据 API](financial-data-api.md) | [Tushare 股票列表指南](TUSHARE_STOCK_LIST_GUIDE.md) |
-| 按自然语言需求跨渠道取数并下载数据包 | [数据一站式获取](data-acquisition.md) | [统一财经数据 API](financial-data-api.md) |
-| 查看整体行情、海外市场和自选股情报 | [首页市场大看板](home-dashboard.md) | [投资情报台](investment-monitor.md) |
-| 参与开发或提交 PR | [贡献指南](CONTRIBUTING.md) | [API 规格](architecture/api_spec.json) |
+| 今日决策 | 核心指数、市场广度、行业分布、自选股变化与重要新闻 | [首页市场数据](home-dashboard.md) |
+| 机会发现 | 题材层级、来源共识、成分股、题材 Beta 与个股 Alpha | [概念题材共识引擎](concept-theme-consensus.md) |
+| 个股决策 | 行情、财务、公告、研报、机构语料、股评与事实时间线 | [统一财经数据 API](financial-data-api.md) |
+| 深度研究 | 公司/行业后台研究、录音转写、证据矩阵、Word/PDF 导出 | [行业与公司调研](industry-research.md) |
+| 任务与验证 | 录音、取数、调研与量化任务的进度、结果和复现 | [机构语料量化研究](essay-quant.md) |
 
-## 快速开始
+## 数据与模型
 
 | 文档 | 内容 |
 | --- | --- |
-| [README](../README.md) | 项目定位、核心能力、快速开始、推送效果 |
-| [小白客户端安装与配置](beginner-client-setup.md) | 面向不会代码用户的客户端下载、Anspire Open / AIHubMix 模型配置、新闻源配置和常见问题 |
-| [完整配置与部署指南](full-guide.md) | 环境准备、运行方式、配置说明、部署路径和常见问题 |
-| [FAQ](FAQ.md) | 常见配置、模型、通知、部署和运行问题 |
-| [数据源稳定性与故障处理图示](data-source-stability.md) | Tushare、TickFlow、AkShare、Efinance、YFinance、Longbridge 等已接入源的使用场景、fallback 链路和推荐配置 |
-| [更新日志](CHANGELOG.md) | 版本变化、能力调整和迁移说明 |
+| [统一财经数据 API](financial-data-api.md) | Tushare、知识星球 MCP 与统一查询契约 |
+| [数据一站式获取](data-acquisition.md) | 研报本地链接库、精细筛选、取数计划与文件打包 |
+| [资讯与情报源](intelligence-sources.md) | 资讯源接入、去重、存储与安全边界 |
+| [行情数据](market-data.md) | 分钟、日线、实时快照与历史行情口径 |
+| [数据源稳定性](data-source-stability.md) | 来源优先级、降级、缓存与故障处理 |
+| [分析上下文包](analysis-context-pack.md) | 分析输入、质量状态、证据摘要与可见性 |
+| [分析上下文包契约、运行态消费与可见性](analysis-context-pack.md) | P1/P2 内部契约、P3 Prompt 摘要消费、P4 历史/API/Web 低敏可见性、P5 数据质量评分、P6 迁移回滚；完整指南保留 #1386 阶段感知分析、迁移与回滚入口 |
+| [LLM 配置](LLM_CONFIG_GUIDE.md) | 模型渠道、路由、超时和用量配置 |
+| [模型服务商](llm-providers.md) | Provider 预设、兼容方式与诊断 |
 
-## 配置
-
-| 文档 | 内容 |
-| --- | --- |
-| [LLM 配置指南](LLM_CONFIG_GUIDE.md) | 大模型渠道、三层配置、Web 设置页和常见模型配置 |
-| [LLM 服务商配置指南](llm-providers.md) | Provider 预设、Actions 映射、错误分类和诊断建议 |
-| [LiteLLM YAML 示例](examples/litellm_config.example.yaml) | LiteLLM 多渠道配置示例 |
-| [通知能力基线](notifications.md) | 企业微信、飞书、Telegram、Discord、Slack、邮件等通知渠道配置 |
-| [Tushare 股票列表指南](TUSHARE_STOCK_LIST_GUIDE.md) | Tushare 股票列表相关配置和使用说明 |
-| [统一财经数据 API](financial-data-api.md) | Tushare 全 api_name 调用、知识星球 MCP 调研纪要同步与统一查询契约 |
-| [数据一站式获取](data-acquisition.md) | DeepSeek 规划多渠道取数，生成 JSON、CSV、Excel、ZIP 和来源清单 |
-| [投资情报台](investment-monitor.md) | 自选股行情、新闻小作文、公司事件、机构预测三视角监控与外部 API/MCP 接入 |
-| [小作文量化回测与数据利用](essay-quant.md) | 自定义卖方规则、事件收益、研究组胜率、首次提及、吹票强度、趋势信号与组合研究 |
-| [首页市场大看板](home-dashboard.md) | A 股及海外行情、市场温度、北向资金、自选股超级看板和五分钟缓存策略 |
-
-## 使用专题
+## 部署与运维
 
 | 文档 | 内容 |
 | --- | --- |
-| [Bot 命令与接入](bot-command.md) | Bot 命令、Webhook、平台接入和回调说明 |
-| [Bot 平台配置](bot/) | 飞书、钉钉、Discord 等 Bot 配置截图和补充说明 |
-| [实时告警中心](alerts.md) | EventMonitor 基线、Web 规则管理、通知结果、冷却状态和 Phase 边界 |
-| [DecisionSignal 决策信号专题](decision-signals.md) | AI 建议池字段语义、API、Web 展示、告警/通知/组合风险联动、后验评估、脱敏、迁移与回滚 |
-| [资讯 / 情报源](intelligence-sources.md) | RSS/Atom 合规资讯源配置、测试、拉取、去重、存储、查询与安全边界 |
-| [分析上下文包契约、运行态消费与可见性](analysis-context-pack.md) | AnalysisContextPack 首版范围、字段质量状态、P1/P2 内部契约、P3 Prompt 摘要消费、P4 历史/API/Web 低敏可见性、P5 数据质量评分、P6 迁移回滚与源码锚点；完整指南补充 #1386 阶段感知分析、迁移与回滚入口 |
-| [图片识别 Prompt](image-extract-prompt.md) | 图片识别股票信息的 Prompt 与使用边界 |
-| [OpenClaw Skill 集成](openclaw-skill-integration.md) | OpenClaw / Skill 外部集成说明 |
+| [完整配置指南](full-guide.md) | 环境变量、运行模式、数据源与功能配置 |
+| [部署指南](DEPLOY.md) | 本地、Docker、systemd 与服务器部署 |
+| [云端 Web 部署](deploy-webui-cloud.md) | 域名、HTTPS、反向代理与生产服务 |
+| [云端运维手册](cloud-operations.md) | 健康检查、守护、日志、资源与恢复 |
+| [macOS 自启动](macos-autostart.md) | LaunchAgent 与桌面入口 |
+| [桌面端打包](desktop-package.md) | Electron 桌面端和安装包 |
+| [FAQ](FAQ.md) | 常见运行、数据、模型与部署问题 |
 
-## 部署与打包
-
-| 文档 | 内容 |
-| --- | --- |
-| [部署指南](DEPLOY.md) | 服务器部署、Docker、systemd、Supervisor 等部署方式 |
-| [云端 WebUI 部署](deploy-webui-cloud.md) | 云服务器访问 WebUI 的部署说明 |
-| [Zeabur 部署](docker/zeabur-deployment.md) | Zeabur 平台部署说明 |
-| [桌面端打包说明](desktop-package.md) | Electron 桌面端和 Web 构建产物打包说明 |
-
-## 参考与开发
+## 开发与审计
 
 | 文档 | 内容 |
 | --- | --- |
+| [贡献指南](CONTRIBUTING.md) | Issue、分支、测试、文档与安全要求 |
 | [API 规格](architecture/api_spec.json) | FastAPI OpenAPI 规格产物 |
-| [贡献指南](CONTRIBUTING.md) | Issue、PR、测试、文档同步和协作要求 |
+| [决策信号兼容契约](decision-signals.md) | 保留给既有后端与 API 消费方的兼容参考，不再作为当前前台一级功能 |
+| [更新日志](CHANGELOG.md) | 产品、数据、部署与兼容性变化 |
+| [运行诊断 P0](run-diagnostics-p0.md) · [P1](run-diagnostics-p1.md) · [P2](run-diagnostics-p2.md) · [P3](run-diagnostics-p3.md) | 从基础可用到生产恢复的分层诊断 |
 
-## 多语言
+## 文档边界
 
-| 文档 | 内容 |
-| --- | --- |
-| [英文文档索引](INDEX_EN.md) | English documentation index |
-| [英文 README](README_EN.md) | English project overview and quick start |
-| [繁中 README](README_CHT.md) | 繁體中文項目概覽與快速開始 |
+- GitHub 首页只保留项目定位、产品实机、核心架构与快速开始；
+- 在线使用手册负责页面级操作和真实截图；
+- 本目录负责配置、接口、方法、部署、排障与工程约束；
+- 历史兼容文档和上游开源版权信息会保留，但不再作为乐子乌产品的主要入口。

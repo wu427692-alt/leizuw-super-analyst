@@ -337,8 +337,8 @@ OPENAI_MODEL=deepseek-v4-flash
 4. 桌面端版本是单独维护的，写在 `apps/dsa-desktop/package.json` 的 `version` 字段；它只代表 Electron 桌面端，不代表 Docker 镜像版本。
 
 **怎么查当前 Docker 版本**：
-1. **先看部署命令或 Compose 文件里的镜像 tag**：例如 `ghcr.io/zhulinsen/daily_stock_analysis:v3.12.0`，其中 `v3.12.0` 就是当前部署版本。
-2. **如果你拉的是 `latest`**：请回看当时的 `docker pull` / `docker-compose.yml` / 部署脚本，或对照 [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) 确认对应发布记录。
+1. **先看部署命令或 Compose 文件里的镜像 tag**：例如 `ghcr.io/wu427692-alt/leizuw-super-analyst:v3.12.0`，其中 `v3.12.0` 就是当前部署版本。
+2. **如果你拉的是 `latest`**：请回看当时的 `docker pull` / `docker-compose.yml` / 部署脚本，或对照 [GitHub Releases](https://github.com/wu427692-alt/leizuw-super-analyst/releases) 确认对应发布记录。
 3. **如果只是想确认前端是否更新到新构建**：可以打开 WebUI 的“系统设置”页查看 `构建标识` / `构建时间`；这能帮助确认静态资源是否刷新，但不等同于 Docker 镜像发布版本。
 
 **建议**：如果你想避免重复更新，部署时尽量固定使用明确的版本 tag（如 `v3.12.0`），不要长期依赖 `latest`。
@@ -391,7 +391,7 @@ python main.py --market-review
 
 如果以上内容没有解决你的问题，欢迎：
 1. 查看 [完整配置指南](full-guide.md)
-2. 搜索或提交 [GitHub Issue](https://github.com/ZhuLinsen/daily_stock_analysis/issues)
+2. 搜索或提交 [GitHub Issue](https://github.com/wu427692-alt/leizuw-super-analyst/issues)
 3. 查看 [更新日志](CHANGELOG.md) 了解最新修复
 
 ---

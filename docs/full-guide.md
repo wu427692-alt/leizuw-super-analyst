@@ -468,15 +468,15 @@ Dockerfile 使用多阶段构建，前端会在构建镜像时自动打包并内
 
 当前官方镜像发布地址：
 
-- GHCR：`ghcr.io/zhulinsen/daily_stock_analysis:<tag>`
-- Docker Hub：`<DOCKERHUB_USERNAME>/daily_stock_analysis:<tag>`（由发布者的 `DOCKERHUB_USERNAME` secret 决定，官方发布为 `zhulinsen/daily_stock_analysis`）
+- GHCR：`ghcr.io/wu427692-alt/leizuw-super-analyst:<tag>`
+- Docker Hub：如维护者单独配置 `DOCKERHUB_USERNAME`，镜像名由对应发布配置决定；当前项目以 GHCR 为主要仓库镜像入口。
 
 ### 快速启动
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/ZhuLinsen/daily_stock_analysis.git
-cd daily_stock_analysis
+git clone https://github.com/wu427692-alt/leizuw-super-analyst.git
+cd leizuw-super-analyst
 
 # 2. 配置环境变量
 cp .env.example .env
@@ -502,7 +502,7 @@ docker-compose -f ./docker/docker-compose.yml logs -f server
 
 ```bash
 # Web/API 模式
-docker pull zhulinsen/daily_stock_analysis:latest
+docker pull ghcr.io/wu427692-alt/leizuw-super-analyst:latest
 docker run -d \
   --name dsa-server \
   --env-file .env \
@@ -510,7 +510,7 @@ docker run -d \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   -v "$(pwd)/reports:/app/reports" \
-  zhulinsen/daily_stock_analysis:latest \
+  ghcr.io/wu427692-alt/leizuw-super-analyst:latest \
   python main.py --serve-only --host 0.0.0.0 --port 8000
 
 # 定时任务模式
@@ -520,7 +520,7 @@ docker run -d \
   -v "$(pwd)/data:/app/data" \
   -v "$(pwd)/logs:/app/logs" \
   -v "$(pwd)/reports:/app/reports" \
-  zhulinsen/daily_stock_analysis:latest
+  ghcr.io/wu427692-alt/leizuw-super-analyst:latest
 ```
 
 如需固定版本或便于回滚，请将 `latest` 替换为具体版本 tag，例如 `v3.13.0`。
@@ -1689,7 +1689,7 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
 
 ---
 
-更多问题请 [提交 Issue](https://github.com/ZhuLinsen/daily_stock_analysis/issues)
+更多问题请 [提交 Issue](https://github.com/wu427692-alt/leizuw-super-analyst/issues)
 
 ## Agent 工具数据缓存与持久化
 
