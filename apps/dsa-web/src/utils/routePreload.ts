@@ -9,15 +9,12 @@ type NetworkInformationLike = {
 
 const ROUTE_LOADERS: Array<{ match: (pathname: string) => boolean; load: () => RouteModule }> = [
   { match: (path) => path === '/app' || path === '/dashboard', load: () => import('../pages/MarketDashboardPage') },
-  { match: (path) => path.startsWith('/research-center'), load: () => import('../pages/ResearchCenterPage') },
   { match: (path) => path.startsWith('/industry-research'), load: () => import('../pages/IndustryResearchPage') },
   { match: (path) => path.startsWith('/concept-themes'), load: () => import('../pages/ConceptThemesPage') },
   { match: (path) => path.startsWith('/tasks'), load: () => import('../pages/TasksHubPage') },
   { match: (path) => path.startsWith('/chat'), load: () => import('../pages/ChatPage') },
   { match: (path) => path.startsWith('/essay-radar'), load: () => import('../pages/EssayRadarPage') },
   { match: (path) => path.startsWith('/essay-quant'), load: () => import('../pages/EssayQuantPage') },
-  { match: (path) => path === '/investment-monitor', load: () => import('../pages/InvestmentMonitorOverviewPage') },
-  { match: (path) => path.startsWith('/investment-monitor/bi'), load: () => import('../pages/InvestmentMonitorBIPage') },
   { match: (path) => path.startsWith('/investment-monitor/feed'), load: () => import('../pages/InvestmentMonitorPage') },
   { match: (path) => path.startsWith('/investment-monitor/dragon-tiger'), load: () => import('../pages/DragonTigerPage') },
   { match: (path) => path.startsWith('/super-watchlist'), load: () => import('../pages/SuperWatchlistPage') },
