@@ -4,6 +4,7 @@ import { API_BASE_URL } from '../utils/constants';
 import { finishRouteRequest, startRouteRequest } from '../utils/routeLoadTracker';
 import type { RouteLoadToken } from '../utils/routeLoadTracker';
 import { attachParsedApiError } from './error';
+import { waitForApiServiceRecovery } from './serviceRecovery';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -22,7 +23,15 @@ type RetryableRequestConfig = InternalAxiosRequestConfig & {
 export const BACKGROUND_ROUTE_HEADER = 'X-DSA-Route-Load';
 export const BACKGROUND_ROUTE_HEADERS = { [BACKGROUND_ROUTE_HEADER]: 'background' } as const;
 
-const TRANSIENT_HTTP_STATUSES = new Set([408, 425, 500, 502, 503, 504]);
+const TRANSIENT_HTTP_STATUSES = new Set([408, 425, 500, 502, 503, 504, 524]);
+const SERVICE_UNAVAILABLE_HTTP_STATUSES = new Set([502, 503, 504, 524]);
+
+function isServiceUnavailable(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || axios.isCancel(error)) return false;
+  const status = error.response?.status;
+  if (status != null) return SERVICE_UNAVAILABLE_HTTP_STATUSES.has(status);
+  return ['ECONNREFUSED', 'ERR_NETWORK'].includes(String(error.code || ''));
+}
 
 function isRetryableRead(error: unknown): boolean {
   if (!axios.isAxiosError(error) || axios.isCancel(error) || !error.config) return false;
@@ -85,7 +94,16 @@ apiClient.interceptors.response.use(
       const retryCount = requestConfig.__dsaRetryCount ?? 0;
       if (retryCount < 2) {
         requestConfig.__dsaRetryCount = retryCount + 1;
-        await retryDelay(requestConfig.__dsaRetryCount);
+        if (isServiceUnavailable(error)) {
+          const recovered = await waitForApiServiceRecovery();
+          if (!recovered) {
+            completeTrackedRequest(requestConfig);
+            attachParsedApiError(error);
+            return Promise.reject(error);
+          }
+        } else {
+          await retryDelay(requestConfig.__dsaRetryCount);
+        }
         return apiClient.request(requestConfig);
       }
     }

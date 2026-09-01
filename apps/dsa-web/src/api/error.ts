@@ -487,6 +487,8 @@ export function parseApiError(error: unknown): ParsedApiError {
   if (
     status === 502
     || status === 503
+    || status === 504
+    || status === 524
     || includesAny(matchText, [
       'dns',
       'enotfound',
@@ -496,11 +498,13 @@ export function parseApiError(error: unknown): ParsedApiError {
       'tunnel',
       '502',
       '503',
+      '504',
+      '524',
     ])
   ) {
     return createParsedApiError({
-      title: '服务端无法访问外部依赖',
-      message: '页面已连接到本地服务，但本地服务访问外部模型或数据接口失败，请检查代理、DNS 或出网配置。',
+      title: '服务正在恢复',
+      message: '服务可能正在重启或上游暂时不可用；系统已自动探测并重试，已加载的数据不会丢失。',
       rawMessage,
       status,
       category: 'upstream_network',

@@ -41,7 +41,7 @@ def overview(
     view: str = Query(default="source", pattern="^(canonical|source)$"),
     sort_by: str = Query(default="heat", pattern="^(heat|name|size|change)$"),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=80, ge=12, le=200),
+    page_size: int = Query(default=80, ge=1, le=200),
 ):
     return ConceptThemeService().overview(
         query=query, theme_type=theme_type, source=source, family=family, cluster=cluster, min_sources=min_sources,
