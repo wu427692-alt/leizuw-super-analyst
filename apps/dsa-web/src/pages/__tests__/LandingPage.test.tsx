@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import LandingPage from '../LandingPage';
@@ -7,21 +7,22 @@ describe('LandingPage', () => {
   it('introduces the real platform and enters the dashboard', () => {
     render(<MemoryRouter><LandingPage /></MemoryRouter>);
 
-    expect(screen.getByRole('heading', { name: /研究，\s*不该从\s*整理资料开始。/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /从变化，\s*到判断，\s*再到行动。/ })).toBeInTheDocument();
     expect(screen.getAllByText('乐子乌超级价值')).toHaveLength(2);
-    expect(screen.getByRole('heading', { name: '市场总览' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /自选股超级看板/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /机构段子与录音/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /投资情报台/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /量化回测与数据利用/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /数据一站式获取/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /概念题材查看/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '今日决策' })).toBeInTheDocument();
+    const productTabs = within(screen.getByRole('tablist', { name: '研究任务' }));
+    expect(productTabs.getByRole('tab', { name: /今日决策/ })).toBeInTheDocument();
+    expect(productTabs.getByRole('tab', { name: /机会发现/ })).toBeInTheDocument();
+    expect(productTabs.getByRole('tab', { name: /个股决策/ })).toBeInTheDocument();
+    expect(productTabs.getByRole('tab', { name: /深度研究/ })).toBeInTheDocument();
+    expect(productTabs.getByRole('tab', { name: /任务与验证/ })).toBeInTheDocument();
+    expect(productTabs.queryByRole('tab', { name: /投资情报台/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText('平台研究数据范围')).toBeVisible();
-    expect(screen.getByLabelText('研究工作台三层结构')).toBeVisible();
-    expect(screen.getByRole('heading', { name: /一条证据链，\s*回答一个真实问题。/ })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /八类任务，\s*一套共享数据底座。/ })).toBeInTheDocument();
-    expect(screen.getByAltText('乐子乌超级价值市场总览最新真实页面')).toHaveAttribute('src', '/landing/screens/market-overview.jpg');
-    expect(screen.getByRole('link', { name: /进入研究平台/ })).toHaveAttribute('href', '/app');
+    expect(screen.getByLabelText('新版决策工作流')).toBeVisible();
+    expect(screen.getByRole('heading', { name: /五个步骤，\s*围绕一次真实决策。/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /五个工作区，\s*围绕一次决策。/ })).toBeInTheDocument();
+    expect(screen.getByAltText('乐子乌超级价值今日市场环境最新真实页面')).toHaveAttribute('src', '/landing/screens/market-overview.jpg');
+    expect(screen.getByRole('link', { name: /进入今日决策/ })).toHaveAttribute('href', '/app');
     expect(screen.getAllByRole('link', { name: '使用手册' })[0]).toHaveAttribute('href', '/guide');
     expect(screen.getByRole('link', { name: '注册' })).toHaveAttribute('href', '/access?mode=register&redirect=%2Fapp');
     expect(screen.getAllByRole('link', { name: '管理员' })[0]).toHaveAttribute('href', '/admin');
@@ -31,20 +32,23 @@ describe('LandingPage', () => {
     const { container } = render(<MemoryRouter><LandingPage /></MemoryRouter>);
     const page = container.querySelector('.landing-page') as HTMLElement;
     expect(page.querySelectorAll('[data-landing-reveal]')).toHaveLength(0);
-    expect(screen.getByRole('heading', { name: '数据有口径' })).toBeVisible();
-    expect(screen.getByRole('tab', { name: /概念题材查看/ })).toBeVisible();
-    expect(screen.getByRole('link', { name: /进入研究平台/ })).toBeVisible();
+    expect(screen.getByRole('heading', { name: '先看变化' })).toBeVisible();
+    expect(within(screen.getByRole('tablist', { name: '研究任务' })).getByRole('tab', { name: /机会发现/ })).toBeVisible();
+    expect(screen.getByRole('link', { name: /进入今日决策/ })).toBeVisible();
   });
 
   it('switches the evidence chain and product screenshot without loading every screenshot at once', () => {
     render(<MemoryRouter><LandingPage /></MemoryRouter>);
 
-    fireEvent.click(screen.getByRole('tab', { name: /历史验证/ }));
-    expect(screen.getByRole('heading', { name: '历史验证' })).toBeVisible();
-    expect(screen.getByAltText('量化研究任务中心最新真实界面')).toHaveAttribute('src', '/landing/screens/quant-workbench.jpg');
+    const evidenceTabs = within(screen.getByRole('tablist', { name: '研究证据链' }));
+    const productTabs = within(screen.getByRole('tablist', { name: '研究任务' }));
 
-    fireEvent.click(screen.getByRole('tab', { name: /行业与公司调研/ }));
-    expect(screen.getByRole('heading', { name: '行业与公司调研' })).toBeVisible();
-    expect(screen.getByAltText('行业与公司调研最新真实页面')).toHaveAttribute('src', '/landing/screens/industry-research.jpg');
+    fireEvent.click(evidenceTabs.getByRole('tab', { name: /验证复盘/ }));
+    expect(screen.getByRole('heading', { name: '验证复盘' })).toBeVisible();
+    expect(screen.getByAltText('验证复盘最新真实界面')).toHaveAttribute('src', '/landing/screens/quant-workbench.jpg');
+
+    fireEvent.click(productTabs.getByRole('tab', { name: /深度研究/ }));
+    expect(screen.getByRole('heading', { name: '深度研究' })).toBeVisible();
+    expect(screen.getByAltText('深度研究最新真实页面')).toHaveAttribute('src', '/landing/screens/industry-research.jpg');
   });
 });
