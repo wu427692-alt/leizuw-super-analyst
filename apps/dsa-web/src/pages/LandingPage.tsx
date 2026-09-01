@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowDown, ArrowRight, BarChart3, BookOpen, Building2, CheckCircle2, DatabaseZap,
-  Download, FileSearch, FileText, FlaskConical, Landmark, LineChart,
-  LockKeyhole, MessageCircleMore, Mic2, Radar, Search, ShieldCheck,
-  Sparkles, Star, UserRoundPlus, Waves,
+  ArrowRight, BarChart3, BookOpen, Building2, CheckCircle2, DatabaseZap,
+  Download, FileSearch, FileText, FlaskConical, Landmark, Layers3, LineChart,
+  LockKeyhole, MessageCircleMore, MessagesSquare, Mic2, Radar, Search,
+  ShieldCheck, SlidersHorizontal, Sparkles, Star, UserRoundPlus, Waves,
 } from 'lucide-react';
 import './LandingPage.css';
 
@@ -19,62 +18,76 @@ const connectedSources = [
 ];
 
 const researchFlow = [
-  { number: '01', title: '确定问题', detail: '先明确市场、行业或公司问题，以及日期、标的和资料范围。', icon: Search },
-  { number: '02', title: '召回证据', detail: '从统一数据库检索行情、公告、研报、机构语料、企业事实和公开讨论。', icon: FileSearch },
-  { number: '03', title: '交叉验证', detail: '把观点与价格、财务和公司事实放在同一时间轴，保留来源和原文入口。', icon: ShieldCheck },
-  { number: '04', title: '形成任务', detail: '将需要持续观察的假设交给自选股、情报监控、行业研究或量化任务。', icon: Radar },
+  { number: '01', title: '定义问题', detail: '明确对象、日期和需要回答的研究问题。', icon: Search },
+  { number: '02', title: '召回证据', detail: '从统一数据库检索行情、公告、研报与机构语料。', icon: FileSearch },
+  { number: '03', title: '交叉验证', detail: '把观点、价格和公司事实放回同一时间轴。', icon: ShieldCheck },
+  { number: '04', title: '持续跟踪', detail: '将假设交给自选股、情报监控或量化任务。', icon: Radar },
 ];
 
 const productTours = [
   {
-    number: '01', eyebrow: '市场与行情', title: '市场总览', href: '/app', action: '打开市场总览', icon: BarChart3,
-    description: '把核心指数、分时与 K 线、全市场涨跌家数、行业分布、海外市场和个人自选股放在同一页，并明确显示实际交易日与数据来源。',
-    data: ['Tushare 指数与全市场日线', '腾讯行情分钟快照', '本地 SQLite 行情库'],
-    outputs: ['指数与个股周期切换', '市场广度及行业涨跌分布', '自选股行情与最新情报'],
+    number: '01', eyebrow: '每日市场判断', title: '市场总览', href: '/app', action: '打开市场总览', icon: BarChart3,
+    description: '核心指数、分时与 K 线、全市场涨跌家数、行业分布、海外市场和个人自选股保持统一交易日口径。',
+    data: 'Tushare 指数与全市场日线 · 腾讯分钟快照 · SQLite 行情库',
+    output: '市场广度、行业分布与自选股行情',
     screenshot: '/landing/screens/market-overview.jpg', alt: '市场总览真实页面，展示指数、交易日、分时行情和成交量',
   },
   {
-    number: '02', eyebrow: '个股研究', title: '自选股超级看板', href: '/super-watchlist', action: '进入自选股看板', icon: Star,
-    description: '新增股票后自动建立行情和全渠道信息档案。报价、K 线、财务、资金、公告、研报、机构段子、企业风险、股评和一致预期围绕同一股票共享。',
-    data: ['实时/最近事实行情', '公告、研报与财务指标', '机构段子、企业事实与公开股评'],
-    outputs: ['统一口径的个股行情', '可回原文的事实时间线', '财务估值、资金筹码与一致预期'],
-    screenshot: '/landing/screens/super-watchlist.jpg', alt: '自选股超级看板真实页面，展示中际旭创行情、估值和分时图',
+    number: '02', eyebrow: '公司研究', title: '自选股超级看板', href: '/super-watchlist', action: '进入自选股看板', icon: Star,
+    description: '新增股票后自动形成共享档案，把报价、财务、公告、研报、机构段子、企业风险、股评和一致预期放在一处。',
+    data: '行情 · 财务 · 资金 · 公告 · 研报 · 机构语料',
+    output: '个股行情、事实时间线与一致预期',
+    screenshot: '/landing/screens/super-watchlist.jpg', alt: '自选股超级看板真实页面，展示个股行情、估值和分时图',
   },
   {
-    number: '03', eyebrow: '非结构化研究', title: '机构段子与录音', href: '/essay-radar', action: '查看机构语料', icon: Mic2,
-    description: '知识星球新增内容自动增量入库。正文可以按标题或全文检索，图片和文件保留查看入口，录音可以筛选、批量下载或提交后台转写与纪要任务。',
-    data: ['知识星球 MCP 增量内容', '正文、图片、文件与录音元数据', 'AI 结构化标签与日报结果'],
-    outputs: ['今日研判与多周期洞察', '全库检索、Excel 导出与批量下载', '主题趋势、个股提及和录音纪要'],
-    screenshot: '/landing/screens/essay-radar.jpg', alt: '机构段子与录音真实洞察页面，展示语料统计、主题与证据覆盖',
+    number: '03', eyebrow: '深度研究', title: '行业与公司调研', href: '/industry-research', action: '开始深度研究', icon: Landmark,
+    description: '后台任务围绕产业链、趋势、龙头、痛点、应用场景和关键验证指标组织多源证据，并生成可继续补强的报告。',
+    data: '研报 · 公告 · 财报 · 录音转写 · 互联网资料',
+    output: '标准调研报告、图表、Word 与 PDF',
+    screenshot: '/landing/screens/industry-research.jpg', alt: '行业与公司调研真实页面，展示后台任务、证据来源和深度报告',
   },
   {
-    number: '04', eyebrow: '全渠道监控', title: '投资情报台', href: '/investment-monitor', action: '进入投资情报台', icon: Radar,
-    description: '不同来源不再混成一条流水，而是按公告、研报、资讯、龙虎榜、公司事实、企业风险、机构段子和公开股评分渠道查看。',
-    data: ['巨潮公告与 Tushare 数据', '天眼查企业事实', '知识星球与东方财富公开股评'],
-    outputs: ['来源级新鲜度与同步状态', '全渠道信息流与原文入口', 'BI 汇总、龙虎榜和自选股筛选'],
+    number: '04', eyebrow: '主线归因', title: '概念题材查看', href: '/concept-themes', action: '查看概念题材', icon: Layers3,
+    description: '从分层题材、成分股和多源共识出发，区分板块 Beta 与个股 Alpha，并保留归因证据和更新时间。',
+    data: '题材成分 · 行情联动 · 机构语料 · 公告事实',
+    output: '题材树、成分矩阵、Beta 与 Alpha 线索',
+    screenshot: '/landing/screens/concept-themes.jpg', alt: '概念题材真实页面，展示题材分层、成分股和归因分析',
+  },
+  {
+    number: '05', eyebrow: '非结构化研究', title: '机构段子与录音', href: '/essay-radar', action: '检索机构语料', icon: Mic2,
+    description: '知识星球新增内容自动增量入库；正文支持标题或全文检索，录音支持批量下载、转写和纪要任务。',
+    data: '知识星球正文 · 图片 · 文件 · 录音 · AI 标签',
+    output: '全库检索、趋势洞察、转写与纪要',
+    screenshot: '/landing/screens/essay-radar.jpg', alt: '机构段子与录音真实页面，展示语料统计、主题与证据覆盖',
+  },
+  {
+    number: '06', eyebrow: '全渠道监控', title: '投资情报台', href: '/investment-monitor', action: '进入投资情报台', icon: Radar,
+    description: '公告、研报、资讯、龙虎榜、公司事实、企业风险、机构段子和公开股评按渠道分流，并显示同步状态。',
+    data: '巨潮 · Tushare · 天眼查 · 知识星球 · 公开股评',
+    output: '实时流水、来源新鲜度、BI 与龙虎榜',
     screenshot: '/landing/screens/investment-monitor.jpg', alt: '投资情报台真实页面，展示全渠道数据源及其同步状态',
   },
   {
-    number: '05', eyebrow: '验证研究假设', title: '量化回测与数据利用', href: '/essay-quant', action: '创建量化任务', icon: FlaskConical,
-    description: '研究以后台任务运行，离开页面不会中断。用户可以从模板或自然语言建立事件研究、多因子、机构胜率、信息与趋势共振等可复现任务。',
-    data: ['行情与交易日历', '机构段子事件和来源标签', '财务、资金与技术因子'],
-    outputs: ['样本、交易约束和数据截止时间', '收益、回撤、置信区间与分组稳定性', '可复现任务、结果快照和方法说明'],
-    screenshot: '/landing/screens/quant-workbench.jpg', alt: '量化研究任务中心真实页面，展示五步研究流程与后台任务',
+    number: '07', eyebrow: '验证研究假设', title: '量化回测与数据利用', href: '/essay-quant', action: '创建量化任务', icon: FlaskConical,
+    description: '从模板或自然语言建立事件研究、多因子、机构胜率和信息趋势共振任务，后台运行并保存结果快照。',
+    data: '行情 · 交易日历 · 机构事件 · 财务与技术因子',
+    output: '收益、回撤、置信区间与稳健性检验',
+    screenshot: '/landing/screens/quant-workbench.jpg', alt: '量化研究任务中心真实页面，展示研究流程与后台任务',
   },
   {
-    number: '06', eyebrow: '资料交付', title: '数据一站式获取', href: '/data-acquisition', action: '检索与下载数据', icon: Download,
-    description: '先从本地资料库按标题、摘要、券商、公司、研报类型、行业、作者和日期筛选，再由后台打包用户勾选的原文、附件或 PDF 链接。',
-    data: ['本地研报元数据与 PDF 链接库', '知识星球正文、附件和录音', '公告、行情、财务与企业事实接口'],
-    outputs: ['可审阅的筛选结果', '勾选后的文件或链接包', '真实获取与打包进度'],
+    number: '08', eyebrow: '资料交付', title: '数据一站式获取', href: '/data-acquisition', action: '检索与下载数据', icon: Download,
+    description: '从本地资料库按标题、摘要、券商、公司、类型、行业、作者和日期筛选，再后台打包勾选的原文或链接。',
+    data: '研报 PDF 链接 · 公告 · 知识星球文件与录音',
+    output: '筛选结果、原文文件包与真实进度',
     screenshot: '/landing/screens/data-acquisition.jpg', alt: '数据一站式获取真实页面，展示研报筛选字段与后台任务状态',
   },
-  {
-    number: '07', eyebrow: '全渠道深度研究', title: '行业与公司调研', href: '/industry-research', action: '开始深度研究', icon: Landmark,
-    description: '输入行业主题后，后台任务围绕产业链、发展趋势、龙头公司、痛点、应用场景和关键验证指标组织证据，并保存可继续补强的研究报告。',
-    data: ['研报、公告和公司资料', '机构段子、录音纪要与资讯', '行情、财务和企业事实'],
-    outputs: ['产业链与关键环节', '龙头、趋势、痛点和应用场景', '证据引用、待验证问题和深度报告'],
-    screenshot: '/landing/screens/industry-research.jpg', alt: '行业与公司调研真实页面，展示后台任务、证据来源和深度报告',
-  },
+];
+
+const utilityEntries = [
+  { title: '研究决策台', detail: '把市场、行业、公司和资料任务组织成研究路径。', href: '/research-center', icon: SlidersHorizontal },
+  { title: '问股', detail: '优先调用本地事实，缺失时再请求外部数据。', href: '/chat', icon: MessagesSquare },
+  { title: 'AlphaSift 选股', detail: '从条件筛选进入候选池，再回到证据与验证。', href: '/screening', icon: Sparkles },
+  { title: '完整使用手册', detail: '按任务检索全部入口、数据、步骤和核验方法。', href: '/guide', icon: BookOpen },
 ];
 
 const LandingPage = () => {
@@ -82,55 +95,20 @@ const LandingPage = () => {
 
   useEffect(() => {
     document.title = '乐子乌超级价值 · 全域财经研究平台';
-    const page = pageRef.current;
-    if (!page) return undefined;
-    const revealNodes = Array.from(page.querySelectorAll<HTMLElement>('[data-landing-reveal]'));
-    if (typeof IntersectionObserver === 'undefined') {
-      revealNodes.forEach((node) => node.classList.add('is-visible'));
-      return undefined;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          (entry.target as HTMLElement).classList.add('is-visible');
-          observer.unobserve(entry.target);
-        }
-      });
-    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.08 });
-    revealNodes.forEach((node) => observer.observe(node));
-
-    let frame = 0;
-    const updateScroll = () => {
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        const max = Math.max(document.documentElement.scrollHeight - window.innerHeight, 1);
-        page.style.setProperty('--landing-scroll', `${Math.min(window.scrollY / max, 1)}`);
-        page.style.setProperty('--landing-parallax', `${Math.min(window.scrollY * 0.07, 90)}px`);
-        frame = 0;
-      });
+    const updateProgress = () => {
+      const max = Math.max(document.documentElement.scrollHeight - window.innerHeight, 1);
+      pageRef.current?.style.setProperty('--landing-scroll', `${Math.min(window.scrollY / max, 1)}`);
     };
-    updateScroll();
-    window.addEventListener('scroll', updateScroll, { passive: true });
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('scroll', updateScroll);
-      if (frame) window.cancelAnimationFrame(frame);
-    };
+    updateProgress();
+    window.addEventListener('scroll', updateProgress, { passive: true });
+    return () => window.removeEventListener('scroll', updateProgress);
   }, []);
 
-  const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / bounds.width;
-    const y = (event.clientY - bounds.top) / bounds.height;
-    pageRef.current?.style.setProperty('--pointer-x', `${x * 100}%`);
-    pageRef.current?.style.setProperty('--pointer-y', `${y * 100}%`);
-  }, []);
-
-  return <main ref={pageRef} className="landing-page" onPointerMove={handlePointerMove}>
+  return <main ref={pageRef} className="landing-page">
     <div className="landing-scroll-progress" aria-hidden="true"><i /></div>
     <header className="landing-header">
-      <Link className="landing-brand" to="/" aria-label="乐子乌超级价值首页"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link>
-      <nav aria-label="首页栏目"><a href="#real-product">真实界面</a><a href="#research-flow">研究流程</a><a href="#data-sources">数据来源</a><Link to="/guide">使用手册</Link></nav>
+      <Link className="landing-brand" to="/" aria-label="乐子乌超级价值首页"><span><DatabaseZap aria-hidden="true" /></span><b>乐子乌超级价值</b></Link>
+      <nav aria-label="首页栏目"><a href="#research-flow">研究方法</a><a href="#real-product">真实界面</a><a href="#data-sources">数据来源</a><Link to="/guide">使用手册</Link></nav>
       <div className="landing-header-actions">
         <Link className="landing-register-enter" to="/access?mode=register&redirect=%2Fapp"><UserRoundPlus aria-hidden="true" />注册</Link>
         <Link className="landing-admin-enter" to="/admin"><LockKeyhole aria-hidden="true" />管理员</Link>
@@ -139,77 +117,74 @@ const LandingPage = () => {
     </header>
 
     <section className="landing-hero" aria-labelledby="landing-title">
-      <div className="landing-hero-mesh" aria-hidden="true" />
-      <div className="landing-hero-copy" data-landing-reveal>
-        <div className="landing-proof-label"><CheckCircle2 aria-hidden="true" />以下功能均为已上线真实页面</div>
-        <h1 id="landing-title">让市场信息，<span>成为可验证的研究优势。</span></h1>
-        <p>一套面向中国股票研究的事实与证据工作台。连接行情、公告、研报、机构段子与录音、企业事实、公开股评和量化研究；每个页面明确显示时间、来源与原文入口。</p>
-        <div className="landing-actions"><Link className="landing-enter" to="/app">进入研究平台<ArrowRight aria-hidden="true" /></Link><Link className="landing-discover" to="/guide"><BookOpen aria-hidden="true" />查看使用手册</Link><a className="landing-discover" href="#real-product">查看真实界面<ArrowDown aria-hidden="true" /></a></div>
+      <div className="landing-hero-copy">
+        <div className="landing-kicker"><span>中国股票研究工作台</span><b>2026 / 真实生产系统</b></div>
+        <h1 id="landing-title">研究，<br />不该从<br /><em>整理资料</em>开始。</h1>
+        <p>把行情、公告、研报、机构段子与录音、企业事实和量化验证接入同一条证据链。时间、来源、原文和任务状态都可以核验。</p>
+        <div className="landing-actions"><Link className="landing-enter" to="/app">进入研究平台<ArrowRight aria-hidden="true" /></Link><Link className="landing-discover" to="/guide"><BookOpen aria-hidden="true" />查看完整手册</Link></div>
       </div>
-      <figure className="landing-hero-screen" data-landing-reveal>
-        <div className="landing-window-bar"><i /><i /><i /><span>市场总览 · 实机截图</span></div>
+      <figure className="landing-hero-screen">
+        <div className="landing-window-bar"><span>01</span><b>市场总览</b><em>真实运行界面</em></div>
         <img src="/landing/screens/market-overview.jpg" alt="乐子乌超级价值市场总览真实页面" fetchPriority="high" />
-        <figcaption><span>截图采集于 2026-08-31</span><b>页面中的日期和来源随数据更新</b></figcaption>
+        <figcaption><span>截图采集于 2026-08-31</span><b>页面数据按实际交易日自动更新</b></figcaption>
       </figure>
-      <div className="landing-hero-sources" aria-label="平台真实接入的数据源">
-        {connectedSources.map(({ label, icon: Icon }) => <span key={label}><Icon aria-hidden="true" />{label}</span>)}
-      </div>
+      <dl className="landing-hero-metrics" aria-label="平台覆盖范围">
+        <div><dt>12</dt><dd>研究工作台</dd></div>
+        <div><dt>08</dt><dd>真实界面展示</dd></div>
+        <div><dt>06</dt><dd>核心数据源</dd></div>
+        <div><dt>原文</dt><dd>证据可追溯</dd></div>
+      </dl>
     </section>
 
-    <section className="landing-truth" id="real-product" aria-labelledby="landing-truth-title">
-      <div className="landing-section-heading" data-landing-reveal><span>真实产品导览</span><h2 id="landing-truth-title">不是概念图。<br />下面每张都是实际运行页面。</h2><p>截图来自当前程序和本地真实数据库。数值会随交易日、数据同步状态和用户权限变化，介绍页不固定展示虚构收益或虚构案例。</p></div>
-      <div className="landing-truth-grid">
-        <article data-landing-reveal><strong>01</strong><h3>数据有口径</h3><p>行情点位、涨跌幅、市场广度和个股价格显示实际交易日与来源，避免把旧数据写成“实时”。</p></article>
-        <article data-landing-reveal><strong>02</strong><h3>观点有原文</h3><p>公告、研报、机构段子、录音纪要和股评保留来源、发布时间及原文或文件入口。</p></article>
-        <article data-landing-reveal><strong>03</strong><h3>任务可回看</h3><p>量化、行业研究、AI 分析和文件打包在后台执行，完成后保留参数、状态和结果。</p></article>
-      </div>
+    <section className="landing-proof" aria-label="平台研究原则">
+      <article><strong>01</strong><CheckCircle2 aria-hidden="true" /><div><h2>数据有口径</h2><p>交易日、昨收零轴、单位和来源明确展示。</p></div></article>
+      <article><strong>02</strong><FileText aria-hidden="true" /><div><h2>观点有原文</h2><p>公告、研报、段子、录音和股评保留入口。</p></div></article>
+      <article><strong>03</strong><Radar aria-hidden="true" /><div><h2>任务可回看</h2><p>调研、量化、分析和打包都保留状态与结果。</p></div></article>
     </section>
 
     <section className="landing-flow-section" id="research-flow" aria-labelledby="landing-flow-title">
-      <div className="landing-section-heading" data-landing-reveal><span>研究流程</span><h2 id="landing-flow-title">从问题出发，<br />沿证据形成结论。</h2><p>数据跨页面共享；同一标的和同一时间范围不需要在每个功能里重新抓取一遍。</p></div>
+      <div className="landing-section-heading"><span>01 / 研究方法</span><h2 id="landing-flow-title">从问题到证据，<br />再到可跟踪的判断。</h2><p>同一标的和同一时间范围的数据跨页面共享，不需要在每个功能里重新抓取。</p></div>
       <div className="landing-flow-stage">
-        {researchFlow.map(({ number, title, detail, icon: Icon }) => <article key={title} data-landing-reveal><strong>{number}</strong><Icon aria-hidden="true" /><h3>{title}</h3><p>{detail}</p></article>)}
+        {researchFlow.map(({ number, title, detail, icon: Icon }) => <article key={title}><strong>{number}</strong><Icon aria-hidden="true" /><h3>{title}</h3><p>{detail}</p></article>)}
       </div>
     </section>
 
-    <section className="landing-platform" aria-labelledby="landing-platform-title">
-      <div className="landing-section-heading" data-landing-reveal><span>七个真实工作台</span><h2 id="landing-platform-title">每个入口解决什么，<br />使用什么数据，输出什么。</h2></div>
+    <section className="landing-platform" id="real-product" aria-labelledby="landing-platform-title">
+      <div className="landing-section-heading"><span>02 / 真实产品</span><h2 id="landing-platform-title">八个界面，<br />对应八类研究任务。</h2><p>下面均为当前程序的实际页面，不使用概念图或虚构收益。数值会随交易日、同步状态和用户权限变化。</p></div>
       <div className="landing-feature-index">
-        {productTours.map(({ number, eyebrow, title, href, action, icon: Icon, description, data, outputs, screenshot, alt }, index) => <article className={`landing-feature-row${index % 2 ? ' is-reverse' : ''}`} key={title} data-landing-reveal>
+        {productTours.map(({ number, eyebrow, title, href, action, icon: Icon, description, data, output, screenshot, alt }) => <article className="landing-feature-card" key={title}>
+          <figure className="landing-product-shot">
+            <div className="landing-window-bar"><span>{number}</span><b>{title}</b><em>实机截图</em></div>
+            <img src={screenshot} alt={alt} loading="lazy" />
+          </figure>
           <div className="landing-feature-copy">
-            <strong className="landing-feature-number">{number}</strong>
             <div className="landing-feature-title"><Icon aria-hidden="true" /><span>{eyebrow}</span><h3>{title}</h3></div>
             <p className="landing-feature-description">{description}</p>
-            <div className="landing-feature-details">
-              <div><h4>使用的数据</h4><ul>{data.map(item => <li key={item}>{item}</li>)}</ul></div>
-              <div><h4>得到的输出</h4><ul>{outputs.map(item => <li key={item}>{item}</li>)}</ul></div>
-            </div>
+            <dl className="landing-feature-details"><div><dt>使用数据</dt><dd>{data}</dd></div><div><dt>形成输出</dt><dd>{output}</dd></div></dl>
             <Link to={href}>{action}<ArrowRight aria-hidden="true" /></Link>
           </div>
-          <figure className="landing-product-shot">
-            <div className="landing-window-bar"><i /><i /><i /><span>{title} · 当前版本实机截图</span></div>
-            <img src={screenshot} alt={alt} loading="lazy" />
-            <figcaption>截图采集于 2026-08-31 · 页面数据会自动更新</figcaption>
-          </figure>
         </article>)}
+      </div>
+      <div className="landing-utility-grid" aria-label="其他研究入口">
+        {utilityEntries.map(({ title, detail, href, icon: Icon }, index) => <Link to={href} key={title}><span>{String(index + 9).padStart(2, '0')}</span><Icon aria-hidden="true" /><div><h3>{title}</h3><p>{detail}</p></div><ArrowRight aria-hidden="true" /></Link>)}
       </div>
     </section>
 
     <section className="landing-data-section" id="data-sources" aria-labelledby="landing-data-title">
-      <div className="landing-section-heading" data-landing-reveal><span>数据如何进入平台</span><h2 id="landing-data-title">来源分开，证据打通。</h2><p>平台不把不同渠道混成无法追溯的摘要。每一类数据保留自己的更新时间、来源字段和原文能力，再围绕股票、行业与事件建立关联。</p></div>
+      <div className="landing-section-heading"><span>03 / 数据基础</span><h2 id="landing-data-title">来源分开，<br />证据打通。</h2><p>每一类数据保留自己的更新时间、来源字段和原文能力，再围绕股票、行业与事件建立关联。</p></div>
       <div className="landing-source-grid">
-        {connectedSources.map(({ label, detail, icon: Icon }) => <article key={label} data-landing-reveal><Icon aria-hidden="true" /><div><h3>{label}</h3><p>{detail}</p></div></article>)}
+        {connectedSources.map(({ label, detail, icon: Icon }, index) => <article key={label}><strong>{String(index + 1).padStart(2, '0')}</strong><Icon aria-hidden="true" /><div><h3>{label}</h3><p>{detail}</p></div></article>)}
       </div>
       <p className="landing-data-note"><Sparkles aria-hidden="true" />AI 用于提取、归纳和生成研究任务，不替代原始数据；没有证据的内容应标记待核验。</p>
     </section>
 
-    <section className="landing-final" id="landing-start" aria-labelledby="landing-final-title" data-landing-reveal>
-      <h2 id="landing-final-title">先看真实数据，<br />再做研究判断。</h2>
+    <section className="landing-final" id="landing-start" aria-labelledby="landing-final-title">
+      <span>04 / 开始使用</span><h2 id="landing-final-title">先看证据，<br />再做判断。</h2>
       <p>注册只需要姓名和密码；申请通过后，个人自选股、问股记录与后台任务相互独立。</p>
       <div><Link className="landing-final-enter" to="/access?mode=register&redirect=%2Fapp"><UserRoundPlus aria-hidden="true" />申请使用</Link><Link className="landing-final-secondary" to="/app">已有账号，进入平台<ArrowRight aria-hidden="true" /></Link></div>
     </section>
 
-    <footer className="landing-footer"><Link className="landing-brand" to="/"><span><DatabaseZap aria-hidden="true" /></span>乐子乌超级价值</Link><p>截图和功能说明基于 2026-08-31 当前版本</p><div><Link to="/guide">使用手册</Link><Link to="/app">研究平台</Link><Link to="/admin">管理员</Link></div></footer>
+    <footer className="landing-footer"><Link className="landing-brand" to="/"><span><DatabaseZap aria-hidden="true" /></span><b>乐子乌超级价值</b></Link><p>全域财经研究平台 · 页面与数据持续更新</p><div><Link to="/guide">使用手册</Link><Link to="/app">研究平台</Link><Link to="/admin">管理员</Link></div></footer>
   </main>;
 };
 
