@@ -9,7 +9,7 @@ describe('UserGuidePage', () => {
 
     expect(screen.getByRole('heading', { name: /不是功能清单/ })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '市场总览' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '研究决策台' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '任务与验证' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '自选股超级看板' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '机构段子与录音' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '数据一站式获取' })).toBeInTheDocument();
@@ -34,9 +34,9 @@ describe('UserGuidePage', () => {
   it('filters the complete manual by a detailed function keyword', () => {
     render(<MemoryRouter><UserGuidePage /></MemoryRouter>);
 
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索使用手册' }), { target: { value: '龙虎榜' } });
-    expect(screen.getByRole('heading', { name: '投资情报台' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索使用手册' }), { target: { value: '用户只能看到自己的任务' } });
+    expect(screen.getByRole('heading', { name: '任务与验证' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '市场总览' })).not.toBeInTheDocument();
-    expect(screen.getByText('当前显示 1 / 12 个工作台')).toBeInTheDocument();
+    expect(screen.getByText('当前显示 1 / 11 个工作台')).toBeInTheDocument();
   });
 });

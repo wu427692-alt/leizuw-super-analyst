@@ -313,6 +313,14 @@ def create_research_note_audio_package_task(request: ResearchNoteAudioBatchDownl
 
 
 @router.get(
+    "/research-notes/audio-files/batch-download-tasks",
+    summary="列出当前用户的录音后台打包任务",
+)
+def list_research_note_audio_package_tasks(limit: int = Query(20, ge=1, le=50)):
+    return ResearchNoteMediaTaskService.get_instance().list_tasks(limit)
+
+
+@router.get(
     "/research-notes/audio-files/batch-download-tasks/{task_id}",
     summary="读取录音源文件后台下载与打包进度",
 )

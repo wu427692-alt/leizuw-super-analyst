@@ -162,6 +162,10 @@ export const essayRadarApi = {
     const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-files/batch-download-tasks/${encodeURIComponent(taskId)}`);
     return toCamelCase<EssayAudioBatchTask>(response.data);
   },
+  audioBatchTasks: async (): Promise<{ items: EssayAudioBatchTask[]; total: number }> => {
+    const response = await apiClient.get('/api/v1/financial-data/research-notes/audio-files/batch-download-tasks', { params: { limit: 20 } });
+    return toCamelCase(response.data);
+  },
   downloadAudioBatchTask: async (
     taskId: string,
     onProgress?: (progress: EssayAudioDownloadProgress) => void,

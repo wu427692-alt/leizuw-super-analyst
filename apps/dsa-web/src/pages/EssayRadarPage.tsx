@@ -585,6 +585,8 @@ const EssayRadarPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const requestedAudioTaskId = searchParams.get('task')?.trim() ?? '';
+  const requestedAudioPackageId = searchParams.get('package')?.trim() ?? '';
   const view = radarView(location.pathname);
   const [dashboard, setDashboard] = useState<EssayDashboard | null>(null);
   const [deepInsights, setDeepInsights] = useState<EssayDeepInsights | null>(null);
@@ -597,7 +599,7 @@ const EssayRadarPage = () => {
   const [historicalBacklog, setHistoricalBacklog] = useState<EssayHistoricalBacklog | null>(null);
   const [libraryStatsLoading, setLibraryStatsLoading] = useState(false);
   const [selected, setSelected] = useState<EssayAnalysis | null>(null);
-  const [feedMode, setFeedMode] = useState<'essays' | 'audio'>('essays');
+  const [feedMode, setFeedMode] = useState<'essays' | 'audio'>(() => searchParams.get('tab') === 'audio' ? 'audio' : 'essays');
   const [selectedEssays, setSelectedEssays] = useState<Set<string>>(() => new Set());
   const [selectedAudio, setSelectedAudio] = useState<Map<string, EssayAudioFile>>(() => new Map());
   const [query, setQuery] = useState(() => searchParams.get('query') || '');
@@ -629,7 +631,7 @@ const EssayRadarPage = () => {
   const [batchActionLoading, setBatchActionLoading] = useState(false);
   const [audioBatchTask, setAudioBatchTask] = useState<EssayAudioBatchTask | null>(null);
   const [activeAudioBatchTaskId, setActiveAudioBatchTaskId] = useState(
-    () => window.localStorage.getItem(AUDIO_BATCH_TASK_STORAGE_KEY) ?? '',
+    () => requestedAudioPackageId || window.localStorage.getItem(AUDIO_BATCH_TASK_STORAGE_KEY) || '',
   );
   const [audioDownloadProgress, setAudioDownloadProgress] = useState<EssayAudioDownloadProgress | null>(null);
   const [audioDownloadLoading, setAudioDownloadLoading] = useState(false);
@@ -644,7 +646,7 @@ const EssayRadarPage = () => {
   const [audioMemoOpen, setAudioMemoOpen] = useState(false);
   const [audioMemoInitialTab, setAudioMemoInitialTab] = useState<'memo' | 'transcript'>('memo');
   const [activeAudioAnalysisTaskId, setActiveAudioAnalysisTaskId] = useState(
-    () => window.localStorage.getItem(AUDIO_ANALYSIS_TASK_STORAGE_KEY) ?? '',
+    () => requestedAudioTaskId || window.localStorage.getItem(AUDIO_ANALYSIS_TASK_STORAGE_KEY) || '',
   );
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<string | null>(null);
@@ -721,6 +723,10 @@ const EssayRadarPage = () => {
         const next = await essayRadarApi.audioAnalysisTask(activeAudioAnalysisTaskId);
         if (cancelled) return;
         setAudioAnalysisTask(next);
+        if (next.status === 'completed' && requestedAudioTaskId === next.taskId) {
+          setAudioMemoInitialTab(next.generateMemo === false || next.result?.transcriptOnly ? 'transcript' : 'memo');
+          setAudioMemoOpen(true);
+        }
         if (next.status === 'queued' || next.status === 'running') timer = window.setTimeout(() => void poll(), 1500);
       } catch {
         if (cancelled) return;
@@ -730,7 +736,7 @@ const EssayRadarPage = () => {
     };
     void poll();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [activeAudioAnalysisTaskId]);
+  }, [activeAudioAnalysisTaskId, requestedAudioTaskId]);
 
   const loadView = useCallback(async (_requestVersion: number) => {
     void _requestVersion;

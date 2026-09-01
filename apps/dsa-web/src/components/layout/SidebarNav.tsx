@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, BookOpen, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Orbit, Radar, RadioTower, Search, ShieldCheck, Star } from 'lucide-react';
+import { BarChart3, BookOpen, ClipboardCheck, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Orbit, Radar, Search, Star } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
 import { useAgentChatStore } from '../../stores/agentChatStore';
@@ -25,21 +25,21 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
   exact?: boolean;
   badge?: 'completion';
+  group: 'primary' | 'tools';
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { key: 'home', labelKey: 'layout.nav.home', to: '/app', icon: Home, exact: true },
-  { key: 'research-center', labelKey: 'layout.nav.researchCenter', to: '/research-center', icon: ShieldCheck },
-  { key: 'industry-research', labelKey: 'layout.nav.industryResearch', to: '/industry-research', icon: Network },
-  { key: 'concept-themes', labelKey: 'layout.nav.conceptThemes', to: '/concept-themes', icon: Orbit },
-  { key: 'chat', labelKey: 'layout.nav.chat', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
-  { key: 'essay-radar', labelKey: 'layout.nav.essayRadar', to: '/essay-radar', icon: Radar },
-  { key: 'essay-quant', labelKey: 'layout.nav.essayQuant', to: '/essay-quant', icon: FlaskConical },
-  { key: 'investment-monitor', labelKey: 'layout.nav.investmentMonitor', to: '/investment-monitor', icon: RadioTower },
-  { key: 'super-watchlist', labelKey: 'layout.nav.superWatchlist', to: '/super-watchlist', icon: Star },
-  { key: 'data-acquisition', labelKey: 'layout.nav.dataAcquisition', to: '/data-acquisition', icon: DatabaseZap },
-  { key: 'guide', labelKey: 'layout.nav.guide', to: '/guide', icon: BookOpen },
-  { key: 'screening', labelKey: 'layout.nav.screening', to: '/screening', icon: Search },
+  { key: 'home', labelKey: 'layout.nav.home', to: '/app', icon: Home, exact: true, group: 'primary' },
+  { key: 'concept-themes', labelKey: 'layout.nav.conceptThemes', to: '/concept-themes', icon: Orbit, group: 'primary' },
+  { key: 'super-watchlist', labelKey: 'layout.nav.superWatchlist', to: '/super-watchlist', icon: Star, group: 'primary' },
+  { key: 'industry-research', labelKey: 'layout.nav.industryResearch', to: '/industry-research', icon: Network, group: 'primary' },
+  { key: 'tasks', labelKey: 'layout.nav.tasks', to: '/tasks', icon: ClipboardCheck, group: 'primary' },
+  { key: 'essay-radar', labelKey: 'layout.nav.essayRadar', to: '/essay-radar', icon: Radar, group: 'tools' },
+  { key: 'essay-quant', labelKey: 'layout.nav.essayQuant', to: '/essay-quant', icon: FlaskConical, group: 'tools' },
+  { key: 'data-acquisition', labelKey: 'layout.nav.dataAcquisition', to: '/data-acquisition', icon: DatabaseZap, group: 'tools' },
+  { key: 'chat', labelKey: 'layout.nav.chat', to: '/chat', icon: MessageSquareQuote, badge: 'completion', group: 'tools' },
+  { key: 'screening', labelKey: 'layout.nav.screening', to: '/screening', icon: Search, group: 'tools' },
+  { key: 'guide', labelKey: 'layout.nav.guide', to: '/guide', icon: BookOpen, group: 'tools' },
 ];
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate, variant = 'default' }) => {
@@ -121,11 +121,12 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
         className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         aria-label={t('layout.mainNav')}
       >
-        {navItems.map(({ key, labelKey, to, icon: Icon, exact, badge }) => {
+        {navItems.map(({ key, labelKey, to, icon: Icon, exact, badge, group }, index) => {
           const label = t(labelKey);
           return (
+          <React.Fragment key={key}>
+          {index === 0 || navItems[index - 1]?.group !== group ? <div className={cn('px-2 pb-1 pt-2 text-[8px] font-semibold uppercase tracking-[.16em] text-secondary-text', (collapsed || isRail) && 'sr-only')}>{t(group === 'primary' ? 'layout.nav.primaryGroup' : 'layout.nav.toolsGroup')}</div> : null}
           <NavLink
-            key={key}
             to={to}
             end={exact}
             onClick={onNavigate}
@@ -158,6 +159,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
               </>
             )}
           </NavLink>
+          </React.Fragment>
         );
         })}
 

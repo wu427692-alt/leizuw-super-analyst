@@ -124,6 +124,26 @@ class ResearchNoteMediaTaskService:
             raise ResearchNoteMediaTaskError("录音打包任务不存在或无权访问")
         return self._public_state(state)
 
+    def list_tasks(self, limit: int = 20) -> Dict[str, Any]:
+        """Return retained package tasks for the active user."""
+        self._cleanup_expired_tasks()
+        owner_id = self._owner_getter()
+        items = []
+        for path in self.task_root.glob("audio-*.json"):
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if state.get("owner_id") != owner_id:
+                continue
+            items.append(self._public_state(state))
+        items.sort(
+            key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+            reverse=True,
+        )
+        bounded_limit = max(1, min(int(limit or 20), 50))
+        return {"items": items[:bounded_limit], "total": len(items)}
+
     def _read_state(self, task_id: str) -> Dict[str, Any]:
         path = self._task_path(task_id)
         if not path.is_file():

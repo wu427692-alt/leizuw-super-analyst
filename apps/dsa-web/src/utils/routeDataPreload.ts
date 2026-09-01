@@ -5,6 +5,18 @@ type DataPreloader = {
 
 const DATA_PRELOADERS: DataPreloader[] = [
   {
+    match: (path) => path.startsWith('/tasks'),
+    load: async () => {
+      const [{ industryResearchApi }, { essayQuantApi }, { essayRadarApi }, { dataAcquisitionApi }] = await Promise.all([
+        import('../api/industryResearch'), import('../api/essayQuant'), import('../api/essayRadar'), import('../api/dataAcquisition'),
+      ]);
+      return Promise.allSettled([
+        industryResearchApi.projects(), essayQuantApi.tasks(), essayRadarApi.audioAnalysisTasks(),
+        essayRadarApi.audioBatchTasks(), dataAcquisitionApi.tasks(),
+      ]);
+    },
+  },
+  {
     match: (path) => path === '/app' || path === '/dashboard',
     load: async () => {
       const { homeDashboardApi } = await import('../api/homeDashboard');

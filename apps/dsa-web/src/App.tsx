@@ -70,27 +70,21 @@ const StockScreeningPage = lazyRoute(() => import('./pages/StockScreeningPage'),
 const EssayRadarPage = lazyRoute(() => import('./pages/EssayRadarPage'), 'essay-radar');
 const EssayQuantPage = lazyRoute(() => import('./pages/EssayQuantPage'), 'essay-quant');
 const InvestmentMonitorPage = lazyRoute(() => import('./pages/InvestmentMonitorPage'), 'monitor-feed');
-const InvestmentMonitorOverviewPage = lazyRoute(() => import('./pages/InvestmentMonitorOverviewPage'), 'monitor-overview');
-const InvestmentMonitorBIPage = lazyRoute(() => import('./pages/InvestmentMonitorBIPage'), 'monitor-bi');
 const SuperWatchlistPage = lazyRoute(() => import('./pages/SuperWatchlistPage'), 'super-watchlist');
 const DataAcquisitionPage = lazyRoute(() => import('./pages/DataAcquisitionPage'), 'data-acquisition');
-const ResearchCenterPage = lazyRoute(() => import('./pages/ResearchCenterPage'), 'research-center');
 const IndustryResearchPage = lazyRoute(() => import('./pages/IndustryResearchPage'), 'industry-research');
 const ConceptThemesPage = lazyRoute(() => import('./pages/ConceptThemesPage'), 'concept-themes');
 const DragonTigerPage = lazyRoute(() => import('./pages/DragonTigerPage'), 'dragon-tiger');
 const AdminConsolePage = lazyRoute(() => import('./pages/AdminConsolePage'), 'admin-console');
 const UserGuidePage = lazyRoute(() => import('./pages/UserGuidePage'), 'user-guide');
+const TasksHubPage = lazyRoute(() => import('./pages/TasksHubPage'), 'tasks-hub');
 
 const APP_ROUTE_PRELOAD_PATHS = [
-  '/investment-monitor',
   '/super-watchlist',
-  '/essay-radar',
-  '/essay-quant',
-  '/chat',
-  '/research-center',
-  '/industry-research',
   '/concept-themes',
-  '/data-acquisition',
+  '/industry-research',
+  '/tasks',
+  '/essay-radar',
 ];
 
 /**
@@ -238,9 +232,10 @@ const AppContent: React.FC = () => {
         <Route path="/app" element={<HomePage />} />
         <Route path="/dashboard" element={<Navigate to="/app" replace />} />
         <Route path="/chat" element={<ChatPage />} />
-        <Route path="/research-center" element={<ResearchCenterPage />} />
+        <Route path="/research-center" element={<Navigate to="/super-watchlist?view=decision" replace />} />
         <Route path="/industry-research" element={<IndustryResearchPage />} />
         <Route path="/concept-themes" element={<ConceptThemesPage />} />
+        <Route path="/tasks" element={<TasksHubPage />} />
         <Route path="/portfolio" element={<Navigate to="/app" replace />} />
         <Route path="/decision-signals" element={<Navigate to="/app" replace />} />
         <Route path="/screening" element={<StockScreeningPage />} />
@@ -251,8 +246,8 @@ const AppContent: React.FC = () => {
         <Route path="/essay-radar/reports" element={<EssayRadarPage />} />
         <Route path="/essay-radar/system" element={<EssayRadarPage />} />
         <Route path="/essay-quant/*" element={<EssayQuantPage />} />
-        <Route path="/investment-monitor" element={<InvestmentMonitorOverviewPage />} />
-        <Route path="/investment-monitor/bi" element={<InvestmentMonitorBIPage />} />
+        <Route path="/investment-monitor" element={<Navigate to="/admin/data-sources" replace />} />
+        <Route path="/investment-monitor/bi" element={<Navigate to="/admin/data-sources" replace />} />
         <Route path="/investment-monitor/feed" element={<InvestmentMonitorPage />} />
         <Route path="/investment-monitor/dragon-tiger" element={<DragonTigerPage />} />
         <Route path="/investment-monitor/watchlist" element={<Navigate to="/super-watchlist" replace />} />

@@ -22,8 +22,7 @@ const marketRibbon = [
   { code: 'OPPORTUNITY', label: '机会发现', detail: '题材、事件与候选' },
   { code: 'STOCK', label: '个股决策', detail: '证据、情景与条件' },
   { code: 'RESEARCH', label: '深度研究', detail: '公司、行业与原文' },
-  { code: 'TASKS', label: '后台任务', detail: '调研、转写与打包' },
-  { code: 'VALIDATION', label: '验证复盘', detail: '回测、结果与快照' },
+  { code: 'TASKS', label: '任务与验证', detail: '调研、转写、回测与结果' },
 ];
 
 const evidenceChain = [
@@ -80,7 +79,7 @@ const productTours = [
     screenshot: '/landing/screens/industry-research.jpg', alt: '深度研究最新真实页面',
   },
   {
-    number: '05', category: '离开页面也继续执行', title: '任务与验证', href: '/essay-quant', action: '查看任务与研究结果', icon: ListChecks,
+    number: '05', category: '离开页面也继续执行', title: '任务与验证', href: '/tasks', action: '查看任务与研究结果', icon: ListChecks,
     description: '调研、录音转写、数据打包和量化验证都在后台执行；量化任务按用户独立保存参数、进度和结果，完成后可以复现与比较。',
     data: '后台任务状态 · 行情 · 交易日历 · 机构事件 · 研究样本', output: '任务进度、研究结果、收益回撤、稳健性与可复现快照',
     screenshot: '/landing/screens/quant-workbench.jpg', alt: '量化研究任务中心最新真实页面',
@@ -152,7 +151,6 @@ const LandingPage = () => {
         </dl>
       </div>
       <div className="landing-hero-visual">
-        <div className="landing-hero-thread" aria-hidden="true"><span /><i /></div>
         <figure className="landing-hero-screen">
           <div className="landing-window-bar"><span>01</span><b>今日市场环境</b><em>2026-09-01 · 线上实机</em></div>
           <img src="/landing/screens/market-overview.jpg" alt="乐子乌超级价值今日市场环境最新真实页面" fetchPriority="high" />

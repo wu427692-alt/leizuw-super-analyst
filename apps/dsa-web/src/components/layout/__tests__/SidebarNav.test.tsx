@@ -60,7 +60,7 @@ describe('SidebarNav', () => {
     expect(await screen.findByRole('link', { name: '选股' })).toHaveAttribute('href', '/screening');
   });
 
-  it('keeps monitoring routes before screening when AlphaSift is enabled', async () => {
+  it('keeps five decision workspaces before research tools', async () => {
     mockGetAlphaSiftStatus.mockResolvedValueOnce({ enabled: true, available: false, installSpecIsDefault: false });
 
     render(
@@ -73,17 +73,17 @@ describe('SidebarNav', () => {
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
     expect(hrefs.slice(0, 12)).toEqual([
       '/app',
-      '/research-center',
-      '/industry-research',
       '/concept-themes',
-      '/chat',
+      '/super-watchlist',
+      '/industry-research',
+      '/tasks',
       '/essay-radar',
       '/essay-quant',
-      '/investment-monitor',
-      '/super-watchlist',
       '/data-acquisition',
-      '/guide',
+      '/chat',
       '/screening',
+      '/guide',
+      '/admin',
     ]);
   });
 

@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useEffect, useState } from 'react';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, Menu } from 'lucide-react';
 import { Outlet } from 'react-router-dom';
 import { Drawer } from '../common/Drawer';
 import { SidebarNav } from './SidebarNav';
@@ -41,9 +41,10 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
       <header className="mobile-app-bar lg:hidden">
         <div className="mobile-app-bar__brand">
           <span><BarChart3 aria-hidden="true" /></span>
-          <div><strong>乐子乌超级价值</strong><small>财经情报与研究</small></div>
+          <div><strong>乐子乌超级价值</strong><small>证据驱动的投资研究</small></div>
         </div>
         <div className="mobile-app-bar__actions">
+          <button type="button" className="mobile-app-bar__menu" aria-label={t('layout.openNav')} onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></button>
           <UiLanguageToggle />
           <ThemeToggle />
         </div>
@@ -68,7 +69,7 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
         </main>
       </div>
 
-      <MobileBottomNav onOpenMore={() => setMobileOpen(true)} />
+      <MobileBottomNav />
 
       <Drawer
         isOpen={mobileOpen}

@@ -131,8 +131,10 @@ def test_background_acquisition_task_is_owner_scoped(tmp_path: Path):
     )
     submitted = manager.submit("获取华懋科技数据", FakePlanner().plan("获取华懋科技数据"))
     assert "owner_id" not in submitted
+    assert manager.list_tasks()["items"][0]["task_id"] == submitted["task_id"]
 
     owner["value"] = "user:2"
+    assert manager.list_tasks() == {"items": [], "total": 0}
     with pytest.raises(DataAcquisitionError, match="无权访问"):
         manager.get(submitted["task_id"])
     manager._executor.shutdown(wait=True)

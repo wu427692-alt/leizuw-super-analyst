@@ -1,27 +1,20 @@
 import type React from 'react';
-import { AudioLines, Download, Home, Menu, Star } from 'lucide-react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { ClipboardCheck, Home, Network, Orbit, Star } from 'lucide-react';
+import { NavLink } from 'react-router-dom';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { cn } from '../../utils/cn';
 import { preloadRoute } from '../../utils/routePreload';
 
-type MobileBottomNavProps = {
-  onOpenMore: () => void;
-};
-
 const PRIMARY_ITEMS = [
   { to: '/app', labelKey: 'layout.nav.home' as const, shortLabel: '首页', icon: Home, exact: true },
-  { to: '/super-watchlist', labelKey: 'layout.nav.superWatchlist' as const, shortLabel: '自选', icon: Star },
-  { to: '/essay-radar', labelKey: 'layout.nav.essayRadar' as const, shortLabel: '机构段子', icon: AudioLines },
-  { to: '/data-acquisition', labelKey: 'layout.nav.dataAcquisition' as const, shortLabel: '数据下载', icon: Download },
+  { to: '/concept-themes', labelKey: 'layout.nav.conceptThemes' as const, shortLabel: '机会', icon: Orbit },
+  { to: '/super-watchlist', labelKey: 'layout.nav.superWatchlist' as const, shortLabel: '个股', icon: Star },
+  { to: '/industry-research', labelKey: 'layout.nav.industryResearch' as const, shortLabel: '研究', icon: Network },
+  { to: '/tasks', labelKey: 'layout.nav.tasks' as const, shortLabel: '任务', icon: ClipboardCheck },
 ];
 
-export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ onOpenMore }) => {
+export const MobileBottomNav: React.FC = () => {
   const { t } = useUiLanguage();
-  const location = useLocation();
-  const moreActive = !PRIMARY_ITEMS.some((item) => (
-    item.exact ? location.pathname === item.to : location.pathname.startsWith(item.to)
-  ));
 
   return (
     <nav className="mobile-bottom-nav lg:hidden" aria-label="手机主导航">
@@ -39,15 +32,6 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ onOpenMore }) 
           <span aria-hidden="true">{shortLabel}</span>
         </NavLink>
       ))}
-      <button
-        type="button"
-        onClick={onOpenMore}
-        className={cn('mobile-bottom-nav__item', moreActive && 'is-active')}
-        aria-label={t('layout.navMenu')}
-      >
-        <Menu aria-hidden="true" />
-        <span>更多</span>
-      </button>
     </nav>
   );
 };

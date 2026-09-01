@@ -5,6 +5,7 @@ import { AppPage, Badge, Card, EmptyState, EvidenceRail, PageHeader, StatCard } 
 import ResearchReportLibrary from '../components/data-acquisition/ResearchReportLibrary';
 import type { AcquisitionCapabilities, AcquisitionDownloadProgress, AcquisitionJob, AcquisitionPlan, AcquisitionRunTask } from '../types/dataAcquisition';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
+import { useSearchParams } from 'react-router-dom';
 
 const EXAMPLES = [
   '打包华懋科技和胜宏科技近90天行情、估值、资金、公告、研报、新闻和知识星球小作文，并补充工商与风险信息',
@@ -65,13 +66,15 @@ function DownloadProgress({ state }: { state: DownloadState }) {
 }
 
 const DataAcquisitionPage = () => {
+  const [searchParams] = useSearchParams();
+  const requestedTaskId = searchParams.get('task')?.trim() ?? '';
   const [request, setRequest] = useState(EXAMPLES[0]);
   const [capabilities, setCapabilities] = useState<AcquisitionCapabilities | null>(null);
   const [plan, setPlan] = useState<AcquisitionPlan | null>(null);
   const [jobs, setJobs] = useState<AcquisitionJob[]>([]);
   const [activeJob, setActiveJob] = useState<AcquisitionJob | null>(null);
   const [runTask, setRunTask] = useState<AcquisitionRunTask | null>(null);
-  const [activeTaskId, setActiveTaskId] = useState(() => window.localStorage.getItem(ACTIVE_TASK_STORAGE_KEY) ?? '');
+  const [activeTaskId, setActiveTaskId] = useState(() => requestedTaskId || window.localStorage.getItem(ACTIVE_TASK_STORAGE_KEY) || '');
   const [planning, setPlanning] = useState(false);
   const [running, setRunning] = useState(false);
   const [downloading, setDownloading] = useState('');

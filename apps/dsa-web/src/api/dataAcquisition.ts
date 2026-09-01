@@ -59,6 +59,7 @@ export const dataAcquisitionApi = {
   },
   runAsync: async (request: string, plan: AcquisitionPlan): Promise<AcquisitionRunTask> => {
     const response = await apiClient.post('/api/v1/data-acquisition/run-async', { request, plan: writePlan(plan) });
+    invalidateCachedQueries('acquisition:tasks');
     return toCamelCase<AcquisitionRunTask>(response.data);
   },
   task: async (taskId: string): Promise<AcquisitionRunTask> => {
@@ -66,6 +67,12 @@ export const dataAcquisitionApi = {
     const task = toCamelCase<AcquisitionRunTask>(response.data);
     if (task.result) task.result.plan = readPlan((response.data as { result: { plan: RawPlan } }).result.plan);
     return task;
+  },
+  tasks: async (): Promise<{ items: AcquisitionRunTask[]; total: number }> => {
+    return cachedQuery('acquisition:tasks', async () => {
+      const response = await apiClient.get('/api/v1/data-acquisition/tasks', { params: { limit: 50 } });
+      return toCamelCase(response.data);
+    }, { freshMs: 1_000, staleMs: 5_000 });
   },
   jobs: async (): Promise<{ items: AcquisitionJob[]; total: number }> => {
     return cachedQuery('acquisition:jobs', async () => {

@@ -105,8 +105,10 @@ def test_audio_package_task_is_owner_scoped(tmp_path: Path) -> None:
     )
     submitted = service.submit([("topic-1", "audio-1")])
     assert "owner_id" not in submitted
+    assert service.list_tasks()["items"][0]["task_id"] == submitted["task_id"]
 
     owner["value"] = "user:2"
+    assert service.list_tasks() == {"items": [], "total": 0}
     with pytest.raises(ResearchNoteMediaTaskError, match="无权访问"):
         service.get(submitted["task_id"])
     service._executor.shutdown(wait=True)

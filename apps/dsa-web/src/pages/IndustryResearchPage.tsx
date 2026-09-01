@@ -12,7 +12,7 @@ import {
   LibraryBig, ListChecks, LoaderCircle, MessageSquareText, Network, Play,
   RadioTower, ScanText, Search, ShieldCheck, Sparkles, Telescope, Workflow,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { industryResearchApi } from '../api/industryResearch';
 import { AppPage } from '../components/common';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
@@ -450,6 +450,8 @@ function ReportView({ project }: { project?: IndustryResearchProject }) {
 }
 
 export default function IndustryResearchPage() {
+  const [searchParams] = useSearchParams();
+  const requestedProjectId = searchParams.get('project')?.trim() ?? '';
   const [topic, setTopic] = useState('光模块');
   const [researchType, setResearchType] = useState<ResearchType>('industry');
   const [lookbackDays, setLookbackDays] = useState(730);
@@ -462,6 +464,7 @@ export default function IndustryResearchPage() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
   const blueprintRequestRef = useRef(0);
+  const deepLinkOpenedRef = useRef('');
 
   useEffect(() => { document.title = '行业与公司调研 - 乐子乌超级价值'; }, []);
 
@@ -597,6 +600,12 @@ export default function IndustryResearchPage() {
       setError(caught instanceof Error ? caught.message : '任务详情暂时无法读取');
     }
   }, []);
+
+  useEffect(() => {
+    if (!requestedProjectId || deepLinkOpenedRef.current === requestedProjectId) return;
+    deepLinkOpenedRef.current = requestedProjectId;
+    void openProject(requestedProjectId);
+  }, [openProject, requestedProjectId]);
 
   useEffect(() => {
     if (!blueprint || loading || activeProject || topic.trim() !== blueprint.topic.trim()) return;

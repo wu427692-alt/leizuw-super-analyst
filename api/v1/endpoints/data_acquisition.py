@@ -55,6 +55,11 @@ def run_async(request: DataAcquisitionRunRequest):
         raise _error(exc)
 
 
+@router.get("/tasks", summary="列出当前用户的一站式取数后台任务")
+def tasks(limit: int = Query(50, ge=1, le=100)):
+    return DataAcquisitionTaskService.get_instance().list_tasks(limit)
+
+
 @router.get("/tasks/{task_id}", summary="读取后台取数任务的真实渠道与打包进度")
 def task(task_id: str):
     try:

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowRight, CheckCircle2, KeyRound, LockKeyhole, RadioTower, ShieldCheck, UserRoundPlus } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -18,6 +18,8 @@ const UserAccessPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => { document.title = '登录 · 乐子乌超级价值'; }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -38,24 +40,24 @@ const UserAccessPage: React.FC = () => {
     <main className="user-access-page">
       <div className="user-access-grid" aria-hidden="true" />
       <section className="user-access-story">
-        <Link to="/" className="user-access-brand"><span>乐子乌超级价值</span> FINANCIAL INTELLIGENCE</Link>
+        <Link to="/" className="user-access-brand"><span>乐子乌超级价值</span> 证据驱动的投资研究</Link>
         <div className="user-access-copy">
-          <p className="user-access-kicker"><RadioTower /> PRIVATE DATA WORKSPACE</p>
-          <h1>一套共享事实库，<br /><em>每个人拥有独立工作台。</em></h1>
-          <p>行情、公告、研报和知识星球由后台统一更新；自选股、问股会话与个人任务只属于当前账号。</p>
+          <p className="user-access-kicker"><RadioTower /> 从变化到判断，再到验证</p>
+          <h1>共享同一套事实，<br /><em>保留每个人的研究路径。</em></h1>
+          <p>行情、公告、研报和机构语料由后台统一更新；自选股、问股会话、调研与量化任务按账号独立保存。</p>
           <div className="user-access-features">
             <article><ShieldCheck /><div><strong>管理员审批</strong><span>注册后先审核，再开放数据和 AI 能力</span></div></article>
             <article><LockKeyhole /><div><strong>用户数据隔离</strong><span>服务端按账号分区，不依赖浏览器自报身份</span></div></article>
             <article><KeyRound /><div><strong>会话登录保护</strong><span>必须完成账号登录，共享网络不会自动放行</span></div></article>
           </div>
         </div>
-        <small>MARKET DATA · INTELLIGENCE · AI RESEARCH</small>
+        <small>今日决策 · 机会发现 · 个股决策 · 深度研究 · 任务验证</small>
       </section>
 
       <section className="user-access-card">
         <div className="user-access-card-head">
           <span>{pending ? <CheckCircle2 /> : mode === 'login' ? <KeyRound /> : <UserRoundPlus />}</span>
-          <div><p>ACCESS GATEWAY</p><h2>{pending ? '等待访问批准' : mode === 'login' ? '进入情报台' : '提交访问申请'}</h2></div>
+          <div><p>用户访问</p><h2>{pending ? '等待访问批准' : mode === 'login' ? '进入研究工作台' : '提交访问申请'}</h2></div>
         </div>
 
         {pending ? (
