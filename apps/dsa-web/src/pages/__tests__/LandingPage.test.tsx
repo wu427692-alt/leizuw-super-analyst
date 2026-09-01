@@ -17,6 +17,8 @@ describe('LandingPage', () => {
     expect(screen.getByRole('heading', { name: '数据一站式获取' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '概念题材查看' })).toBeInTheDocument();
     expect(screen.getByText('中国股票研究工作台')).toBeInTheDocument();
+    expect(screen.getByLabelText('平台研究数据范围')).toBeVisible();
+    expect(screen.getByLabelText('研究工作台三层结构')).toBeVisible();
     expect(screen.getByRole('heading', { name: /八个界面，\s*对应八类研究任务。/ })).toBeInTheDocument();
     expect(screen.getByAltText('乐子乌超级价值市场总览真实页面')).toHaveAttribute('src', '/landing/screens/market-overview.jpg');
     expect(screen.getByRole('link', { name: /进入研究平台/ })).toHaveAttribute('href', '/app');

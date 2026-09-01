@@ -17,6 +17,21 @@ const connectedSources = [
   { label: '本地 SQLite', detail: '跨页面共享的行情与证据库', icon: DatabaseZap },
 ];
 
+const marketRibbon = [
+  { code: 'INDEX', label: '核心指数', detail: '分时与多周期' },
+  { code: 'BREADTH', label: '市场广度', detail: '涨跌家数与行业分布' },
+  { code: 'DISCLOSURE', label: '公司公告', detail: '交易所原文与附件' },
+  { code: 'RESEARCH', label: '机构研报', detail: '标题、正文与 PDF' },
+  { code: 'CORPUS', label: '机构语料', detail: '段子、文件与录音' },
+  { code: 'VALIDATION', label: '量化验证', detail: '任务、结果与快照' },
+];
+
+const researchLedger = [
+  { number: '01', label: '行情口径', detail: '交易日 · 昨收 · 来源' },
+  { number: '02', label: '证据链', detail: '公告 · 研报 · 机构语料' },
+  { number: '03', label: '研究输出', detail: '结论 · 风险 · 跟踪点' },
+];
+
 const researchFlow = [
   { number: '01', title: '定义问题', detail: '明确对象、日期和需要回答的研究问题。', icon: Search },
   { number: '02', title: '召回证据', detail: '从统一数据库检索行情、公告、研报与机构语料。', icon: FileSearch },
@@ -116,6 +131,14 @@ const LandingPage = () => {
       </div>
     </header>
 
+    <section className="landing-market-ribbon" aria-label="平台研究数据范围">
+      <div className="landing-market-ribbon__track">
+        {[...marketRibbon, ...marketRibbon].map((item, index) => <article key={`${item.code}-${index}`} aria-hidden={index >= marketRibbon.length}>
+          <span>{item.code}</span><strong>{item.label}</strong><small>{item.detail}</small>
+        </article>)}
+      </div>
+    </section>
+
     <section className="landing-hero" aria-labelledby="landing-title">
       <div className="landing-hero-copy">
         <div className="landing-kicker"><span>中国股票研究工作台</span><b>2026 / 真实生产系统</b></div>
@@ -123,11 +146,17 @@ const LandingPage = () => {
         <p>把行情、公告、研报、机构段子与录音、企业事实和量化验证接入同一条证据链。时间、来源、原文和任务状态都可以核验。</p>
         <div className="landing-actions"><Link className="landing-enter" to="/app">进入研究平台<ArrowRight aria-hidden="true" /></Link><Link className="landing-discover" to="/guide"><BookOpen aria-hidden="true" />查看完整手册</Link></div>
       </div>
-      <figure className="landing-hero-screen">
-        <div className="landing-window-bar"><span>01</span><b>市场总览</b><em>真实运行界面</em></div>
-        <img src="/landing/screens/market-overview.jpg" alt="乐子乌超级价值市场总览真实页面" fetchPriority="high" />
-        <figcaption><span>截图采集于 2026-08-31</span><b>页面数据按实际交易日自动更新</b></figcaption>
-      </figure>
+      <div className="landing-hero-visual">
+        <div className="landing-hero-coordinate" aria-hidden="true"><span>研究对象</span><b>市场 / 行业 / 公司</b></div>
+        <figure className="landing-hero-screen">
+          <div className="landing-window-bar"><span>01</span><b>市场总览</b><em>真实运行界面</em></div>
+          <img src="/landing/screens/market-overview.jpg" alt="乐子乌超级价值市场总览真实页面" fetchPriority="high" />
+          <figcaption><span>截图采集于 2026-08-31</span><b>页面数据按实际交易日自动更新</b></figcaption>
+        </figure>
+        <div className="landing-hero-ledger" aria-label="研究工作台三层结构">
+          {researchLedger.map(item => <article key={item.number}><span>{item.number}</span><div><strong>{item.label}</strong><small>{item.detail}</small></div></article>)}
+        </div>
+      </div>
       <dl className="landing-hero-metrics" aria-label="平台覆盖范围">
         <div><dt>12</dt><dd>研究工作台</dd></div>
         <div><dt>08</dt><dd>真实界面展示</dd></div>
