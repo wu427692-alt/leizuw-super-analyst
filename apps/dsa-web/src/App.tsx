@@ -15,7 +15,6 @@ import { useAgentChatStore } from './stores/agentChatStore';
 import { WEB_BUILD_INFO } from './utils/constants';
 import { chunkRetryKey, isChunkLoadError, reloadWithFreshFrontend } from './utils/chunkRecovery';
 import { canPreloadRoutes, preloadRoute } from './utils/routePreload';
-import { preloadRouteData } from './utils/routeDataPreload';
 import LandingPage from './pages/LandingPage';
 import './App.css';
 
@@ -136,31 +135,6 @@ const RoutePreloadController = () => {
   return null;
 };
 
-/** Warm one page at a time after authentication and first paint. */
-const RouteDataWarmupController = () => {
-  useEffect(() => {
-    if (!canPreloadRoutes()) return undefined;
-    const candidates = APP_ROUTE_PRELOAD_PATHS;
-    let cancelled = false;
-    let cursor = 0;
-    let timer: number | undefined;
-
-    const warmNext = async () => {
-      if (cancelled || document.visibilityState === 'hidden' || cursor >= candidates.length) return;
-      const path = candidates[cursor++];
-      try { await preloadRouteData(path ?? '/app'); } catch { /* the page owns its retry UI */ }
-      if (!cancelled && cursor < candidates.length) timer = window.setTimeout(() => void warmNext(), 3_500);
-    };
-    timer = window.setTimeout(() => void warmNext(), 3_500);
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, []);
-
-  return null;
-};
-
 const AppContent: React.FC = () => {
   const location = useLocation();
   const { authEnabled, loggedIn, isLoading } = useAuth();
@@ -220,7 +194,6 @@ const AppContent: React.FC = () => {
 
   return (
     <>
-      <RouteDataWarmupController />
       <Routes>
       <Route
         element={(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,19 @@ class StartupWarmupService:
 
         essays = EssayAnalysisService()
         monitor = InvestmentMonitorService()
+
+        def warm_watchlist_workspaces() -> None:
+            symbols = monitor.equity_watchlist()
+            if not symbols:
+                return
+            # Two readers keep startup bounded on the 2-core production host
+            # without creating the request burst the former browser preloader did.
+            with ThreadPoolExecutor(max_workers=min(2, len(symbols))) as executor:
+                list(executor.map(
+                    lambda symbol: monitor.stock_workspace(symbol, days=183, refresh=True),
+                    symbols,
+                ))
+
         essential: tuple[WarmupTask, ...] = (
             # This is maintenance, not request-path work.  It used to run every
             # time InvestmentMonitorService was constructed, forcing unrelated
@@ -43,6 +57,7 @@ class StartupWarmupService:
                 "investment-feed-first-page",
                 lambda: monitor.list_events(days=7, page=1, page_size=30),
             ),
+            ("watchlist-stock-workspaces", warm_watchlist_workspaces),
         )
         if os.getenv("APP_STARTUP_WARMUP_PROFILE", "essential").strip().lower() != "full":
             return essential

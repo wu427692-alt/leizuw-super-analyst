@@ -46,8 +46,13 @@ from src.storage import (
 logger = logging.getLogger(__name__)
 
 _STOCK_WORKSPACE_CACHE_TTL_SECONDS = 120
+_STOCK_WORKSPACE_CACHE_STALE_SECONDS = 900
 _stock_workspace_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _stock_workspace_cache_lock = threading.Lock()
+_stock_workspace_refreshing: set[str] = set()
+_stock_workspace_refresh_executor = ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="stock-workspace-refresh",
+)
 _SUPER_WATCHLIST_CACHE_TTL_SECONDS = 30
 _super_watchlist_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _super_watchlist_cache_lock = threading.Lock()
@@ -967,8 +972,26 @@ class InvestmentMonitorService:
         if not refresh:
             with _stock_workspace_cache_lock:
                 cached = _stock_workspace_cache.get(cache_key)
-            if cached and time.monotonic() - cached[0] <= _STOCK_WORKSPACE_CACHE_TTL_SECONDS:
-                return {**cached[1], "cache": {"hit": True, "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS}}
+            if cached:
+                age_seconds = max(0.0, time.monotonic() - cached[0])
+                if age_seconds <= _STOCK_WORKSPACE_CACHE_TTL_SECONDS:
+                    return {
+                        **cached[1],
+                        "cache": {
+                            "hit": True, "state": "fresh", "age_seconds": round(age_seconds, 1),
+                            "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS,
+                        },
+                    }
+                if age_seconds <= _STOCK_WORKSPACE_CACHE_STALE_SECONDS:
+                    self._refresh_stock_workspace_in_background(cache_key, code, safe_days)
+                    return {
+                        **cached[1],
+                        "cache": {
+                            "hit": True, "state": "stale-refreshing", "age_seconds": round(age_seconds, 1),
+                            "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS,
+                            "stale_seconds": _STOCK_WORKSPACE_CACHE_STALE_SECONDS,
+                        },
+                    }
 
         try:
             quote_rows = MarketDataService().latest_quotes([code], refresh_missing=False)
@@ -1003,7 +1026,36 @@ class InvestmentMonitorService:
             if len(_stock_workspace_cache) > 128:
                 oldest = min(_stock_workspace_cache, key=lambda key: _stock_workspace_cache[key][0])
                 _stock_workspace_cache.pop(oldest, None)
-        return {**payload, "cache": {"hit": False, "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS}}
+        return {
+            **payload,
+            "cache": {
+                "hit": False, "state": "rebuilt",
+                "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS,
+                "stale_seconds": _STOCK_WORKSPACE_CACHE_STALE_SECONDS,
+            },
+        }
+
+    def _refresh_stock_workspace_in_background(self, cache_key: str, code: str, days: int) -> None:
+        """Refresh one stale workspace once while callers keep using its last valid snapshot."""
+        with _stock_workspace_cache_lock:
+            if cache_key in _stock_workspace_refreshing:
+                return
+            _stock_workspace_refreshing.add(cache_key)
+
+        def refresh_cached_workspace() -> None:
+            try:
+                self.stock_workspace(code, days=days, refresh=True)
+            except Exception as exc:  # noqa: BLE001 - the last valid snapshot remains available.
+                logger.warning("Background stock workspace refresh skipped for %s: %s", code, type(exc).__name__)
+            finally:
+                with _stock_workspace_cache_lock:
+                    _stock_workspace_refreshing.discard(cache_key)
+
+        try:
+            _stock_workspace_refresh_executor.submit(refresh_cached_workspace)
+        except RuntimeError:
+            with _stock_workspace_cache_lock:
+                _stock_workspace_refreshing.discard(cache_key)
 
     @staticmethod
     def _agent_context_from_stock(stock: Dict[str, Any]) -> Dict[str, Any]:

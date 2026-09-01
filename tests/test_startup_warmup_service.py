@@ -58,6 +58,7 @@ def test_essential_warmup_keeps_heavy_analytics_lazy(monkeypatch):
         "essay-status",
         "essay-feed-first-page",
         "investment-feed-first-page",
+        "watchlist-stock-workspaces",
     ]
 
 

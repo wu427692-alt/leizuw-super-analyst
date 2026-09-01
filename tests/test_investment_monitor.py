@@ -523,6 +523,7 @@ def test_stock_workspace_short_cache_reuses_assembled_payload(monitor, monkeypat
 
     assert first["generated_at"] == second["generated_at"]
     assert second["cache"]["hit"] is True
+    assert second["cache"]["state"] == "fresh"
 
 
 def test_watchlist_backfill_job_is_durable_and_idempotent_while_active(monitor):
