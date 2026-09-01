@@ -52,10 +52,12 @@ export const investmentMonitorApi = {
     }, { freshMs: 8_000, staleMs: 120_000, force });
   },
   stockWorkspace: async (symbol: string, days = 365, refresh = false): Promise<StockWorkspace> => {
-    const response = await apiClient.get(`/api/v1/investment-monitor/stock-workspace/${encodeURIComponent(symbol)}`, {
-      params: { days, refresh },
-    });
-    return toCamelCase<StockWorkspace>(response.data);
+    return cachedQuery(`monitor:stock-workspace:${symbol}:${days}`, async () => {
+      const response = await apiClient.get(`/api/v1/investment-monitor/stock-workspace/${encodeURIComponent(symbol)}`, {
+        params: { days, refresh },
+      });
+      return toCamelCase<StockWorkspace>(response.data);
+    }, { freshMs: 30_000, staleMs: 300_000, force: refresh });
   },
   researchCenter: async (): Promise<ResearchCenterOverview> => {
     return cachedQuery('monitor:research-center', async () => {
@@ -66,6 +68,7 @@ export const investmentMonitorApi = {
   refreshSuperWatchlist: async (): Promise<unknown> => {
     const response = await apiClient.post('/api/v1/investment-monitor/super-watchlist/refresh', undefined, { timeout: 60000 });
     invalidateCachedQueries('monitor:super-watchlist:');
+    invalidateCachedQueries('monitor:stock-workspace:');
     return toCamelCase(response.data);
   },
   backfillWatchlist: async (symbol: string): Promise<WatchlistBackfillJob> => {

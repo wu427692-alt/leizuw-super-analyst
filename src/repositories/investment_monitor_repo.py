@@ -702,6 +702,162 @@ class InvestmentMonitorRepository:
             ).scalars().all()
         return [self._event_dict(row) for row in rows]
 
+    def recent_symbol_events(
+        self,
+        *,
+        symbol: str,
+        days: int,
+        event_types: Optional[Iterable[str]] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Read a bounded, type-filtered slice of one symbol's evidence.
+
+        Stock workspaces only need the newest rows for a visible section.  The
+        older ``all_symbol_events`` contract remains available to offline
+        research jobs, while interactive pages avoid hydrating and JSON-decoding
+        thousands of unrelated documents.
+        """
+        cutoff = utc_naive_now() - timedelta(days=max(1, int(days)))
+        types = tuple(dict.fromkeys(str(value) for value in (event_types or ()) if str(value)))
+        with self.db.get_session() as session:
+            query = select(MonitoringEventRecord).where(
+                MonitoringEventRecord.event_at >= cutoff,
+                MonitoringEventRecord.symbol_codes.like(f"%{symbol}%"),
+                MonitoringEventRecord.event_type != "realtime_quote",
+            )
+            if types:
+                query = query.where(MonitoringEventRecord.event_type.in_(types))
+            query = query.order_by(
+                desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id),
+            ).options(load_only(*_EVENT_LIST_COLUMNS))
+            if limit is not None:
+                query = query.limit(max(1, int(limit)))
+            rows = session.execute(query).scalars().all()
+        return [self._event_dict(row) for row in rows]
+
+    def symbol_workspace_bundle(self, *, symbol: str, days: int) -> Dict[str, Any]:
+        """Return exact counters plus bounded evidence for an interactive stock page.
+
+        The former workspace path materialized every matching event merely to
+        compute counts.  Popular stocks can have tens of thousands of comments
+        and news rows, making a three-stock page spend seconds in SQLite and JSON
+        parsing.  This method keeps totals as narrow SQL aggregates and fetches
+        only the rows that can actually be rendered.
+        """
+        safe_days = max(1, int(days))
+        cutoff = utc_naive_now() - timedelta(days=safe_days)
+        conditions = (
+            MonitoringEventRecord.event_at >= cutoff,
+            MonitoringEventRecord.symbol_codes.like(f"%{symbol}%"),
+            MonitoringEventRecord.event_type != "realtime_quote",
+        )
+        snapshot_types = {
+            "market_open_snapshot", "market_snapshot", "fundamental_snapshot",
+            "capital_chip_snapshot", "ownership_snapshot", "technical_factor",
+            "market_theme_flow", "limit_pool", "company_profile",
+        }
+        research_types = {
+            "research_report_pdf", "institution_forecast", "institution_survey",
+            "broker_recommendation",
+        }
+        message_types = {
+            "news", "long_news", "essay", "enterprise_registration",
+            "enterprise_risk", "enterprise_credit", "enterprise_ipr",
+            "enterprise_history",
+        }
+        original = case(
+            (and_(MonitoringEventRecord.url.is_not(None), MonitoringEventRecord.url != ""), 1),
+            else_=0,
+        )
+        unverified = case(
+            (MonitoringEventRecord.metrics_json.like('%"evidence_level":"unverified"%'), 1),
+            (MonitoringEventRecord.source_key.in_(("zsxq.essays", "eastmoney.guba_posts")), 1),
+            else_=0,
+        )
+
+        def fetch(
+            session: Any,
+            types: Optional[Iterable[str]],
+            limit: int,
+        ) -> List[Dict[str, Any]]:
+            query = select(MonitoringEventRecord).where(*conditions)
+            values = tuple(types or ())
+            if values:
+                query = query.where(MonitoringEventRecord.event_type.in_(values))
+            rows = session.execute(
+                query.order_by(
+                    desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id),
+                ).limit(max(1, int(limit))).options(load_only(*_EVENT_LIST_COLUMNS))
+            ).scalars().all()
+            return [self._event_dict(row) for row in rows]
+
+        with self.db.get_session() as session:
+            grouped_rows = session.execute(select(
+                MonitoringEventRecord.source_key,
+                MonitoringEventRecord.event_type,
+                func.count(MonitoringEventRecord.id),
+                func.max(MonitoringEventRecord.event_at),
+                func.sum(original),
+                func.sum(unverified),
+            ).where(*conditions).group_by(
+                MonitoringEventRecord.source_key,
+                MonitoringEventRecord.event_type,
+            )).all()
+            snapshots = fetch(session, snapshot_types, 200)
+            research = fetch(session, research_types, 200)
+            announcements = fetch(session, ("company_announcement",), 20)
+            essays = fetch(session, ("essay",), 30)
+            stock_comments = fetch(session, ("stock_forum_post",), 20)
+            messages = fetch(session, message_types, 40)
+            timeline = fetch(session, None, 40)
+
+        type_counts: Dict[str, int] = {}
+        type_latest: Dict[str, str] = {}
+        source_counts: Dict[str, int] = {}
+        source_latest: Dict[str, str] = {}
+        raw_event_count = decision_event_count = original_link_count = unverified_count = 0
+        groups: List[Dict[str, Any]] = []
+        for source_key, event_type, count, latest_at, original_count, unverified_rows in grouped_rows:
+            raw_count = int(count or 0)
+            decision_count = 1 if str(event_type) in snapshot_types else raw_count
+            raw_event_count += raw_count
+            decision_event_count += decision_count
+            original_links = min(decision_count, int(original_count or 0))
+            unverified_links = min(decision_count, int(unverified_rows or 0))
+            original_link_count += original_links
+            unverified_count += unverified_links
+            type_counts[str(event_type)] = type_counts.get(str(event_type), 0) + decision_count
+            source_counts[str(source_key)] = source_counts.get(str(source_key), 0) + decision_count
+            latest_iso = self._iso(latest_at)
+            if latest_iso:
+                type_latest[str(event_type)] = max(type_latest.get(str(event_type), ""), latest_iso)
+                source_latest[str(source_key)] = max(source_latest.get(str(source_key), ""), latest_iso)
+            groups.append({
+                "source_key": str(source_key), "event_type": str(event_type),
+                "count": decision_count, "raw_count": raw_count,
+                "latest_at": latest_iso, "original_link_count": original_links,
+                "unverified_count": unverified_links,
+            })
+
+        return {
+            "snapshots": snapshots,
+            "research": research,
+            "announcements": announcements,
+            "essays": essays,
+            "stock_comments": stock_comments,
+            "messages": messages,
+            "timeline": timeline,
+            "groups": groups,
+            "type_counts": type_counts,
+            "type_latest": type_latest,
+            "source_counts": source_counts,
+            "source_latest": source_latest,
+            "raw_event_count": raw_event_count,
+            "decision_event_count": decision_event_count,
+            "original_link_count": original_link_count,
+            "unverified_count": unverified_count,
+        }
+
     def reindex_keyword_symbols(
         self, *, aliases_by_symbol: Dict[str, Iterable[str]], days: int = 3650,
         event_types: Iterable[str] = ("essay",),

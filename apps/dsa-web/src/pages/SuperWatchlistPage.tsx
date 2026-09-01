@@ -9,7 +9,7 @@ import { AppPage, ConfirmDialog, Drawer, EmptyState, EvidenceRail } from '../com
 import { eventTime } from '../components/investmentMonitor/investmentMonitorMeta';
 import { MarketTimeframeChart } from '../components/market';
 import { StockAutocomplete } from '../components/StockAutocomplete/StockAutocomplete';
-import type { EssayConsensusAnalysis, MonitorEvent, SuperWatchlistDashboard, SuperWatchlistStock } from '../types/investmentMonitor';
+import type { EssayConsensusAnalysis, MonitorEvent, SuperWatchlistStock } from '../types/investmentMonitor';
 import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type { RealtimeQuote } from '../api/realtimeQuotes';
@@ -261,47 +261,98 @@ function DetailSection({ section, stock, onEssayOpen, onForumOpen, onAnalyzeCons
 }
 
 export default function SuperWatchlistPage() {
-  const [data, setData] = useState<SuperWatchlistDashboard | null>(null);
-  const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [symbols, setSymbols] = useState<string[]>([]);
+  const [stockCache, setStockCache] = useState<Record<string, SuperWatchlistStock>>({});
+  const [listReady, setListReady] = useState(false);
+  const [loadingSymbol, setLoadingSymbol] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const [refreshingShared, setRefreshingShared] = useState(false);
   const [section, setSection] = useState<Section>('overview'); const [newSymbol, setNewSymbol] = useState('');
   const [selectedEssay, setSelectedEssay] = useState<MonitorEvent | null>(null);
   const [selectedForumPost, setSelectedForumPost] = useState<MonitorEvent | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<SuperWatchlistStock | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ symbol: string; name: string } | null>(null);
   const [deletingSymbol, setDeletingSymbol] = useState<string | null>(null);
   const [consensusOverrides, setConsensusOverrides] = useState<Record<string, EssayConsensusAnalysis>>({});
   const [analyzingConsensus, setAnalyzingConsensus] = useState(false);
   const [consensusMessage, setConsensusMessage] = useState('');
   const [params, setParams] = useSearchParams(); const navigate = useNavigate();
-  const requestInFlight = useRef(false);
+  const workspaceInFlight = useRef(new Set<string>());
+  const listInFlight = useRef(false);
+  const stockCacheRef = useRef(stockCache);
+  useEffect(() => { stockCacheRef.current = stockCache; }, [stockCache]);
   useEffect(() => { document.title = '自选股超级看板 - 乐子乌超级价值'; }, []);
-  const load = useCallback(async (force = false) => {
-    if (requestInFlight.current) return;
-    requestInFlight.current = true;
-    setLoading(true); setError('');
-    try { setData(await investmentMonitorApi.superWatchlist(183, force)); }
-    catch (err) { setError(err instanceof Error ? err.message : '加载失败'); }
-    finally { requestInFlight.current = false; setLoading(false); }
+  const loadWatchlist = useCallback(async () => {
+    if (listInFlight.current) return;
+    listInFlight.current = true;
+    try { setSymbols(await systemConfigApi.getWatchlist()); setError(''); }
+    catch (err) { if (!listReady) setError(err instanceof Error ? err.message : '自选股列表加载失败'); }
+    finally { listInFlight.current = false; setListReady(true); }
+  }, [listReady]);
+  const loadWorkspace = useCallback(async (symbol: string, force = false) => {
+    if (!symbol || workspaceInFlight.current.has(symbol)) return;
+    workspaceInFlight.current.add(symbol);
+    if (!stockCacheRef.current[symbol]) setLoadingSymbol(symbol);
+    try {
+      const workspace = await investmentMonitorApi.stockWorkspace(symbol, 183, force);
+      setStockCache(previous => ({
+        ...previous,
+        [symbol]: workspace.stock,
+        [workspace.stock.symbol]: workspace.stock,
+      }));
+      setError('');
+    } catch (err) {
+      if (!stockCacheRef.current[symbol]) setError(err instanceof Error ? err.message : '个股工作台加载失败');
+    } finally {
+      workspaceInFlight.current.delete(symbol);
+      setLoadingSymbol(current => current === symbol ? null : current);
+    }
   }, []);
-  usePageActivationRefresh(load, { intervalMs: 60_000, minIntervalMs: 5_000 });
-  const symbols = useMemo(() => (data?.stocks ?? []).map(row => row.symbol), [data]);
+  const requestedSymbol = params.get('symbol');
+  const activeSymbol = useMemo(() => (
+    symbols.find(symbol => symbol === requestedSymbol) ?? symbols[0] ?? ''
+  ), [requestedSymbol, symbols]);
+  useEffect(() => {
+    if (activeSymbol && requestedSymbol !== activeSymbol) setParams({ symbol: activeSymbol }, { replace: true });
+  }, [activeSymbol, requestedSymbol, setParams]);
+  useEffect(() => { if (activeSymbol) void loadWorkspace(activeSymbol); }, [activeSymbol, loadWorkspace]);
+  const refreshVisibleData = useCallback(async () => {
+    await loadWatchlist();
+    if (activeSymbol) await loadWorkspace(activeSymbol);
+  }, [activeSymbol, loadWatchlist, loadWorkspace]);
+  usePageActivationRefresh(refreshVisibleData, { intervalMs: 60_000, minIntervalMs: 5_000 });
   const { quotes: liveQuotes, keyFor: quoteKey } = useRealtimeQuotes(symbols);
-  const stocks = useMemo(() => (data?.stocks ?? []).map(stock => (
-    applyRealtimeQuote(stock, liveQuotes.get(quoteKey(stock.symbol)))
-  )), [data, liveQuotes, quoteKey]);
-  const active = useMemo(() => stocks.find(row => row.symbol === params.get('symbol')) ?? stocks[0] ?? null, [stocks, params]);
+  const railStocks = useMemo(() => symbols.map(symbol => {
+    const cached = stockCache[symbol];
+    const quote = liveQuotes.get(quoteKey(symbol));
+    return {
+      symbol,
+      name: quote?.stockName || cached?.name || symbol,
+      price: quote?.currentPrice || cached?.market.price,
+      changePct: quote?.changePercent ?? cached?.market.changePct,
+    };
+  }), [liveQuotes, quoteKey, stockCache, symbols]);
+  const baseActive = activeSymbol ? stockCache[activeSymbol] : undefined;
+  const active = useMemo(() => baseActive ? applyRealtimeQuote(
+    baseActive, liveQuotes.get(quoteKey(activeSymbol)),
+  ) : null, [activeSymbol, baseActive, liveQuotes, quoteKey]);
+  const loading = !listReady || Boolean(activeSymbol && !active);
   const activeForDetail = useMemo(() => {
     if (!active || !consensusOverrides[active.symbol]) return active;
     return { ...active, consensus: { ...active.consensus, essayAnalysis: consensusOverrides[active.symbol], essayExpectationCount: consensusOverrides[active.symbol].estimates.length, essayExpectations: consensusOverrides[active.symbol].estimates.map(item => ({ ...item, text: item.valueText })) } };
   }, [active, consensusOverrides]);
   const activeLiveQuote = active ? liveQuotes.get(quoteKey(active.symbol)) : undefined;
   const hasActiveLiveQuote = Boolean(active && activeLiveQuote && activeLiveQuote.currentPrice > 0
-    && shouldPreferQuote(activeLiveQuote.updateTime, data?.stocks.find(row => row.symbol === active.symbol)?.market.updatedAt, Boolean(activeLiveQuote.isStale)));
+    && shouldPreferQuote(activeLiveQuote.updateTime, baseActive?.market.updatedAt, Boolean(activeLiveQuote.isStale)));
   const submitStock = async (rawSymbol: string) => {
     const symbol = rawSymbol.trim();
     if (!symbol || busy) return;
     setBusy(true); setError('');
-    try { await systemConfigApi.addToWatchlist(symbol); setNewSymbol(''); await load(true); }
+    try {
+      const nextSymbols = await systemConfigApi.addToWatchlist(symbol);
+      setSymbols(nextSymbols); setNewSymbol('');
+      const added = nextSymbols.find(value => !symbols.includes(value)) ?? nextSymbols.at(-1);
+      if (added) { setParams({ symbol: added }, { replace: true }); void loadWorkspace(added, true); }
+    }
     catch (err) { setError(err instanceof Error ? err.message : '添加失败'); }
     finally { setBusy(false); }
   };
@@ -312,14 +363,14 @@ export default function SuperWatchlistPage() {
     setDeletingSymbol(removed.symbol);
     setError('');
     try {
-      await systemConfigApi.removeFromWatchlist(removed.symbol);
-      const remaining = stocks.filter(row => row.symbol !== removed.symbol);
+      const remaining = await systemConfigApi.removeFromWatchlist(removed.symbol);
+      setSymbols(remaining);
+      setStockCache(previous => { const next = { ...previous }; delete next[removed.symbol]; return next; });
       setPendingDelete(null);
       if (active?.symbol === removed.symbol) {
         const next = remaining[0];
-        setParams(next ? { symbol: next.symbol } : {}, { replace: true });
+        setParams(next ? { symbol: next } : {}, { replace: true });
       }
-      await load(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除失败');
     } finally {
@@ -329,7 +380,10 @@ export default function SuperWatchlistPage() {
   const refreshShared = async () => {
     if (refreshingShared) return;
     setRefreshingShared(true); setError('');
-    try { await investmentMonitorApi.refreshSuperWatchlist(); await load(true); }
+    try {
+      await investmentMonitorApi.refreshSuperWatchlist();
+      if (activeSymbol) await loadWorkspace(activeSymbol, true);
+    }
     catch (err) { setError(err instanceof Error ? err.message : '共享数据刷新失败'); }
     finally { setRefreshingShared(false); }
   };
@@ -369,12 +423,12 @@ export default function SuperWatchlistPage() {
     <div className={`super-watchlist-grid grid grid-cols-1 ${section === 'consensus' ? 'is-consensus' : ''}`}>
       <aside className="super-watchlist-sidebar border-b border-r border-[#D8DADF] bg-[#FAFBFC] xl:border-b-0">
         <form onSubmit={addStock} className="border-b border-[#D8DADF] p-3"><div className="flex"><div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy} placeholder="输入股票名称或代码" className="h-8 rounded-none border-[#C9CCD2] px-2 text-[11px] focus:border-[#155EEF]" /></div><button type="submit" disabled={busy || !newSymbol.trim()} aria-label="加入自选股" className="flex h-8 w-8 shrink-0 items-center justify-center bg-[#155EEF] text-white disabled:opacity-40"><Plus className="h-4 w-4" /></button></div><p className="mt-1.5 text-[9px] text-[#7B7F87]">支持中文名称、拼音简称和股票代码；加入后自动建立行情与全渠道信息档案</p></form>
-        <div className="super-watchlist-stock-rail">{stocks.map(stock => {
-          const selected = stock.symbol === active?.symbol;
+        <div className="super-watchlist-stock-rail">{railStocks.map(stock => {
+          const selected = stock.symbol === activeSymbol;
           return <div key={stock.symbol} className={`super-watchlist-item flex border-b border-[#D8DADF] ${selected ? 'is-selected bg-[#EEF4FF]' : ''}`}>
             <button type="button" onClick={() => setParams({ symbol: stock.symbol }, { replace: true })} className="super-watchlist-select min-w-0 flex-1 p-3 text-left hover:bg-white">
-              <div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-bold">{stock.name}</span><span className={`shrink-0 font-mono text-[12px] font-bold ${(stock.market.changePct ?? 0) >= 0 ? 'text-[#B42318]' : 'text-[#027A48]'}`}>{number(stock.market.price)}</span></div>
-              <div className="mt-1 flex justify-between font-mono text-[9px] text-[#62666D]"><span>{stock.symbol}</span><span>{percent(stock.market.changePct)}</span></div>
+              <div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-bold">{stock.name}</span><span className={`shrink-0 font-mono text-[12px] font-bold ${(stock.changePct ?? 0) >= 0 ? 'text-[#B42318]' : 'text-[#027A48]'}`}>{number(stock.price)}</span></div>
+              <div className="mt-1 flex justify-between font-mono text-[9px] text-[#62666D]"><span>{stock.symbol}</span><span>{percent(stock.changePct)}</span></div>
             </button>
             <button type="button" onClick={() => setPendingDelete(stock)} disabled={deletingSymbol === stock.symbol} aria-label={`删除自选股 ${stock.name}`} className="super-watchlist-delete m-2 ml-0 inline-flex w-8 shrink-0 items-center justify-center self-stretch rounded-lg text-[#7B7F87] hover:bg-[#FEF3F2] hover:text-[#B42318] disabled:cursor-wait disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>;
@@ -386,7 +440,7 @@ export default function SuperWatchlistPage() {
         <nav className="super-detail-nav flex h-10 border-b border-[#D8DADF] px-2">{SECTIONS.map(item => <button key={item.key} onClick={() => setSection(item.key)} className={`border-b-2 px-4 text-[11px] font-semibold ${section === item.key ? 'border-[#155EEF] text-[#155EEF]' : 'border-transparent text-[#62666D]'}`}>{item.label}</button>)}</nav>
         <DetailSection section={section} stock={activeForDetail ?? active} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} onAnalyzeConsensus={() => void analyzeConsensus()} analyzingConsensus={analyzingConsensus} consensusMessage={consensusMessage} />
         {section !== 'consensus' ? <section className="overflow-x-auto border-t border-[#D8DADF]"><div className="flex items-center justify-between px-3 py-2"><h3 className="text-[12px] font-bold">事实时间线</h3><Link to={`/investment-monitor/feed?symbol=${encodeURIComponent(active.symbol)}`} className="text-[10px] font-semibold text-[#155EEF]">查看全部证据</Link></div>{active.timeline.slice(0, 6).map(event => <EvidenceRow key={event.id} event={event} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} />)}</section> : null}
-      </> : !loading ? <EmptyState title="暂无自选股" description="在左侧输入股票名称或代码加入，系统会自动建立行情与全渠道信息档案。" /> : null}</main>
+      </> : loading ? <div role="status" className="space-y-4 p-5" aria-label={`正在加载 ${loadingSymbol || activeSymbol || '自选股'} 数据`}><div className="h-16 animate-pulse rounded-xl bg-border/45" /><div className="h-[420px] animate-pulse rounded-xl bg-border/30" /><p className="text-center text-[11px] text-secondary-text">正在读取当前股票的行情与证据，其他股票不会阻塞本页。</p></div> : <EmptyState title="暂无自选股" description="在左侧输入股票名称或代码加入，系统会自动建立行情与全渠道信息档案。" />}</main>
     </div>
     {selectedEssay ? <EssayOriginalDrawer key={selectedEssay.externalId} event={selectedEssay} onClose={() => setSelectedEssay(null)} /> : null}
     {selectedForumPost ? <ForumPostDrawer key={selectedForumPost.id} event={selectedForumPost} onClose={() => setSelectedForumPost(null)} /> : null}

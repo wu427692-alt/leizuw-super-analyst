@@ -22,6 +22,7 @@ import type {
   ValidateSystemConfigRequest,
   ValidateSystemConfigResponse,
 } from '../types/systemConfig';
+import { cachedQuery, invalidateCachedQueries } from './requestCache';
 
 export class SystemConfigValidationError extends Error {
   issues: SystemConfigValidationErrorResponse['issues'];
@@ -254,9 +255,11 @@ export const systemConfigApi = {
    * 获取自选队列股票代码列表
    */
   getWatchlist: async (): Promise<string[]> => {
-    const response = await apiClient.get<Record<string, unknown>>('/api/v1/stocks/watchlist');
-    const data = toCamelCase<{ stockCodes: string[] }>(response.data);
-    return data.stockCodes || [];
+    return cachedQuery('system:watchlist', async () => {
+      const response = await apiClient.get<Record<string, unknown>>('/api/v1/stocks/watchlist');
+      const data = toCamelCase<{ stockCodes: string[] }>(response.data);
+      return data.stockCodes || [];
+    }, { freshMs: 30_000, staleMs: 300_000 });
   },
 
   /**
@@ -267,6 +270,7 @@ export const systemConfigApi = {
       stock_code: stockCode,
     });
     const data = toCamelCase<{ stockCodes: string[] }>(response.data);
+    invalidateCachedQueries('system:watchlist');
     return data.stockCodes || [];
   },
 
@@ -278,6 +282,7 @@ export const systemConfigApi = {
       stock_code: stockCode,
     });
     const data = toCamelCase<{ stockCodes: string[] }>(response.data);
+    invalidateCachedQueries('system:watchlist');
     return data.stockCodes || [];
   },
 };

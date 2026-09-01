@@ -68,8 +68,15 @@ const DATA_PRELOADERS: DataPreloader[] = [
   {
     match: (path) => path.startsWith('/super-watchlist'),
     load: async () => {
-      const { investmentMonitorApi } = await import('../api/investmentMonitor');
-      return investmentMonitorApi.superWatchlist(183);
+      const [{ investmentMonitorApi }, { systemConfigApi }, { getMarketSeries }] = await Promise.all([
+        import('../api/investmentMonitor'), import('../api/systemConfig'), import('../api/marketSeries'),
+      ]);
+      const symbols = await systemConfigApi.getWatchlist();
+      if (!symbols[0]) return symbols;
+      return Promise.allSettled([
+        investmentMonitorApi.stockWorkspace(symbols[0], 183),
+        getMarketSeries(symbols[0], 'intraday', '1d', false, 'stock', false),
+      ]);
     },
   },
   {

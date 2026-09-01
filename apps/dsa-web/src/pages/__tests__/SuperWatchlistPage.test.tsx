@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SuperWatchlistDashboard, SuperWatchlistStock } from '../../types/investmentMonitor';
 import SuperWatchlistPage from '../SuperWatchlistPage';
 
-const { mockAdd, mockLoad, mockEvent, mockRemove, mockQuotes, mockNote, mockRefresh, mockAnalyzeConsensus, mockEssayConsensus } = vi.hoisted(() => ({
+const { mockAdd, mockLoad, mockGetWatchlist, mockEvent, mockRemove, mockQuotes, mockNote, mockRefresh, mockAnalyzeConsensus, mockEssayConsensus } = vi.hoisted(() => ({
   mockAdd: vi.fn(),
   mockLoad: vi.fn(),
+  mockGetWatchlist: vi.fn(),
   mockEvent: vi.fn(),
   mockRemove: vi.fn(),
   mockQuotes: new Map<string, Record<string, unknown>>(),
@@ -18,7 +19,10 @@ const { mockAdd, mockLoad, mockEvent, mockRemove, mockQuotes, mockNote, mockRefr
 
 vi.mock('../../api/investmentMonitor', () => ({
   investmentMonitorApi: {
-    superWatchlist: mockLoad,
+    stockWorkspace: async (symbol: string, ...args: unknown[]) => {
+      const value = await mockLoad(symbol, ...args) as SuperWatchlistDashboard;
+      return { stock: value.stocks.find(item => item.symbol === symbol) ?? value.stocks[0] };
+    },
     event: mockEvent,
     backfillWatchlist: vi.fn(),
     refreshSuperWatchlist: mockRefresh,
@@ -29,6 +33,7 @@ vi.mock('../../api/investmentMonitor', () => ({
 
 vi.mock('../../api/systemConfig', () => ({
   systemConfigApi: {
+    getWatchlist: mockGetWatchlist,
     addToWatchlist: mockAdd,
     removeFromWatchlist: mockRemove,
   },
@@ -107,6 +112,7 @@ describe('SuperWatchlistPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuotes.clear();
+    mockGetWatchlist.mockResolvedValue(['603306.SH']);
     mockAdd.mockResolvedValue(['603306', '300476']);
     mockRemove.mockResolvedValue(['300476']);
     mockNote.mockResolvedValue({
@@ -148,9 +154,9 @@ describe('SuperWatchlistPage', () => {
 
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
 
-    expect((await screen.findAllByText('74.28')).length).toBeGreaterThanOrEqual(2);
+    expect((await screen.findAllByText('74.28')).length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText('70.11')).not.toBeInTheDocument();
-    expect(screen.getByText(/最新行情/)).toBeInTheDocument();
+    expect(await screen.findByText(/最新行情/)).toBeInTheDocument();
   });
 
   it('does not let a stale realtime row overwrite a newer dashboard fact', async () => {
@@ -171,6 +177,7 @@ describe('SuperWatchlistPage', () => {
 
   it('requires confirmation, removes one stock, and keeps the remaining stock visible', async () => {
     const initial = dashboard([stock('603306', '华懋科技'), stock('300476', '胜宏科技')]);
+    mockGetWatchlist.mockResolvedValue(['603306', '300476']);
     mockLoad.mockResolvedValueOnce(initial).mockResolvedValue(dashboard([initial.stocks[1]]));
 
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
@@ -183,7 +190,7 @@ describe('SuperWatchlistPage', () => {
 
     await waitFor(() => expect(mockRemove).toHaveBeenCalledWith('603306'));
     await waitFor(() => expect(screen.queryByText('华懋科技')).not.toBeInTheDocument());
-    expect(screen.getAllByText('胜宏科技').length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('胜宏科技')).length).toBeGreaterThan(0);
   });
 
   it('opens a keyword-matched essay inside the current page', async () => {

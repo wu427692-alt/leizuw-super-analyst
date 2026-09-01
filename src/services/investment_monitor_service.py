@@ -23,6 +23,7 @@ import pandas as pd
 from sqlalchemy import desc, select
 
 from src.config import get_config
+from src.data.stock_index_loader import get_index_stock_name
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.services.financial_data_service import TushareGatewayService
 from src.services.market_data_service import MarketDataService
@@ -44,7 +45,7 @@ from src.storage import (
 
 logger = logging.getLogger(__name__)
 
-_STOCK_WORKSPACE_CACHE_TTL_SECONDS = 20
+_STOCK_WORKSPACE_CACHE_TTL_SECONDS = 120
 _stock_workspace_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _stock_workspace_cache_lock = threading.Lock()
 _SUPER_WATCHLIST_CACHE_TTL_SECONDS = 30
@@ -1060,10 +1061,22 @@ class InvestmentMonitorService:
         live_quote: Optional[Dict[str, Any]] = None,
         source_states: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        # Aggregates require the complete symbol dataset.  The previous paginated
-        # read silently discarded events after row 200 and could hide an older but
-        # still-current fundamental snapshot behind newer news and research rows.
-        events = self.repo.all_symbol_events(symbol=symbol, days=days)
+        # Interactive workspaces need exact totals, but only bounded visible
+        # evidence.  Hydrating every forum post/news row made popular stocks take
+        # several seconds and hundreds of MB per request.  The repository keeps
+        # totals in narrow SQL aggregates and returns the latest renderable rows.
+        bundle = self.repo.symbol_workspace_bundle(symbol=symbol, days=days)
+        snapshots = list(bundle["snapshots"])
+        research = list(bundle["research"])
+        announcements = list(bundle["announcements"])
+        essays = list(bundle["essays"])
+        stock_comments = list(bundle["stock_comments"])
+        messages = list(bundle["messages"])
+        timeline = list(bundle["timeline"])
+        events_by_id: Dict[int, Dict[str, Any]] = {}
+        for item in [*snapshots, *research, *announcements, *essays, *stock_comments, *messages, *timeline]:
+            events_by_id[int(item["id"])] = item
+        events = sorted(events_by_id.values(), key=lambda item: str(item.get("event_at") or ""), reverse=True)
         source_states = source_states or {}
 
         def latest(event_type: str) -> Optional[Dict[str, Any]]:
@@ -1087,34 +1100,29 @@ class InvestmentMonitorService:
         northbound = dict(capital.get("northbound") or {})
         ownership = metrics("ownership_snapshot")
         profile = metrics("company_profile")
-        research = [item for item in events if item["event_type"] in {"research_report_pdf", "institution_forecast", "institution_survey", "broker_recommendation"}]
-        announcements = [item for item in events if item["event_type"] == "company_announcement"]
-        essays = [item for item in events if item["event_type"] == "essay"]
-        stock_comments = [item for item in events if item["event_type"] == "stock_forum_post"]
         message_types = {
             "news", "long_news", "essay", "enterprise_registration", "enterprise_risk",
             "enterprise_credit", "enterprise_ipr", "enterprise_history",
         }
-        messages = [item for item in events if item["event_type"] in message_types]
 
         snapshot_types = {
             "market_open_snapshot", "market_snapshot", "fundamental_snapshot", "capital_chip_snapshot",
             "ownership_snapshot", "technical_factor", "market_theme_flow", "limit_pool",
         }
-        decision_events: List[Dict[str, Any]] = []
-        seen = set()
-        for event in events:
-            key = (event["source_key"], event["event_type"], tuple(event["symbols"]))
-            if event["event_type"] in snapshot_types and key in seen:
-                continue
-            if event["event_type"] in snapshot_types:
-                seen.add(key)
-            decision_events.append(event)
-
-        levels = Counter(self._event_evidence(event)["evidence_level"] for event in decision_events)
-        channels = Counter(self._event_evidence(event)["channel"] for event in decision_events)
-        source_count = len({event["source_key"] for event in decision_events})
-        original_count = sum(1 for event in decision_events if event.get("url"))
+        type_counts = Counter(bundle["type_counts"])
+        type_latest = dict(bundle["type_latest"])
+        source_counts = Counter(bundle["source_counts"])
+        source_count = len(source_counts)
+        original_count = int(bundle["original_link_count"])
+        unverified_count = int(bundle["unverified_count"])
+        decision_event_count = int(bundle["decision_event_count"])
+        channels = Counter()
+        for group in bundle["groups"]:
+            state = source_states.get(group["source_key"]) or {}
+            channel = str(state.get("category") or self._event_evidence({
+                "source_key": group["source_key"], "metrics": {},
+            })["channel"])
+            channels[channel] += int(group["count"])
         signals: List[Dict[str, Any]] = []
 
         def signal(kind: str, title: str, detail: str, event_type: str) -> None:
@@ -1169,7 +1177,11 @@ class InvestmentMonitorService:
         }
         coverage = []
         for name, definition in dimensions.items():
-            related = [event for event in decision_events if event["event_type"] in definition["types"]]
+            related_count = sum(type_counts[event_type] for event_type in definition["types"])
+            related_latest = max(
+                (type_latest.get(event_type) or "" for event_type in definition["types"]),
+                default="",
+            ) or None
             states = [source_states[key] for key in definition["sources"] if key in source_states]
             sync_times = [str(item.get("last_success_at") or "") for item in states if item.get("last_success_at")]
             latest_sync = max(sync_times, default=None)
@@ -1182,11 +1194,11 @@ class InvestmentMonitorService:
                     sync_age = max(0, int((utc_naive_now() - parsed_sync).total_seconds()))
                 except ValueError:
                     sync_age = None
-            freshness = "empty" if not related else "fresh" if sync_age is not None and sync_age <= max(60, (target_seconds or 86400) * 3) else "stale"
+            freshness = "empty" if not related_count else "fresh" if sync_age is not None and sync_age <= max(60, (target_seconds or 86400) * 3) else "stale"
             coverage.append({
-                "name": name, "count": len(related),
-                "latest_at": related[0]["event_at"] if related else None,
-                "available": bool(related),
+                "name": name, "count": related_count,
+                "latest_at": related_latest,
+                "available": bool(related_count),
                 "freshness_status": freshness,
                 "last_sync_at": latest_sync,
                 "sync_age_seconds": sync_age,
@@ -1214,6 +1226,12 @@ class InvestmentMonitorService:
                     StockDaily.code == symbol.split(".")[0], StockDaily.date >= cutoff,
                 ).order_by(StockDaily.date)
             ).scalars().all()
+        consensus_payload = self._consensus_payload(research, essays, essay_consensus)
+        consensus_payload["broker_report_count"] = type_counts["institution_forecast"]
+        research_count = sum(type_counts[event_type] for event_type in (
+            "research_report_pdf", "institution_forecast", "institution_survey", "broker_recommendation",
+        ))
+        message_count = sum(type_counts[event_type] for event_type in message_types)
         return {
             "symbol": symbol, "name": stock_name,
             "history": [{
@@ -1260,17 +1278,17 @@ class InvestmentMonitorService:
                 "repurchases": list(ownership.get("repurchases") or [])[:20],
             },
             "institution": {
-                "research_count": len(research), "latest": [self.compact_event(event) for event in research[:20]],
+                "research_count": research_count, "latest": [self.compact_event(event) for event in research[:20]],
                 "institutions": self._counter_rows(Counter(str((event.get("metrics") or {}).get("inst_csname") or event["source_name"]) for event in research), 10),
             },
             "company": {
                 "profile": {key: profile.get(key) for key in ("com_name", "chairman", "manager", "secretary", "province", "city", "employees", "main_business", "website")},
-                "announcement_count": len(announcements), "announcements": [self.compact_event(event) for event in announcements[:20]],
+                "announcement_count": type_counts["company_announcement"], "announcements": [self.compact_event(event) for event in announcements[:20]],
             },
-            "alternative": {"essay_count": len(essays), "essays": [self.compact_event(event) for event in essays[:30]], "catalysts": list(dict.fromkeys(essay_catalysts))[:12], "risks": list(dict.fromkeys(essay_risks))[:12]},
-            "consensus": self._consensus_payload(research, essays, essay_consensus),
+            "alternative": {"essay_count": type_counts["essay"], "essays": [self.compact_event(event) for event in essays[:30]], "catalysts": list(dict.fromkeys(essay_catalysts))[:12], "risks": list(dict.fromkeys(essay_risks))[:12]},
+            "consensus": consensus_payload,
             "messages": {
-                "count": len(messages),
+                "count": message_count,
                 "items": [self.compact_event(event) for event in messages[:40]],
                 "channels": self._counter_rows(Counter(
                     "知识星球" if event["event_type"] == "essay"
@@ -1280,20 +1298,20 @@ class InvestmentMonitorService:
                 )),
             },
             "stock_comments": {
-                "count": len(stock_comments),
+                "count": type_counts["stock_forum_post"],
                 "items": [self.compact_event(event) for event in stock_comments[:20]],
                 "source_note": "只展示东方财富股吧真实公开帖子；保留作者、时间、正文摘录、互动数和图片并标记待核验，点击可在当前页面查看详情。",
             },
             "signals": signals,
             "coverage": coverage,
             "evidence": {
-                "event_count": len(decision_events), "raw_event_count": len(events),
-                "factual_count": len(decision_events) - levels["unverified"], "unverified_count": levels["unverified"],
+                "event_count": decision_event_count, "raw_event_count": int(bundle["raw_event_count"]),
+                "factual_count": decision_event_count - unverified_count, "unverified_count": unverified_count,
                 "source_count": source_count, "original_link_count": original_count,
-                "original_link_coverage": round(original_count * 100 / len(decision_events), 1) if decision_events else 0,
+                "original_link_coverage": round(original_count * 100 / decision_event_count, 1) if decision_event_count else 0,
                 "channels": self._counter_rows(channels),
             },
-            "timeline": [self.compact_event(event) for event in decision_events[:40]],
+            "timeline": [self.compact_event(event) for event in timeline[:40]],
         }
 
     def watchlist(self) -> List[str]:
@@ -2851,6 +2869,10 @@ class InvestmentMonitorService:
     def _stock_name(self, ts_code: str) -> str:
         if ts_code in self._name_cache:
             return self._name_cache[ts_code]
+        indexed = get_index_stock_name(ts_code)
+        if indexed:
+            self._name_cache[ts_code] = indexed
+            return indexed
         try:
             rows = self.tushare.query("stock_basic", params={"ts_code": ts_code}, fields=["ts_code", "name"])["rows"]
             name = str(rows[0].get("name") or ts_code) if rows else ts_code

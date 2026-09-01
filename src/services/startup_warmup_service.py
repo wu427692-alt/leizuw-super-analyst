@@ -21,12 +21,14 @@ class StartupWarmupService:
 
     def _default_tasks(self) -> tuple[WarmupTask, ...]:
         # Import and construct lazily: merely importing api.app must remain fast.
+        from src.data.stock_index_loader import get_stock_name_index_map
         from src.services.essay_analysis_service import EssayAnalysisService
         from src.services.investment_monitor_service import InvestmentMonitorService
 
         essays = EssayAnalysisService()
         monitor = InvestmentMonitorService()
         essential: tuple[WarmupTask, ...] = (
+            ("stock-name-index", get_stock_name_index_map),
             ("essay-library-stats", essays.historical_backlog),
             ("essay-status", lambda: essays.progress(days=30)),
             (

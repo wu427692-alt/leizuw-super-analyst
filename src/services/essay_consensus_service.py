@@ -301,9 +301,14 @@ class EssayConsensusService:
         return True
 
     def _select_notes(self, symbol: str, *, limit: int) -> List[Dict[str, Any]]:
+        # Consensus only consumes essay rows.  Loading every announcement,
+        # quote, report, news item and forum post for a popular stock made the
+        # visible workspace read the same multi-thousand-row evidence set twice.
         events = [
-            event for event in self.monitor_repo.all_symbol_events(symbol=symbol, days=3650)
-            if event.get("event_type") == "essay" and event.get("external_id")
+            event for event in self.monitor_repo.recent_symbol_events(
+                symbol=symbol, days=3650, event_types=("essay",),
+            )
+            if event.get("external_id")
         ]
         topic_ids = [str(event["external_id"]) for event in events]
         event_by_topic = {str(event["external_id"]): event for event in events}

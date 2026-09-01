@@ -48,6 +48,7 @@ def test_essential_warmup_keeps_heavy_analytics_lazy(monkeypatch):
     names = [name for name, _ in StartupWarmupService()._default_tasks()]
 
     assert names == [
+        "stock-name-index",
         "essay-library-stats",
         "essay-status",
         "essay-feed-first-page",

@@ -120,7 +120,7 @@ def test_sampling_keeps_20_related_and_5_single_stock_notes_without_duplicates(c
         "author_name": "研究员", "group_name": "测试星球",
         "symbols": ["603306.SH"] if index < 7 else ["603306.SH", "300476.SZ"],
     } for index in range(30)]
-    monkeypatch.setattr(consensus_service.monitor_repo, "all_symbol_events", lambda **_kwargs: events)
+    monkeypatch.setattr(consensus_service.monitor_repo, "recent_symbol_events", lambda **_kwargs: events)
     monkeypatch.setattr(consensus_service, "_notes_by_ids", lambda _topic_ids: notes)
 
     selected = consensus_service._select_notes("603306.SH", limit=20)
