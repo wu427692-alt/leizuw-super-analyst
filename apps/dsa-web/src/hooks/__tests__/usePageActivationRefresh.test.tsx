@@ -31,4 +31,27 @@ describe('usePageActivationRefresh', () => {
     });
     expect(refresh).toHaveBeenCalledTimes(3);
   });
+
+  it('guards background intervals without blocking activation refreshes', async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const intervalGuard = vi.fn().mockReturnValue(false);
+    renderHook(() => usePageActivationRefresh(refresh, {
+      intervalMs: 15_000, minIntervalMs: 2_000, intervalGuard,
+    }));
+    await act(async () => { await Promise.resolve(); });
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+    });
+    expect(intervalGuard).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await Promise.resolve();
+    });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
 });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getRealtimeQuotes, type RealtimeQuote } from '../api/realtimeQuotes';
 import { getRealtimeIndices, type RealtimeIndexQuote } from '../api/realtimeQuotes';
 import { usePageActivationRefresh } from './usePageActivationRefresh';
+import { isAshareLiveWindow } from '../utils/marketSession';
 
 const keyFor = (value: string) => value.trim().toUpperCase().split('.')[0].replace(/^(SH|SZ|BJ)/, '');
 
@@ -25,7 +26,8 @@ export function useRealtimeQuotes(symbols: string[], pollMs = 15_000) {
     } finally { inFlight.current = false; }
   }, [signature]);
   usePageActivationRefresh(poll, {
-    enabled: Boolean(signature), intervalMs: Math.max(5_000, pollMs), minIntervalMs: 1_500,
+    enabled: Boolean(signature), intervalMs: Math.max(5_000, pollMs),
+    intervalGuard: isAshareLiveWindow, minIntervalMs: 1_500,
   });
   return { quotes, error, keyFor };
 }

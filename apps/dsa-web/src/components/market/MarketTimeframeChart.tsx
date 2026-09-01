@@ -8,6 +8,7 @@ import { getMarketSeries } from '../../api/marketSeries';
 import type { MarketBar, MarketPeriod, MarketRange, MarketSeries } from '../../types/marketSeries';
 import { adaptivePercentDomain, resolveIntradayBasePrice, tooltipChangePercent } from './marketChartDomain';
 import { usePageActivationRefresh } from '../../hooks/usePageActivationRefresh';
+import { isAshareLiveWindow } from '../../utils/marketSession';
 
 const PERIODS: Array<{ value: MarketPeriod; label: string }> = [
   { value: 'intraday', label: '分时' }, { value: 'daily', label: '日K' },
@@ -177,7 +178,8 @@ export function MarketTimeframeChart({
   // The chart stores minute bars. Refresh on activation and every 15 seconds
   // while visible; focus/visibility events are coalesced by the shared hook.
   usePageActivationRefresh(refreshVisibleChart, {
-    enabled: period === 'intraday', intervalMs: 15_000, minIntervalMs: 2_000, runOnMount: false,
+    enabled: period === 'intraday', intervalMs: 15_000,
+    intervalGuard: isAshareLiveWindow, minIntervalMs: 2_000, runOnMount: false,
   });
 
   const stageBase = useMemo(() => {

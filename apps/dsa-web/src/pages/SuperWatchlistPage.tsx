@@ -12,6 +12,7 @@ import { StockAutocomplete } from '../components/StockAutocomplete/StockAutocomp
 import type { EssayConsensusAnalysis, MonitorEvent, SuperWatchlistStock } from '../types/investmentMonitor';
 import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
+import { isAshareLiveWindow } from '../utils/marketSession';
 import type { RealtimeQuote } from '../api/realtimeQuotes';
 import type { ResearchNoteDetail } from '../types/essayRadar';
 import { shouldPreferQuote } from '../utils/marketQuoteDate';
@@ -319,7 +320,9 @@ export default function SuperWatchlistPage() {
     await loadWatchlist();
     if (activeSymbol) await loadWorkspace(activeSymbol);
   }, [activeSymbol, loadWatchlist, loadWorkspace]);
-  usePageActivationRefresh(refreshVisibleData, { intervalMs: 60_000, minIntervalMs: 5_000 });
+  usePageActivationRefresh(refreshVisibleData, {
+    intervalMs: 60_000, intervalGuard: isAshareLiveWindow, minIntervalMs: 5_000,
+  });
   const { quotes: liveQuotes, keyFor: quoteKey } = useRealtimeQuotes(symbols);
   const railStocks = useMemo(() => symbols.map(symbol => {
     const cached = stockCache[symbol];

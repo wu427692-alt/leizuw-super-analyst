@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 type PageActivationRefreshOptions = {
   enabled?: boolean;
   intervalMs?: number;
+  intervalGuard?: () => boolean;
   minIntervalMs?: number;
   runOnMount?: boolean;
 };
@@ -19,6 +20,7 @@ export function usePageActivationRefresh(
   {
     enabled = true,
     intervalMs = 0,
+    intervalGuard,
     minIntervalMs = 2_000,
     runOnMount = true,
   }: PageActivationRefreshOptions = {},
@@ -54,7 +56,9 @@ export function usePageActivationRefresh(
     window.addEventListener('focus', onFocus);
     window.addEventListener('pageshow', onPageShow);
     const timer = intervalMs > 0
-      ? window.setInterval(() => trigger(false), Math.max(1_000, intervalMs))
+      ? window.setInterval(() => {
+        if (!intervalGuard || intervalGuard()) trigger(false);
+      }, Math.max(1_000, intervalMs))
       : undefined;
 
     return () => {
@@ -64,7 +68,7 @@ export function usePageActivationRefresh(
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('pageshow', onPageShow);
     };
-  }, [enabled, intervalMs, minIntervalMs, runOnMount]);
+  }, [enabled, intervalGuard, intervalMs, minIntervalMs, runOnMount]);
 }
 
 export default usePageActivationRefresh;

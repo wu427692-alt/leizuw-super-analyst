@@ -13,6 +13,7 @@ import type { HomeDashboard, HomeWatchlistCard, MarketIndexCard, MarketPoint } f
 import type { MonitorEvent } from '../types/investmentMonitor';
 import { useRealtimeIndices, useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
+import { isAshareLiveWindow } from '../utils/marketSession';
 import { marketQuoteSession, shouldPreferQuote } from '../utils/marketQuoteDate';
 import './MarketDashboardPage.css';
 
@@ -218,7 +219,9 @@ const MarketDashboardPage = () => {
     // upstream source and schedule three more duplicate probes.
     await load(false, false);
   }, [load]);
-  usePageActivationRefresh(refreshVisiblePage, { intervalMs: 60_000, minIntervalMs: 10_000 });
+  usePageActivationRefresh(refreshVisiblePage, {
+    intervalMs: 60_000, intervalGuard: isAshareLiveWindow, minIntervalMs: 10_000,
+  });
   useEffect(() => {
     if (!error) return undefined;
     const timer = window.setTimeout(() => void load(), 8_000);
