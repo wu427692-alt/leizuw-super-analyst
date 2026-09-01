@@ -57,14 +57,25 @@ class CninfoAnnouncementService:
     def categories() -> List[Dict[str, str]]:
         return [{"code": code, "name": name} for code, name in ANNOUNCEMENT_CATEGORIES.items()]
 
-    def resolve_security(self, symbol: str) -> Dict[str, str]:
+    def resolve_security(
+        self,
+        symbol: str,
+        *,
+        deadline_monotonic: Optional[float] = None,
+        request_budget: Optional[Dict[str, int]] = None,
+    ) -> Dict[str, str]:
         code = str(symbol or "").strip().upper().split(".", 1)[0]
         if len(code) != 6 or not code.isdigit():
             raise CninfoAnnouncementError(f"无效 A 股代码：{symbol}")
         cached = self._security_cache.get(code)
         if cached is not None:
             return dict(cached)
-        rows = self._post_json(CNINFO_SEARCH_URL, {"keyWord": code, "maxNum": 10})
+        rows = self._post_json(
+            CNINFO_SEARCH_URL,
+            {"keyWord": code, "maxNum": 10},
+            deadline_monotonic=deadline_monotonic,
+            request_budget=request_budget,
+        )
         if not isinstance(rows, list):
             raise CninfoAnnouncementError("巨潮证券检索返回格式异常")
         row = next((item for item in rows if str(item.get("code")) == code), None)
@@ -78,6 +89,9 @@ class CninfoAnnouncementService:
         self, *, start_date: date, end_date: date, symbols: Sequence[str] = (),
         categories: Sequence[str] = (), keyword: str = "", page_size: int = 50,
         max_pages: int = 20, exclude_noise: bool = True,
+        deadline_monotonic: Optional[float] = None,
+        request_budget: Optional[Dict[str, int]] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         if end_date < start_date:
             raise CninfoAnnouncementError("结束日期不能早于开始日期")
@@ -88,9 +102,26 @@ class CninfoAnnouncementService:
             raise CninfoAnnouncementError(f"未知公告分类：{invalid[0]}")
         safe_size = max(1, min(int(page_size), 100))
         safe_pages = max(1, min(int(max_pages), 100))
+        diagnostic_target = diagnostics if isinstance(diagnostics, dict) else None
+        budget_used_before = int((request_budget or {}).get("used") or 0)
+        if diagnostic_target is not None:
+            diagnostic_target.clear()
+            diagnostic_target.update({
+                "pages_fetched": 0,
+                "total_pages": 0,
+                "truncated": False,
+                "request_attempts": 0,
+            })
         securities: List[Optional[Dict[str, str]]] = [None]
         if symbols:
-            securities = [self.resolve_security(symbol) for symbol in dict.fromkeys(symbols)]
+            securities = [
+                self.resolve_security(
+                    symbol,
+                    deadline_monotonic=deadline_monotonic,
+                    request_budget=request_budget,
+                )
+                for symbol in dict.fromkeys(symbols)
+            ]
         collected: Dict[str, Dict[str, Any]] = {}
         for security in securities:
             stock = f"{security['code']},{security['org_id']}" if security else ""
@@ -103,20 +134,39 @@ class CninfoAnnouncementService:
                     "seDate": f"{start_date.isoformat()}~{end_date.isoformat()}",
                     "sortName": "", "sortType": "", "isHLtitle": "true",
                 }
-                data = self._post_json(CNINFO_QUERY_URL, payload)
+                data = self._post_json(
+                    CNINFO_QUERY_URL,
+                    payload,
+                    deadline_monotonic=deadline_monotonic,
+                    request_budget=request_budget,
+                )
                 if not isinstance(data, dict):
                     raise CninfoAnnouncementError("巨潮公告接口返回格式异常")
                 rows = data.get("announcements") or []
+                if diagnostic_target is not None:
+                    diagnostic_target["pages_fetched"] = int(diagnostic_target["pages_fetched"]) + 1
                 for raw in rows:
                     item = self._normalize(raw, categories)
                     if exclude_noise and any(word in item["title"] for word in ("英文", "已取消", "摘要")):
                         continue
                     collected[item["announcement_id"]] = item
                 total_pages = int(data.get("totalpages") or 0)
+                if diagnostic_target is not None:
+                    diagnostic_target["total_pages"] = max(
+                        int(diagnostic_target["total_pages"]),
+                        total_pages,
+                    )
+                    if page >= safe_pages and total_pages > page:
+                        diagnostic_target["truncated"] = True
                 if not rows or page >= total_pages:
                     break
                 if self.request_interval:
                     time.sleep(self.request_interval)
+        if diagnostic_target is not None:
+            diagnostic_target["request_attempts"] = max(
+                0,
+                int((request_budget or {}).get("used") or 0) - budget_used_before,
+            )
         return sorted(collected.values(), key=lambda item: item["announcement_at"], reverse=True)
 
     def fetch_recent(self, symbols: Sequence[str], *, days: int = 2) -> List[Dict[str, Any]]:
@@ -134,17 +184,45 @@ class CninfoAnnouncementService:
             symbols=[], page_size=100, max_pages=max_pages,
         )
 
-    def _post_json(self, url: str, payload: Dict[str, Any]) -> Any:
+    def _post_json(
+        self,
+        url: str,
+        payload: Dict[str, Any],
+        *,
+        deadline_monotonic: Optional[float] = None,
+        request_budget: Optional[Dict[str, int]] = None,
+    ) -> Any:
         last_error: Optional[Exception] = None
         for attempt in range(self.retries + 1):
+            remaining_seconds: Optional[float] = None
+            if deadline_monotonic is not None:
+                remaining_seconds = float(deadline_monotonic) - time.monotonic()
+                if remaining_seconds <= 0:
+                    raise CninfoAnnouncementError("巨潮请求已达任务总时间预算")
+            if request_budget is not None:
+                remaining_requests = int(request_budget.get("remaining") or 0)
+                if remaining_requests <= 0:
+                    raise CninfoAnnouncementError("巨潮请求已达任务总次数预算")
+                request_budget["remaining"] = remaining_requests - 1
+                request_budget["used"] = int(request_budget.get("used") or 0) + 1
+            request_timeout = self.timeout
+            if remaining_seconds is not None:
+                request_timeout = max(0.25, min(request_timeout, remaining_seconds))
             try:
-                response = self.session.post(url, headers=self.headers, data=payload, timeout=self.timeout)
+                response = self.session.post(url, headers=self.headers, data=payload, timeout=request_timeout)
                 response.raise_for_status()
                 return response.json()
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 if attempt < self.retries:
-                    time.sleep(0.25 * (2 ** attempt))
+                    retry_delay = 0.25 * (2 ** attempt)
+                    if deadline_monotonic is not None:
+                        retry_delay = min(
+                            retry_delay,
+                            max(0.0, float(deadline_monotonic) - time.monotonic()),
+                        )
+                    if retry_delay:
+                        time.sleep(retry_delay)
         raise CninfoAnnouncementError(f"巨潮接口请求失败：{type(last_error).__name__}") from last_error
 
     @staticmethod

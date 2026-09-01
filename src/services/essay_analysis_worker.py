@@ -54,7 +54,7 @@ class EssayAnalysisWorker:
     def start(self, *, bootstrap_recent: bool = True) -> Dict[str, Any]:
         analyzer = DeepSeekEssayAnalyzer()
         if not analyzer.configured:
-            raise EssayAnalysisError("DEEPSEEK_API_KEY is not configured")
+            raise EssayAnalysisError("没有可用的低价 AI 通道")
         with self._state_lock:
             already_running = self._thread is not None and self._thread.is_alive()
             if not already_running:
@@ -119,7 +119,7 @@ class EssayAnalysisWorker:
                 logger.warning("[essay-radar] automatically requeued %s placeholder summaries", repaired)
             if bootstrap_recent:
                 service.enqueue_recent(days=self.backfill_days)
-            with ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="essay-deepseek") as executor:
+            with ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="essay-llm") as executor:
                 futures: set[Future] = set()
                 while not self._stop_event.is_set():
                     # Keep every slot busy. Waiting for a whole wave means one
@@ -161,6 +161,9 @@ class EssayAnalysisWorker:
         repository = EssayAnalysisRepository()
         topic_ids = [str(item["topic_id"]) for item in batch]
         analyzer = DeepSeekEssayAnalyzer()
+        # Set after construction to preserve compatibility with injected test
+        # transports and older adapters that expose the historical constructor.
+        analyzer.call_type = "essay_analysis"
         try:
             response = analyzer.analyze_batch(batch)
             results = list(response["items"])
@@ -168,6 +171,7 @@ class EssayAnalysisWorker:
                 results,
                 raw_response=response["raw_response"],
                 usage=response["usage"],
+                model=analyzer.model,
             )
             successful_ids = {str(item["topic_id"]) for item in results}
             missing_ids = [topic_id for topic_id in topic_ids if topic_id not in successful_ids]
@@ -188,6 +192,7 @@ class EssayAnalysisWorker:
                             single_results,
                             raw_response=single_response["raw_response"],
                             usage=single_response["usage"],
+                            model=analyzer.model,
                         )
                         recovered_ids.add(topic_id)
                     except Exception as exc:  # noqa: BLE001 - remaining item stays retryable.

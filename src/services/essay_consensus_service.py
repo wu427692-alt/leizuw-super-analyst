@@ -79,7 +79,7 @@ class EssayConsensusAnalyzer:
     """One bounded DeepSeek request across the latest matched essay bundle."""
 
     def __init__(self, transport: Optional[DeepSeekEssayAnalyzer] = None):
-        self.transport = transport or DeepSeekEssayAnalyzer()
+        self.transport = transport or DeepSeekEssayAnalyzer(call_type="essay_consensus")
         self.model = self.transport.model
 
     @property
@@ -88,7 +88,7 @@ class EssayConsensusAnalyzer:
 
     def analyze(self, *, symbol: str, stock_name: str, notes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         if not self.configured:
-            raise EssayConsensusError("DEEPSEEK_API_KEY is not configured")
+            raise EssayConsensusError("没有可用的低价 AI 通道")
         payload_notes = [{
             "topic_id": str(note["topic_id"]),
             "title": str(note.get("title") or "")[:300],

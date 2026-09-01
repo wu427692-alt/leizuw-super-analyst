@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 import json
@@ -435,6 +436,8 @@ class ConceptThemeService:
     _market_date_checked_at: Optional[datetime] = None
     _taxonomy_lock = threading.Lock()
     _taxonomy_cache: Dict[int, Tuple[datetime, Dict[str, Any]]] = {}
+    _overview_cache_lock = threading.Lock()
+    _overview_cache: Dict[Tuple[Any, ...], Tuple[datetime, Dict[str, Any]]] = {}
 
     def __init__(self, *, gateway: Optional[TushareGatewayService] = None, db: Optional[DatabaseManager] = None):
         self.gateway = gateway or TushareGatewayService()
@@ -767,6 +770,25 @@ class ConceptThemeService:
     ) -> Dict[str, Any]:
         page = max(1, page)
         page_size = max(12, min(page_size, 200))
+        cache_key = (
+            id(self.db), query.strip(), theme_type, source, family, cluster,
+            int(min_sources), readiness, sort_by, view, page, page_size,
+        )
+        now = utc_naive_now()
+        cached = self.__class__._overview_cache.get(cache_key)
+        if cached and (now - cached[0]).total_seconds() < 30:
+            return deepcopy(cached[1])
+        shared_metadata: Optional[Tuple[Dict[str, Any], Any, Dict[str, Any]]] = None
+        with self.__class__._overview_cache_lock:
+            for stored_key, (stored_at, stored_value) in self.__class__._overview_cache.items():
+                if stored_key[0] != id(self.db) or (now - stored_at).total_seconds() >= 300:
+                    continue
+                shared_metadata = (
+                    deepcopy(stored_value.get("summary") or {}),
+                    deepcopy(stored_value.get("sync")),
+                    deepcopy(stored_value.get("methodology") or {}),
+                )
+                break
         stock_matches: List[Dict[str, Any]] = []
         taxonomy = self._taxonomy_index()
         with self._read_scope() as session:
@@ -830,13 +852,26 @@ class ConceptThemeService:
             else:
                 statement = statement.order_by(desc(ConceptThemeRecord.heat_score), desc(ConceptThemeRecord.market_date), ConceptThemeRecord.name.asc())
             if view == "canonical":
-                source_rows = session.execute(statement).scalars().all()
-                grouped_rows: Dict[str, ConceptThemeRecord] = {}
-                for row in source_rows:
-                    grouped_rows.setdefault(row.canonical_name, row)
-                grouped_values = list(grouped_rows.values())
-                total = len(grouped_values)
-                rows = grouped_values[(page - 1) * page_size:page * page_size]
+                # The catalog stores source payloads as large text fields. Loading
+                # every ORM row just to choose one representative per canonical
+                # theme made the first page wait several seconds in production.
+                # Scan only the ordered identity columns, then hydrate this page.
+                identity_rows = session.execute(statement.with_only_columns(
+                    ConceptThemeRecord.id,
+                    ConceptThemeRecord.canonical_name,
+                    maintain_column_froms=True,
+                )).all()
+                representative_ids: Dict[str, int] = {}
+                for theme_id, canonical_name in identity_rows:
+                    representative_ids.setdefault(str(canonical_name), int(theme_id))
+                ordered_ids = list(representative_ids.values())
+                total = len(ordered_ids)
+                page_ids = ordered_ids[(page - 1) * page_size:page * page_size]
+                page_rows = session.execute(select(ConceptThemeRecord).where(
+                    ConceptThemeRecord.id.in_(page_ids),
+                )).scalars().all() if page_ids else []
+                rows_by_id = {int(row.id): row for row in page_rows}
+                rows = [rows_by_id[theme_id] for theme_id in page_ids if theme_id in rows_by_id]
             else:
                 rows = session.execute(statement.offset((page - 1) * page_size).limit(page_size)).scalars().all()
                 total = int(session.execute(count_stmt).scalar_one())
@@ -867,6 +902,42 @@ class ConceptThemeService:
                 item["canonical_node_count"] = int(coverage.get("node_count", 0))
                 if view == "canonical":
                     item["constituent_count"] = int(canonical_stock_counts.get(item["canonical_name"], 0) or 0)
+            if query.strip():
+                stock_term = f"%{query.strip()}%"
+                matched_stocks = session.execute(select(
+                    ConceptMembershipRecord.ts_code,
+                    func.max(ConceptMembershipRecord.stock_name),
+                    func.count(func.distinct(ConceptThemeRecord.canonical_name)),
+                    func.count(func.distinct(_provider_sql(ConceptMembershipRecord.source))),
+                ).join(
+                    ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+                ).where(
+                    ConceptMembershipRecord.active.is_(True),
+                    or_(
+                        ConceptMembershipRecord.ts_code.like(stock_term),
+                        ConceptMembershipRecord.stock_name.like(stock_term),
+                    ),
+                ).group_by(ConceptMembershipRecord.ts_code).order_by(
+                    desc(func.count(func.distinct(_provider_sql(ConceptMembershipRecord.source)))),
+                    desc(func.count(func.distinct(ConceptThemeRecord.canonical_name))),
+                ).limit(8)).all()
+                stock_matches = [{
+                    "ts_code": code, "name": name or code,
+                    "theme_count": int(theme_count or 0), "source_count": int(source_count or 0),
+                } for code, name, theme_count, source_count in matched_stocks]
+            if shared_metadata is not None:
+                summary_payload, sync_payload, methodology_payload = shared_metadata
+                result = {
+                    "items": items, "total": total, "page": page, "page_size": page_size,
+                    "view": "canonical" if view == "canonical" else "source",
+                    "stock_matches": stock_matches,
+                    "summary": summary_payload,
+                    "sync": sync_payload,
+                    "methodology": methodology_payload,
+                }
+                with self.__class__._overview_cache_lock:
+                    self.__class__._overview_cache[cache_key] = (now, deepcopy(result))
+                return result
             latest_run = session.execute(select(ConceptSyncRunRecord).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
             source_counts = dict(session.execute(
                 select(ConceptThemeRecord.source, func.count(ConceptThemeRecord.id)).group_by(ConceptThemeRecord.source)
@@ -918,29 +989,6 @@ class ConceptThemeService:
                 ConceptExposureRecord.canonical_name.in_(consensus_theme_names),
             )).scalar_one())
             latest_market_date = session.execute(select(func.max(ConceptThemeRecord.market_date))).scalar_one_or_none()
-            if query.strip():
-                stock_term = f"%{query.strip()}%"
-                matched_stocks = session.execute(select(
-                    ConceptMembershipRecord.ts_code,
-                    func.max(ConceptMembershipRecord.stock_name),
-                    func.count(func.distinct(ConceptThemeRecord.canonical_name)),
-                    func.count(func.distinct(_provider_sql(ConceptMembershipRecord.source))),
-                ).join(
-                    ConceptThemeRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
-                ).where(
-                    ConceptMembershipRecord.active.is_(True),
-                    or_(
-                        ConceptMembershipRecord.ts_code.like(stock_term),
-                        ConceptMembershipRecord.stock_name.like(stock_term),
-                    ),
-                ).group_by(ConceptMembershipRecord.ts_code).order_by(
-                    desc(func.count(func.distinct(_provider_sql(ConceptMembershipRecord.source)))),
-                    desc(func.count(func.distinct(ConceptThemeRecord.canonical_name))),
-                ).limit(8)).all()
-                stock_matches = [{
-                    "ts_code": code, "name": name or code,
-                    "theme_count": int(theme_count or 0), "source_count": int(source_count or 0),
-                } for code, name, theme_count, source_count in matched_stocks]
         family_counts = taxonomy["family_counts"]
         cluster_families = taxonomy["cluster_families"]
         theme_total = sum(source_counts.values())
@@ -967,7 +1015,7 @@ class ConceptThemeService:
             quality_warnings.append(f"{len(SOURCE_LABELS) - fresh_catalogs} 套目录交易日滞后")
         if failed_theme_count:
             quality_warnings.append(f"{failed_theme_count} 个成分节点等待重试")
-        return {
+        result = {
             "items": items, "total": total, "page": page, "page_size": page_size,
             "view": "canonical" if view == "canonical" else "source",
             "stock_matches": stock_matches,
@@ -997,6 +1045,16 @@ class ConceptThemeService:
             "sync": self._run_dict(latest_run) if latest_run else None,
             "methodology": self.methodology(),
         }
+        with self.__class__._overview_cache_lock:
+            self.__class__._overview_cache[cache_key] = (now, deepcopy(result))
+            if len(self.__class__._overview_cache) > 128:
+                oldest_keys = sorted(
+                    self.__class__._overview_cache,
+                    key=lambda key: self.__class__._overview_cache[key][0],
+                )[:32]
+                for old_key in oldest_keys:
+                    self.__class__._overview_cache.pop(old_key, None)
+        return result
 
     def theme_detail(self, theme_id: int, *, refresh_if_empty: bool = True, horizon_days: int = 60) -> Dict[str, Any]:
         horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
@@ -2760,6 +2818,10 @@ class ConceptThemeService:
                 saved += 1
         with self.__class__._taxonomy_lock:
             self.__class__._taxonomy_cache.pop(id(self.db), None)
+        with self.__class__._overview_cache_lock:
+            stale_keys = [key for key in self.__class__._overview_cache if key[0] == id(self.db)]
+            for key in stale_keys:
+                self.__class__._overview_cache.pop(key, None)
         return saved
 
     def _fetch_theme_members(self, theme: Dict[str, Any]) -> List[Dict[str, Any]]:

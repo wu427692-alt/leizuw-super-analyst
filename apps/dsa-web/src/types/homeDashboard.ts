@@ -88,6 +88,8 @@ export type HomeDashboard = {
   northbound: { tradeDate?: string; northMoney?: number; northMoneyYi?: number; southMoney?: number; source?: string };
   watchlist: HomeWatchlistCard[];
   latestEvents: MonitorEvent[];
+  latestNews: MonitorEvent[];
+  pinnedNews: MonitorEvent[];
   intelligenceSummary: {
     eventCount?: number; highPriorityCount?: number; bullishCount?: number; bearishCount?: number; activeSourceCount?: number;
   };

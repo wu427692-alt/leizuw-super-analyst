@@ -35,6 +35,7 @@ from src.config import (
     get_api_keys_for_model,
     get_config,
     get_configured_llm_models,
+    get_effective_litellm_models_to_try,
     normalize_litellm_temperature,
     resolve_litellm_wire_model,
     resolve_news_window_days,
@@ -2966,8 +2967,7 @@ class GeminiAnalyzer:
         )
         requested_temperature = generation_config.get('temperature', 0.7)
 
-        models_to_try = [config.litellm_model] + (config.litellm_fallback_models or [])
-        models_to_try = [m for m in models_to_try if m]
+        models_to_try = get_effective_litellm_models_to_try(config)
 
         use_channel_router = self._has_channel_config(config)
 

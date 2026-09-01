@@ -150,6 +150,41 @@ def test_tushare_news_associates_watchlist_and_company_perspective(monitor):
     assert event["sentiment"] == "bullish"
 
 
+def test_home_news_stream_excludes_non_news_and_pins_important_watchlist_news(monitor):
+    monitor.create_external_source({
+        "source_key": "api.newsroom", "name": "测试财经媒体", "category": "news",
+    })
+    monitor.create_external_source({
+        "source_key": "api.comments", "name": "测试股评", "category": "comment",
+    })
+    monitor.ingest_external_events("api.newsroom", [{
+        "external_id": "important-news", "event_type": "news",
+        "title": "贵州茅台发布重要经营更新", "summary": "公司披露最新经营进展。",
+        "symbols": ["600519"], "importance_score": 88,
+        "url": "https://example.com/important-news",
+    }])
+    monitor.ingest_external_events("api.newsroom", [{
+        "external_id": "ordinary-news", "event_type": "news",
+        "title": "行业日常新闻", "importance_score": 55,
+    }])
+    monitor.ingest_external_events("api.newsroom", [{
+        "external_id": "calibrated-important-news", "event_type": "news",
+        "title": "行业重大政策发布", "importance_score": 71,
+    }])
+    monitor.ingest_external_events("api.comments", [{
+        "external_id": "comment-1", "event_type": "stock_forum_post",
+        "title": "论坛用户观点不应进入首页新闻", "importance_score": 99,
+    }])
+
+    result = monitor.dashboard(days=7)
+
+    assert [item["title"] for item in result["pinned_news"]] == [
+        "贵州茅台发布重要经营更新", "行业重大政策发布",
+    ]
+    assert [item["title"] for item in result["latest_news"]] == ["行业日常新闻"]
+    assert all("论坛用户观点" not in item["title"] for item in result["latest_news"])
+
+
 def test_public_guba_posts_are_real_attributed_unverified_events(monitor):
     first = monitor.sync_source("eastmoney.guba_posts")
     second = monitor.sync_source("eastmoney.guba_posts")

@@ -132,7 +132,7 @@ describe('essayRadarApi', () => {
       { title: '公司录音纪要', focus: '业绩', hotwords: ['CPO'], speakerCount: 3 },
     );
     expect(apiClient.post).toHaveBeenCalledWith('/api/v1/financial-data/research-notes/audio-analysis/tasks', {
-      items: [{ topic_id: 'topic-1', file_id: 'audio-1' }], title: '公司录音纪要', focus: '业绩', hotwords: ['CPO'], speaker_count: 3,
+      items: [{ topic_id: 'topic-1', file_id: 'audio-1' }], title: '公司录音纪要', focus: '业绩', hotwords: ['CPO'], speaker_count: 3, generate_memo: true,
     });
     expect(task.taskId).toBe('audio-analysis-1');
 

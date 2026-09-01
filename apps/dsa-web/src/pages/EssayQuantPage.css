@@ -32,3 +32,28 @@
 .quant-panel,.quant-pipeline,.quant-kpis,.quant-task-panel,.quant-completed-panel,.quant-template-panel,.quant-availability{overflow:hidden;border-radius:8px}
 .quant-section-title p,.quant-method-grid p,.quant-panel td,.quant-quality-notes p,.quant-active-task-list small{color:hsl(var(--secondary-text));font-size:10px;line-height:1.55}
 .quant-panel th{background:hsl(var(--elevated))}.quant-loading{color:hsl(var(--foreground));background:hsl(var(--background));border-color:hsl(var(--border))}.quant-loading>div span,.quant-loading strong{color:var(--research-blue);background:var(--research-blue)}
+
+/* Light mode completion: remove legacy dark islands from secondary task views. */
+html.light .quant-hypothesis-launch { color: #59636f; background: #ffffff; }
+html.light .quant-hypothesis-launch:hover { color: #c93d00; background: #fff5ef; }
+html.light .quant-pipe-arrow { color: #ff4f00 !important; background: #ffffff; }
+html.light .quant-template-rail > button:hover { background: #fff5ef; }
+html.light .quant-task-progress { background: #e5e7eb; }
+html.light .quant-form-stack :is(input, select),
+html.light .quant-action-row select,
+html.light .quant-checks button,
+html.light .quant-prompt textarea { border-color: #d0d5dd; color: #202124; background: #ffffff; }
+html.light .quant-checks button.is-active { border-color: #ff4f00; color: #c93d00; background: #fff5ef; }
+html.light :is(.quant-definition, .quant-safety, .quant-plan-grid > div, .quant-method-context > div, .quant-method-context dl, .quant-method-diagnostics article, .quant-evidence-questions > div, .quant-quality-notes > div) { color: #202124; background: #ffffff; }
+html.light .quant-code { background: #f7f7f8; }
+html.light .quant-code pre { border-color: #30343b; color: #edf2f7; background: #16181d; }
+html.light .quant-natural-card blockquote,
+html.light .quant-ci { border-color: rgb(255 79 0 / .28); color: #344054; background: #fff8f3; }
+html.light .quant-warning { color: #9a6700; background: #fffaeb; }
+html.light .quant-decision-banner { border-color: #f2c94c; background: #fffaeb; }
+html.light .quant-decision-banner.is-positive { border-color: #86c79a; background: #f0fdf4; }
+html.light .quant-decision-banner.is-negative { border-color: #fda29b; background: #fff1f0; }
+html.light .quant-decision-banner :is(p, li) { color: #344054; }
+html.light .quant-task-definition dd,
+html.light .quant-method-context dd,
+html.light .quant-plan li { color: #344054; }

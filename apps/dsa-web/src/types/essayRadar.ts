@@ -187,6 +187,10 @@ export type EssayAudioFile = {
   authorName?: string | null;
   noteTitle: string;
   createdAt?: string | null;
+  transcribed?: boolean;
+  transcriptTaskId?: string | null;
+  transcriptLineCount?: number | null;
+  transcribedAt?: string | null;
 };
 
 export type EssayAudioFileList = {
@@ -253,6 +257,7 @@ export type EssayAudioMemoResult = {
   sourceFiles?: Array<{ filename?: string; topicId?: string; fileId?: string; noteTitle?: string; createdAt?: string }>;
   libraryTopicId?: string | null;
   indexed?: boolean;
+  transcriptOnly?: boolean;
 };
 
 export type EssayAudioTranscript = {
@@ -272,6 +277,7 @@ export type EssayAudioAnalysisTask = {
   focus?: string;
   hotwords?: string[];
   speakerCount?: number | null;
+  generateMemo?: boolean;
   retryCount?: number;
   totalFiles: number;
   completedFiles: number;

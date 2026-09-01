@@ -26,7 +26,12 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from src.auth import COOKIE_NAME, is_auth_enabled, refresh_auth_state, verify_session
-from src.config import Config, DEFAULT_ALPHASIFT_INSTALL_SPEC, get_configured_llm_models
+from src.config import (
+    Config,
+    DEFAULT_ALPHASIFT_INSTALL_SPEC,
+    get_configured_llm_models,
+    get_effective_litellm_models_to_try,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3040,7 +3045,8 @@ def _resolve_dsa_llm_max_candidates(max_results: Optional[int]) -> int:
 
 
 def _resolve_alphasift_llm_models(config: Config) -> Tuple[str, List[str]]:
-    primary = _env_text(config.litellm_model)
+    scheduled_models = get_effective_litellm_models_to_try(config)
+    primary = _env_text(scheduled_models[0] if scheduled_models else config.litellm_model)
     configured_models = get_configured_llm_models(config.llm_model_list or [])
     configured_model_set = set(configured_models)
 
@@ -3049,7 +3055,9 @@ def _resolve_alphasift_llm_models(config: Config) -> Tuple[str, List[str]]:
     ):
         primary = configured_models[0]
 
-    raw_fallbacks = _dedupe_strings(config.litellm_fallback_models or [])
+    raw_fallbacks = _dedupe_strings(
+        scheduled_models[1:] if scheduled_models else (config.litellm_fallback_models or [])
+    )
     if not configured_models:
         return primary, [model for model in raw_fallbacks if model != primary]
 

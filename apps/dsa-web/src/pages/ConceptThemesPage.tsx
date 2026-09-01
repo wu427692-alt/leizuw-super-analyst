@@ -29,6 +29,93 @@ const metric = (value?: number | null, digits = 2) => value == null ? '—' : Nu
 const signed = (value?: number | null, suffix = '%') => value == null ? '—' : `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}${suffix}`;
 const growthMultiple = (value?: number | null) => value == null ? 'NEW' : `${Math.max(0, 1 + value / 100).toFixed(1)}×`;
 
+type ConceptSection = 'overview' | 'market' | 'catalog' | 'stocks' | 'decision';
+
+const CONCEPT_SECTIONS: Array<{ key: ConceptSection; index: string; label: string; purpose: string }> = [
+  { key: 'overview', index: '01', label: '研究总览', purpose: '数据边界与研究入口' },
+  { key: 'market', index: '02', label: '题材轮动', purpose: '价格、语料与成分变化' },
+  { key: 'catalog', index: '03', label: '题材库', purpose: '分层检索与成分归因' },
+  { key: 'stocks', index: '04', label: '个股映射', purpose: 'Beta、Alpha 与自选暴露' },
+  { key: 'decision', index: '05', label: '交易验证', purpose: '证据门槛、计划与复盘' },
+];
+
+function ConceptWorkflowRail({ active, onSelect }: { active: ConceptSection; onSelect: (section: ConceptSection) => void }) {
+  const steps: Array<{ section: ConceptSection; label: string; note: string }> = [
+    { section: 'overview', label: '数据证据', note: '确认来源与截止日' },
+    { section: 'market', label: '题材强弱', note: '识别扩张或退潮' },
+    { section: 'catalog', label: '成分归因', note: '核验股票与权重' },
+    { section: 'stocks', label: '个股暴露', note: '拆分 Beta / Alpha' },
+    { section: 'decision', label: '计划验证', note: '形成规则并复盘' },
+  ];
+  return <nav className="concept-workflow-rail" aria-label="概念题材研究闭环">
+    <span>RESEARCH LOOP</span>
+    {steps.map((step, index) => <button type="button" key={step.section} className={active === step.section ? 'is-active' : ''} onClick={() => onSelect(step.section)}>
+      <i>{String(index + 1).padStart(2, '0')}</i><strong>{step.label}</strong><small>{step.note}</small>{index < steps.length - 1 ? <ArrowRight /> : null}
+    </button>)}
+  </nav>;
+}
+
+function ConceptOverviewStart({ overview, onSelect }: { overview: ConceptOverview | null; onSelect: (section: ConceptSection) => void }) {
+  const warnings = overview?.summary.quality.warnings ?? [];
+  return <section className="concept-start-grid" aria-label="概念题材研究入口">
+    <header><div><span>START WITH A QUESTION</span><h2>先确定研究问题，再进入对应工作台</h2></div><p>每页只加载当前任务需要的数据。结论必须能回到供应商目录、成分关系和同一截止日归因。</p></header>
+    <div>
+      <button type="button" onClick={() => onSelect('market')}><Activity /><span><strong>今天哪些题材正在扩张？</strong><small>比较多源价格、机构语料和成分变化</small></span><ArrowRight /></button>
+      <button type="button" onClick={() => onSelect('catalog')}><Layers3 /><span><strong>一个题材到底包含谁？</strong><small>进入分层题材库，核验来源、成分与权重</small></span><ArrowRight /></button>
+      <button type="button" onClick={() => onSelect('stocks')}><Target /><span><strong>一只股票跟什么题材有关？</strong><small>拆分共识主线、题材 Beta 与独特 Alpha</small></span><ArrowRight /></button>
+      <button type="button" onClick={() => onSelect('decision')}><ShieldCheck /><span><strong>研究结论如何变成可验证计划？</strong><small>设置数据、主题、个股和风险四道门槛</small></span><ArrowRight /></button>
+    </div>
+    <footer data-tone={warnings.length ? 'attention' : 'ready'}><ShieldCheck /><strong>{warnings.length ? `${warnings.length} 项数据边界需要注意` : '当前数据边界已对齐'}</strong><p>{warnings.join(' · ') || `目录 ${overview?.summary.quality.catalogDate || '—'} · 归因 ${overview?.summary.quality.exposureDate || '—'}；仍需结合原始证据核验。`}</p></footer>
+  </section>;
+}
+
+function TradeDecisionWorkbench({ overview, leaders, lifecycle, watchlistMap, onOpen }: {
+  overview: ConceptOverview | null;
+  leaders: ConceptLeaders | null;
+  lifecycle: ConceptLifecycle | null;
+  watchlistMap: WatchlistThemeMap | null;
+  onOpen: (tsCode: string) => void;
+}) {
+  const lifecycleByTheme = new Map<string, ConceptLifecycle['items'][number]>();
+  lifecycle?.items.forEach(item => {
+    item.marketThemes.forEach(name => lifecycleByTheme.set(name, item));
+    lifecycleByTheme.set(item.cluster, item);
+  });
+  const candidates = (leaders?.items ?? []).slice(0, 8).map(item => {
+    const exposure = item.primaryThemes[0];
+    const life = exposure ? lifecycleByTheme.get(exposure.canonicalName) : undefined;
+    const sourceReady = (exposure?.sourceCount ?? 0) >= 2;
+    const attributionReady = exposure?.confidence !== 'insufficient' && exposure?.beta != null;
+    const alphaPositive = (exposure?.residualReturn ?? 0) > 0;
+    const themeConfirming = life?.stage === '共识扩张' || life?.stage === '价格驱动';
+    const passed = [sourceReady, attributionReady, alphaPositive, themeConfirming].filter(Boolean).length;
+    return { item, exposure, life, passed, state: passed >= 4 ? '进入验证' : passed >= 2 ? '继续跟踪' : '补充证据' };
+  });
+  const topLifecycle = lifecycle?.items[0];
+  const watchlistCoverage = watchlistMap?.stockCount ? watchlistMap.concentration.coveredStockCount / watchlistMap.stockCount * 100 : 0;
+  return <section className="concept-decision-workbench">
+    <header><div><span>RESEARCH → TEST → REVIEW</span><h2>交易研究验证台</h2><p>这里不直接给买卖指令，只把真实数据转成可执行、可证伪、可复盘的研究计划。</p></div><b>{leaders?.asOfDate || overview?.summary.quality.exposureDate || '等待归因'}</b></header>
+    <div className="concept-decision-gates">
+      <article><i>01</i><Database /><strong>数据门</strong><b>{overview?.summary.quality.warnings.length ? '有边界' : '已对齐'}</b><p>目录 {overview?.summary.quality.catalogDate || '—'} · 扫描 {metric(overview?.summary.scanCoveragePct, 0)}%</p></article>
+      <article><i>02</i><Activity /><strong>题材门</strong><b>{topLifecycle?.stage || '待交叉'}</b><p>{topLifecycle ? `${topLifecycle.cluster} · 5日 ${signed(topLifecycle.marketMomentum5D)}` : '等待价格与语料形成真实交集'}</p></article>
+      <article><i>03</i><Target /><strong>个股门</strong><b>{leaders?.totalCandidates || 0} 个候选</b><p>同一归因日比较来源、Beta、Alpha 和专属性</p></article>
+      <article><i>04</i><ShieldCheck /><strong>风险门</strong><b>{metric(watchlistCoverage, 0)}% 覆盖</b><p>自选集中度 {watchlistMap?.concentration.level || '待读取'} · 结果需样本外验证</p></article>
+    </div>
+    <section className="concept-decision-candidates">
+      <header><strong>候选验证队列</strong><small>四项检查：多源确认、归因可用、Alpha 为正、题材阶段确认</small></header>
+      <div>{candidates.map(({ item, exposure, life, passed, state }) => <article key={item.tsCode} data-state={state}>
+        <header><span><strong>{item.name}</strong><code>{item.tsCode}</code></span><b>{state} · {passed}/4</b></header>
+        <h3>{exposure?.canonicalName || '待补主线题材'}</h3>
+        <dl><div><dt>来源</dt><dd>{exposure?.sourceCount || 0} 方</dd></div><div><dt>Beta</dt><dd>{metric(exposure?.beta)}</dd></div><div><dt>Alpha</dt><dd data-tone={(exposure?.residualReturn ?? 0) >= 0 ? 'up' : 'down'}>{signed(exposure?.residualReturn)}</dd></div><div><dt>阶段</dt><dd>{life?.stage || '未交叉'}</dd></div></dl>
+        <p>{state === '进入验证' ? '证据条件齐备，可进入量化回测和交易规则验证。' : state === '继续跟踪' ? '已有部分证据，等待题材或个股归因进一步确认。' : '当前证据不足，不应把单一标签当成交易理由。'}</p>
+        <footer><button type="button" onClick={() => onOpen(item.tsCode)}>打开证据透镜</button><a href={`/essay-quant?symbol=${encodeURIComponent(item.tsCode)}&theme=${encodeURIComponent(exposure?.canonicalName || '')}`}>创建量化验证 <ArrowRight /></a></footer>
+      </article>)}</div>
+      {!candidates.length ? <div className="concept-decision-empty"><EmptyState title="候选正在准备" description="归因任务完成后，这里只展示满足真实来源和同一截止日要求的股票。" /><a href="/essay-quant?source=concept-themes&strategy=theme-event">先创建题材事件验证模板 <ArrowRight /></a><small>可先定义入场、持有期、止损与样本外窗口；候选形成后再绑定标的，不需要停在空页面等待。</small></div> : null}
+    </section>
+    <footer><ShieldCheck /><p><strong>闭环规则：</strong>先保存数据截止日与入选条件，再在量化回测中验证收益、回撤、成交约束和样本外表现，最后回到此页复盘失效原因。研究计划不构成投资建议。</p></footer>
+  </section>;
+}
+
 function exportThemeComparison(left: ThemeDetail, right: ThemeDetail, horizonDays: number) {
   const leftByCode = new Map(left.stocks.map(item => [item.tsCode, item]));
   const rightByCode = new Map(right.stocks.map(item => [item.tsCode, item]));
@@ -122,7 +209,7 @@ function ConsensusMatrix({ stocks }: { stocks: ConceptStock[] }) {
       <b>股票</b>{sources.map(source => <b key={source}>{SOURCE_LABEL[source] ?? source}</b>)}
       {rows.map(stock => <div className="concept-matrix-row" key={stock.tsCode}>
         <span><strong>{stock.name}</strong><small>{stock.tsCode}</small></span>
-        {sources.map(source => <i key={source} className={stock.sources.includes(source) ? 'is-hit' : ''} title={`${stock.name} · ${SOURCE_LABEL[source]} · ${stock.sources.includes(source) ? '已纳入' : '未纳入'}`} />)}
+        {sources.map(source => <i key={source} className={stock.sources.includes(source) ? 'is-hit' : ''} aria-label={`${stock.name} · ${SOURCE_LABEL[source]} · ${stock.sources.includes(source) ? '已纳入' : '未纳入'}`} />)}
       </div>)}
     </div>
   </section>;
@@ -178,7 +265,7 @@ function ThemeResearchQueue({ stocks, onOpen }: { stocks: ConceptStock[]; onOpen
     { key: 'alpha', title: '独立正 Alpha', note: 'Beta<0.8且窗口Alpha>0', values: take([...stocks].filter(item => (item.beta ?? 99) < .8 && (item.residualReturn ?? 0) > 0).sort((a, b) => (b.residualReturn ?? 0) - (a.residualReturn ?? 0))) },
     { key: 'divergence', title: '负 Alpha 背离', note: 'Beta≥0.8但窗口Alpha<0', values: take([...stocks].filter(item => (item.beta ?? -99) >= .8 && (item.residualReturn ?? 0) < 0).sort((a, b) => (a.residualReturn ?? 0) - (b.residualReturn ?? 0))) },
   ];
-  return <section className="concept-research-queue"><header><div><strong>题材研究优先队列</strong><small>由来源共识与归因结果生成，用于决定先核验谁，不构成买卖信号</small></div><Target /></header><div>{groups.map(group => <article key={group.key} data-kind={group.key}><h3>{group.title}</h3><p>{group.note}</p>{group.values.map(item => <button type="button" key={item.tsCode} title={item.betaInterpretation} onClick={() => onOpen(item.tsCode)}><span>{item.name}<small>{item.tsCode}</small></span><b>{group.key === 'consensus' ? `${item.sourceCount}源 · W${metric(item.weightScore, 0)}` : group.key === 'elastic' ? `β ${metric(item.beta)}` : signed(item.residualReturn)}</b></button>)}{!group.values.length ? <em>当前无满足条件的成分</em> : null}</article>)}</div></section>;
+  return <section className="concept-research-queue"><header><div><strong>题材研究优先队列</strong><small>由来源共识与归因结果生成，用于决定先核验谁，不构成买卖信号</small></div><Target /></header><div>{groups.map(group => <article key={group.key} data-kind={group.key}><h3>{group.title}</h3><p>{group.note}</p>{group.values.map(item => <button type="button" key={item.tsCode} aria-label={`${item.name}：${item.betaInterpretation}`} onClick={() => onOpen(item.tsCode)}><span>{item.name}<small>{item.tsCode}</small></span><b>{group.key === 'consensus' ? `${item.sourceCount}源 · W${metric(item.weightScore, 0)}` : group.key === 'elastic' ? `β ${metric(item.beta)}` : signed(item.residualReturn)}</b></button>)}{!group.values.length ? <em>当前无满足条件的成分</em> : null}</article>)}</div></section>;
 }
 
 function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
@@ -219,7 +306,7 @@ function InstitutionDiscoveryRadar({ value, onSelect, onOpen }: {
         return <article key={item.canonicalName} data-status={item.status}>
           <div className="concept-institution-radar__title"><button type="button" onClick={() => onSelect(item)}><strong>{item.canonicalName}</strong><ChevronRight /></button><span>{statusLabel[item.status]}</span></div>
           <div className="concept-institution-radar__metrics"><b>{item.noteCount}<small>篇语料</small></b><b>{item.recent7D}<small>近7日</small></b><b data-tone={(item.accelerationPct ?? 0) >= 0 ? 'up' : 'down'}>{item.accelerationPct == null ? 'NEW' : signed(item.accelerationPct)}<small>提及加速度</small></b><b>{metric(item.discoveryScore, 0)}<small>发现分</small></b></div>
-          <div className="concept-institution-radar__tone" title={`看多 ${item.sentiment.bullish} · 中性 ${item.sentiment.neutral} · 看空 ${item.sentiment.bearish}`}><i data-tone="bullish" style={{ width: `${item.sentiment.bullish / totalTone * 100}%` }} /><i data-tone="neutral" style={{ width: `${item.sentiment.neutral / totalTone * 100}%` }} /><i data-tone="bearish" style={{ width: `${item.sentiment.bearish / totalTone * 100}%` }} /></div>
+          <div className="concept-institution-radar__tone" aria-label={`看多 ${item.sentiment.bullish} · 中性 ${item.sentiment.neutral} · 看空 ${item.sentiment.bearish}`}><i data-tone="bullish" style={{ width: `${item.sentiment.bullish / totalTone * 100}%` }} /><i data-tone="neutral" style={{ width: `${item.sentiment.neutral / totalTone * 100}%` }} /><i data-tone="bearish" style={{ width: `${item.sentiment.bearish / totalTone * 100}%` }} /></div>
           <div className="concept-institution-radar__stocks">{item.stocks.slice(0, 4).map(stock => <button type="button" key={`${item.canonicalName}-${stock.tsCode || stock.name}`} onClick={() => stock.tsCode ? onOpen(stock.tsCode) : undefined} disabled={!stock.tsCode}><span>{stock.name}</span><b>{stock.mentions}</b></button>)}{!item.stocks.length ? <em>暂无明确股票提及</em> : null}</div>
           <footer>{item.providerCount ? `${item.providerCount} 个独立供应商已有同名题材` : '尚无供应商同名题材，需人工核验'} · {item.latestAt?.slice(0, 10) || '近期'}</footer>
         </article>;
@@ -325,7 +412,7 @@ function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: b
   return <button type="button" className={`concept-stock-row ${selected ? 'is-active' : ''}`} onClick={onClick}>
     <span className="concept-stock-name"><strong>{item.name || item.tsCode}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><small>{item.tsCode}</small></span>
     <span><strong>{item.weightScore ? item.weightScore.toFixed(1) : '待算'}</strong><small>题材权重</small></span>
-    <span title={item.betaInterpretation}><strong>{metric(item.beta)}</strong><small>题材 Beta · {item.confidence === 'high' ? '高' : item.confidence === 'medium' ? '中' : '低'}置信</small></span>
+    <span aria-label={item.betaInterpretation}><strong>{metric(item.beta)}</strong><small>题材 Beta · {item.confidence === 'high' ? '高' : item.confidence === 'medium' ? '中' : '低'}置信</small></span>
     <span data-tone={(item.residualReturn ?? 0) >= 0 ? 'up' : 'down'}><strong>{signed(item.residualReturn)}</strong><small>窗口 Alpha</small></span>
     <span><strong>{item.sourceCount}</strong><small>独立提供方</small></span>
     <span className="concept-stock-reason">{item.reasons?.[0] || '结构化来源已确认，尚无文字入选原因'}</span>
@@ -389,7 +476,7 @@ function StockLensPanel({ value, onClose, onExport }: { value: StockThemeLens; o
         </div>
         <div className="concept-weight-decomp" aria-label="题材权重分项">
           <span><i style={{ width: `${Number(item.components?.consensus) || 0}%` }} /><b>{metric(Number(item.components?.consensus) || 0, 0)}</b><small>来源共识 · 36%</small></span>
-          <span title={`供应商理由 ${metric(Number(item.components?.providerReasonScore) || 0, 0)} · 本地机构语料 ${metric(Number(item.components?.localCorpusScore) || 0, 0)}`}><i style={{ width: `${Number(item.components?.relevance) || 0}%` }} /><b>{metric(Number(item.components?.relevance) || 0, 0)}</b><small>业务证据 · 29%{Number(item.components?.localCorpusEvidenceCount) > 0 ? ` · 机构${Number(item.components?.localCorpusEvidenceCount)}篇` : ''}</small></span>
+          <span aria-label={`供应商理由 ${metric(Number(item.components?.providerReasonScore) || 0, 0)} · 本地机构语料 ${metric(Number(item.components?.localCorpusScore) || 0, 0)}`}><i style={{ width: `${Number(item.components?.relevance) || 0}%` }} /><b>{metric(Number(item.components?.relevance) || 0, 0)}</b><small>业务证据 · 29%{Number(item.components?.localCorpusEvidenceCount) > 0 ? ` · 机构${Number(item.components?.localCorpusEvidenceCount)}篇` : ''}</small></span>
           <span><i style={{ width: `${Number(item.components?.market) || 0}%` }} /><b>{metric(Number(item.components?.market) || 0, 0)}</b><small>市场热度 · 20%</small></span>
           <span><i style={{ width: `${Number(item.components?.specificity) || 0}%` }} /><b>{metric(Number(item.components?.specificity) || 0, 0)}</b><small>题材专属性 · 15%</small></span>
         </div>
@@ -429,7 +516,10 @@ export default function ConceptThemesPage() {
   const initialThemeId = Number.isInteger(initialThemeValue) && initialThemeValue > 0 ? initialThemeValue : null;
   const initialWindowValue = Number(initialParams?.get('window') || 60);
   const initialHorizon = ([20, 60, 120].includes(initialWindowValue) ? initialWindowValue : 60) as 20 | 60 | 120;
+  const initialSectionValue = initialParams?.get('section') as ConceptSection | null;
+  const initialSection = initialThemeId != null ? 'catalog' : CONCEPT_SECTIONS.some(item => item.key === initialSectionValue) ? initialSectionValue! : 'overview';
   const directThemeRef = useRef(initialThemeId != null);
+  const [activeSection, setActiveSection] = useState<ConceptSection>(initialSection);
   const [overview, setOverview] = useState<ConceptOverview | null>(null);
   const [rotation, setRotation] = useState<ConceptRotation | null>(null);
   const [leaders, setLeaders] = useState<ConceptLeaders | null>(null);
@@ -468,17 +558,17 @@ export default function ConceptThemesPage() {
   const loadOverview = useCallback(async () => {
     const sequence = ++requestSequence.current;
     try {
-      const responsivePageSize = typeof window !== 'undefined' && window.innerWidth <= 720 ? 12 : 48;
+      const responsivePageSize = typeof window !== 'undefined' && window.innerWidth <= 720 ? 10 : 24;
       const value = await conceptThemesApi.overview({ query: debouncedQuery, themeType, source, family, cluster, minSources, readiness, sortBy, view: catalogView, page, pageSize: responsivePageSize });
       if (sequence !== requestSequence.current) return;
       setOverview(value);
       setStatus(`${value.summary.marketDate || '最新交易日'} · ${number(value.summary.themes)} 个源题材 · ${number(value.summary.memberships)} 条成分关系`);
-      setSelectedTheme(current => (directThemeRef.current && current != null) || value.items.some(item => item.id === current) ? current : value.items.find(item => item.canonicalSourceCount >= 3 && item.constituentCount > 0)?.id ?? value.items.find(item => item.canonicalSourceCount >= 2 && item.constituentCount > 0)?.id ?? value.items[0]?.id ?? null);
+      if (activeSection === 'catalog') setSelectedTheme(current => (directThemeRef.current && current != null) || value.items.some(item => item.id === current) ? current : value.items.find(item => item.canonicalSourceCount >= 3 && item.constituentCount > 0)?.id ?? value.items.find(item => item.canonicalSourceCount >= 2 && item.constituentCount > 0)?.id ?? value.items[0]?.id ?? null);
     } catch (error) {
       if (sequence !== requestSequence.current) return;
       setStatus(error instanceof Error ? error.message : '题材库暂时不可用，系统会静默重试');
     } finally { if (sequence === requestSequence.current) setLoading(false); }
-  }, [catalogView, cluster, debouncedQuery, family, minSources, page, readiness, sortBy, source, themeType]);
+  }, [activeSection, catalogView, cluster, debouncedQuery, family, minSources, page, readiness, sortBy, source, themeType]);
   const loadRotation = useCallback(async () => {
     try { setRotation(await conceptThemesApi.rotation(20, 18)); }
     catch { /* keep the last successful rotation snapshot while the upstream refreshes */ }
@@ -510,20 +600,28 @@ export default function ConceptThemesPage() {
   }, [cluster, family, horizonDays]);
 
   useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
-  useEffect(() => { void loadRotation(); }, [loadRotation]);
-  useEffect(() => { void loadLeaders(); }, [loadLeaders]);
-  useEffect(() => { void loadInstitutionRadar(); }, [loadInstitutionRadar]);
-  useEffect(() => { void loadLifecycle(); }, [loadLifecycle]);
-  useEffect(() => { void loadWatchlistMap(); }, [loadWatchlistMap]);
-  useEffect(() => { void loadMembershipChanges(); }, [loadMembershipChanges]);
-  useEffect(() => { setClusterDetail(null); void loadCluster(); }, [loadCluster]);
+  useEffect(() => {
+    const tasks: Array<Promise<unknown>> = [];
+    if (activeSection === 'market') tasks.push(loadRotation(), loadInstitutionRadar(), loadLifecycle(), loadMembershipChanges());
+    if (activeSection === 'stocks') tasks.push(loadLeaders(), loadWatchlistMap());
+    if (activeSection === 'decision') tasks.push(loadRotation(), loadLeaders(), loadLifecycle(), loadWatchlistMap());
+    if (tasks.length) void Promise.allSettled(tasks);
+  }, [activeSection, loadCluster, loadInstitutionRadar, loadLeaders, loadLifecycle, loadMembershipChanges, loadRotation, loadWatchlistMap]);
+  useEffect(() => { if (activeSection === 'catalog') { setClusterDetail(null); void loadCluster(); } }, [activeSection, loadCluster]);
   useEffect(() => { setPage(1); }, [catalogView, cluster, debouncedQuery, family, minSources, readiness, sortBy, source, themeType]);
   useEffect(() => { setLoading(true); void loadOverview(); }, [loadOverview]);
-  const refreshActivePage = useCallback(async () => { await Promise.all([loadOverview(), loadRotation(), loadLeaders(), loadInstitutionRadar(), loadLifecycle(), loadWatchlistMap(), loadMembershipChanges(), loadCluster()]); }, [loadCluster, loadInstitutionRadar, loadLeaders, loadLifecycle, loadMembershipChanges, loadOverview, loadRotation, loadWatchlistMap]);
+  const refreshActivePage = useCallback(async () => {
+    const tasks: Array<Promise<unknown>> = [loadOverview()];
+    if (activeSection === 'market') tasks.push(loadRotation(), loadInstitutionRadar(), loadLifecycle(), loadMembershipChanges());
+    if (activeSection === 'stocks') tasks.push(loadLeaders(), loadWatchlistMap());
+    if (activeSection === 'decision') tasks.push(loadRotation(), loadLeaders(), loadLifecycle(), loadWatchlistMap());
+    if (activeSection === 'catalog') tasks.push(loadCluster());
+    await Promise.allSettled(tasks);
+  }, [activeSection, loadCluster, loadInstitutionRadar, loadLeaders, loadLifecycle, loadMembershipChanges, loadOverview, loadRotation, loadWatchlistMap]);
   usePageActivationRefresh(refreshActivePage, { intervalMs: 60_000, minIntervalMs: 8_000, runOnMount: false });
 
   useEffect(() => {
-    if (selectedTheme == null) { setDetail(null); return; }
+    if (activeSection !== 'catalog' || selectedTheme == null) { if (activeSection !== 'catalog') setDetail(null); return; }
     let active = true;
     setDetailLoading(true);
     setDetail(null);
@@ -531,7 +629,7 @@ export default function ConceptThemesPage() {
       if (active) setStatus(error instanceof Error ? error.message : '题材成分读取失败');
     }).finally(() => { if (active) setDetailLoading(false); });
     return () => { active = false; };
-  }, [horizonDays, selectedTheme]);
+  }, [activeSection, horizonDays, selectedTheme]);
 
   const families = useMemo(() => Object.entries(overview?.summary.families ?? {}).sort((a, b) => b[1] - a[1]), [overview]);
   const clusters = useMemo(() => Object.entries(family ? overview?.summary.clusterFamilies?.[family] ?? {} : {}).sort((a, b) => b[1] - a[1]), [family, overview]);
@@ -545,7 +643,7 @@ export default function ConceptThemesPage() {
           : right.weightScore - left.weightScore);
     return values;
   }, [detail, stockQuery, stockSort, watchlistOnly]);
-  const stockPageSize = 60;
+  const stockPageSize = 24;
   const visibleStocks = filteredStocks.slice((stockPage - 1) * stockPageSize, stockPage * stockPageSize);
   const consensusDistribution = detail?.consensusDistribution ?? {
     strong: detail?.stocks.filter(item => item.sourceCount >= 3).length ?? 0,
@@ -608,6 +706,17 @@ export default function ConceptThemesPage() {
     if (exists) return current.filter(item => item.theme.canonicalName !== value.theme.canonicalName);
     return current.length >= 2 ? [current[1], value] : [...current, value];
   });
+  const selectSection = useCallback((next: ConceptSection) => {
+    setActiveSection(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set('section', next);
+    if (next !== 'catalog') url.searchParams.delete('theme');
+    window.history.replaceState({}, '', url);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+  const openThemeInCatalog = useCallback((name: string) => {
+    setQuery(name); setPage(1); setFamily(''); setCluster(''); selectSection('catalog');
+  }, [selectSection]);
 
   return <AppPage className="concept-page max-w-[1840px]">
     <div className="concept-shell">
@@ -617,38 +726,38 @@ export default function ConceptThemesPage() {
         <div className="concept-orbit" aria-hidden="true"><span /><span /><span /><b /></div>
       </header>
 
-      <section className="concept-kpis">
-        <div><Database /><span>源题材节点</span><strong>{number(overview?.summary.themes)}</strong><small>语义分层 {metric(overview?.summary.semanticCoveragePct, 1)}% · 六套原始口径保留</small></div>
-        <div><GitBranch /><span>成分关系</span><strong>{number(overview?.summary.memberships)}</strong><small>已扫描 {number(overview?.summary.attemptedThemes)} 个节点 · {metric(overview?.summary.scanCoveragePct, 1)}% · {number(overview?.summary.memberedThemes)} 个有成分</small></div>
-        <div><Binary /><span>归因结果</span><strong>{number(overview?.summary.exposures)}</strong><small>当前60日 · {number(overview?.summary.exposureThemes)}题材 / {number(overview?.summary.exposureStocks)}股票 · 多源可研究 {number(overview?.summary.researchableThemes)}</small></div>
-        <div><ShieldCheck /><span>最新交易日</span><strong>{overview?.summary.marketDate || '—'}</strong><small>{overview?.sync?.stage || '共享题材库'}</small></div>
-      </section>
-      <section className="concept-quality-strip" data-tone={overview?.summary.quality.warnings.length ? 'attention' : 'ready'} aria-label="题材数据质量与截止时间">
-        <div><span>目录交易日</span><strong>{overview?.summary.quality.catalogDate || '—'}</strong></div>
-        <div><span>独立目录就绪</span><strong>{overview ? `${overview.summary.quality.freshCatalogs}/${overview.summary.quality.totalCatalogs}` : '—'}</strong></div>
-        <div><span>成分扫描</span><strong>{metric(overview?.summary.scanCoveragePct, 1)}%</strong></div>
-        <div><span>归因截止</span><strong>{overview?.summary.quality.exposureDate || '—'}</strong></div>
-        <p>{overview?.summary.quality.warnings.join(' · ') || '目录、成分与归因截止时间一致；仍需结合原始证据核验。'}</p>
-      </section>
-      <section className="concept-cadence" aria-label="概念题材数据更新节奏">
-        <header><Clock3 /><div><strong>数据更新节奏</strong><small>按数据本身的生成频率更新，不把页面轮询冒充上游实时数据</small></div></header>
-        <div><span>供应商题材目录</span><strong>每日交易日同步</strong><small>保留六套原始口径与各自交易日</small></div>
-        <div><span>全市场成分扫描</span><strong>每 5 分钟续跑</strong><small>断点续扫 · 单轮 120 个源节点</small></div>
-        <div><span>我的自选校验</span><strong>每 6 小时复核</strong><small>优先补齐新增自选的题材和归因</small></div>
-        <div><span>当前页面</span><strong>切回即刷新</strong><small>停留期间每 60 秒静默读取共享库</small></div>
-      </section>
-      <nav className="concept-section-nav" aria-label="概念题材研究导航">
-        <span>研究路径</span>
-        <a href="#concept-rotation">市场轮动</a>
-        <a href="#concept-lifecycle">生命周期</a>
-        <a href="#concept-corpus-radar">机构语料</a>
-        <a href="#concept-watchlist">自选暴露</a>
-        <a href="#concept-changes">成分变化</a>
-        <a href="#concept-stock-radar">股票雷达</a>
-        <a href="#concept-universe">题材宇宙</a>
-        <small>找主题 → 核成分 → 看 Beta → 查 Alpha</small>
+      <nav className="concept-page-nav" aria-label="概念题材工作台分页">
+        {CONCEPT_SECTIONS.map(item => <button type="button" key={item.key} className={activeSection === item.key ? 'is-active' : ''} onClick={() => selectSection(item.key)}>
+          <i>{item.index}</i><span><strong>{item.label}</strong><small>{item.purpose}</small></span>
+        </button>)}
       </nav>
+      <ConceptWorkflowRail active={activeSection} onSelect={selectSection} />
 
+      {activeSection === 'overview' ? <>
+        <section className="concept-kpis">
+          <div><Database /><span>源题材节点</span><strong>{number(overview?.summary.themes)}</strong><small>语义分层 {metric(overview?.summary.semanticCoveragePct, 1)}% · 六套原始口径保留</small></div>
+          <div><GitBranch /><span>成分关系</span><strong>{number(overview?.summary.memberships)}</strong><small>已扫描 {number(overview?.summary.attemptedThemes)} 个节点 · {metric(overview?.summary.scanCoveragePct, 1)}%</small></div>
+          <div><Binary /><span>归因结果</span><strong>{number(overview?.summary.exposures)}</strong><small>{number(overview?.summary.exposureThemes)}题材 / {number(overview?.summary.exposureStocks)}股票 · 可研究 {number(overview?.summary.researchableThemes)}</small></div>
+          <div><ShieldCheck /><span>最新交易日</span><strong>{overview?.summary.marketDate || '—'}</strong><small>{overview?.sync?.stage || '共享题材库'}</small></div>
+        </section>
+        <section className="concept-quality-strip" data-tone={overview?.summary.quality.warnings.length ? 'attention' : 'ready'} aria-label="题材数据质量与截止时间">
+          <div><span>目录交易日</span><strong>{overview?.summary.quality.catalogDate || '—'}</strong></div>
+          <div><span>独立目录就绪</span><strong>{overview ? `${overview.summary.quality.freshCatalogs}/${overview.summary.quality.totalCatalogs}` : '—'}</strong></div>
+          <div><span>成分扫描</span><strong>{metric(overview?.summary.scanCoveragePct, 1)}%</strong></div>
+          <div><span>归因截止</span><strong>{overview?.summary.quality.exposureDate || '—'}</strong></div>
+          <p>{overview?.summary.quality.warnings.join(' · ') || '目录、成分与归因截止时间一致；仍需结合原始证据核验。'}</p>
+        </section>
+        <ConceptOverviewStart overview={overview} onSelect={selectSection} />
+        <section className="concept-cadence" aria-label="概念题材数据更新节奏">
+          <header><Clock3 /><div><strong>数据更新节奏</strong><small>按数据本身的生成频率更新，不把页面轮询冒充上游实时数据</small></div></header>
+          <div><span>供应商题材目录</span><strong>每日交易日同步</strong><small>保留六套原始口径与各自交易日</small></div>
+          <div><span>全市场成分扫描</span><strong>每 5 分钟续跑</strong><small>断点续扫 · 单轮 120 个源节点</small></div>
+          <div><span>我的自选校验</span><strong>每 6 小时复核</strong><small>优先补齐新增自选的题材和归因</small></div>
+          <div><span>当前页面</span><strong>切回即刷新</strong><small>停留期间每 60 秒静默读取共享库</small></div>
+        </section>
+      </> : null}
+
+      {activeSection === 'catalog' ? <>
       <section className="concept-toolbar">
         <label className="concept-search"><Search /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索题材、行业、股票代码或源代码" /></label>
         <select value={themeType} onChange={event => setThemeType(event.target.value)} aria-label="题材类型"><option value="">全部层级</option><option value="theme">市场题材</option><option value="concept">概念</option><option value="industry">行业</option><option value="region">地域</option><option value="style">风格</option></select>
@@ -664,11 +773,13 @@ export default function ConceptThemesPage() {
           <strong>{item.name}</strong><code>{item.tsCode}</code><small>{item.themeCount} 个题材 · {item.sourceCount} 个来源</small><ChevronRight />
         </button>)}</div>
       </section> : null}
+      </> : null}
 
+      {activeSection === 'market' ? <>
       <section className="concept-rotation-board" id="concept-rotation">
         <header><div><span><Activity /> THEME ROTATION</span><h2>多源题材轮动</h2></div><p>{rotation?.latestDate || overview?.summary.marketDate || '最新交易日'} · {rotation?.availableDates || 0} 个历史交易日 · 日涨跌取多来源中位数</p></header>
         <div className="concept-rotation-track">
-          {rotation?.items.slice(0, 12).map(item => <button type="button" key={item.canonicalName} onClick={() => setQuery(item.canonicalName)}>
+          {rotation?.items.slice(0, 12).map(item => <button type="button" key={item.canonicalName} onClick={() => openThemeInCatalog(item.canonicalName)}>
             <div><strong>{item.canonicalName}</strong><span>{item.cluster}</span></div>
             <RotationSparkline points={item.points} />
             <b data-tone={(item.pctChange || 0) >= 0 ? 'up' : 'down'}>{signed(item.pctChange)}</b>
@@ -679,16 +790,19 @@ export default function ConceptThemesPage() {
         <footer>{rotation?.method || '每日保留各来源原始快照后再聚合；数据不足时不外推历史。'}</footer>
       </section>
 
-      <ThemeLifecycleBoard value={lifecycle} onTheme={name => { setQuery(name); setPage(1); }} />
+      <ThemeLifecycleBoard value={lifecycle} onTheme={openThemeInCatalog} />
 
       <InstitutionDiscoveryRadar value={institutionRadar} onSelect={item => { setStockLens(null); setInstitutionCandidate(item); }} onOpen={tsCode => void openStock(tsCode)} />
 
-      <WatchlistExposureMap value={watchlistMap} onOpen={tsCode => void openStock(tsCode)} onCluster={(nextFamily, nextCluster) => { setFamily(nextFamily); setCluster(nextCluster); }} onExport={() => void conceptThemesApi.exportWatchlistMap(horizonDays)} />
+      <MembershipChangeLedger value={membershipChanges} onOpen={tsCode => void openStock(tsCode)} onTheme={openThemeInCatalog} />
+      </> : null}
 
-      <MembershipChangeLedger value={membershipChanges} onOpen={tsCode => void openStock(tsCode)} onTheme={name => { setQuery(name); setPage(1); }} />
+      {activeSection === 'stocks' ? <>
+        <WatchlistExposureMap value={watchlistMap} onOpen={tsCode => void openStock(tsCode)} onCluster={(nextFamily, nextCluster) => { setFamily(nextFamily); setCluster(nextCluster); selectSection('catalog'); }} onExport={() => void conceptThemesApi.exportWatchlistMap(horizonDays)} />
+        <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
+      </> : null}
 
-      <MarketConsensusRadar value={leaders} mode={leaderMode} onMode={setLeaderMode} onOpen={tsCode => void openStock(tsCode)} />
-
+      {activeSection === 'catalog' ? <>
       <div className="concept-workspace" id="concept-universe">
         <aside className="concept-families">
           <div className="concept-panel-title"><Layers3 /><div><strong>题材分层</strong><small>规范族群 → 原始题材</small></div></div>
@@ -737,15 +851,18 @@ export default function ConceptThemesPage() {
           <aside><strong>{comparison.similarity.toFixed(1)}%</strong><span>成分 Jaccard 相似度</span><b>{comparison.shared.length} 只共同成分</b><p>{comparison.shared.slice(0, 12).map(item => item.name).join('、') || '没有共同成分'}</p></aside>
         </div> : <div className="concept-compare-empty"><Scale /><p>对照不是只比涨跌：系统会比较成分重合、市场共识、归因覆盖和双方独占的高权重股票。</p></div>}
       </section>
+      </> : null}
 
-      <section className="concept-method">
+      {activeSection === 'decision' ? <TradeDecisionWorkbench overview={overview} leaders={leaders} lifecycle={lifecycle} watchlistMap={watchlistMap} onOpen={tsCode => void openStock(tsCode)} /> : null}
+
+      {activeSection === 'overview' ? <section className="concept-method">
         <header><BrainCircuit /><div><span>ATTRIBUTION METHOD</span><h2>Beta 与 Alpha 如何被计算</h2></div></header>
         <div className="concept-method__flow"><div><Boxes /><strong>来源共识</strong><p>同花顺、东财、开盘啦、通达信、申万独立投票</p></div><ArrowRight /><div><Target /><strong>题材权重</strong><p>36%共识 + 29%业务证据 + 20%热度 + 15%专属性</p></div><ArrowRight /><div><TrendingUp /><strong>题材 Beta</strong><p>剔除个股自身后的题材组合，同时控制沪深300</p></div><ArrowRight /><div><Activity /><strong>独特 Alpha</strong><p>统计窗口残差与公司独有事实证据分层展示</p></div></div>
         <p className="concept-method__formula">{overview?.methodology.betaFormula}</p>
         <small>{overview?.methodology.licenseNote}</small>
-      </section>
+      </section> : null}
     </div>
       {stockLens ? <StockLensPanel value={stockLens} onClose={() => setStockLens(null)} onExport={() => void conceptThemesApi.exportStock(stockLens.tsCode, horizonDays)} /> : null}
-      {institutionCandidate ? <InstitutionCandidatePanel item={institutionCandidate} onClose={() => setInstitutionCandidate(null)} onTheme={setQuery} onOpen={tsCode => { setInstitutionCandidate(null); void openStock(tsCode); }} /> : null}
+      {institutionCandidate ? <InstitutionCandidatePanel item={institutionCandidate} onClose={() => setInstitutionCandidate(null)} onTheme={openThemeInCatalog} onOpen={tsCode => { setInstitutionCandidate(null); void openStock(tsCode); }} /> : null}
   </AppPage>;
 }

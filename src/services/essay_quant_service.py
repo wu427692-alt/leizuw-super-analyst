@@ -23,6 +23,7 @@ from sqlalchemy.orm import load_only
 from src.data.stock_index_loader import get_index_stock_name, get_stock_name_index_map
 from src.request_identity import current_owner_id
 from src.services.financial_data_service import TushareGatewayService
+from src.services.quant_capability_service import QuantCapabilityService
 from src.storage import (
     DatabaseManager,
     EssayAnalysisRecord,
@@ -147,7 +148,7 @@ class EssayQuantService:
             if row is None:
                 row = EssayQuantRuleRecord(owner_id=self.owner_id)
                 session.add(row)
-            advanced_keys = {"strategy_type", "raw_note_policy", "dedupe_window_days", "transaction_cost_bps", "validation_method"}
+            advanced_keys = {"strategy_type", "raw_note_policy", "dedupe_window_days", "transaction_cost_bps", "validation_method", "entry_price_mode"}
             for key, value in fields.items():
                 if key not in {"holding_periods", *advanced_keys}:
                     setattr(row, key, value)
@@ -391,6 +392,29 @@ class EssayQuantService:
         all_symbols = list(symbol_counts)
         refresh_limit = max(2, min(int(max_symbols), 60))
         warnings: List[str] = []
+        auction_map: Dict[Tuple[str, date], float] = {}
+        if rule["entry_price_mode"] == "next_auction" and all_symbols:
+            capability = QuantCapabilityService(db=self.db, tushare=self.tushare, owner_id=self.owner_id)
+            event_start = min((event["event_date"] for event in events), default=datetime.now(_SH_TZ).date())
+            auction_symbols = [symbol for symbol, _ in symbol_counts.most_common(refresh_limit)]
+            if refresh_prices:
+                try:
+                    sync_result = capability.sync_auction(
+                        auction_symbols, start_date=event_start, end_date=datetime.now(_SH_TZ).date(),
+                    )
+                    if sync_result.get("failed"):
+                        warnings.append(
+                            f"集合竞价同步存在 {len(sync_result['failed'])} 个标的缺口，缺口事件明确回退到日线开盘价"
+                        )
+                except Exception as exc:  # keep the run reproducible with an explicit fallback marker.
+                    warnings.append(f"集合竞价同步失败，缺口事件回退到日线开盘价：{str(exc)[:120]}")
+            auction_map = capability.auction_price_map(
+                all_symbols, event_start, datetime.now(_SH_TZ).date(),
+            )
+            if len(all_symbols) > refresh_limit:
+                warnings.append(
+                    f"本次主动同步集合竞价覆盖高频出现的 {refresh_limit}/{len(all_symbols)} 个标的；其余优先读取历史缓存"
+                )
         bulk_refreshed_symbols = 0
         if refresh_prices and all_symbols:
             self._target_price_date, bulk_refreshed_symbols, freshness_warnings = self._hydrate_market_freshness(
@@ -414,7 +438,7 @@ class EssayQuantService:
             if not apply_adjustment:
                 factor_map = {}
         price_map = self._price_map(all_symbols + [rule["benchmark_code"]], rule["lookback_days"] + max(rule["holding_periods"]) + 60)
-        evaluated = [self._evaluate_event(event, price_map, factor_map, rule) for event in events]
+        evaluated = [self._evaluate_event(event, price_map, factor_map, rule, auction_map) for event in events]
         selected_events, method_analysis = self._apply_strategy(rule, evaluated, price_map)
         self._coverage.update({
             "resolved_symbol_count": len(all_symbols),
@@ -988,17 +1012,27 @@ class EssayQuantService:
             result[row.code].append({"date": row.date, "open": row.open, "close": row.close, "high": row.high, "low": row.low})
         return result
 
-    def _evaluate_event(self, event: Dict[str, Any], prices: Dict[str, List[Dict[str, Any]]], factors: Dict[str, Dict[date, float]], rule: Dict[str, Any]) -> Dict[str, Any]:
+    def _evaluate_event(
+        self,
+        event: Dict[str, Any],
+        prices: Dict[str, List[Dict[str, Any]]],
+        factors: Dict[str, Dict[date, float]],
+        rule: Dict[str, Any],
+        auction_prices: Optional[Dict[Tuple[str, date], float]] = None,
+    ) -> Dict[str, Any]:
         series = prices.get(event["symbol"].split(".")[0], [])
         future = [row for row in series if row["date"] > event["event_date"] and row.get("open") not in (None, 0)]
-        row = {**event, "entry_date": None, "entry_price": None, "returns": {}, "excess_returns": {}, "mature_periods": []}
+        row = {**event, "entry_date": None, "entry_price": None, "entry_price_source": None, "returns": {}, "excess_returns": {}, "mature_periods": []}
         if not future:
             return row
         entry = future[0]
         entry_factor = factors.get(event["symbol"], {}).get(entry["date"], 1.0)
-        entry_price = float(entry["open"]) * entry_factor
+        auction_value = (auction_prices or {}).get((event["symbol"], entry["date"]))
+        use_auction = rule.get("entry_price_mode") == "next_auction" and auction_value not in (None, 0)
+        entry_price = float(auction_value if use_auction else entry["open"]) * entry_factor
         row["entry_date"] = entry["date"].isoformat()
         row["entry_price"] = round(entry_price, 4)
+        row["entry_price_source"] = "opening_auction" if use_auction else "daily_open_fallback" if rule.get("entry_price_mode") == "next_auction" else "daily_open"
         benchmark_series = prices.get(rule["benchmark_code"].split(".")[0], [])
         benchmark_future = [item for item in benchmark_series if item["date"] >= entry["date"] and item.get("close") not in (None, 0)]
         benchmark_entry = float(benchmark_future[0]["close"]) if benchmark_future else None
@@ -1063,7 +1097,8 @@ class EssayQuantService:
                     continue
                 entry_factor = factors.get(event["symbol"], {}).get(future[0]["date"], 1.0)
                 day_factor = factors.get(event["symbol"], {}).get(future[day_index]["date"], 1.0)
-                stock_values.append((float(future[day_index]["close"]) * day_factor / (float(future[0]["open"]) * entry_factor) - 1) * 100)
+                actual_entry_price = float(event.get("entry_price") or (float(future[0]["open"]) * entry_factor))
+                stock_values.append((float(future[day_index]["close"]) * day_factor / actual_entry_price - 1) * 100)
                 benchmark = prices.get(rule["benchmark_code"].split(".")[0], [])
                 bench_future = [row for row in benchmark if row["date"] >= future[0]["date"] and row.get("close")]
                 if len(bench_future) > day_index:
@@ -1110,7 +1145,11 @@ class EssayQuantService:
                              "price_basis": "Tushare复权因子" if adjusted else "本地原始日线（未复权）",
                              "price_cutoff": cutoff.isoformat() if cutoff else None,
                              **freshness,
-                             "entry_rule": "事件后首个交易日开盘", "exit_rule": "第N个交易日收盘",
+                             "entry_rule": "事件后首个交易日开盘集合竞价成交价（缺口显式回退）" if rule.get("entry_price_mode") == "next_auction" else "事件后首个交易日开盘",
+                             "entry_price_mode": rule.get("entry_price_mode", "next_auction"),
+                             "auction_entry_count": sum(event.get("entry_price_source") == "opening_auction" for event in events),
+                             "auction_fallback_count": sum(event.get("entry_price_source") == "daily_open_fallback" for event in events),
+                             "exit_rule": "第N个交易日收盘",
                              "transaction_cost_bps": rule["transaction_cost_bps"],
                              "validation_method": rule["validation_method"],
                              "benchmark": rule["benchmark_code"], "survivorship_note": "仅统计有证券代码且具备到期行情的事件；未成熟样本不计胜率。",
@@ -1361,6 +1400,7 @@ class EssayQuantService:
             "dedupe_window_days": max(0, min(int(3 if payload.get("dedupe_window_days") is None else payload.get("dedupe_window_days")), 30)),
             "transaction_cost_bps": max(0.0, min(float(12 if payload.get("transaction_cost_bps") is None else payload.get("transaction_cost_bps")), 200.0)),
             "validation_method": str(payload.get("validation_method") or "walk_forward") if str(payload.get("validation_method") or "walk_forward") in {"walk_forward", "time_split", "none"} else "walk_forward",
+            "entry_price_mode": str(payload.get("entry_price_mode") or "next_auction") if str(payload.get("entry_price_mode") or "next_auction") in {"next_auction", "next_open"} else "next_auction",
         }
 
     @staticmethod
@@ -1376,5 +1416,6 @@ class EssayQuantService:
                 "dedupe_window_days": config.get("dedupe_window_days", 3),
                 "transaction_cost_bps": config.get("transaction_cost_bps", 12),
                 "validation_method": config.get("validation_method", "walk_forward"),
+                "entry_price_mode": config.get("entry_price_mode", "next_auction"),
                 "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
                 "updated_at": row.updated_at.isoformat() + "Z" if row.updated_at else None}

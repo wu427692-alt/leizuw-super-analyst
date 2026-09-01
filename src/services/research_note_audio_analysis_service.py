@@ -22,17 +22,27 @@ import requests
 from json_repair import repair_json
 
 from src.config import get_config
+from src.llm.provider_schedule import (
+    direct_chat_headers,
+    prepare_direct_chat_payload,
+    scheduled_direct_chat_routes,
+)
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.repositories.research_note_repo import ResearchNoteRepository
 from src.research_note_fingerprint import research_note_information_hash
 from src.request_identity import current_owner_id
 from src.services.financial_data_service import FinancialDataValidationError, ResearchNoteService
+from src.services.run_diagnostics import sanitize_diagnostic_text
 from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncService
+from src.storage import persist_llm_usage
 
 
 logger = logging.getLogger(__name__)
 _TASK_ID_RE = re.compile(r"^audio-analysis-[A-Za-z0-9_-]{8,80}$")
 _ACTIVE_STATUSES = {"queued", "running"}
+_OWNER_UNSET = object()
+_TRANSCRIPT_CACHE_SCHEMA_VERSION = 1
+_TRANSCRIPT_CACHE_CONFIG_VERSION = "audio-asr-v1"
 
 
 class ResearchNoteAudioAnalysisError(RuntimeError):
@@ -57,6 +67,10 @@ class OpenAICompatibleAudioTranscriber:
     @property
     def configured(self) -> bool:
         return bool(self.api_key and self.model)
+
+    @property
+    def provider(self) -> str:
+        return "openai_compatible"
 
     def __call__(self, path: Path, filename: str) -> str:
         if not self.configured:
@@ -113,6 +127,12 @@ class AliyunDashScopeAudioTranscriber:
         )
         self.timeout = max(
             60, min(int(os.getenv("AUDIO_TRANSCRIPTION_TIMEOUT_SEC", "7200")), 43200)
+        )
+        self.request_max_attempts = max(
+            1, min(int(os.getenv("DASHSCOPE_ASR_REQUEST_MAX_ATTEMPTS", "3")), 6)
+        )
+        self.request_backoff = max(
+            0.0, min(float(os.getenv("DASHSCOPE_ASR_REQUEST_BACKOFF_SEC", "0.75")), 10.0)
         )
         self.session = session or requests.Session()
 
@@ -230,19 +250,56 @@ class AliyunDashScopeAudioTranscriber:
         raise ResearchNoteAudioAnalysisError(f"阿里云转写《{filename}》超时，请稍后重试")
 
     def _request_json(self, method: str, url: str, **kwargs: Any) -> Dict[str, Any]:
-        response: Optional[requests.Response] = None
-        try:
-            response = self.session.request(method, url, **kwargs)
-            response.raise_for_status()
-            payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            detail = str(getattr(response, "text", "") or "")[:300]
-            raise ResearchNoteAudioAnalysisError(
-                f"阿里云语音识别请求失败：{detail or type(exc).__name__}"
-            ) from exc
-        if not isinstance(payload, dict):
-            raise ResearchNoteAudioAnalysisError("阿里云语音识别返回格式无效")
-        return payload
+        for attempt in range(1, self.request_max_attempts + 1):
+            response: Optional[requests.Response] = None
+            try:
+                response = self.session.request(method, url, **kwargs)
+                response.raise_for_status()
+                payload = response.json()
+            except requests.RequestException as exc:
+                status_code = int(getattr(response, "status_code", 0) or 0)
+                transient = (
+                    isinstance(exc, (requests.ConnectionError, requests.Timeout))
+                    or status_code == 429
+                    or 500 <= status_code <= 599
+                )
+                if transient and attempt < self.request_max_attempts:
+                    delay = min(self.request_backoff * (2 ** (attempt - 1)), 10.0)
+                    response_headers = getattr(response, "headers", {}) or {}
+                    retry_after = str(response_headers.get("Retry-After", "") or "").strip()
+                    if retry_after:
+                        try:
+                            delay = min(max(delay, float(retry_after)), 30.0)
+                        except ValueError:
+                            pass
+                    logger.warning(
+                        "Aliyun ASR transient request failure method=%s status=%s attempt=%s/%s error=%s",
+                        method,
+                        status_code or "network",
+                        attempt,
+                        self.request_max_attempts,
+                        type(exc).__name__,
+                    )
+                    if delay > 0:
+                        time.sleep(delay)
+                    continue
+                detail = sanitize_diagnostic_text(
+                    getattr(response, "text", "") or type(exc).__name__, max_length=300,
+                )
+                raise ResearchNoteAudioAnalysisError(
+                    f"阿里云语音识别请求失败：{detail or type(exc).__name__}"
+                ) from exc
+            except ValueError as exc:
+                detail = sanitize_diagnostic_text(
+                    getattr(response, "text", "") or type(exc).__name__, max_length=300,
+                )
+                raise ResearchNoteAudioAnalysisError(
+                    f"阿里云语音识别请求失败：{detail or type(exc).__name__}"
+                ) from exc
+            if not isinstance(payload, dict):
+                raise ResearchNoteAudioAnalysisError("阿里云语音识别返回格式无效")
+            return payload
+        raise ResearchNoteAudioAnalysisError("阿里云语音识别请求失败：瞬时网络错误重试耗尽")
 
     @staticmethod
     def _error_detail(payload: Any) -> str:
@@ -307,6 +364,10 @@ class ConfiguredAudioTranscriber:
     def provider(self) -> str:
         return str(getattr(self.backend, "provider", "openai_compatible"))
 
+    @property
+    def model(self) -> str:
+        return str(getattr(self.backend, "model", ""))
+
     def transcribe(
         self,
         path: Path,
@@ -334,12 +395,12 @@ class DeepSeekAudioMemoAnalyzer:
 
     def __init__(self, *, session: Optional[requests.Session] = None) -> None:
         config = get_config()
-        keys = list(getattr(config, "deepseek_api_keys", None) or [])
-        self.api_key = str((keys[0] if keys else getattr(config, "deepseek_api_key", "")) or "").strip()
-        self.base_url = str(
-            os.getenv("ESSAY_ANALYSIS_DEEPSEEK_BASE_URL") or "https://api.deepseek.com"
-        ).rstrip("/")
-        self.model = str(os.getenv("AUDIO_MEMO_ANALYSIS_MODEL") or os.getenv("ESSAY_ANALYSIS_MODEL") or "").strip()
+        requested_model = str(os.getenv("AUDIO_MEMO_ANALYSIS_MODEL") or "").strip() or None
+        self.routes = scheduled_direct_chat_routes(config, requested_model=requested_model)
+        primary = self.routes[0] if self.routes else None
+        self.api_key = primary.api_key if primary else ""
+        self.base_url = primary.base_url if primary else ""
+        self.model = primary.model if primary else str(requested_model or "")
         self.timeout = max(30, min(int(os.getenv("AUDIO_MEMO_ANALYSIS_TIMEOUT_SEC", "300")), 900))
         self.chunk_chars = max(4000, min(int(os.getenv("AUDIO_MEMO_CHUNK_CHARS", "12000")), 30000))
         self.max_chunks = max(1, min(int(os.getenv("AUDIO_MEMO_MAX_CHUNKS_PER_FILE", "12")), 30))
@@ -348,11 +409,11 @@ class DeepSeekAudioMemoAnalyzer:
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key and self.model)
+        return bool(self.routes)
 
     def __call__(self, transcripts: List[Dict[str, Any]], title: str, focus: str) -> Dict[str, Any]:
         if not self.configured:
-            raise ResearchNoteAudioAnalysisError("DeepSeek 文本分析服务尚未配置")
+            raise ResearchNoteAudioAnalysisError("录音纪要 AI 通道尚未配置")
         extracted: List[Dict[str, Any]] = []
         for source in transcripts:
             text = str(source.get("transcript") or "")
@@ -427,65 +488,80 @@ class DeepSeekAudioMemoAnalyzer:
             "stream": False,
         }
         last_reason = "empty_content"
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                response = self.session.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                    json=request_payload,
-                    timeout=self.timeout,
-                )
-                response.raise_for_status()
-                response_payload = response.json()
-                choice = response_payload["choices"][0]
-                message = choice["message"]
-                raw = str(message.get("content") or "").strip()
-                finish_reason = str(choice.get("finish_reason") or "").strip()
-                if not raw:
-                    last_reason = "output_truncated" if finish_reason == "length" else "empty_content"
+        for route in self.routes:
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    outbound = prepare_direct_chat_payload(route, request_payload)
+                    response = self.session.post(
+                        f"{route.base_url}/chat/completions",
+                        headers=direct_chat_headers(route),
+                        json=outbound,
+                        timeout=self.timeout,
+                    )
+                    response.raise_for_status()
+                    response_payload = response.json()
+                    choice = response_payload["choices"][0]
+                    message = choice["message"]
+                    raw = str(message.get("content") or "").strip()
+                    finish_reason = str(choice.get("finish_reason") or "").strip()
+                    if not raw:
+                        last_reason = "output_truncated" if finish_reason == "length" else "empty_content"
+                        logger.warning(
+                            "Audio memo returned no content channel=%s attempt=%s/%s finish_reason=%s reasoning_chars=%s",
+                            route.channel,
+                            attempt,
+                            self.max_retries,
+                            finish_reason or "unknown",
+                            len(str(message.get("reasoning_content") or "")),
+                        )
+                        if attempt < self.max_retries:
+                            time.sleep(min(2 ** (attempt - 1), 4))
+                            continue
+                        break
+                    parsed = json.loads(repair_json(raw, return_objects=False))
+                    if not isinstance(parsed, dict):
+                        last_reason = "invalid_json_root"
+                        raise ValueError(last_reason)
+                    usage = response_payload.get("usage") if isinstance(response_payload.get("usage"), dict) else {}
+                    if usage:
+                        persist_llm_usage(
+                            {**usage, "provider": route.provider, "transport": "direct_chat"},
+                            route.litellm_model,
+                            call_type="audio_memo",
+                        )
+                    self.api_key = route.api_key
+                    self.base_url = route.base_url
+                    self.model = route.model
+                    return parsed
+                except requests.RequestException as exc:
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    last_reason = f"http_{status_code}" if status_code else type(exc).__name__
+                    retryable = status_code in {408, 409, 425, 429} or (status_code is not None and status_code >= 500)
                     logger.warning(
-                        "DeepSeek audio memo returned no content attempt=%s/%s finish_reason=%s reasoning_chars=%s",
+                        "Audio memo request failed channel=%s attempt=%s/%s reason=%s",
+                        route.channel,
                         attempt,
                         self.max_retries,
-                        finish_reason or "unknown",
-                        len(str(message.get("reasoning_content") or "")),
+                        last_reason,
                     )
-                    if attempt < self.max_retries:
-                        time.sleep(min(2 ** (attempt - 1), 4))
-                        continue
-                    break
-                parsed = json.loads(repair_json(raw, return_objects=False))
-                if not isinstance(parsed, dict):
-                    last_reason = "invalid_json_root"
-                    raise ValueError(last_reason)
-                return parsed
-            except requests.RequestException as exc:
-                status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                last_reason = f"http_{status_code}" if status_code else type(exc).__name__
-                retryable = status_code in {408, 409, 425, 429} or (status_code is not None and status_code >= 500)
-                logger.warning(
-                    "DeepSeek audio memo request failed attempt=%s/%s reason=%s",
-                    attempt,
-                    self.max_retries,
-                    last_reason,
-                )
-                if not retryable or attempt >= self.max_retries:
-                    break
-                time.sleep(min(2 ** (attempt - 1), 4))
-            except (KeyError, IndexError, TypeError, ValueError) as exc:
-                last_reason = type(exc).__name__
-                logger.warning(
-                    "DeepSeek audio memo response could not be parsed attempt=%s/%s reason=%s",
-                    attempt,
-                    self.max_retries,
-                    last_reason,
-                )
-                if attempt >= self.max_retries:
-                    break
-                time.sleep(min(2 ** (attempt - 1), 4))
+                    if not retryable or attempt >= self.max_retries:
+                        break
+                    time.sleep(min(2 ** (attempt - 1), 4))
+                except (KeyError, IndexError, TypeError, ValueError) as exc:
+                    last_reason = type(exc).__name__
+                    logger.warning(
+                        "Audio memo response could not be parsed channel=%s attempt=%s/%s reason=%s",
+                        route.channel,
+                        attempt,
+                        self.max_retries,
+                        last_reason,
+                    )
+                    if attempt >= self.max_retries:
+                        break
+                    time.sleep(min(2 ** (attempt - 1), 4))
         if last_reason in {"empty_content", "output_truncated"}:
-            raise ResearchNoteAudioAnalysisError("DeepSeek 暂未返回完整纪要，系统已自动重试；可稍后从后台再次重试")
-        raise ResearchNoteAudioAnalysisError("DeepSeek 纪要生成暂时不可用，系统已自动重试；请稍后再试")
+            raise ResearchNoteAudioAnalysisError("AI 暂未返回完整纪要，系统已自动重试；可稍后从后台再次重试")
+        raise ResearchNoteAudioAnalysisError("AI 纪要生成暂时不可用，系统已自动重试；请稍后再试")
 
 
 class ResearchNoteAudioAnalysisTaskService:
@@ -511,7 +587,11 @@ class ResearchNoteAudioAnalysisTaskService:
         self.task_root = Path(task_root or configured_root or database_path.parent / "research_note_audio_analysis").resolve()
         self.output_root = self.task_root / "outputs"
         self.temp_root = self.task_root / "temporary"
-        for directory in (self.task_root, self.output_root, self.temp_root):
+        # Shared transcript cache is deliberately kept below the existing
+        # persistent audio-analysis data root. Task retention cleanup never
+        # visits it, while its opaque filenames reveal no owner or source IDs.
+        self.transcript_cache_root = self.task_root / "transcript_cache"
+        for directory in (self.task_root, self.output_root, self.temp_root, self.transcript_cache_root):
             directory.mkdir(parents=True, exist_ok=True)
         self._service_factory = service_factory
         self._should_index = service_factory is ResearchNoteService
@@ -526,6 +606,7 @@ class ResearchNoteAudioAnalysisTaskService:
         worker_count = workers if workers is not None else int(os.getenv("AUDIO_ANALYSIS_WORKERS", "1"))
         self._executor = ThreadPoolExecutor(max_workers=max(1, min(worker_count, 2)), thread_name_prefix="audio-analysis")
         self._lock = threading.RLock()
+        self._transcript_cache_locks: Dict[str, threading.Lock] = {}
         self._resume_interrupted_tasks()
         self._cleanup_expired_tasks()
 
@@ -539,6 +620,12 @@ class ResearchNoteAudioAnalysisTaskService:
     def capability(self) -> Dict[str, Any]:
         transcription_configured = bool(getattr(self._transcriber, "configured", True))
         analysis_configured = bool(getattr(self._analyzer, "configured", True))
+        if not transcription_configured:
+            message = "需要管理员配置阿里云百炼 API Key 后启用语音转写"
+        elif not analysis_configured:
+            message = "语音转写可用；AI 纪要通道尚未配置"
+        else:
+            message = "可分别提交仅转写或转写并生成 AI 纪要任务"
         return {
             "configured": transcription_configured and analysis_configured,
             "transcription_configured": transcription_configured,
@@ -546,7 +633,7 @@ class ResearchNoteAudioAnalysisTaskService:
             "transcription_provider": str(getattr(self._transcriber, "provider", "custom")),
             "max_files": self.max_files,
             "max_file_mb": self.max_file_bytes // 1024 // 1024,
-            "message": "可提交后台录音纪要任务" if transcription_configured else "需要管理员配置阿里云百炼 API Key 后启用语音转写",
+            "message": message,
         }
 
     def submit(
@@ -557,6 +644,8 @@ class ResearchNoteAudioAnalysisTaskService:
         focus: str = "",
         hotwords: Optional[Iterable[str]] = None,
         speaker_count: Optional[int] = None,
+        generate_memo: bool = True,
+        owner_id: object = _OWNER_UNSET,
     ) -> Dict[str, Any]:
         selected = list(dict.fromkeys((str(topic).strip(), str(file_id).strip()) for topic, file_id in items))
         if not selected:
@@ -564,7 +653,9 @@ class ResearchNoteAudioAnalysisTaskService:
         if len(selected) > self.max_files:
             raise ResearchNoteAudioAnalysisError(f"单次最多分析 {self.max_files} 个录音文件")
         capability = self.capability()
-        if not capability["configured"]:
+        if not capability["transcription_configured"]:
+            raise ResearchNoteAudioAnalysisError(str(capability["message"]))
+        if generate_memo and not capability["analysis_configured"]:
             raise ResearchNoteAudioAnalysisError(str(capability["message"]))
         now = datetime.now(timezone.utc)
         task_id = f"audio-analysis-{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:10]}"
@@ -572,12 +663,14 @@ class ResearchNoteAudioAnalysisTaskService:
             str(value).strip()[:80] for value in (hotwords or []) if str(value).strip()
         ))[:100]
         normalized_speakers = int(speaker_count) if speaker_count and 2 <= int(speaker_count) <= 20 else None
+        effective_owner = self._owner_getter() if owner_id is _OWNER_UNSET else owner_id
         state = {
-            "task_id": task_id, "owner_id": self._owner_getter(), "status": "queued", "phase": "queued",
+            "task_id": task_id, "owner_id": effective_owner, "status": "queued", "phase": "queued",
             "progress": 0, "message": "已进入后台队列，可以离开当前页面", "title": title.strip()[:160],
             "focus": focus.strip()[:500], "total_files": len(selected), "completed_files": 0,
             "items": [{"topic_id": topic_id, "file_id": file_id} for topic_id, file_id in selected],
             "hotwords": normalized_hotwords, "speaker_count": normalized_speakers, "retry_count": 0,
+            "generate_memo": bool(generate_memo),
             "transcript_artifacts": [], "indexed": False, "library_topic_id": None,
             "current_filename": None, "result": None, "download_urls": {}, "error": None,
             "created_at": now.isoformat(), "updated_at": now.isoformat(),
@@ -587,16 +680,19 @@ class ResearchNoteAudioAnalysisTaskService:
         self._executor.submit(self._run, task_id, selected)
         return self._public_state(state)
 
-    def retry(self, task_id: str) -> Dict[str, Any]:
+    def retry(self, task_id: str, *, owner_id: object = _OWNER_UNSET) -> Dict[str, Any]:
         state = self._read_state(task_id)
-        self._assert_owner(state)
+        self._assert_owner(state, owner_id=owner_id)
         if state.get("status") in _ACTIVE_STATUSES:
             return self._public_state(state)
         selected = self._selected_from_state(state)
         if not selected:
             raise ResearchNoteAudioAnalysisError("旧任务缺少可恢复的录音清单，请重新选择录音提交")
         capability = self.capability()
-        if not capability["configured"]:
+        generate_memo = bool(state.get("generate_memo", True))
+        if not capability["transcription_configured"]:
+            raise ResearchNoteAudioAnalysisError(str(capability["message"]))
+        if generate_memo and not capability["analysis_configured"]:
             raise ResearchNoteAudioAnalysisError(str(capability["message"]))
         self._update(
             task_id,
@@ -612,11 +708,17 @@ class ResearchNoteAudioAnalysisTaskService:
             retry_count=int(state.get("retry_count") or 0) + 1,
         )
         self._executor.submit(self._run, task_id, selected)
-        return self.get(task_id)
+        return self.get(task_id, owner_id=owner_id)
 
-    def transcript(self, task_id: str, file_id: str) -> Dict[str, Any]:
+    def transcript(
+        self,
+        task_id: str,
+        file_id: str,
+        *,
+        owner_id: object = _OWNER_UNSET,
+    ) -> Dict[str, Any]:
         state = self._read_state(task_id)
-        self._assert_owner(state)
+        self._assert_owner(state, owner_id=owner_id)
         artifact = next(
             (item for item in state.get("transcript_artifacts") or [] if str(item.get("file_id")) == str(file_id)),
             None,
@@ -648,9 +750,67 @@ class ResearchNoteAudioAnalysisTaskService:
                 break
         return {"items": rows, "total": len(rows)}
 
-    def get(self, task_id: str) -> Dict[str, Any]:
+    def transcript_availability(
+        self,
+        items: Iterable[Tuple[str, str]],
+        *,
+        owner_id: object = _OWNER_UNSET,
+    ) -> Dict[Tuple[str, str], Dict[str, Any]]:
+        """Return the newest readable transcript task for each selected audio.
+
+        Transcript text remains owner-scoped. The list endpoint only exposes a
+        task reference when that same owner can open its saved artifact.
+        """
+        wanted = {
+            (str(topic_id or ""), str(file_id or ""))
+            for topic_id, file_id in items
+            if str(topic_id or "") and str(file_id or "")
+        }
+        if not wanted:
+            return {}
+        wanted_by_file: Dict[str, set[Tuple[str, str]]] = {}
+        for key in wanted:
+            wanted_by_file.setdefault(key[1], set()).add(key)
+        effective_owner = self._owner_getter() if owner_id is _OWNER_UNSET else owner_id
+        found: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for state_path in sorted(self.task_root.glob("audio-analysis-*.json"), reverse=True):
+            if len(found) >= len(wanted):
+                break
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if state.get("owner_id") != effective_owner:
+                continue
+            task_id = str(state.get("task_id") or "")
+            if not _TASK_ID_RE.fullmatch(task_id):
+                continue
+            for artifact in state.get("transcript_artifacts") or []:
+                if not isinstance(artifact, dict):
+                    continue
+                artifact_key = (str(artifact.get("topic_id") or ""), str(artifact.get("file_id") or ""))
+                matching_keys = wanted_by_file.get(artifact_key[1], set())
+                if not matching_keys:
+                    continue
+                artifact_name = str(artifact.get("artifact_name") or "")
+                if not artifact_name or not (self.output_root / task_id / artifact_name).is_file():
+                    continue
+                metadata = {
+                    "transcribed": True,
+                    "transcript_task_id": task_id,
+                    "transcript_line_count": int(artifact.get("line_count") or 0),
+                    "transcribed_at": state.get("updated_at") or state.get("created_at"),
+                }
+                # A generated memo can re-index the same source attachment
+                # under a synthetic topic id. ZSXQ file ids are stable, so the
+                # same owner should still see the existing transcript there.
+                for key in matching_keys:
+                    found.setdefault(key, metadata)
+        return found
+
+    def get(self, task_id: str, *, owner_id: object = _OWNER_UNSET) -> Dict[str, Any]:
         state = self._read_state(task_id)
-        self._assert_owner(state)
+        self._assert_owner(state, owner_id=owner_id)
         return self._public_state(state)
 
     def download(self, task_id: str, artifact: str) -> Tuple[Path, str, str]:
@@ -680,7 +840,7 @@ class ResearchNoteAudioAnalysisTaskService:
             transcripts: List[Dict[str, Any]] = []
             transcript_artifacts: List[Dict[str, Any]] = []
             cached_artifacts = {
-                str(item.get("file_id") or ""): item
+                (str(item.get("topic_id") or ""), str(item.get("file_id") or "")): item
                 for item in (state.get("transcript_artifacts") or [])
                 if isinstance(item, dict) and item.get("artifact_name")
             }
@@ -693,10 +853,22 @@ class ResearchNoteAudioAnalysisTaskService:
                 declared_size = int(asset.get("size") or 0)
                 if declared_size > self.max_file_bytes:
                     raise ResearchNoteAudioAnalysisError(f"《{filename}》超过单文件 {self.max_file_bytes // 1024 // 1024}MB 转写限制")
-                cached = cached_artifacts.get(file_id)
+                task_hotwords = self._task_hotwords(hotwords, filename, note)
+                cache_identity = self._transcript_cache_identity(
+                    topic_id=topic_id,
+                    file_id=file_id,
+                    asset=asset,
+                    hotwords=task_hotwords,
+                    speaker_count=speaker_count,
+                )
+                transcript = ""
+                cached = cached_artifacts.get((topic_id, file_id))
                 cached_path = output_dir / str((cached or {}).get("artifact_name") or "")
                 if cached and cached_path.is_file():
-                    transcript = cached_path.read_text(encoding="utf-8")
+                    transcript = cached_path.read_text(encoding="utf-8").strip()
+                    if not transcript:
+                        cached = None
+                if cached and transcript:
                     transcripts.append({
                         "filename": filename,
                         "topic_id": topic_id,
@@ -717,59 +889,131 @@ class ResearchNoteAudioAnalysisTaskService:
                         message=f"已复用逐字稿 {index + 1}/{len(selected)} · {filename}",
                     )
                     continue
-                self._update(task_id, status="running", phase="downloading", progress=5 + int(index / len(selected) * 55), current_filename=filename, message=f"正在读取录音 {index + 1}/{len(selected)} · {filename}")
-                local_path = work_dir / f"{index + 1:02d}-{filename}"
-                source_url = self._resolver(topic_id, file_id)
-                response = self._http_get(source_url, stream=True, timeout=(10, 300))
-                loaded = 0
-                try:
-                    response.raise_for_status()
-                    with local_path.open("wb") as target:
-                        for chunk in response.iter_content(chunk_size=256 * 1024):
-                            if not chunk:
-                                continue
-                            target.write(chunk)
-                            loaded += len(chunk)
-                            if loaded > self.max_file_bytes:
-                                raise ResearchNoteAudioAnalysisError(f"《{filename}》超过单文件转写限制")
-                finally:
-                    response.close()
-                file_progress_base = 12 + int(index / len(selected) * 58)
-                self._update(task_id, phase="transcribing", progress=file_progress_base, message=f"正在语音转写 {index + 1}/{len(selected)} · {filename}")
-
-                def update_transcription(_status: str, message: str) -> None:
-                    self._update(
-                        task_id,
-                        phase="transcribing",
-                        progress=file_progress_base,
-                        current_filename=filename,
-                        message=f"{message}（{index + 1}/{len(selected)}）",
-                    )
-
-                transcribe = getattr(self._transcriber, "transcribe", None)
-                if callable(transcribe):
-                    transcript = transcribe(
-                        local_path,
-                        filename,
-                        source_url,
-                        progress=update_transcription,
-                        hotwords=self._task_hotwords(hotwords, filename, note),
-                        speaker_count=speaker_count,
-                    )
-                else:
-                    transcript = self._transcriber(local_path, filename)
-                local_path.unlink(missing_ok=True)
                 transcript_name = f"{index + 1:02d}-{Path(filename).stem}.txt"
-                (output_dir / transcript_name).write_text(transcript, encoding="utf-8")
+                cache_hit = False
+                cache_lock = self._transcript_cache_lock(cache_identity["key_hash"])
+                with cache_lock:
+                    cache_entry = self._read_transcript_cache(cache_identity)
+                    if cache_entry is not None:
+                        transcript = str(cache_entry["transcript"])
+                        cache_hit = True
+                        self._update(
+                            task_id,
+                            status="running",
+                            phase="transcribing",
+                            progress=18 + int((index + 1) / len(selected) * 55),
+                            current_filename=filename,
+                            message=f"已命中转写缓存 {index + 1}/{len(selected)} · {filename}",
+                        )
+                    else:
+                        self._update(task_id, status="running", phase="downloading", progress=5 + int(index / len(selected) * 55), current_filename=filename, message=f"正在读取录音 {index + 1}/{len(selected)} · {filename}")
+                        local_path = work_dir / f"{index + 1:02d}-{filename}"
+                        source_url = self._resolver(topic_id, file_id)
+                        response = self._http_get(source_url, stream=True, timeout=(10, 300))
+                        loaded = 0
+                        try:
+                            response.raise_for_status()
+                            with local_path.open("wb") as target:
+                                for chunk in response.iter_content(chunk_size=256 * 1024):
+                                    if not chunk:
+                                        continue
+                                    target.write(chunk)
+                                    loaded += len(chunk)
+                                    if loaded > self.max_file_bytes:
+                                        raise ResearchNoteAudioAnalysisError(f"《{filename}》超过单文件转写限制")
+                        finally:
+                            response.close()
+                        file_progress_base = 12 + int(index / len(selected) * 58)
+                        self._update(task_id, phase="transcribing", progress=file_progress_base, message=f"正在语音转写 {index + 1}/{len(selected)} · {filename}")
+
+                        def update_transcription(_status: str, message: str) -> None:
+                            self._update(
+                                task_id,
+                                phase="transcribing",
+                                progress=file_progress_base,
+                                current_filename=filename,
+                                message=f"{message}（{index + 1}/{len(selected)}）",
+                            )
+
+                        try:
+                            transcribe = getattr(self._transcriber, "transcribe", None)
+                            if callable(transcribe):
+                                transcript = transcribe(
+                                    local_path,
+                                    filename,
+                                    source_url,
+                                    progress=update_transcription,
+                                    hotwords=task_hotwords,
+                                    speaker_count=speaker_count,
+                                )
+                            else:
+                                transcript = self._transcriber(local_path, filename)
+                        finally:
+                            # Source-audio lifecycle is unchanged: the temporary
+                            # copy is removed even when ASR fails.
+                            local_path.unlink(missing_ok=True)
+                        transcript = str(transcript or "").strip()
+                        if not transcript:
+                            raise ResearchNoteAudioAnalysisError("语音转写服务没有返回有效文本")
+                        try:
+                            self._write_transcript_cache(cache_identity, transcript)
+                        except OSError:
+                            # A cache outage must not discard a paid, successful
+                            # transcript or fail the user's own task artifact.
+                            logger.warning(
+                                "Could not persist shared transcript cache key=%s",
+                                cache_identity["key_hash"][:12],
+                                exc_info=True,
+                            )
+                self._write_text_atomic(output_dir / transcript_name, transcript)
                 transcript_artifacts.append({
                     "file_id": file_id,
                     "topic_id": topic_id,
                     "filename": filename,
                     "artifact_name": transcript_name,
                     "line_count": len(str(transcript).splitlines()),
+                    "cache_hit": cache_hit,
+                    "transcript_sha256": hashlib.sha256(transcript.encode("utf-8")).hexdigest(),
+                    "transcription_provider": cache_identity["provider"],
+                    "transcription_model": cache_identity["model"],
+                    "transcription_config_hash": cache_identity["config_hash"],
+                    "cache_key_version": _TRANSCRIPT_CACHE_SCHEMA_VERSION,
                 })
                 transcripts.append({"filename": filename, "topic_id": topic_id, "file_id": file_id, "note_title": note.get("title"), "created_at": note.get("created_at"), "transcript": transcript})
                 self._update(task_id, completed_files=index + 1, transcript_artifacts=transcript_artifacts, progress=18 + int((index + 1) / len(selected) * 55))
+            if not bool(state.get("generate_memo", True)):
+                requested_title = str(state.get("title") or "").strip() or f"{transcripts[0]['note_title'] or Path(transcripts[0]['filename']).stem} · 录音逐字稿"
+                result = {
+                    "title": requested_title[:180],
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "source_files": [
+                        {key: item.get(key) for key in ("filename", "topic_id", "file_id", "note_title", "created_at")}
+                        for item in transcripts
+                    ],
+                    "transcript_only": True,
+                    "indexed": False,
+                    "library_topic_id": None,
+                }
+                with zipfile.ZipFile(output_dir / "bundle.zip", "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                    for path in output_dir.glob("*.txt"):
+                        archive.write(path, arcname=f"转写文本/{path.name}")
+                urls = {
+                    "zip": f"/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/download?format=zip"
+                }
+                self._update(
+                    task_id,
+                    status="completed",
+                    phase="completed",
+                    progress=100,
+                    current_filename=None,
+                    message="录音转写已完成，可在页面内查看逐字稿",
+                    result=result,
+                    download_urls=urls,
+                    error=None,
+                    indexed=False,
+                    library_topic_id=None,
+                )
+                return
             self._update(task_id, phase="analyzing", progress=76, current_filename=None, message="正在交叉整理转写内容并生成录音纪要")
             requested_title = str(state.get("title") or "").strip() or f"{transcripts[0]['note_title'] or Path(transcripts[0]['filename']).stem} · 录音纪要"
             result = self._analyzer(transcripts, requested_title, str(state.get("focus") or ""))
@@ -861,8 +1105,9 @@ class ResearchNoteAudioAnalysisTaskService:
             raise ResearchNoteAudioAnalysisError("无效的录音分析任务编号")
         return self.task_root / f"{task_id}.json"
 
-    def _assert_owner(self, state: Dict[str, Any]) -> None:
-        if state.get("owner_id") != self._owner_getter():
+    def _assert_owner(self, state: Dict[str, Any], *, owner_id: object = _OWNER_UNSET) -> None:
+        effective_owner = self._owner_getter() if owner_id is _OWNER_UNSET else owner_id
+        if state.get("owner_id") != effective_owner:
             raise ResearchNoteAudioAnalysisError("录音分析任务不存在或无权访问")
 
     @staticmethod
@@ -900,6 +1145,172 @@ class ResearchNoteAudioAnalysisTaskService:
                 if 2 <= len(cleaned) <= 80 and cleaned not in terms:
                     terms.append(cleaned)
         return terms[:100]
+
+    def _transcript_cache_identity(
+        self,
+        *,
+        topic_id: str,
+        file_id: str,
+        asset: Dict[str, Any],
+        hotwords: Iterable[str],
+        speaker_count: Optional[int],
+    ) -> Dict[str, str]:
+        """Build an opaque cache identity from source and ASR-affecting config.
+
+        A ZSXQ file id is stable, so cache lookup never needs to download the
+        audio. Any upstream checksum exposed in attachment metadata is folded
+        in as an extra guard. Raw IDs, owner IDs and hotwords are never written
+        into the cache entry or its filename.
+        """
+        transcriber = self._transcriber
+        backend = getattr(transcriber, "backend", transcriber)
+        default_provider = (
+            f"custom:{backend.__class__.__module__}.{backend.__class__.__qualname__}"
+        )
+        provider = str(
+            getattr(transcriber, "provider", "")
+            or getattr(backend, "provider", "")
+            or default_provider
+        ).strip().lower()
+        model = str(
+            getattr(transcriber, "model", "")
+            or getattr(backend, "model", "")
+            or backend.__class__.__qualname__
+        ).strip()
+        cache_config_version = str(
+            getattr(transcriber, "cache_version", "")
+            or getattr(backend, "cache_version", "")
+            or _TRANSCRIPT_CACHE_CONFIG_VERSION
+        ).strip()
+        effective_speakers = speaker_count or getattr(backend, "speaker_count", None)
+        normalized_hotwords = sorted({str(value).strip() for value in hotwords if str(value).strip()})
+        source_hint = ""
+        for key in ("sha256", "file_hash", "content_hash", "checksum", "md5", "etag"):
+            value = asset.get(key)
+            if value not in (None, "", {}):
+                source_hint = f"{key}:{value}"
+                break
+        config_payload = {
+            "version": cache_config_version,
+            "provider": provider,
+            "model": model,
+            "base_url": str(getattr(backend, "base_url", "") or "").rstrip("/"),
+            "language": str(getattr(backend, "language", "") or ""),
+            "diarization_enabled": bool(getattr(backend, "diarization_enabled", False)),
+            "speaker_count": effective_speakers,
+            "hotwords_sha256": hashlib.sha256(
+                json.dumps(normalized_hotwords, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+        }
+        config_hash = hashlib.sha256(
+            json.dumps(config_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        key_payload = {
+            "schema_version": _TRANSCRIPT_CACHE_SCHEMA_VERSION,
+            "topic_id": str(topic_id),
+            "file_id": str(file_id),
+            "provider": provider,
+            "model": model,
+            "config_hash": config_hash,
+            "declared_size": max(0, int(asset.get("size") or 0)),
+            "source_hint": source_hint,
+        }
+        key_hash = hashlib.sha256(
+            json.dumps(key_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {
+            "key_hash": key_hash,
+            "config_hash": config_hash,
+            "provider": provider,
+            "model": model,
+        }
+
+    def _transcript_cache_path(self, key_hash: str) -> Path:
+        shard = self.transcript_cache_root / key_hash[:2]
+        shard.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return shard / f"{key_hash}.json"
+
+    def _transcript_cache_lock(self, key_hash: str) -> threading.Lock:
+        # The service is a singleton in production. This lock coalesces two
+        # simultaneous tasks for the same file so only one paid ASR call runs.
+        with self._lock:
+            return self._transcript_cache_locks.setdefault(key_hash, threading.Lock())
+
+    def _read_transcript_cache(self, identity: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        path = self._transcript_cache_path(identity["key_hash"])
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            transcript = str(payload.get("transcript") or "").strip() if isinstance(payload, dict) else ""
+            transcript_hash = hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+            valid = (
+                isinstance(payload, dict)
+                and payload.get("schema_version") == _TRANSCRIPT_CACHE_SCHEMA_VERSION
+                and payload.get("key_hash") == identity["key_hash"]
+                and payload.get("config_hash") == identity["config_hash"]
+                and payload.get("provider") == identity["provider"]
+                and payload.get("model") == identity["model"]
+                and bool(transcript)
+                and payload.get("transcript_sha256") == transcript_hash
+                and payload.get("char_count") == len(transcript)
+            )
+            if not valid:
+                raise ValueError("cache integrity validation failed")
+            return {**payload, "transcript": transcript}
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            # Treat corruption as a miss. The next successful ASR call replaces
+            # this file atomically, so no manual cleanup is required.
+            logger.warning(
+                "Ignoring corrupt transcript cache key=%s",
+                identity["key_hash"][:12],
+            )
+            return None
+
+    def _write_transcript_cache(self, identity: Dict[str, str], transcript: str) -> None:
+        normalized = str(transcript or "").strip()
+        if not normalized:
+            raise ValueError("empty transcript cannot be cached")
+        payload = {
+            "schema_version": _TRANSCRIPT_CACHE_SCHEMA_VERSION,
+            "key_hash": identity["key_hash"],
+            "config_hash": identity["config_hash"],
+            "provider": identity["provider"],
+            "model": identity["model"],
+            "transcript": normalized,
+            "transcript_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+            "char_count": len(normalized),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_text_atomic(
+            self._transcript_cache_path(identity["key_hash"]),
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+
+    @staticmethod
+    def _write_text_atomic(path: Path, text: str) -> None:
+        """Write one artifact with fsync + replace and no shared temp name."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+                target.write(text)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary, path)
+            try:
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                # Some filesystems do not support directory fsync; the file
+                # itself was already flushed and atomically replaced.
+                pass
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @staticmethod
     def _parse_transcript_lines(text: str) -> List[Dict[str, str]]:

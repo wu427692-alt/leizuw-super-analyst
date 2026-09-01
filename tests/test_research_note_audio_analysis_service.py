@@ -6,6 +6,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
+import requests
 
 from src.request_identity import reset_current_user_id, set_current_user_id
 from src.services.research_note_audio_analysis_service import (
@@ -107,6 +108,59 @@ def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path
         reset_current_user_id(token)
 
 
+def test_selected_audio_can_transcribe_without_calling_ai(tmp_path: Path) -> None:
+    class _UnavailableAnalyzer:
+        configured = False
+
+        def __call__(self, *_args, **_kwargs):
+            raise AssertionError("transcript-only mode must not call the analyzer")
+
+    token = set_current_user_id(102)
+    try:
+        service = ResearchNoteAudioAnalysisTaskService(
+            service_factory=_FakeResearchNoteService,
+            resolver=lambda _topic, _file: "https://example.test/audio",
+            http_get=lambda *_args, **_kwargs: _FakeResponse(),
+            transcriber=lambda _path, _name: "[00:00:01] 说话人1：只转写，不生成纪要。",
+            analyzer=_UnavailableAnalyzer(),
+            task_root=tmp_path,
+            workers=1,
+        )
+        assert service.capability()["transcription_configured"] is True
+        assert service.capability()["configured"] is False
+
+        submitted = service.submit(
+            [("topic-1", "audio-1")],
+            title="公司交流逐字稿",
+            generate_memo=False,
+        )
+        service._executor.shutdown(wait=True)
+        completed = service.get(submitted["task_id"])
+
+        assert completed["status"] == "completed"
+        assert completed["generate_memo"] is False
+        assert completed["result"]["transcript_only"] is True
+        assert completed["download_urls"].keys() == {"zip"}
+        assert "只转写" in service.transcript(submitted["task_id"], "audio-1")["text"]
+        bundle_path, _, _ = service.download(submitted["task_id"], "zip")
+        with ZipFile(bundle_path) as archive:
+            assert len(archive.namelist()) == 1
+            assert archive.namelist()[0].startswith("转写文本/")
+
+        availability = service.transcript_availability([("topic-1", "audio-1")])
+        assert availability[("topic-1", "audio-1")]["transcribed"] is True
+        assert availability[("topic-1", "audio-1")]["transcript_task_id"] == submitted["task_id"]
+        reindexed = service.transcript_availability([("audio-memo-synthetic", "audio-1")])
+        assert reindexed[("audio-memo-synthetic", "audio-1")]["transcript_task_id"] == submitted["task_id"]
+        other = set_current_user_id(999)
+        try:
+            assert service.transcript_availability([("topic-1", "audio-1")]) == {}
+        finally:
+            reset_current_user_id(other)
+    finally:
+        reset_current_user_id(token)
+
+
 def test_audio_analysis_rejects_unconfigured_transcriber(tmp_path: Path) -> None:
     class _MissingTranscriber:
         configured = False
@@ -154,7 +208,13 @@ def test_failed_audio_analysis_can_retry_with_persisted_selection(tmp_path: Path
         assert service.get(submitted["task_id"])["status"] == "failed"
 
         service._executor = ThreadPoolExecutor(max_workers=1)
-        retried = service.retry(submitted["task_id"])
+        other = set_current_user_id(909)
+        try:
+            with pytest.raises(ResearchNoteAudioAnalysisError, match="无权访问"):
+                service.retry(submitted["task_id"], owner_id="user:404")
+            retried = service.retry(submitted["task_id"], owner_id="user:303")
+        finally:
+            reset_current_user_id(other)
         assert retried["retry_count"] == 1
         service._executor.shutdown(wait=True)
         assert service.get(submitted["task_id"])["status"] == "completed"
@@ -217,6 +277,184 @@ def test_retry_reuses_completed_transcript_after_analyzer_failure(tmp_path: Path
         reset_current_user_id(token)
 
 
+class _CacheTranscriber:
+    configured = True
+
+    def __init__(self, *, provider: str = "test-asr", model: str = "test-model", text: str = "共享原始逐字稿", fail: bool = False):
+        self.provider = provider
+        self.model = model
+        self.text = text
+        self.fail = fail
+        self.calls = 0
+
+    def __call__(self, _path, _name):
+        self.calls += 1
+        if self.fail:
+            raise ResearchNoteAudioAnalysisError("模拟转写失败")
+        return self.text
+
+
+class _TwoAudioResearchNoteService:
+    def get_note(self, topic_id: str):
+        return {
+            "topic_id": topic_id,
+            "title": "公司录音合集",
+            "created_at": "2026-08-24T09:00:00+08:00",
+            "files": [
+                {"file_id": "audio-1", "name": "公司交流一.mp3", "size": 5, "asset_kind": "audio"},
+                {"file_id": "audio-2", "name": "公司交流二.mp3", "size": 5, "asset_kind": "audio"},
+            ],
+        }
+
+
+def _cache_test_analyzer(_transcripts, title, _focus):
+    return {"title": title, "executive_summary": "缓存测试纪要"}
+
+
+def _submit_and_wait(service, item=("topic-1", "audio-1")):
+    submitted = service.submit([item])
+    service._executor.shutdown(wait=True)
+    return service.get(submitted["task_id"])
+
+
+def test_new_task_reuses_persistent_raw_transcript_cache(tmp_path: Path) -> None:
+    transcriber = _CacheTranscriber(text="同一录音只应付费转写一次")
+    http_calls = []
+    service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic, _file: "https://example.test/audio",
+        http_get=lambda *_args, **_kwargs: http_calls.append(1) or _FakeResponse(),
+        transcriber=transcriber,
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+    )
+
+    first = _submit_and_wait(service)
+    restarted_service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic, _file: "https://example.test/audio",
+        http_get=lambda *_args, **_kwargs: http_calls.append(1) or _FakeResponse(),
+        transcriber=transcriber,
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+    )
+    second = _submit_and_wait(restarted_service)
+
+    assert first["status"] == second["status"] == "completed"
+    assert first["transcript_artifacts"][0]["cache_hit"] is False
+    assert second["transcript_artifacts"][0]["cache_hit"] is True
+    assert first["transcript_artifacts"][0]["transcript_sha256"] == second["transcript_artifacts"][0]["transcript_sha256"]
+    assert transcriber.calls == 1
+    assert len(http_calls) == 1
+    assert restarted_service.transcript(second["task_id"], "audio-1")["text"] == "同一录音只应付费转写一次"
+    cache_payload = json.loads(next((tmp_path / "transcript_cache").rglob("*.json")).read_text(encoding="utf-8"))
+    assert "owner_id" not in cache_payload
+    assert "task_id" not in cache_payload
+    assert "topic_id" not in cache_payload
+    assert "file_id" not in cache_payload
+    assert "缓存测试纪要" not in json.dumps(cache_payload, ensure_ascii=False)
+
+
+def test_transcript_cache_never_crosses_file_or_provider(tmp_path: Path) -> None:
+    provider_a = _CacheTranscriber(provider="provider-a", model="model-1", text="提供方A逐字稿")
+    service_a = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_TwoAudioResearchNoteService,
+        resolver=lambda _topic, file_id: f"https://example.test/{file_id}",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(),
+        transcriber=provider_a,
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+    )
+    first_file = _submit_and_wait(service_a, ("topic-1", "audio-1"))
+    service_a._executor = ThreadPoolExecutor(max_workers=1)
+    second_file = _submit_and_wait(service_a, ("topic-1", "audio-2"))
+    service_a._executor = ThreadPoolExecutor(max_workers=1)
+    other_topic = _submit_and_wait(service_a, ("topic-2", "audio-1"))
+
+    provider_b = _CacheTranscriber(provider="provider-b", model="model-1", text="提供方B逐字稿")
+    service_b = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_TwoAudioResearchNoteService,
+        resolver=lambda _topic, file_id: f"https://example.test/{file_id}",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(),
+        transcriber=provider_b,
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+    )
+    other_provider = _submit_and_wait(service_b, ("topic-1", "audio-1"))
+
+    assert first_file["transcript_artifacts"][0]["cache_hit"] is False
+    assert second_file["transcript_artifacts"][0]["cache_hit"] is False
+    assert other_topic["transcript_artifacts"][0]["cache_hit"] is False
+    assert other_provider["transcript_artifacts"][0]["cache_hit"] is False
+    assert provider_a.calls == 3
+    assert provider_b.calls == 1
+    assert service_b.transcript(other_provider["task_id"], "audio-1")["text"] == "提供方B逐字稿"
+
+
+def test_corrupt_transcript_cache_self_heals_by_retranscribing(tmp_path: Path) -> None:
+    transcriber = _CacheTranscriber(text="可校验逐字稿")
+    service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic, _file: "https://example.test/audio",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(),
+        transcriber=transcriber,
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+    )
+    _submit_and_wait(service)
+    cache_path = next((tmp_path / "transcript_cache").rglob("*.json"))
+    cache_path.write_text('{"transcript":"tampered"}', encoding="utf-8")
+
+    service._executor = ThreadPoolExecutor(max_workers=1)
+    healed = _submit_and_wait(service)
+
+    assert healed["status"] == "completed"
+    assert healed["transcript_artifacts"][0]["cache_hit"] is False
+    assert transcriber.calls == 2
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["transcript"] == "可校验逐字稿"
+    assert payload["char_count"] == len(payload["transcript"])
+
+
+def test_failed_transcription_is_never_cached(tmp_path: Path) -> None:
+    failing = _CacheTranscriber(fail=True)
+    failed_service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic, _file: "https://example.test/audio",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(),
+        transcriber=failing,
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+    )
+    failed = _submit_and_wait(failed_service)
+
+    assert failed["status"] == "failed"
+    assert list((tmp_path / "transcript_cache").rglob("*.json")) == []
+
+    working = _CacheTranscriber(text="失败后重新识别成功")
+    recovered_service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic, _file: "https://example.test/audio",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(),
+        transcriber=working,
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+    )
+    recovered = _submit_and_wait(recovered_service)
+
+    assert recovered["status"] == "completed"
+    assert recovered["transcript_artifacts"][0]["cache_hit"] is False
+    assert failing.calls == working.calls == 1
+    assert len(list((tmp_path / "transcript_cache").rglob("*.json"))) == 1
+
+
 class _JsonResponse:
     def __init__(self, payload):
         self._payload = payload
@@ -227,6 +465,31 @@ class _JsonResponse:
 
     def json(self):
         return self._payload
+
+
+class _StatusResponse(_JsonResponse):
+    def __init__(self, status_code, payload=None, *, text=""):
+        super().__init__(payload or {})
+        self.status_code = status_code
+        self.text = text or json.dumps(payload or {}, ensure_ascii=False)
+        self.headers = {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}", response=self)
+
+
+class _SequencedRequestSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class _DeepSeekSession:
@@ -344,3 +607,62 @@ def test_aliyun_dashscope_transcriber_submits_polls_and_keeps_speakers(monkeypat
     assert post[2]["json"]["parameters"]["speaker_count"] == 3
     assert post[2]["json"]["parameters"]["vocabulary"]["中际旭创"] == 5
     assert [item[0] for item in stages] == ["submitting", "pending", "fetching"]
+
+
+@pytest.mark.parametrize(
+    "transient_failure",
+    [
+        requests.ConnectionError("connection reset"),
+        requests.Timeout("read timeout"),
+        _StatusResponse(429, {"message": "rate limited"}),
+        _StatusResponse(503, {"message": "temporarily unavailable"}),
+    ],
+)
+def test_aliyun_request_retries_only_transient_failures(monkeypatch, transient_failure) -> None:
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-test-key")
+    monkeypatch.setenv("DASHSCOPE_ASR_REQUEST_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("DASHSCOPE_ASR_REQUEST_BACKOFF_SEC", "0")
+    session = _SequencedRequestSession([
+        transient_failure,
+        _StatusResponse(200, {"output": {"task_id": "aliyun-task-1"}}),
+    ])
+    transcriber = AliyunDashScopeAudioTranscriber(session=session)
+
+    payload = transcriber._request_json("GET", "https://dashscope.test/api/v1/tasks/T1")
+
+    assert payload["output"]["task_id"] == "aliyun-task-1"
+    assert len(session.calls) == 2
+
+
+def test_aliyun_request_does_not_retry_other_4xx_and_redacts_error(monkeypatch) -> None:
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-test-key")
+    monkeypatch.setenv("DASHSCOPE_ASR_REQUEST_MAX_ATTEMPTS", "4")
+    session = _SequencedRequestSession([
+        _StatusResponse(400, text='{"api_key":"sk-sensitive-value","message":"bad request"}'),
+        _StatusResponse(200, {"unexpected": "must not be called"}),
+    ])
+    transcriber = AliyunDashScopeAudioTranscriber(session=session)
+
+    with pytest.raises(ResearchNoteAudioAnalysisError) as captured:
+        transcriber._request_json("POST", "https://dashscope.test/api/v1/services/audio/asr/transcription")
+
+    assert len(session.calls) == 1
+    assert "sk-sensitive-value" not in str(captured.value)
+    assert "<redacted>" in str(captured.value)
+
+
+def test_aliyun_request_stops_after_configured_transient_attempts(monkeypatch) -> None:
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dash-test-key")
+    monkeypatch.setenv("DASHSCOPE_ASR_REQUEST_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("DASHSCOPE_ASR_REQUEST_BACKOFF_SEC", "0")
+    session = _SequencedRequestSession([
+        requests.ConnectionError("first reset"),
+        requests.ConnectionError("second reset"),
+        _StatusResponse(200, {"unexpected": "must not be called"}),
+    ])
+    transcriber = AliyunDashScopeAudioTranscriber(session=session)
+
+    with pytest.raises(ResearchNoteAudioAnalysisError, match="ConnectionError"):
+        transcriber._request_json("GET", "https://dashscope.test/api/v1/tasks/T1")
+
+    assert len(session.calls) == 2

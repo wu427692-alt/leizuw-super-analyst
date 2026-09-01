@@ -186,7 +186,7 @@ export const essayRadarApi = {
   },
   startAudioAnalysisTask: async (
     items: Array<{ topicId: string; fileId: string }>,
-    options: { title?: string; focus?: string; hotwords?: string[]; speakerCount?: number } = {},
+    options: { title?: string; focus?: string; hotwords?: string[]; speakerCount?: number; generateMemo?: boolean } = {},
   ): Promise<EssayAudioAnalysisTask> => {
     const response = await apiClient.post('/api/v1/financial-data/research-notes/audio-analysis/tasks', {
       items: items.map((item) => ({ topic_id: item.topicId, file_id: item.fileId })),
@@ -194,6 +194,7 @@ export const essayRadarApi = {
       focus: options.focus || undefined,
       hotwords: options.hotwords || [],
       speaker_count: options.speakerCount || undefined,
+      generate_memo: options.generateMemo ?? true,
     });
     return toCamelCase<EssayAudioAnalysisTask>(response.data);
   },

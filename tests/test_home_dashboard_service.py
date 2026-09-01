@@ -38,7 +38,8 @@ class FakeTushare:
 class FakeMonitor:
     def dashboard(self, days=7):
         event = {"id": 1, "title": "目标公司新增订单", "symbols": ["603306.SH"],
-                 "sentiment": "bullish", "perspective": "institution", "importance_score": 80}
+                 "sentiment": "bullish", "perspective": "institution", "importance_score": 80,
+                 "event_type": "news", "source_name": "测试财经媒体", "event_at": "2026-08-19T10:01:00Z"}
         return {
             "watchlist": [{"symbol": "603306.SH", "name": "华懋科技", "event_count": 1,
                            "high_priority_count": 1, "opportunity_score": 70, "risk_score": 20,
@@ -46,6 +47,8 @@ class FakeMonitor:
                            "latest_quote": {"current_price": 42.0, "change_percent": 1.0},
                            "institution_rating_count": 1}],
             "latest_events": [event],
+            "latest_news": [],
+            "pinned_news": [event],
             "summary": {"event_count": 1, "active_source_count": 4},
         }
 
@@ -111,6 +114,8 @@ def test_home_dashboard_aggregates_market_and_watchlist_with_cache(monkeypatch, 
         "volume": 200, "amount": 1_234_500.0, "update_time": "20260819",
         "source": "tushare.daily",
     }
+    assert first["pinned_news"][0]["title"] == "目标公司新增订单"
+    assert first["latest_news"] == []
     assert first["cache"]["hit"] is False
     assert second["cache"]["hit"] is True
     assert len(tushare.calls) == call_count

@@ -50,6 +50,8 @@ _stock_workspace_cache_lock = threading.Lock()
 _SUPER_WATCHLIST_CACHE_TTL_SECONDS = 30
 _super_watchlist_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _super_watchlist_cache_lock = threading.Lock()
+_HOMEPAGE_PIN_IMPORTANCE = 70
+_HOMEPAGE_WATCHLIST_PIN_IMPORTANCE = 60
 
 PERSPECTIVES = ("investor", "company", "institution")
 SENTIMENTS = ("bullish", "bearish", "neutral", "mixed")
@@ -671,6 +673,29 @@ class InvestmentMonitorService:
             for symbol in watchlist
         ]
         latest = events
+        news_events = [
+            event for event in latest
+            if str((source_meta.get(event["source_key"]) or {}).get("category") or "") == "news"
+            and event.get("event_type") in {"news", "long_news"}
+        ]
+        watchlist_symbols = set(watchlist)
+        pinned_news = sorted(
+            [
+                event for event in news_events
+                if int(event.get("importance_score") or 0) >= _HOMEPAGE_PIN_IMPORTANCE
+                or (
+                    int(event.get("importance_score") or 0) >= _HOMEPAGE_WATCHLIST_PIN_IMPORTANCE
+                    and bool(watchlist_symbols.intersection(event.get("symbols") or []))
+                )
+            ],
+            key=lambda item: (
+                bool(watchlist_symbols.intersection(item.get("symbols") or [])),
+                int(item.get("importance_score") or 0),
+                str(item.get("event_at") or ""),
+            ),
+            reverse=True,
+        )[:2]
+        pinned_ids = {int(item["id"]) for item in pinned_news}
         event_count = int(stats["event_count"])
         original_count = int(stats["original_link_count"])
         return {
@@ -696,6 +721,8 @@ class InvestmentMonitorService:
             "channels": self._counter_rows(channel_counts),
             "latest_events": [self.compact_event(event) for event in latest[:40]],
             "high_priority": [self.compact_event(event) for event in latest if event["importance_score"] >= 75][:20],
+            "latest_news": [self.compact_event(event) for event in news_events if int(event["id"]) not in pinned_ids][:30],
+            "pinned_news": [self.compact_event(event) for event in pinned_news],
             "sources": self.list_sources(),
         }
 

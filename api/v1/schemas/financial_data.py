@@ -79,6 +79,7 @@ class ResearchNoteAudioAnalysisRequest(BaseModel):
     focus: Optional[str] = Field(None, max_length=500)
     hotwords: List[str] = Field(default_factory=list, max_length=100)
     speaker_count: Optional[int] = Field(None, ge=2, le=20)
+    generate_memo: bool = True
 
 
 class ResearchNoteImportResponse(BaseModel):

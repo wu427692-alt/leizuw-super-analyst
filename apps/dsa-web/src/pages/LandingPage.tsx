@@ -69,11 +69,11 @@ const productTours = [
     screenshot: '/landing/screens/data-acquisition.jpg', alt: '数据一站式获取真实页面，展示研报筛选字段与后台任务状态',
   },
   {
-    number: '07', eyebrow: '快速建立认知', title: '行业调研', href: '/industry-research', action: '开始行业调研', icon: Landmark,
+    number: '07', eyebrow: '全渠道深度研究', title: '行业与公司调研', href: '/industry-research', action: '开始深度研究', icon: Landmark,
     description: '输入行业主题后，后台任务围绕产业链、发展趋势、龙头公司、痛点、应用场景和关键验证指标组织证据，并保存可继续补强的研究报告。',
     data: ['研报、公告和公司资料', '机构段子、录音纪要与资讯', '行情、财务和企业事实'],
     outputs: ['产业链与关键环节', '龙头、趋势、痛点和应用场景', '证据引用、待验证问题和深度报告'],
-    screenshot: '/landing/screens/industry-research.jpg', alt: '行业调研真实页面，展示光模块研究任务入口与四步方法',
+    screenshot: '/landing/screens/industry-research.jpg', alt: '行业与公司调研真实页面，展示后台任务、证据来源和深度报告',
   },
 ];
 

@@ -185,6 +185,8 @@ class HomeDashboardService:
             "breadth": breadth, "sector_distribution": sectors, "northbound": {},
             "watchlist": intelligence.get("watchlist") or [],
             "latest_events": (intelligence.get("latest_events") or [])[:12],
+            "latest_news": (intelligence.get("latest_news") or [])[:12],
+            "pinned_news": (intelligence.get("pinned_news") or [])[:2],
             "intelligence_summary": intelligence.get("summary") or {}, "warnings": warnings,
         }
 
@@ -239,6 +241,8 @@ class HomeDashboardService:
             "global_indices": global_indices, "breadth": breadth,
             "sector_distribution": sector_distribution, "northbound": northbound,
             "watchlist": watchlist, "latest_events": (intelligence.get("latest_events") or [])[:12],
+            "latest_news": (intelligence.get("latest_news") or [])[:12],
+            "pinned_news": (intelligence.get("pinned_news") or [])[:2],
             "intelligence_summary": intelligence.get("summary") or {}, "warnings": warnings,
         }
 

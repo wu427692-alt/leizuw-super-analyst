@@ -62,9 +62,9 @@ const chapters: GuideChapter[] = [
     verify: ['事实、观点和模型推断必须分开。', '每个结论都应能回到来源、日期和原文。', '没有反证和失效条件的“结论”只能算假设。'],
   },
   {
-    id: 'industry', category: '行业题材', eyebrow: '快速建立行业认知', title: '行业调研', icon: Landmark,
+    id: 'industry', category: '行业题材', eyebrow: '快速建立可核验认知', title: '行业与公司调研', icon: Landmark,
     summary: '输入一个行业，后台并行组织产业链、趋势、龙头、痛点、应用场景、验证指标和长篇报告。',
-    href: '/industry-research', action: '进入行业调研', screenshot: '/landing/screens/industry-research.jpg', alt: '行业调研实机页面截图',
+    href: '/industry-research', action: '进入深度调研', screenshot: '/landing/screens/industry-research.jpg', alt: '行业与公司调研实机页面截图',
     purpose: '在尽可能短的时间内建立可继续验证的行业框架，而不是只生成一篇不可追溯的长文。',
     data: ['两年研报链接与摘要库', '机构段子与录音纪要', '公司公告、财务与行情', '企业事实、新闻与题材关系'],
     outputs: ['产业链地图', '趋势与拐点', '龙头候选对比', '痛点与应用场景', '访谈提纲', '带引用的长篇报告'],
@@ -334,16 +334,33 @@ const searchableText = (chapter: GuideChapter) => [
 
 const AnnotatedScreenshot = ({ chapter, onOpen }: { chapter: GuideChapter; onOpen: () => void }) => {
   if (!chapter.screenshot || !chapter.alt) return null;
-  return <div className="guide-anatomy">
-    <button className="guide-shot" type="button" onClick={onOpen} aria-label={`放大查看${chapter.title}截图`}>
-      <img src={chapter.screenshot} alt={chapter.alt} loading="lazy" />
-      {chapter.hotspots?.map((hotspot) => <span className="guide-hotspot" style={{ left: `${hotspot.x}%`, top: `${hotspot.y}%` }} key={hotspot.number}>{hotspot.number}</span>)}
-      <span className="guide-shot-action"><Expand /> 放大并查看标注</span>
-    </button>
-    <ol className="guide-hotspot-list" aria-label={`${chapter.title}截图标注说明`}>
-      {chapter.hotspots?.map((hotspot) => <li key={hotspot.number}><b>{hotspot.number}</b><div><strong>{hotspot.title}</strong><p>{hotspot.detail}</p></div></li>)}
-    </ol>
-  </div>;
+  return <section className="guide-screenshot-suite" aria-label={`${chapter.title}真实页面截图详解`}>
+    <div className="guide-screenshot-heading">
+      <div><small>REAL PRODUCT SCREEN</small><h4>整页定位与局部功能放大</h4></div>
+      <span>{chapter.hotspots?.length ?? 0} 个关键操作点</span>
+    </div>
+    <div className="guide-anatomy">
+      <button className="guide-shot" type="button" onClick={onOpen} aria-label={`放大查看${chapter.title}截图`}>
+        <img src={chapter.screenshot} alt={chapter.alt} loading="lazy" />
+        {chapter.hotspots?.map((hotspot) => <span className="guide-hotspot" style={{ left: `${hotspot.x}%`, top: `${hotspot.y}%` }} key={hotspot.number}>{hotspot.number}</span>)}
+        <span className="guide-shot-action"><Expand /> 查看完整实机大图</span>
+      </button>
+      <ol className="guide-hotspot-list" aria-label={`${chapter.title}截图标注说明`}>
+        {chapter.hotspots?.map((hotspot) => <li key={hotspot.number}><b>{hotspot.number}</b><div><strong>{hotspot.title}</strong><p>{hotspot.detail}</p></div></li>)}
+      </ol>
+    </div>
+    <div className="guide-detail-grid" aria-label={`${chapter.title}局部功能截图`}>
+      {chapter.hotspots?.map((hotspot) => <button type="button" className="guide-detail-card" onClick={onOpen} key={hotspot.number} aria-label={`放大查看${chapter.title}的${hotspot.title}`}>
+        <span
+          className="guide-detail-viewport"
+          role="img"
+          aria-label={`${chapter.title}真实页面局部：${hotspot.title}`}
+          style={{ backgroundImage: `url(${chapter.screenshot})`, backgroundPosition: `${hotspot.x}% ${hotspot.y}%` }}
+        ><b>{hotspot.number}</b></span>
+        <span className="guide-detail-copy"><small>SCREEN DETAIL {String(hotspot.number).padStart(2, '0')}</small><strong>{hotspot.title}</strong><p>{hotspot.detail}</p></span>
+      </button>)}
+    </div>
+  </section>;
 };
 
 const UserGuidePage = () => {
@@ -364,6 +381,7 @@ const UserGuidePage = () => {
     && (!normalizedQuery || searchableText(chapter).includes(normalizedQuery))), [category, normalizedQuery]);
   const moduleCount = chapters.reduce((total, chapter) => total + chapter.modules.length, 0);
   const screenshotCount = chapters.filter((chapter) => chapter.screenshot).length;
+  const screenshotDetailCount = chapters.reduce((total, chapter) => total + (chapter.hotspots?.length ?? 0), 0);
 
   return <main className="guide-page">
     <header className="guide-header">
@@ -373,14 +391,14 @@ const UserGuidePage = () => {
 
     <section className="guide-hero">
       <div className="guide-hero-copy">
-        <span className="guide-kicker"><BookOpen /> COMPLETE OPERATIONS MANUAL · 2026-08-31</span>
-        <h1>不是功能清单。<br /><em>是一套能照着完成研究的操作系统。</em></h1>
+        <span className="guide-kicker"><BookOpen /> COMPLETE OPERATIONS MANUAL · 2026-09-01</span>
+        <h1><span>不是功能清单。</span><em>是一套能照着完成研究的操作系统。</em></h1>
         <p>覆盖普通用户全部入口、子页面、后台任务和管理员功能。每个模块都写清目的、使用数据、具体操作、输出结果与核验标准；核心页面使用真实截图和编号标注。</p>
         <div className="guide-hero-actions"><a href="#find"><Search /> 搜索功能</a><a href="#workspaces">阅读完整手册 <ArrowRight /></a></div>
       </div>
       <div className="guide-hero-ledger" aria-label="手册覆盖统计">
         <span>MANUAL COVERAGE</span>
-        <dl><div><dt>功能工作台</dt><dd>{chapters.length}</dd></div><div><dt>子模块</dt><dd>{moduleCount}</dd></div><div><dt>真实截图</dt><dd>{screenshotCount}</dd></div><div><dt>跨页流程</dt><dd>{workflowRows.length}</dd></div></dl>
+        <dl><div><dt>功能工作台</dt><dd>{chapters.length}</dd></div><div><dt>子模块</dt><dd>{moduleCount}</dd></div><div><dt>真实截图 / 细节</dt><dd>{screenshotCount}<small> / {screenshotDetailCount}</small></dd></div><div><dt>跨页流程</dt><dd>{workflowRows.length}</dd></div></dl>
         <p><CheckCircle2 /> 内容按当前生产功能编写；界面数值会随数据自动更新。</p>
       </div>
     </section>
@@ -481,7 +499,7 @@ const UserGuidePage = () => {
       </article>
     </div>
 
-    <footer className="guide-footer"><span>乐子乌超级价值 · 完整使用手册 · 当前版本 2026-08-31</span><nav><Link to="/">产品介绍</Link><Link to="/app">研究平台</Link><a href="#find">搜索手册</a></nav></footer>
+    <footer className="guide-footer"><span>乐子乌超级价值 · 完整使用手册 · 当前版本 2026-09-01</span><nav><Link to="/">产品介绍</Link><Link to="/app">研究平台</Link><a href="#find">搜索手册</a></nav></footer>
     {lightbox?.screenshot && lightbox.alt ? <div className="guide-lightbox" role="dialog" aria-modal="true" aria-label="页面截图预览" onClick={() => setLightbox(null)}>
       <button type="button" onClick={() => setLightbox(null)} aria-label="关闭截图预览"><X /></button>
       <div className="guide-lightbox-shell" onClick={(event) => event.stopPropagation()}>

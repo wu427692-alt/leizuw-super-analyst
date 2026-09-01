@@ -66,6 +66,15 @@ services:
     <<: *common
     container_name: stock-server
     command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${API_PORT:-8000}"]
+    # 公司/行业深度报告会并行整理公告、PDF、录音转写与长文本；1G 在生成阶段
+    # 容易触发 OOM。生产机当前为 2C4G，给 API/研究任务保留 2.5G，并用宿主机
+    # swap 吸收短时峰值；采集 worker 继续独立运行。
+    deploy:
+      resources:
+        limits:
+          memory: 2500M
+        reservations:
+          memory: 1G
     # 若使用 network_mode: host，则以下 ports 映射无效，端口由 command 中的 --port 指定
     ports:
       - "${API_PORT:-8000}:${API_PORT:-8000}"

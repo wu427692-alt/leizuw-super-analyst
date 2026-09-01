@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import os
+from pathlib import Path
+import threading
+import time
 import zipfile
 
 import pytest
@@ -13,7 +17,11 @@ import pytest
 from src.config import Config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.services.cninfo_announcement_service import CninfoAnnouncementError, CninfoAnnouncementService
-from src.services.announcement_artifact_service import AnnouncementArtifactService
+from src.services.announcement_artifact_service import (
+    AnnouncementArtifactError,
+    AnnouncementArtifactService,
+    _PdfExtractionFailure,
+)
 from src.services.investment_monitor_service import InvestmentMonitorService
 from src.services.watchlist_announcement_sync_worker import WatchlistAnnouncementSyncWorker
 from src.storage import DatabaseManager
@@ -59,6 +67,29 @@ class FakePdfSession:
         return FakePdfResponse(self.content)
 
 
+class _ConcurrentPdfResponse(FakePdfResponse):
+    def __init__(self, content, barrier):
+        super().__init__(content)
+        self.barrier = barrier
+
+    def iter_content(self, chunk_size):
+        del chunk_size
+        split = max(4, len(self.content) // 2)
+        yield self.content[:split]
+        self.barrier.wait(timeout=2)
+        yield self.content[split:]
+
+
+class _ConcurrentPdfSession:
+    def __init__(self, content, barrier):
+        self.content = content
+        self.barrier = barrier
+
+    def get(self, *args, **kwargs):
+        del args, kwargs
+        return _ConcurrentPdfResponse(self.content, self.barrier)
+
+
 class FakeSession:
     def __init__(self):
         self.calls = []
@@ -97,6 +128,72 @@ def test_cninfo_rejects_unknown_category():
         CninfoAnnouncementService(session=FakeSession()).fetch(
             start_date=date(2025, 1, 1), end_date=date(2025, 1, 2), categories=["unknown"],
         )
+
+
+def test_cninfo_exposes_pagination_truncation_and_shared_request_budget():
+    class _PagedSession(FakeSession):
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if "topSearch" in url:
+                return FakeResponse([{"code": "600519", "orgId": "gssh0600519", "zwjc": "贵州茅台"}])
+            page = int(kwargs["data"]["pageNum"])
+            return FakeResponse({
+                "announcements": [{
+                    "secCode": "600519", "secName": "贵州茅台", "orgId": "gssh0600519",
+                    "announcementId": f"A{page}", "announcementTitle": f"第{page}页公告",
+                    "announcementTime": 1743609600000 + page,
+                    "adjunctUrl": f"finalpage/{page}.PDF",
+                }],
+                "totalpages": 5,
+            })
+
+    diagnostics = {}
+    budget = {"remaining": 10, "used": 0}
+    service = CninfoAnnouncementService(session=_PagedSession(), request_interval=0)
+
+    rows = service.fetch(
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 12, 31),
+        symbols=["600519.SH"],
+        categories=["category_ndbg_szsh"],
+        max_pages=2,
+        deadline_monotonic=time.monotonic() + 5,
+        request_budget=budget,
+        diagnostics=diagnostics,
+    )
+
+    assert len(rows) == 2
+    assert diagnostics["truncated"] is True
+    assert diagnostics["pages_fetched"] == 2
+    assert diagnostics["total_pages"] == 5
+    assert diagnostics["request_attempts"] == 3  # security lookup + two announcement pages
+    assert budget == {"remaining": 7, "used": 3}
+
+
+def test_concurrent_same_announcement_downloads_publish_atomically(tmp_path):
+    content = b"%PDF-1.7\n" + (b"same-cninfo-object\n" * 128)
+    barrier = threading.Barrier(2)
+    event = {
+        "external_id": "same-announcement",
+        "symbols": ["603306.SH"],
+        "url": "https://static.cninfo.com.cn/finalpage/same.PDF",
+    }
+
+    def download_once():
+        service = AnnouncementArtifactService(
+            session=_ConcurrentPdfSession(content, barrier),
+        )
+        service.root = tmp_path
+        return service.download_pdf(event)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _index: download_once(), range(2)))
+
+    targets = {path for path, _cached in results}
+    assert len(targets) == 1
+    target = targets.pop()
+    assert target.read_bytes() == content
+    assert not list(target.parent.glob("*.part"))
 
 
 class FakeCninfo:
@@ -309,3 +406,166 @@ def test_package_uses_persisted_event_and_contains_pdf_txt_and_excel(tmp_path):
         assert result["downloaded"] == 1
     finally:
         result["path"].unlink(missing_ok=True)
+
+
+def test_announcement_text_cache_is_hash_bound_atomic_and_self_healing(tmp_path, monkeypatch):
+    from pypdf import PdfWriter
+
+    def pdf_bytes(marker: str) -> bytes:
+        buffer = BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        writer.add_metadata({"/Subject": marker})
+        writer.write(buffer)
+        return buffer.getvalue()
+
+    pdf_path = tmp_path / "announcement.pdf"
+    pdf_path.write_bytes(pdf_bytes("first-version"))
+    artifacts = AnnouncementArtifactService()
+    original_extract = artifacts._extract_text_audited
+    extract_calls = 0
+
+    def counted_extract(path):
+        nonlocal extract_calls
+        extract_calls += 1
+        return original_extract(path)
+
+    monkeypatch.setattr(artifacts, "_extract_text_audited", counted_extract)
+
+    first = artifacts.extract_text_cached(pdf_path)
+    second = artifacts.extract_text_cached(pdf_path)
+
+    assert first["cached"] is False
+    assert second["cached"] is True
+    assert extract_calls == 1
+    assert first["document_hash"] == second["document_hash"]
+    assert first["text_hash"] == second["text_hash"]
+    assert first["extraction_complete"] is True
+    assert first["pages_extracted"] == first["page_count"] == 1
+    assert first["extraction_method"] in {"pdfium_text", "pypdf_text_fallback"}
+    assert first["extraction_engine_version"]
+    first_cache_path = Path(first["cache_path"])
+    assert first_cache_path.is_file()
+
+    pdf_path.write_bytes(pdf_bytes("second-version"))
+    changed = artifacts.extract_text_cached(pdf_path)
+
+    assert changed["cached"] is False
+    assert changed["document_hash"] != first["document_hash"]
+    assert extract_calls == 2
+    assert first_cache_path.is_file()  # Historical cache data is not deleted.
+
+    changed_cache_path = Path(changed["cache_path"])
+    changed_cache_path.write_text("{broken", encoding="utf-8")
+    repaired = artifacts.extract_text_cached(pdf_path)
+
+    assert repaired["cached"] is False
+    assert extract_calls == 3
+    assert repaired["document_hash"] == changed["document_hash"]
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_announcement_text_cache_atomic_write_preserves_previous_file_on_failure(tmp_path, monkeypatch):
+    cache_path = tmp_path / "announcement.pdf.hash.text.json"
+    cache_path.write_text('{"previous":true}', encoding="utf-8")
+
+    def fail_fsync(_file_descriptor):
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr("src.services.announcement_artifact_service.os.fsync", fail_fsync)
+    with pytest.raises(AnnouncementArtifactError, match="缓存写入失败"):
+        AnnouncementArtifactService._write_text_cache(cache_path, {"new": True})
+
+    assert cache_path.read_text(encoding="utf-8") == '{"previous":true}'
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_pdf_extraction_fallback_is_bounded_and_auditable(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "announcement.pdf"
+    pdf_path.write_bytes(b"%PDF-test")
+    calls = []
+
+    def fake_run(cls, path, *, engine, timeout):
+        calls.append((engine, timeout))
+        if engine == "pdfium":
+            raise _PdfExtractionFailure("parse_failed", "simulated PDFium failure")
+        return {
+            "text": "完整正文",
+            "page_count": 2,
+            "pages_extracted": 2,
+            "extraction_complete": True,
+            "extraction_status": "complete",
+            "extraction_method": "pypdf_text_fallback",
+            "extraction_engine_version": "pypdf=test",
+            "duration_ms": 7,
+        }
+
+    monkeypatch.setattr(AnnouncementArtifactService, "_run_text_extractor", classmethod(fake_run))
+
+    parsed = AnnouncementArtifactService._extract_text_audited(pdf_path)
+
+    assert calls == [
+        ("pdfium", AnnouncementArtifactService._PDFIUM_TIMEOUT_SECONDS),
+        ("pypdf", AnnouncementArtifactService._PYPDF_FALLBACK_TIMEOUT_SECONDS),
+    ]
+    assert parsed["fallback_reason"] == "parse_failed"
+    assert parsed["extraction_complete"] is True
+    assert parsed["pages_extracted"] == parsed["page_count"]
+
+
+def test_pdf_extraction_timeout_is_explicit_and_does_not_leave_partial_result(tmp_path, monkeypatch):
+    import src.services.announcement_artifact_service as module
+
+    pdf_path = tmp_path / "announcement.pdf"
+    pdf_path.write_bytes(b"%PDF-test")
+    real_named_temporary_file = module.tempfile.NamedTemporaryFile
+
+    def local_named_temporary_file(**kwargs):
+        return real_named_temporary_file(dir=tmp_path, **kwargs)
+
+    def timeout_run(*_args, **_kwargs):
+        raise module.subprocess.TimeoutExpired(cmd="pdf-worker", timeout=1)
+
+    monkeypatch.setattr(module.tempfile, "NamedTemporaryFile", local_named_temporary_file)
+    monkeypatch.setattr(module.subprocess, "run", timeout_run)
+
+    with pytest.raises(_PdfExtractionFailure, match="超时") as failure:
+        AnnouncementArtifactService._run_text_extractor(pdf_path, engine="pdfium", timeout=1)
+
+    assert failure.value.code == "timeout"
+    assert not list(tmp_path.glob("*.extract.json"))
+
+
+def test_pdf_extraction_rejects_partial_page_result():
+    payload = {
+        "text": "只有第一页",
+        "page_count": 2,
+        "pages_extracted": 1,
+        "extraction_complete": True,
+        "extraction_status": "complete",
+        "extraction_method": "pdfium_text",
+        "extraction_engine_version": "pypdfium2=test",
+    }
+
+    with pytest.raises(_PdfExtractionFailure, match="完整性") as failure:
+        AnnouncementArtifactService._validate_extraction_payload(payload, engine="pdfium")
+
+    assert failure.value.code == "incomplete"
+
+
+def test_pdfium_worker_extracts_every_page_when_dependency_is_available(tmp_path):
+    pytest.importorskip("pypdfium2")
+    from pypdf import PdfWriter
+
+    pdf_path = tmp_path / "announcement.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    with pdf_path.open("wb") as output:
+        writer.write(output)
+
+    parsed = AnnouncementArtifactService._extract_text_audited(pdf_path)
+
+    assert parsed["extraction_method"] == "pdfium_text"
+    assert parsed["page_count"] == parsed["pages_extracted"] == 1
+    assert parsed["extraction_complete"] is True
+    assert parsed["extraction_status"] == "complete_no_selectable_text"

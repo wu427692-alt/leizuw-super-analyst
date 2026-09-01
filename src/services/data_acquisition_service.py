@@ -24,10 +24,20 @@ from openpyxl import Workbook
 import requests
 
 from src.config import get_config
-from src.services.essay_analysis_service import DEFAULT_ESSAY_MODEL, EssayDailyReportService
+from src.llm.provider_schedule import (
+    direct_chat_headers,
+    prepare_direct_chat_payload,
+    scheduled_direct_chat_routes,
+)
+from src.services.essay_analysis_service import (
+    DEFAULT_ESSAY_MODEL,
+    DeepSeekEssayAnalyzer,
+    EssayDailyReportService,
+)
 from src.services.cninfo_announcement_service import CninfoAnnouncementService
 from src.services.financial_data_service import FinancialDataService, FinancialDataValidationError
 from src.services.investment_monitor_service import InvestmentMonitorService
+from src.storage import persist_llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -250,20 +260,18 @@ def _extract_requested_date_range(request_text: str) -> Optional[tuple[str, str]
 class DataAcquisitionPlanner:
     def __init__(self, *, session: Optional[requests.Session] = None):
         config = get_config()
-        keys = list(getattr(config, "deepseek_api_keys", None) or [])
-        self.api_key = str((keys[0] if keys else "") or "").strip()
-        self.base_url = str(os.getenv("DATA_ACQUISITION_LLM_BASE_URL") or "https://api.deepseek.com").rstrip("/")
-        self.model = str(
-            os.getenv("DATA_ACQUISITION_LLM_MODEL")
-            or os.getenv("ESSAY_ANALYSIS_MODEL")
-            or DEFAULT_ESSAY_MODEL
-        ).strip()
+        requested_model = str(os.getenv("DATA_ACQUISITION_LLM_MODEL") or "").strip() or None
+        self.routes = scheduled_direct_chat_routes(config, requested_model=requested_model)
+        primary = self.routes[0] if self.routes else None
+        self.api_key = primary.api_key if primary else ""
+        self.base_url = primary.base_url if primary else ""
+        self.model = primary.model if primary else str(requested_model or DEFAULT_ESSAY_MODEL)
         self.timeout = max(10, min(int(os.getenv("DATA_ACQUISITION_LLM_TIMEOUT_SEC", "120")), 300))
         self.session = session or requests.Session()
 
     def plan(self, request_text: str) -> Dict[str, Any]:
-        if not self.api_key:
-            raise DataAcquisitionError("DeepSeek API key is not configured")
+        if not self.routes:
+            raise DataAcquisitionError("没有可用的低价 AI 通道")
         catalog = {
             "tushare": TUSHARE_CATALOG,
             "zsxq": {"research_notes": "知识星球 MCP 增量同步后的本地调研纪要（含图片和附件链接）"},
@@ -287,19 +295,40 @@ class DataAcquisitionPlanner:
             "max_tokens": 6000,
             "stream": False,
         }
-        try:
-            response = self.session.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json=payload, timeout=self.timeout,
-            )
-            response.raise_for_status()
-            body = response.json()
-            content = body["choices"][0]["message"]["content"]
-            parsed = json.loads(repair_json(content))
-        except Exception as exc:
-            logger.warning("Data acquisition planning failed: %s", type(exc).__name__)
-            raise DataAcquisitionError("大模型暂时无法生成取数计划，请稍后重试") from exc
+        last_error: Optional[Exception] = None
+        parsed: Optional[Dict[str, Any]] = None
+        for route in self.routes:
+            try:
+                outbound = prepare_direct_chat_payload(route, payload)
+                response = self.session.post(
+                    f"{route.base_url}/chat/completions",
+                    headers=direct_chat_headers(route),
+                    json=outbound,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                body = response.json()
+                content = body["choices"][0]["message"]["content"]
+                parsed = json.loads(repair_json(content))
+                usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+                persist_llm_usage(
+                    {**usage, "provider": route.provider, "transport": "direct_chat"},
+                    route.litellm_model,
+                    call_type="data_acquisition_plan",
+                )
+                self.api_key = route.api_key
+                self.base_url = route.base_url
+                self.model = route.model
+                break
+            except Exception as exc:  # noqa: BLE001 - cross-provider fallback is intentional.
+                last_error = exc
+                logger.warning(
+                    "Data acquisition planning route failed channel=%s error=%s",
+                    route.channel,
+                    type(exc).__name__,
+                )
+        if parsed is None:
+            raise DataAcquisitionError("大模型暂时无法生成取数计划，请稍后重试") from last_error
         return self._normalize(parsed, request_text)
 
     def _normalize(self, raw: Dict[str, Any], request_text: str) -> Dict[str, Any]:
@@ -1045,10 +1074,11 @@ class DataAcquisitionService:
     ) -> List[Dict[str, Any]]:
         """Use structured semantic classification; never execute model-generated code."""
         enabled = str(os.getenv("DATA_ACQUISITION_REPORT_AI_FILTER", "1")).lower() not in {"0", "false", "off"}
-        api_key = str(getattr(self.planner, "api_key", "") or "").strip()
-        base_url = str(getattr(self.planner, "base_url", "") or "").rstrip("/")
-        model = str(getattr(self.planner, "model", "") or DEFAULT_ESSAY_MODEL)
-        if not enabled or not api_key or not base_url:
+        routes = list(getattr(self.planner, "routes", None) or [])
+        legacy_api_key = str(getattr(self.planner, "api_key", "") or "").strip()
+        legacy_base_url = str(getattr(self.planner, "base_url", "") or "").rstrip("/")
+        legacy_model = str(getattr(self.planner, "model", "") or DEFAULT_ESSAY_MODEL)
+        if not enabled or (not routes and not (legacy_api_key and legacy_base_url)):
             for row in rows:
                 row["AI语义复核"] = "未执行（使用确定性筛选）"
             return rows
@@ -1056,6 +1086,15 @@ class DataAcquisitionService:
         batches = [rows[index:index + 25] for index in range(0, len(rows), 25)]
 
         def review(batch_index: int, batch: List[Dict[str, Any]]) -> tuple[int, Optional[Dict[int, Dict[str, Any]]]]:
+            timeout = max(20, min(int(getattr(self.planner, "timeout", 120)), 180))
+            analyzer = (
+                DeepSeekEssayAnalyzer(
+                    timeout_seconds=timeout,
+                    call_type="data_acquisition_report_filter",
+                )
+                if routes
+                else None
+            )
             items = [{
                 "id": index,
                 "title": str(row.get("title") or "")[:300],
@@ -1071,7 +1110,7 @@ class DataAcquisitionService:
                 "\"depth_score\":0-100,\"matched_topics\":[],\"reason\":\"20字内\"}]}。"
             )
             payload = {
-                "model": model,
+                "model": analyzer.model if analyzer else legacy_model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": json.dumps({"topics": topics, "reports": items}, ensure_ascii=False)},
@@ -1083,14 +1122,22 @@ class DataAcquisitionService:
                 "stream": False,
             }
             try:
-                response = requests.post(
-                    f"{base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json=payload,
-                    timeout=max(20, min(int(getattr(self.planner, "timeout", 120)), 180)),
-                )
-                response.raise_for_status()
-                parsed = json.loads(repair_json(response.json()["choices"][0]["message"]["content"]))
+                if analyzer:
+                    body = analyzer._post_with_retry(payload)
+                else:
+                    response = requests.post(
+                        f"{legacy_base_url}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {legacy_api_key}",
+                            "Content-Type": "application/json",
+                            "User-Agent": "daily-stock-analysis/1.0",
+                        },
+                        json=payload,
+                        timeout=timeout,
+                    )
+                    response.raise_for_status()
+                    body = response.json()
+                parsed = json.loads(repair_json(body["choices"][0]["message"]["content"]))
                 reviewed = {
                     int(item["id"]): item for item in parsed.get("items") or []
                     if isinstance(item, dict) and str(item.get("id", "")).isdigit()

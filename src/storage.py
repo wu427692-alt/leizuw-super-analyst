@@ -717,6 +717,63 @@ class EssayQuantTaskRecord(Base):
     )
 
 
+class QuantAuctionRecord(Base):
+    """Source-preserving opening-auction observations used by quant research."""
+
+    __tablename__ = 'quant_auction_records'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts_code = Column(String(16), nullable=False, index=True)
+    trade_date = Column(Date, nullable=False, index=True)
+    source = Column(String(40), nullable=False, default='tushare.stk_auction_o')
+    open = Column(Float)
+    close = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    volume = Column(Float)
+    amount = Column(Float)
+    vwap = Column(Float)
+    is_realtime = Column(Boolean, nullable=False, default=False, index=True)
+    raw_json = Column(Text, nullable=False, default='{}')
+    captured_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('ts_code', 'trade_date', 'source', name='uix_quant_auction_symbol_date_source'),
+        Index('ix_quant_auction_date_symbol', 'trade_date', 'ts_code'),
+    )
+
+
+class QuantExecutionOrderRecord(Base):
+    """Auditable, owner-scoped paper or broker-routed order lifecycle."""
+
+    __tablename__ = 'quant_execution_orders'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(String(64), nullable=False, unique=True, index=True)
+    owner_id = Column(String(64), nullable=False, index=True)
+    run_id = Column(Integer, ForeignKey('essay_quant_runs.id', ondelete='SET NULL'), index=True)
+    mode = Column(String(16), nullable=False, default='paper', index=True)
+    provider = Column(String(64), nullable=False, default='paper')
+    ts_code = Column(String(16), nullable=False, index=True)
+    side = Column(String(8), nullable=False)
+    order_type = Column(String(16), nullable=False, default='limit')
+    quantity = Column(Integer, nullable=False)
+    limit_price = Column(Float)
+    status = Column(String(24), nullable=False, default='awaiting_confirmation', index=True)
+    confirmation_hash = Column(String(64), nullable=False)
+    confirmation_expires_at = Column(DateTime, nullable=False, index=True)
+    request_json = Column(Text, nullable=False, default='{}')
+    response_json = Column(Text, nullable=False, default='{}')
+    created_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    submitted_at = Column(DateTime, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
+
+    __table_args__ = (
+        Index('ix_quant_execution_owner_created', 'owner_id', 'created_at'),
+        Index('ix_quant_execution_owner_status', 'owner_id', 'status'),
+    )
+
+
 class IndustryResearchProjectRecord(Base):
     """Durable, owner-scoped rapid industry/company research project."""
 

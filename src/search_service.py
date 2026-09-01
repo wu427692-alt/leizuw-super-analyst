@@ -2504,6 +2504,15 @@ class SearchService:
         """检查是否有可用的搜索引擎"""
         return any(p.is_available for p in self._providers)
 
+    @property
+    def available_provider_names(self) -> Tuple[str, ...]:
+        """Return the currently usable provider names for observable fallbacks.
+
+        Callers should not need to inspect the private provider list to decide
+        whether a best-effort, keyless fallback is appropriate.
+        """
+        return tuple(p.name for p in self._providers if p.is_available)
+
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
         return f"{query}|{max_results}|{days}"

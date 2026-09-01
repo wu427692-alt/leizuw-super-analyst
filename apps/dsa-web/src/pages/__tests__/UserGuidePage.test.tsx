@@ -13,11 +13,13 @@ describe('UserGuidePage', () => {
     expect(screen.getByRole('heading', { name: '自选股超级看板' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '机构段子与录音' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '数据一站式获取' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '行业调研' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '行业与公司调研' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '管理员后台' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /进入自选股超级看板/ })).toHaveAttribute('href', '/super-watchlist');
     expect(screen.getByAltText('市场总览实机页面截图')).toHaveAttribute('src', '/landing/screens/market-overview.jpg');
     expect(screen.getByLabelText('市场总览截图标注说明')).toBeInTheDocument();
+    expect(screen.getByLabelText('市场总览局部功能截图')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '市场总览真实页面局部：核心指数切换' })).toBeInTheDocument();
   });
 
   it('opens and closes a real screenshot preview', () => {

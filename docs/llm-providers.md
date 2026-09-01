@@ -48,6 +48,33 @@ LLM_DEEPSEEK_MODELS=deepseek-v4-flash,deepseek-v4-pro
 LITELLM_MODEL=deepseek/deepseek-v4-flash
 ```
 
+### DeepSeek V4 Flash / Kimi Code 按日历轮换
+
+需要把两个低成本额度分时使用时，可开启运行时日历路由。默认以上海时区为准：每月 9—23 日优先 `kimi-for-coding`，24 日至次月 8 日优先 `deepseek-v4-flash`；当日主通道不可用时，只回退到另一个低成本通道。服务会在日期边界动态切换，无需重启。显式设置 `AGENT_LITELLM_MODEL` 会继续覆盖问股 Agent 的日历路由。
+
+```env
+LLM_CHANNELS=kimi_code,deepseek
+LLM_KIMI_CODE_PROTOCOL=openai
+LLM_KIMI_CODE_BASE_URL=https://api.kimi.com/coding/v1
+LLM_KIMI_CODE_API_KEY=sk-kimi-xxx
+LLM_KIMI_CODE_MODELS=kimi-for-coding
+LLM_DEEPSEEK_PROTOCOL=deepseek
+LLM_DEEPSEEK_BASE_URL=https://api.deepseek.com
+LLM_DEEPSEEK_API_KEY=sk-xxx
+LLM_DEEPSEEK_MODELS=deepseek-v4-flash
+
+LLM_PROVIDER_SCHEDULE_ENABLED=true
+LLM_PROVIDER_SCHEDULE_TIMEZONE=Asia/Shanghai
+LLM_PROVIDER_SCHEDULE_KIMI_START_DAY=9
+LLM_PROVIDER_SCHEDULE_DEEPSEEK_START_DAY=24
+LLM_PROVIDER_SCHEDULE_KIMI_MODEL=openai/kimi-for-coding
+LLM_PROVIDER_SCHEDULE_DEEPSEEK_MODEL=deepseek/deepseek-v4-flash
+```
+
+机构段子逐篇分析、每日报告、录音纪要、一站式取数规划、普通分析和未单独指定模型的问股 Agent 共用该路由。自动每日报告同一日期成功后不会因迟到的分析结果反复生成；全量统计仍保留，送入模型的代表性证据条数由 `ESSAY_DAILY_REPORT_MAX_EVIDENCE_RECORDS` 控制（默认 48）。人工强制重跑仍会产生一次新的调用。Kimi Code 路由会保留 `thinking=disabled`，并按官方限制移除 `temperature`、`top_p`、`n` 等强制采样覆盖，避免 400 后暗中回退 DeepSeek。
+
+Kimi Code 官方将该接口定位于终端和 IDE 编程工具；用于面向最终用户的产品能力前，应同时核对账号套餐及使用条款。产品集成更稳妥的长期方案是改用 Kimi 开放平台的通用模型与对应 Base URL。官方说明见 <https://www.kimi.com/code/docs/>。
+
 ### OpenAI-compatible 聚合或自定义网关
 
 ```env
@@ -72,6 +99,7 @@ OpenAI-compatible Base URL 只填到服务商兼容入口，不额外拼接 `/ch
 | Gemini | `gemini` | `gemini` | 留空 | `gemini-3.1-pro-preview,gemini-3-flash-preview` |
 | Anthropic Claude | `anthropic` | `anthropic` | 留空 | `claude-sonnet-4-6,claude-opus-4-7` |
 | Kimi / Moonshot | `moonshot` | `openai` | `https://api.moonshot.cn/v1` | `kimi-k2.6,kimi-k2.5` |
+| Kimi Code（编程工具额度） | `kimi_code` | `openai` | `https://api.kimi.com/coding/v1` | `kimi-for-coding` |
 | 通义千问 / DashScope | `dashscope` | `openai` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3.6-plus,qwen3.6-flash` |
 | 智谱 GLM | `zhipu` | `openai` | `https://open.bigmodel.cn/api/paas/v4` | `glm-5.1,glm-4.7-flash` |
 | MiniMax | `minimax` | `openai` | `https://api.minimax.io/v1` | `MiniMax-M3,MiniMax-M2.7,MiniMax-M2.7-highspeed` |
@@ -91,6 +119,7 @@ OpenAI-compatible Base URL 只填到服务商兼容入口，不额外拼接 `/ch
 | Gemini | [模型列表](https://ai.google.dev/gemini-api/docs/models) | Gemini 3.1 Pro / Gemini 3 Flash 仍为 preview；如需生产稳定性，可在控制台改回 2.5 稳定模型。 |
 | Anthropic Claude | [模型概览](https://docs.anthropic.com/en/docs/about-claude/models/all-models) | Claude 当前 API ID 包含 `claude-sonnet-4-6`、`claude-opus-4-7`；Sonnet 更适合作为默认性价比入口。 |
 | Kimi / Moonshot | [Kimi K2.6 快速开始](https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart)、[模型列表](https://platform.kimi.com/docs/models) | 官方推荐 `kimi-k2.6`；`kimi-k2` 系列将在 2026-05-25 下线，旧 `moonshot-v1-*` 仅保留为稳定旧工作负载选择。 |
+| Kimi Code | [Kimi Code 官方文档](https://www.kimi.com/code/docs/) | OpenAI-compatible Base URL 为 `https://api.kimi.com/coding/v1`，模型为 `kimi-for-coding`；官方定位是编程工具，不应与 Kimi 开放平台的通用产品 API 混为一谈。 |
 | 通义千问 / DashScope | [文本生成](https://help.aliyun.com/zh/model-studio/text-generation-model/) | 百炼推荐 `qwen3.6-plus`，确认效果后可用 `qwen3.6-flash` 降低成本。 |
 | 智谱 GLM | [模型概览](https://docs.bigmodel.cn/cn/guide/start/model-overview)、[GLM-5.1](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.1) | `glm-5.1` 是当前旗舰；`glm-4.7-flash` 作为轻量/免费模型示例。 |
 | MiniMax | [OpenAI API 兼容](https://platform.minimax.io/docs/api-reference/text-chat)、[获取模型列表](https://platform.minimax.io/docs/api-reference/models/openai/list-models)、[Pricing](https://platform.minimax.io/docs/guides/pricing-paygo) | 官方 OpenAI-compatible Base URL 为 `https://api.minimax.io/v1`，并列出 `MiniMax-M3`（默认，支持图片输入，官方支持最多 1M 输入上下文，pricing 区分 `<=512K` 与 `>512K` 输入两档价格）、`MiniMax-M2.7`、`MiniMax-M2.7-highspeed`，以及 Legacy 模型 `MiniMax-M2.5`。本仓库 fallback 成本估算保守按 `<=512K` 价格档注册 M3，并保留 M2.5 legacy 定价以兼容历史用户配置；中国区 Coding 工具场景可能使用 `.com`/Anthropic 专用入口，以控制台为准。 |

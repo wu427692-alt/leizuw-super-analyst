@@ -209,9 +209,23 @@ def list_research_note_audio_files(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    return ResearchNoteService().list_audio_files(
+    result = ResearchNoteService().list_audio_files(
         days=days, query=query, page=page, page_size=page_size,
     )
+    items = result.get("items") or []
+    transcript_status = ResearchNoteAudioAnalysisTaskService.get_instance().transcript_availability(
+        (str(item.get("topic_id") or ""), str(item.get("file_id") or ""))
+        for item in items
+    )
+    for item in items:
+        key = (str(item.get("topic_id") or ""), str(item.get("file_id") or ""))
+        item.update(transcript_status.get(key) or {
+            "transcribed": False,
+            "transcript_task_id": None,
+            "transcript_line_count": None,
+            "transcribed_at": None,
+        })
+    return result
 
 
 @router.post("/research-notes/audio-files/batch-download", summary="将勾选录音源文件临时打包为 ZIP")
@@ -355,6 +369,7 @@ def create_research_note_audio_analysis_task(request: ResearchNoteAudioAnalysisR
             focus=request.focus or "",
             hotwords=request.hotwords,
             speaker_count=request.speaker_count,
+            generate_memo=request.generate_memo,
         )
     except ResearchNoteAudioAnalysisError as exc:
         raise _bad_request(exc)

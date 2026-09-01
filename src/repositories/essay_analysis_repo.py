@@ -459,6 +459,7 @@ class EssayAnalysisRepository:
         *,
         raw_response: str,
         usage: Dict[str, int],
+        model: Optional[str] = None,
     ) -> int:
         if not results:
             return 0
@@ -479,6 +480,8 @@ class EssayAnalysisRepository:
             for row in rows:
                 result = result_by_topic[row.topic_id]
                 row.status = "completed"
+                if model:
+                    row.model = str(model)
                 row.summary = result["summary"]
                 row.primary_category = result["primary_category"]
                 row.sentiment = result["sentiment"]

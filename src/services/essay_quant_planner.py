@@ -33,7 +33,7 @@ source_query 只填写机构、研究组、股票或主题关键词，不要填�
 
 class EssayQuantNaturalLanguagePlanner:
     def __init__(self, analyzer: Optional[DeepSeekEssayAnalyzer] = None, service: Optional[EssayQuantService] = None):
-        self.analyzer = analyzer or DeepSeekEssayAnalyzer()
+        self.analyzer = analyzer or DeepSeekEssayAnalyzer(call_type="essay_quant_plan")
         self.service = service or EssayQuantService()
 
     def plan(self, prompt: str) -> Dict[str, Any]:

@@ -33,12 +33,14 @@ def _service(tmp_path) -> ConceptThemeService:
     DatabaseManager.reset_instance()
     ConceptThemeService._market_date_value = None
     ConceptThemeService._market_date_checked_at = None
+    ConceptThemeService._overview_cache = {}
     db = DatabaseManager(db_url=f"sqlite:///{tmp_path / 'concept-themes.db'}")
     return ConceptThemeService(db=db, gateway=SimpleNamespace(available=False))
 
 
 def teardown_function() -> None:
     DatabaseManager.reset_instance()
+    ConceptThemeService._overview_cache = {}
 
 
 def test_theme_hierarchy_merges_market_synonyms_without_losing_subtheme() -> None:
@@ -287,6 +289,48 @@ def test_overview_filters_family_before_pagination_and_can_recall_stock(tmp_path
     assert canonical_view["items"][0]["canonical_node_count"] == 3
     assert canonical_view["items"][0]["constituent_count"] == 1
     assert source_view["total"] == 3
+
+
+def test_overview_cache_returns_an_isolated_copy(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add(ConceptThemeRecord(
+            source="ths", source_code="885001.TI", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+        ))
+
+    first = service.overview(view="canonical", page_size=12)
+    first["items"][0]["name"] = "被调用方修改"
+    second = service.overview(view="canonical", page_size=12)
+
+    assert second["items"][0]["name"] == "CPO概念"
+
+
+def test_overview_reuses_global_summary_across_catalog_queries(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add_all([
+            ConceptThemeRecord(
+                source="ths", source_code="885001.TI", name="CPO概念",
+                canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+                market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+            ),
+            ConceptThemeRecord(
+                source="ths", source_code="885002.TI", name="白酒",
+                canonical_name="白酒", theme_type="theme", level=3,
+                market_date=date(2026, 8, 28), first_seen_at=now, last_seen_at=now, updated_at=now,
+            ),
+        ])
+
+    baseline = service.overview(view="canonical", page_size=12)
+    filtered = service.overview(query="CPO", view="canonical", page_size=12)
+
+    assert filtered["total"] == 1
+    assert filtered["items"][0]["canonical_name"] == "CPO/共封装光学"
+    assert filtered["summary"] == baseline["summary"]
 
 
 def test_two_catalogs_from_same_provider_do_not_create_false_consensus(tmp_path) -> None:

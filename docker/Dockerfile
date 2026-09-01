@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     wkhtmltopdf \
     fontconfig \
+    fonts-noto-cjk \
+    fonts-wqy-zenhei \
     libjpeg62-turbo \
     libxrender1 \
     libxext6 \

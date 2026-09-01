@@ -27,8 +27,16 @@ from src.config import get_config
 from src.data.stock_index_loader import get_stock_name_index_map
 from src.repositories.essay_daily_report_repo import EssayDailyReportRepository
 from src.repositories.essay_analysis_repo import EssayAnalysisRepository
+from src.llm.provider_schedule import (
+    DirectChatRoute,
+    active_direct_model,
+    direct_chat_headers,
+    prepare_direct_chat_payload,
+    route_status,
+    scheduled_direct_chat_routes,
+)
 from src.services.essay_market_insight_service import EssayMarketInsightService
-from src.storage import utc_naive_now
+from src.storage import persist_llm_usage, utc_naive_now
 from src.utils.essay_analysis_quality import is_low_quality_summary
 from src.utils.essay_topic_taxonomy import TOPIC_TAXONOMY_VERSION, canonicalize_topics
 
@@ -171,7 +179,11 @@ class EssayAnalysisError(RuntimeError):
 
 
 class DeepSeekEssayAnalyzer:
-    """Batch analyzer bound directly to the official DeepSeek API."""
+    """Batch analyzer using the active low-cost OpenAI-compatible route.
+
+    The historical class name is kept for API compatibility. Runtime routing is
+    calendar-based when ``LLM_PROVIDER_SCHEDULE_ENABLED`` is on.
+    """
 
     def __init__(
         self,
@@ -182,13 +194,32 @@ class DeepSeekEssayAnalyzer:
         timeout_seconds: Optional[int] = None,
         max_content_chars: Optional[int] = None,
         session: Optional[requests.Session] = None,
+        call_type: Optional[str] = None,
     ):
         config = get_config()
-        keys = list(getattr(config, "deepseek_api_keys", None) or [])
-        configured_key = str(api_key or (keys[0] if keys else getattr(config, "deepseek_api_key", "")) or "").strip()
-        self.api_key = configured_key
-        self.base_url = str(base_url or os.getenv("ESSAY_ANALYSIS_DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
-        self.model = str(model or os.getenv("ESSAY_ANALYSIS_MODEL") or DEFAULT_ESSAY_MODEL).strip()
+        requested_model = str(model or "").strip() or None
+        if api_key is not None or base_url is not None:
+            wire_model = str(requested_model or os.getenv("ESSAY_ANALYSIS_MODEL") or DEFAULT_ESSAY_MODEL).split("/", 1)[-1]
+            direct_route = DirectChatRoute(
+                channel="explicit",
+                provider="deepseek",
+                litellm_model=f"deepseek/{wire_model}",
+                model=wire_model,
+                base_url=str(base_url or os.getenv("ESSAY_ANALYSIS_DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/"),
+                api_key=str(api_key or "").strip(),
+            )
+            self.routes = [direct_route] if direct_route.configured else []
+        else:
+            self.routes = scheduled_direct_chat_routes(config, requested_model=requested_model)
+        primary = self.routes[0] if self.routes else None
+        self.api_key = primary.api_key if primary else ""
+        self.base_url = primary.base_url if primary else ""
+        self.model = primary.model if primary else str(
+            requested_model or os.getenv("ESSAY_ANALYSIS_MODEL") or DEFAULT_ESSAY_MODEL
+        ).split("/", 1)[-1]
+        self.provider = primary.provider if primary else "unconfigured"
+        self.channel = primary.channel if primary else "unconfigured"
+        self.call_type = str(call_type or "").strip() or None
         self.timeout_seconds = max(
             10,
             min(int(timeout_seconds or os.getenv("ESSAY_ANALYSIS_TIMEOUT_SEC", "120")), 300),
@@ -202,11 +233,11 @@ class DeepSeekEssayAnalyzer:
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.routes)
 
     def analyze_batch(self, notes: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         if not self.configured:
-            raise EssayAnalysisError("DEEPSEEK_API_KEY is not configured")
+            raise EssayAnalysisError("没有可用的低价 AI 通道，请检查 DeepSeek/Kimi Code 配置")
         if not notes:
             return {"items": [], "usage": {}, "raw_response": ""}
 
@@ -242,36 +273,48 @@ class DeepSeekEssayAnalyzer:
         }
 
     def _post_with_retry(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        last_error = "DeepSeek request failed"
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                response = self.session.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                    timeout=self.timeout_seconds,
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    if not isinstance(result, dict):
-                        raise EssayAnalysisError("DeepSeek returned a non-object response")
-                    return result
-                retryable = response.status_code == 429 or response.status_code >= 500
-                last_error = f"DeepSeek HTTP {response.status_code}"
-                if not retryable:
-                    raise EssayAnalysisError(last_error)
-                retry_after = response.headers.get("Retry-After")
-                delay = float(retry_after) if retry_after and retry_after.isdigit() else min(2 ** attempt, 10)
-            except EssayAnalysisError:
-                raise
-            except (requests.RequestException, ValueError) as exc:
-                last_error = f"DeepSeek request failed: {type(exc).__name__}"
-                delay = min(2 ** attempt, 10)
-            if attempt < self.max_retries:
-                time.sleep(delay)
+        last_error = "AI request failed"
+        for route in self.routes:
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    outbound = prepare_direct_chat_payload(route, payload)
+                    response = self.session.post(
+                        f"{route.base_url}/chat/completions",
+                        headers=direct_chat_headers(route),
+                        json=outbound,
+                        timeout=self.timeout_seconds,
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        if not isinstance(result, dict):
+                            raise EssayAnalysisError(f"{route.channel} returned a non-object response")
+                        self.api_key = route.api_key
+                        self.base_url = route.base_url
+                        self.model = route.model
+                        self.provider = route.provider
+                        self.channel = route.channel
+                        if self.call_type:
+                            raw_usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+                            persist_llm_usage(
+                                {**raw_usage, "provider": route.provider, "transport": "direct_chat"},
+                                route.litellm_model,
+                                call_type=self.call_type,
+                            )
+                        return result
+                    retryable = response.status_code == 429 or response.status_code >= 500
+                    last_error = f"{route.channel} HTTP {response.status_code}"
+                    if not retryable:
+                        break
+                    retry_after = response.headers.get("Retry-After")
+                    delay = float(retry_after) if retry_after and retry_after.isdigit() else min(2 ** attempt, 10)
+                except EssayAnalysisError:
+                    raise
+                except (requests.RequestException, ValueError) as exc:
+                    last_error = f"{route.channel} request failed: {type(exc).__name__}"
+                    delay = min(2 ** attempt, 10)
+                if attempt < self.max_retries:
+                    time.sleep(delay)
+            logger.warning("[essay-radar] route %s unavailable, trying standby: %s", route.channel, last_error)
         raise EssayAnalysisError(last_error)
 
     @staticmethod
@@ -478,24 +521,59 @@ class EssayDailyReportService:
 
     @staticmethod
     def configured_models() -> List[str]:
+        config = get_config()
+        if os.getenv("LLM_PROVIDER_SCHEDULE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+            return [active_direct_model(config)]
         raw = os.getenv("ESSAY_DAILY_REPORT_MODELS") or os.getenv("ESSAY_ANALYSIS_MODEL") or DEFAULT_ESSAY_MODEL
         return list(dict.fromkeys(value.strip() for value in raw.split(",") if value.strip()))[:20]
 
-    def generate(self, *, report_date: Optional[str] = None, models: Optional[Sequence[str]] = None, force: bool = False) -> Dict[str, Any]:
+    def generate(
+        self,
+        *,
+        report_date: Optional[str] = None,
+        models: Optional[Sequence[str]] = None,
+        force: bool = False,
+        reuse_completed: bool = False,
+    ) -> Dict[str, Any]:
         target = self._target_date(report_date)
+        selected_models = list(models or self.configured_models())
+        if reuse_completed and not force:
+            completed = []
+            for model in selected_models:
+                existing = self.report_repo.get(target.isoformat(), model)
+                if not existing or existing.get("status") != "completed":
+                    break
+                completed.append({"model": model, "status": "unchanged", "report": existing})
+            if len(completed) == len(selected_models):
+                return {
+                    "report_date": target.isoformat(),
+                    "source_count": max(
+                        (int(item["report"].get("source_count") or 0) for item in completed),
+                        default=0,
+                    ),
+                    "models": completed,
+                }
         start, end = self._utc_bounds(target)
         rows = self.analysis_repo.completed_between(start=start, end=end)
         source_hash = hashlib.sha256(json.dumps(
             [(row["topic_id"], row.get("updated_at"), row.get("prompt_version")) for row in rows],
             ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
-        selected_models = list(models or self.configured_models())
         results = []
         for model in selected_models:
             existing = self.report_repo.get(target.isoformat(), model)
-            if (existing and existing.get("status") == "completed" and
-                    existing.get("source_hash") == source_hash and
-                    existing.get("prompt_version") == DAILY_REPORT_PROMPT_VERSION and not force):
+            if (
+                existing
+                and existing.get("status") == "completed"
+                and not force
+                and (
+                    reuse_completed
+                    or (
+                        existing.get("source_hash") == source_hash
+                        and existing.get("prompt_version") == DAILY_REPORT_PROMPT_VERSION
+                    )
+                )
+            ):
                 results.append({"model": model, "status": "unchanged", "report": existing})
                 continue
             self.report_repo.begin(report_date=target.isoformat(), model=model, prompt_version=DAILY_REPORT_PROMPT_VERSION, source_count=len(rows), source_hash=source_hash)
@@ -519,9 +597,9 @@ class EssayDailyReportService:
         return {"items": items, "models": self.configured_models(), "total": len(items)}
 
     def _call_model(self, model: str, target: date, rows: Sequence[Dict[str, Any]]) -> tuple[Dict[str, Any], Dict[str, int]]:
-        analyzer = DeepSeekEssayAnalyzer(model=model)
+        analyzer = DeepSeekEssayAnalyzer(model=model, call_type="essay_daily_report")
         if not analyzer.configured:
-            raise EssayAnalysisError("DEEPSEEK_API_KEY is not configured")
+            raise EssayAnalysisError("没有可用的低价 AI 通道")
         context = self._daily_context(rows)
         payload = {
             "model": model,
@@ -608,22 +686,16 @@ class EssayDailyReportService:
             int(row.get("importance_score") or 0) + int(row.get("novelty_score") or 0),
             float(row.get("confidence_score") or 0),
         ), reverse=True)
-        representative_rows = cls._representative_rows(ranked, limit=240)
+        evidence_limit = _bounded_env_int(
+            "ESSAY_DAILY_REPORT_MAX_EVIDENCE_RECORDS",
+            48,
+            minimum=20,
+            maximum=200,
+        )
+        representative_rows = cls._representative_rows(ranked, limit=evidence_limit)
         samples = []
         for row in representative_rows:
-            samples.append({
-                "topic_id": row["topic_id"], "title": (row.get("note") or {}).get("title"),
-                "source": (row.get("note") or {}).get("group_name"), "summary": row.get("summary"),
-                "category": row.get("primary_category"), "sentiment": row.get("sentiment"),
-                "importance": row.get("importance_score"), "confidence": row.get("confidence_score"),
-                "novelty": row.get("novelty_score"), "information_type": row.get("information_type"),
-                "source_quality": row.get("source_quality"), "tags": row.get("tags"),
-                "themes": row.get("themes"), "stocks": row.get("stock_mentions"),
-                "key_points": row.get("key_points"), "catalysts": row.get("catalysts"),
-                "risks": row.get("risks"), "evidence": row.get("evidence"),
-                "contradictions": row.get("contradictions"), "falsification_conditions": row.get("falsification_conditions"),
-                "monitoring_points": row.get("monitoring_points"),
-            })
+            samples.append(cls._compact_daily_evidence(row))
         representative_sources = {
             str((row.get("note") or {}).get("group_name") or "unknown") for row in representative_rows
         }
@@ -652,6 +724,74 @@ class EssayDailyReportService:
         }
 
     @classmethod
+    def _compact_daily_evidence(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep decision-relevant evidence while bounding repeated JSON keys/text."""
+
+        def text(value: Any, limit: int) -> str:
+            return " ".join(str(value or "").split())[:limit]
+
+        def strings(value: Any, limit: int, chars: int = 160) -> List[str]:
+            if not isinstance(value, list):
+                return []
+            result: List[str] = []
+            for item in value:
+                candidate = text(item, chars)
+                if candidate and candidate not in result:
+                    result.append(candidate)
+                if len(result) >= limit:
+                    break
+            return result
+
+        stocks = []
+        for item in (row.get("stock_mentions") or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            stocks.append({
+                "ts_code": text(item.get("ts_code"), 16),
+                "name": text(item.get("name"), 40),
+                "stance": text(item.get("stance"), 12),
+                "confidence": item.get("confidence"),
+                "rationale": text(item.get("rationale"), 80),
+            })
+
+        evidence = []
+        for item in (row.get("evidence") or [])[:2]:
+            if isinstance(item, dict):
+                evidence.append({
+                    "claim": text(item.get("claim"), 100),
+                    "evidence": text(item.get("evidence"), 140),
+                    "strength": text(item.get("strength"), 16),
+                })
+            else:
+                candidate = text(item, 140)
+                if candidate:
+                    evidence.append(candidate)
+
+        return {
+            "topic_id": text(row.get("topic_id"), 40),
+            "title": text((row.get("note") or {}).get("title"), 140),
+            "source": text((row.get("note") or {}).get("group_name"), 80),
+            "summary": text(row.get("summary"), 180),
+            "category": text(row.get("primary_category"), 40),
+            "sentiment": text(row.get("sentiment"), 20),
+            "importance": row.get("importance_score"),
+            "confidence": row.get("confidence_score"),
+            "novelty": row.get("novelty_score"),
+            "information_type": text(row.get("information_type"), 40),
+            "source_quality": text(row.get("source_quality"), 20),
+            "tags": strings(row.get("tags"), 5, 40),
+            "themes": strings(row.get("themes"), 4, 40),
+            "stocks": stocks,
+            "key_points": strings(row.get("key_points"), 3, 120),
+            "catalysts": strings(row.get("catalysts"), 2, 120),
+            "risks": strings(row.get("risks"), 2, 120),
+            "evidence": evidence,
+            "contradictions": strings(row.get("contradictions"), 2, 140),
+            "falsification_conditions": strings(row.get("falsification_conditions"), 2, 140),
+            "monitoring_points": strings(row.get("monitoring_points"), 2, 140),
+        }
+
+    @classmethod
     def _representative_rows(cls, ranked: Sequence[Dict[str, Any]], *, limit: int) -> List[Dict[str, Any]]:
         """Keep watchlist evidence and diverse strata before filling by analytical value."""
         safe_limit = max(1, min(int(limit), 500))
@@ -665,7 +805,7 @@ class EssayDailyReportService:
                 selected.setdefault(topic_id, row)
 
         watchlist = cls._daily_watchlist()
-        per_stock_limit = max(8, min(60, 120 // max(1, len(watchlist))))
+        per_stock_limit = max(4, min(20, safe_limit // max(2, len(watchlist) * 2)))
         for symbol, name in watchlist:
             matched = [row for row in ranked if cls._row_mentions(row, symbol, name)]
             for row in matched[:per_stock_limit]:
@@ -733,7 +873,7 @@ class EssayAnalysisService:
     def __init__(self, repository: Optional[EssayAnalysisRepository] = None):
         self.repo = repository or EssayAnalysisRepository()
         self.report_repo = EssayDailyReportRepository(self.repo.db)
-        self.model = str(os.getenv("ESSAY_ANALYSIS_MODEL") or DEFAULT_ESSAY_MODEL).strip()
+        self.model = active_direct_model(get_config())
 
     def enqueue_recent(self, *, days: int = 30) -> Dict[str, Any]:
         safe_days = max(1, min(int(days), 3650))
@@ -956,7 +1096,7 @@ class EssayAnalysisService:
     def progress(self, *, days: int = 30) -> Dict[str, Any]:
         safe_days = max(1, min(int(days), 3650))
         cutoff = utc_naive_now() - timedelta(days=safe_days)
-        analyzer = DeepSeekEssayAnalyzer(model=self.model)
+        analyzer = DeepSeekEssayAnalyzer(model=self.model, call_type="essay_analysis_manual")
         database_key = str(getattr(self.repo.db, "_db_url", id(self.repo.db)))
         progress = self.repo.progress(cutoff=cutoff) if type(self.repo) is not EssayAnalysisRepository else _cached_essay_summary(
             ("progress", database_key, safe_days, self.repo.cache_revision()),
@@ -966,6 +1106,7 @@ class EssayAnalysisService:
             "days": safe_days,
             "model": self.model,
             "deepseek_configured": analyzer.configured,
+            "provider_route": route_status(get_config()),
             **progress,
         }
 
@@ -1668,7 +1809,10 @@ class EssayAnalysisService:
         ), None)
         if item is None:
             raise KeyError("当前研究窗口没有该股票的可用行情关联样本")
-        analyzer = DeepSeekEssayAnalyzer(timeout_seconds=90)
+        analyzer = DeepSeekEssayAnalyzer(
+            timeout_seconds=90,
+            call_type="essay_market_impact_explanation",
+        )
         if not analyzer.configured:
             raise EssayAnalysisError("DeepSeek 尚未配置，无法生成行情关联解读")
         context = {

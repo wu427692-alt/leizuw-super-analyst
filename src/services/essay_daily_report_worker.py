@@ -51,8 +51,21 @@ class EssayDailyReportWorker:
             self._thread.join(timeout)
         return self.status()
 
-    def run_now(self, report_date: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
-        result = EssayDailyReportService().generate(report_date=report_date, force=force)
+    def run_now(
+        self,
+        report_date: Optional[str] = None,
+        force: bool = False,
+        *,
+        automatic: bool = False,
+    ) -> Dict[str, Any]:
+        result = EssayDailyReportService().generate(
+            report_date=report_date,
+            force=force,
+            # Automatic polling must never regenerate the same report merely
+            # because a few late analyses completed. A user can still force a
+            # fresh report explicitly from the report endpoint.
+            reuse_completed=automatic,
+        )
         with self._lock:
             self._last_run_at = time.time()
             self._last_result = result
@@ -100,10 +113,11 @@ class EssayDailyReportWorker:
             try:
                 now = datetime.now(timezone(timedelta(hours=8)))
                 target = (now - timedelta(days=1)).date().isoformat()
-                # The service compares source hashes, so a report is regenerated
-                # when late analysis results arrive and remains free when unchanged.
+                # Polling is cheap after the first successful report: automatic
+                # runs reuse it even if late analysis rows change the source hash.
+                # Only an explicit user request may force a second generation.
                 if now.hour >= self.run_hour:
-                    self.run_now(target)
+                    self.run_now(target, automatic=True)
             except Exception as exc:  # noqa: BLE001
                 safe = f"{type(exc).__name__}: {str(exc)[:500]}"
                 logger.warning("[essay-daily-report] run failed: %s", safe)

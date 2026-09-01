@@ -627,6 +627,14 @@ def get_effective_agent_primary_model(config: "Config") -> str:
     )
     if configured_agent_model:
         return configured_agent_model
+    # The calendar router is evaluated at call time instead of Config startup,
+    # so a long-running service switches providers at the day boundary without
+    # requiring a restart. An explicit AGENT_LITELLM_MODEL remains an opt-out.
+    from src.llm.provider_schedule import scheduled_litellm_models
+
+    scheduled_models = scheduled_litellm_models(config)
+    if scheduled_models:
+        return scheduled_models[0]
     return (getattr(config, "litellm_model", "") or "").strip()
 
 
@@ -635,9 +643,14 @@ def get_effective_agent_models_to_try(config: "Config") -> List[str]:
     configured_router_models = set(
         get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
     )
-    raw_models = [get_effective_agent_primary_model(config)] + (
-        getattr(config, "litellm_fallback_models", []) or []
-    )
+    if (getattr(config, "agent_litellm_model", "") or "").strip():
+        raw_models = [get_effective_agent_primary_model(config)] + (
+            getattr(config, "litellm_fallback_models", []) or []
+        )
+    else:
+        from src.llm.provider_schedule import effective_litellm_models
+
+        raw_models = effective_litellm_models(config)
     seen = set()
     ordered_models: List[str] = []
     for model in raw_models:
@@ -653,6 +666,14 @@ def get_effective_agent_models_to_try(config: "Config") -> List[str]:
         seen.add(dedupe_key)
         ordered_models.append(normalized_model)
     return ordered_models
+
+
+def get_effective_litellm_models_to_try(config: "Config") -> List[str]:
+    """Return runtime model order for non-Agent generation paths."""
+
+    from src.llm.provider_schedule import effective_litellm_models
+
+    return effective_litellm_models(config)
 
 
 def setup_env(override: bool = False):

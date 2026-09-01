@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, ArrowRight, BarChart3, Bot, BrainCircuit, Building2, CalendarClock,
-  FileSearch, Globe2, Landmark, MessageSquareText, RadioTower, RefreshCw, ShieldAlert,
-  Sparkles, Zap,
+  Activity, ArrowRight, BarChart3, Bot, BrainCircuit, Building2,
+  FileSearch, Globe2, MessageSquareText, RadioTower, RefreshCw, ShieldAlert,
+  Newspaper, Pin, Sparkles, Zap,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { homeDashboardApi } from '../api/homeDashboard';
@@ -16,9 +16,6 @@ import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import { marketQuoteSession, shouldPreferQuote } from '../utils/marketQuoteDate';
 import './MarketDashboardPage.css';
 
-const SOURCE_LABELS: Record<string, string> = {
-  investor: '投资者', company: '上市公司', institution: '机构',
-};
 const DATA_SOURCE_LABELS: Record<string, string> = {
   'tushare.index_daily': 'Tushare 指数日线',
   'tushare.index_global': 'Tushare 全球指数',
@@ -159,7 +156,7 @@ function WatchlistFocus({ card, onAnalyze }: { card: HomeWatchlistCard; onAnalyz
   const totalSentiment = Math.max(1, bullish + bearish + (card.sentiment.neutral ?? 0) + (card.sentiment.mixed ?? 0));
   return <div className="market-panel grid gap-px bg-border/60 xl:grid-cols-[minmax(0,1fr)_310px]">
     <div className="min-w-0 bg-card/90 p-3">
-      <MarketTimeframeChart key={card.symbol} symbol={card.symbol} initialPeriod="intraday" initialRange="1d" />
+      <MarketTimeframeChart key={card.symbol} symbol={card.symbol} initialPeriod="intraday" initialRange="1d" compact />
     </div>
     <aside className="bg-card/95 p-4">
       <div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="text-lg font-semibold">{card.name}</h3><Badge>{card.symbol}</Badge></div><div className="mt-2 flex items-baseline gap-2"><span className={`text-3xl font-semibold tabular-nums ${tone(changePct)}`}>{formatNumber(quote?.currentPrice)}</span><span className={`text-sm ${tone(changePct)}`}>{percent(changePct)}</span></div></div><button className="btn-primary inline-flex items-center gap-1.5 px-3 py-2" onClick={onAnalyze}><Sparkles className="h-3.5 w-3.5" />分析</button></div>
@@ -171,6 +168,24 @@ function WatchlistFocus({ card, onAnalyze }: { card: HomeWatchlistCard; onAnalyz
       <div className="mt-4 space-y-3 border-t border-border/60 pt-3 text-[10px]"><div><p className="text-secondary-text">机构最新</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestInstitution} /></p></div><div><p className="flex items-center gap-1 text-danger"><Zap className="h-3 w-3" />最新催化</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestCatalyst} /></p></div><div><p className="flex items-center gap-1 text-warning"><ShieldAlert className="h-3 w-3" />最新风险</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestRisk} /></p></div></div>
     </aside>
   </div>;
+}
+
+function NewsPanel({
+  pinned, latest, onOpen, onOpenAll,
+}: {
+  pinned: MonitorEvent[];
+  latest: MonitorEvent[];
+  onOpen: (event: MonitorEvent) => void;
+  onOpenAll: () => void;
+}) {
+  return <Card padding="none" className="market-news-panel p-3">
+    <div className="flex items-center justify-between gap-3 border-b border-border/55 pb-2">
+      <div><div className="flex items-center gap-1.5"><Newspaper className="h-4 w-4 text-cyan" /><h2 className="text-sm font-semibold">新闻速递</h2></div><p className="mt-0.5 text-[9px] text-secondary-text">财经媒体与新闻源 · 按发布时间更新</p></div>
+      <button className="shrink-0 text-[10px] text-cyan hover:underline" onClick={onOpenAll}>查看全部新闻</button>
+    </div>
+    {pinned.map(event => <button key={`pinned-${event.id}`} className="market-pinned-news mt-2 w-full border border-cyan/35 bg-cyan/5 p-3 text-left" aria-label={`打开重要新闻：${event.title}`} onClick={() => onOpen(event)}><div className="flex flex-wrap items-center gap-2 text-[9px]"><span className="inline-flex items-center gap-1 border border-cyan/45 px-1.5 py-0.5 font-semibold text-cyan"><Pin className="h-3 w-3" />重要新闻</span><span className="tabular-nums text-secondary-text">重要度 {event.importanceScore}</span><span className="text-secondary-text">{new Date(event.eventAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span><Badge>{event.sourceName || event.sourceKey}</Badge>{event.symbols.slice(0, 2).map(symbol => <span key={symbol} className="border border-border/80 px-1.5 py-0.5 text-secondary-text">{symbol}</span>)}</div><h3 className="mt-2 line-clamp-2 text-[13px] font-semibold leading-5">{event.title}</h3>{event.summary ? <p className="mt-1 line-clamp-3 text-[10px] leading-4 text-secondary-text">{event.summary}</p> : null}</button>)}
+    <div className="market-news-list mt-2 divide-y divide-border/55">{latest.map((event) => <button key={event.id} className="market-latest-event grid w-full grid-cols-[54px_minmax(0,1fr)_auto] items-center gap-2 py-2 text-left" aria-label={`${event.url ? '打开新闻原文' : '查看新闻详情'}：${event.title}`} onClick={() => onOpen(event)}><span className="text-[9px] tabular-nums text-secondary-text">{new Date(event.eventAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span><span className="truncate text-[11px]">{event.title}</span><div className="flex items-center gap-1"><Badge>{event.sourceName || event.sourceKey}</Badge>{event.importanceScore >= 70 ? <span className="text-[9px] font-semibold text-cyan">重要 {event.importanceScore}</span> : null}</div></button>)}{!pinned.length && !latest.length ? <EmptyState title="暂无新闻" description="财经新闻源同步后将在这里按发布时间展示。" /> : null}</div>
+  </Card>;
 }
 
 const MarketDashboardPage = () => {
@@ -279,9 +294,19 @@ const MarketDashboardPage = () => {
     { label: '事件影响评估', note: '催化与风险传导', icon: Activity, action: () => navigate('/investment-monitor') },
     { label: '智能问答', note: '带数据上下文提问', icon: MessageSquareText, action: () => navigate('/chat') },
   ];
+  const pinnedNews = (data?.pinnedNews ?? []).slice(0, 1);
+  const pinnedNewsIds = new Set(pinnedNews.map(item => item.id));
+  const latestNews = (
+    data?.latestNews?.length
+      ? data.latestNews
+      : (data?.latestEvents ?? []).filter(item => item.eventType === 'news' || item.eventType === 'long_news')
+  ).filter(item => !pinnedNewsIds.has(item.id)).slice(0, 6);
+  const openNews = (event: MonitorEvent) => event.url
+    ? window.open(event.url, '_blank', 'noopener,noreferrer')
+    : navigate(`/investment-monitor/feed?event=${event.id}`);
 
-  return <AppPage className="market-command-center max-w-none px-2 pb-6 pt-2 md:px-3 lg:px-4">
-    <div className="space-y-2">
+  return <AppPage className="market-command-center max-w-none px-2 pb-4 pt-1.5 md:px-3 lg:px-4">
+    <div className="space-y-1.5">
       <section className="market-panel overflow-hidden border border-border/70 bg-card/90">
         <div className="market-overview-header flex flex-col border-b border-border/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
           <div><div className="flex items-center gap-2"><RadioTower className="h-4 w-4 text-cyan" /><h1 className="text-base font-semibold">市场总览</h1><Badge variant="info">本地秒库</Badge></div><p className="mt-0.5 text-[10px] text-secondary-text">{data?.marketTime ?? '正在同步市场时间'} · 自选与大盘读取 SQLite 秒快照 · 广度、资金和海外指数按所示交易日</p></div>
@@ -291,7 +316,7 @@ const MarketDashboardPage = () => {
           <div className="min-w-[188px] flex-1 px-3 py-2.5"><p className="text-[11px] text-secondary-text">北向资金</p><p className={`mt-0.5 text-lg font-semibold tabular-nums ${tone(data?.northbound.northMoneyYi)}`}>{formatNumber(data?.northbound.northMoneyYi)}亿</p><p className="text-[9px] text-secondary-text">{shortTime(data?.northbound.tradeDate)} · {sourceLabel(data?.northbound.source)}</p></div></div>
       </section>
 
-      <EvidenceRail items={[
+      <EvidenceRail className="market-evidence-rail" items={[
         { label: '行情基准', value: leadIndexSession.label, note: sourceLabel(leadIndex?.source), tone: 'verified' },
         { label: '最新数据时间', value: shortTime(data?.marketTime), note: '切回本页自动刷新', tone: 'live' },
         { label: '市场广度', value: breadthAvailable ? `${data?.breadth.total ?? 0} 只股票` : '等待数据', note: sourceLabel(data?.breadth.source), tone: breadthAvailable ? 'verified' : 'warning' },
@@ -299,10 +324,13 @@ const MarketDashboardPage = () => {
       ]} />
 
       {error ? <div role="status" className="border border-warning/25 bg-warning/5 px-3 py-2 text-xs text-secondary-text">{error}</div> : null}
-      <section className="market-panel border border-border/70 bg-card/90 p-3">
-        <div className="market-main-quote-head flex flex-wrap items-end justify-between gap-3 border-b border-border/55 pb-2"><div><p className="text-[9px] text-secondary-text">大盘主行情 · K线 · {leadIndexSession.label} · {sourceLabel(leadIndex?.source)}</p><div className="mt-1 flex flex-wrap items-baseline gap-3"><h2 className="text-sm font-semibold">{leadIndex?.name ?? '上证指数'}</h2><Badge>{leadIndex?.code ?? '000001.SH'}</Badge><p className={`text-2xl font-semibold tabular-nums ${tone(leadIndexChangePct)}`}>{formatNumber(leadIndex?.close)}</p><span className={`text-xs ${tone(leadIndexChangePct)}`}>{leadIndexSession.canShowChange ? percent(leadIndexChangePct) : '涨跌幅待核验'}</span></div></div><div className="text-right text-[9px] text-secondary-text"><p>上方八个核心指数均可切换主K线</p><p>分时 / 日K / 周K / 月K / 年K均跟随当前指数</p></div></div>
-        <MarketTimeframeChart key={leadIndex?.code ?? '000001.SH'} symbol={leadIndex?.code ?? '000001.SH'} assetType="index" initialPeriod="intraday" initialRange="1d" className="mt-2" />
-      </section>
+      <div className="market-primary-grid grid gap-1.5 xl:grid-cols-[minmax(0,1.28fr)_minmax(420px,.72fr)]">
+        <section className="market-panel border border-border/70 bg-card/90 p-3">
+          <div className="market-main-quote-head flex flex-wrap items-end justify-between gap-3 border-b border-border/55 pb-2"><div><p className="text-[9px] text-secondary-text">大盘主行情 · K线 · {leadIndexSession.label} · {sourceLabel(leadIndex?.source)}</p><div className="mt-1 flex flex-wrap items-baseline gap-3"><h2 className="text-sm font-semibold">{leadIndex?.name ?? '上证指数'}</h2><Badge>{leadIndex?.code ?? '000001.SH'}</Badge><p className={`text-2xl font-semibold tabular-nums ${tone(leadIndexChangePct)}`}>{formatNumber(leadIndex?.close)}</p><span className={`text-xs ${tone(leadIndexChangePct)}`}>{leadIndexSession.canShowChange ? percent(leadIndexChangePct) : '涨跌幅待核验'}</span></div></div><div className="text-right text-[9px] text-secondary-text"><p>八个核心指数可切换主K线</p><p>分时 / 日K / 周K / 月K / 年K</p></div></div>
+          <MarketTimeframeChart key={leadIndex?.code ?? '000001.SH'} symbol={leadIndex?.code ?? '000001.SH'} assetType="index" initialPeriod="intraday" initialRange="1d" className="mt-2" compact />
+        </section>
+        <NewsPanel pinned={pinnedNews} latest={latestNews} onOpen={openNews} onOpenAll={() => navigate('/investment-monitor?channel=news')} />
+      </div>
 
       {breadthAvailable || sectorDistributionAvailable ? <div className={`grid gap-2 ${breadthAvailable && sectorDistributionAvailable ? 'xl:grid-cols-2' : ''}`}>
         {breadthAvailable ? <section className="market-panel border border-border/70 bg-card/90 p-3">
@@ -325,18 +353,15 @@ const MarketDashboardPage = () => {
         </section> : null}
       </div> : null}
 
-      <section className="market-panel border border-border/70 bg-card/90"><div className="flex items-center justify-between border-b border-border/55 px-3 py-2"><div><h2 className="text-sm font-semibold">海外市场最近收盘</h2><p className="text-[9px] text-secondary-text">逐项显示实际交易日 · 不混入A股当日广度</p></div><Globe2 className="h-4 w-4 text-cyan" /></div><div className="market-overseas-list grid md:grid-cols-2 xl:grid-cols-3">{(data?.globalIndices ?? []).map((item) => <OverseasCard key={item.code} item={item} />)}</div></section>
+      <div className="market-secondary-grid grid gap-1.5 xl:grid-cols-[minmax(0,1.4fr)_minmax(420px,.6fr)]">
+        <section className="market-panel border border-border/70 bg-card/90"><div className="flex items-center justify-between border-b border-border/55 px-3 py-1.5"><div><h2 className="text-sm font-semibold">海外市场最近收盘</h2><p className="text-[9px] text-secondary-text">逐项显示实际交易日</p></div><Globe2 className="h-4 w-4 text-cyan" /></div><div className="market-overseas-list market-overseas-compact grid grid-cols-2 lg:grid-cols-3">{(data?.globalIndices ?? []).map((item) => <OverseasCard key={item.code} item={item} />)}</div></section>
+        <Card padding="none" className="market-analysis-panel p-3"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">分析入口</h2><p className="text-[9px] text-secondary-text">使用当前数据库真实上下文</p></div><Bot className="h-4 w-4 text-cyan" /></div><div className="market-ai-actions mt-2 grid grid-cols-5 gap-px bg-border/60">{aiActions.map((item) => <button key={item.label} onClick={item.action} className="group bg-background/60 p-2 text-left hover:bg-hover"><item.icon className="h-4 w-4 text-cyan" /><p className="mt-1.5 text-[9px] font-medium">{item.label}</p><p className="mt-0.5 text-[8px] leading-3 text-secondary-text">{item.note}</p></button>)}</div><div className="mt-1.5 grid grid-cols-3 gap-px bg-border/60 text-center text-[9px]"><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">活跃源</p><p>{data?.intelligenceSummary.activeSourceCount ?? 0}</p></div><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">近7日情报</p><p>{data?.intelligenceSummary.eventCount ?? 0}</p></div><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">高优先级</p><p>{data?.intelligenceSummary.highPriorityCount ?? 0}</p></div></div></Card>
+      </div>
 
       <section><div className="mb-2 flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-base font-semibold">自选股行情与情报</h2><p className="mt-0.5 text-[9px] text-secondary-text">切换股票后，报价、K线、秒量、情报和来源保持同一标的</p></div><div className="market-watchlist-switcher flex flex-wrap items-center gap-1">{liveWatchlist.map(card => <button key={card.symbol} onClick={() => setSelectedSymbol(card.symbol)} className={`border px-3 py-2 text-left ${card.symbol === focusedWatchlist?.symbol ? 'border-cyan bg-cyan/10' : 'border-border bg-card'}`}><span className="text-[10px]">{card.name}</span><span className={`ml-2 text-[10px] tabular-nums ${tone(card.latestQuote?.changePercent)}`}>{formatNumber(card.latestQuote?.currentPrice)} {percent(card.latestQuote?.changePercent)}</span></button>)}<button className="btn-secondary inline-flex items-center gap-1.5" onClick={() => navigate('/investment-monitor')}><Building2 className="h-3.5 w-3.5" />全部情报<ArrowRight className="h-3.5 w-3.5" /></button></div></div>
         {!loading && !liveWatchlist.length ? <EmptyState title="暂无自选股数据" description="请在设置中添加自选股，或等待情报台首次同步。" /> : focusedWatchlist ? <WatchlistFocus card={focusedWatchlist} onAnalyze={() => navigate(`/chat?stock=${encodeURIComponent(focusedWatchlist.symbol.split('.')[0])}&name=${encodeURIComponent(focusedWatchlist.name)}`)} /> : null}
       </section>
 
-      <div className="grid gap-2 xl:grid-cols-[minmax(0,1.25fr)_minmax(440px,.75fr)]">
-        <Card padding="md"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">最新情报</h2><p className="text-[9px] text-secondary-text">来源名称优先，视角作为辅助标签</p></div><button className="text-[10px] text-cyan hover:underline" onClick={() => navigate('/investment-monitor')}>查看全部</button></div>
-          <div className="mt-2 divide-y divide-border/55">{(data?.latestEvents ?? []).slice(0, 5).map((event) => <button key={event.id} className="market-latest-event grid w-full grid-cols-[42px_minmax(0,1fr)_auto] items-center gap-2 py-2 text-left" aria-label={`${event.url ? '打开来源原文' : '查看接口返回原文'}：${event.title}`} onClick={() => event.url ? window.open(event.url, '_blank', 'noopener,noreferrer') : navigate(`/investment-monitor/feed?event=${event.id}`)}><span className="text-[9px] tabular-nums text-secondary-text">{new Date(event.eventAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span><span className="truncate text-[11px]">{event.title}</span><div className="flex items-center gap-1"><Badge>{event.sourceName || event.sourceKey}</Badge><span className="text-[9px] text-secondary-text">{SOURCE_LABELS[event.perspective] ?? event.perspective}</span></div></button>)}{!data?.latestEvents.length ? <EmptyState title="暂无最新情报" description="情报同步后将在这里按来源展示。" /> : null}</div>
-        </Card>
-        <Card padding="md"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">分析入口</h2><p className="text-[9px] text-secondary-text">所有入口使用当前数据库真实上下文</p></div><Bot className="h-4 w-4 text-cyan" /></div><div className="market-ai-actions mt-2 grid grid-cols-5 gap-px bg-border/60">{aiActions.map((item) => <button key={item.label} onClick={item.action} className="group bg-background/60 p-2 text-left hover:bg-hover"><item.icon className="h-4 w-4 text-cyan" /><p className="mt-2 text-[10px] font-medium">{item.label}</p><p className="mt-0.5 text-[8px] leading-3 text-secondary-text">{item.note}</p></button>)}</div><div className="mt-2 grid grid-cols-3 gap-px bg-border/60 text-center text-[9px]"><div className="bg-elevated/60 p-2"><RadioTower className="mx-auto h-3.5 w-3.5 text-cyan" /><p className="mt-1 text-secondary-text">活跃源</p><p>{data?.intelligenceSummary.activeSourceCount ?? 0}</p></div><div className="bg-elevated/60 p-2"><CalendarClock className="mx-auto h-3.5 w-3.5 text-cyan" /><p className="mt-1 text-secondary-text">近7日情报</p><p>{data?.intelligenceSummary.eventCount ?? 0}</p></div><div className="bg-elevated/60 p-2"><Landmark className="mx-auto h-3.5 w-3.5 text-cyan" /><p className="mt-1 text-secondary-text">高优先级</p><p>{data?.intelligenceSummary.highPriorityCount ?? 0}</p></div></div></Card>
-      </div>
       {loading && !data ? <div role="status" className="border border-cyan/20 bg-cyan/5 px-4 py-3 text-xs text-secondary-text">正在读取本地缓存并聚合市场数据，页面会自动完成加载…</div> : null}
     </div>
   </AppPage>;

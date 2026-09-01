@@ -586,8 +586,19 @@ def test_word_cloud_and_daily_report_are_periodic_and_idempotent(essay_service, 
     service = EssayDailyReportService(analysis_repo=essay_service.repo)
     first = service.generate(report_date="2026-08-19", models=["deepseek-v4-flash"])
     second = service.generate(report_date="2026-08-19", models=["deepseek-v4-flash"])
+    monkeypatch.setattr(
+        essay_service.repo,
+        "completed_between",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("automatic reuse should not reload evidence")),
+    )
+    automatic = service.generate(
+        report_date="2026-08-19",
+        models=["deepseek-v4-flash"],
+        reuse_completed=True,
+    )
     assert first["models"][0]["status"] == "completed"
     assert second["models"][0]["status"] == "unchanged"
+    assert automatic["models"][0]["status"] == "unchanged"
     saved = service.list(limit=5)["items"][0]
     assert saved["report"]["executive_summary"] == "机器人订单是当日主线"
 
@@ -606,7 +617,7 @@ def test_daily_context_uses_full_population_and_ranked_evidence() -> None:
     } for index in range(350)]
     context = EssayDailyReportService._daily_context(rows)
     assert context["coverage"]["total_records"] == 350
-    assert context["coverage"]["representative_records"] == 240
+    assert context["coverage"]["representative_records"] == 48
     assert context["coverage"]["rumor_records"] == 1
     assert context["full_population_aggregates"]["top_stocks"][0] == ("宇树科技", 350)
 

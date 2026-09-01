@@ -4,11 +4,15 @@ import type { IndustryResearchBlueprint, IndustryResearchProject } from '../type
 import { cachedQuery, invalidateCachedQueries } from './requestCache';
 
 export const industryResearchApi = {
-  blueprint: async (topic: string, lookbackDays = 730): Promise<IndustryResearchBlueprint> => {
+  blueprint: async (
+    topic: string,
+    lookbackDays = 730,
+    researchType: 'industry' | 'company' = 'industry',
+  ): Promise<IndustryResearchBlueprint> => {
     const normalizedTopic = topic.trim();
-    return cachedQuery(`industry:blueprint:${normalizedTopic}:${lookbackDays}`, async () => {
+    return cachedQuery(`industry:blueprint:${researchType}:${normalizedTopic}:${lookbackDays}`, async () => {
       const response = await apiClient.get('/api/v1/industry-research/blueprint', {
-        params: { topic: normalizedTopic, lookback_days: lookbackDays },
+        params: { topic: normalizedTopic, lookback_days: lookbackDays, research_type: researchType },
         headers: BACKGROUND_ROUTE_HEADERS,
         timeout: 60_000,
       });
@@ -40,4 +44,7 @@ export const industryResearchApi = {
     });
     return toCamelCase<IndustryResearchProject>(response.data);
   },
+  downloadUrl: (projectId: string, format: 'docx' | 'pdf' | 'markdown' | 'json' = 'docx'): string => (
+    `/api/v1/industry-research/projects/${encodeURIComponent(projectId)}/download?format=${format}`
+  ),
 };

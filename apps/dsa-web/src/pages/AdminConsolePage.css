@@ -13,3 +13,40 @@
 .admin-access-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 0;border-top:1px solid var(--admin-border);color:#b9c8ce;font-size:11px}.admin-security-card>p:not(.admin-panel-kicker){color:var(--admin-muted);font-size:11px;line-height:1.8;margin:0 0 20px}
 @media(max-width:1000px){.admin-shell{grid-template-columns:76px minmax(0,1fr)}.admin-sidebar{padding-inline:10px}.admin-brand{justify-content:center;padding-inline:0}.admin-brand>span:last-child,.admin-nav-item span,.admin-sidebar-foot span{display:none}.admin-nav-item,.admin-public-link,.admin-logout{justify-content:center;padding:0}.admin-metrics{grid-template-columns:repeat(2,1fr)}.admin-metrics article:nth-child(2){border-right:0}.admin-metrics article:nth-child(-n+2){border-bottom:1px solid var(--admin-border)}}
 @media(max-width:720px){.admin-shell{display:block}.admin-sidebar{position:static;width:100%;height:auto;padding:10px;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--admin-border);overflow-x:auto}.admin-brand{padding:0 10px 0 0}.admin-nav{flex-direction:row}.admin-nav-item{width:42px;flex:0 0 42px}.admin-sidebar-foot{display:none}.admin-console-page{padding-inline:14px}.admin-topbar{margin-inline:-14px;padding-inline:14px}.admin-top-actions>span{display:none}.admin-page-head{align-items:flex-start;gap:18px}.admin-page-head h1{font-size:23px}.admin-page-head>div>span{display:block}.admin-metrics{grid-template-columns:1fr}.admin-metrics article{border-right:0;border-bottom:1px solid var(--admin-border)}.admin-service-row{grid-template-columns:25px 1fr 60px;padding-inline:14px}.admin-service-row code,.admin-service-row em{display:none}.admin-lower-grid,.admin-access-grid{grid-template-columns:1fr}}
+
+/* Light mode: orange-white financial operations console. */
+html.light .admin-shell {
+  --admin-bg: #f7f7f8;
+  --admin-panel: #ffffff;
+  --admin-panel-2: #fafafa;
+  --admin-border: #d9dde5;
+  --admin-cyan: #ff4f00;
+  --admin-lime: #15803d;
+  --admin-muted: #667085;
+  color: #202124;
+  background: linear-gradient(180deg, #fff7f2 0, #f7f7f8 180px);
+}
+html.light :is(.admin-sidebar, .admin-panel) { background: #ffffff; }
+html.light .admin-sidebar { border-right-color: var(--admin-border); }
+html.light .admin-brand { color: #202124; }
+html.light .admin-brand-mark { border-color: rgb(255 79 0 / .35); background: rgb(255 79 0 / .1); }
+html.light .admin-brand small,
+html.light .admin-user-row.is-head { color: #667085; }
+html.light :is(.admin-nav-item, .admin-public-link, .admin-logout) { color: #59636f; }
+html.light :is(.admin-nav-item, .admin-public-link, .admin-logout):hover { background: #fff5ef; color: #202124; }
+html.light .admin-nav-item.is-active { border-color: rgb(255 79 0 / .28); background: #fff5ef; }
+html.light .admin-topbar strong,
+html.light .admin-page-head button,
+html.light .admin-metrics strong,
+html.light .admin-service-row strong,
+html.light .admin-quick-panel > a,
+html.light .admin-user-row strong { color: #202124; }
+html.light .admin-page-head button { background: #ffffff; }
+html.light .admin-metrics,
+html.light .admin-panel { box-shadow: 0 8px 24px rgb(17 24 39 / .05); }
+html.light .admin-panel { background: linear-gradient(180deg, #ffffff, #fafafa); }
+html.light .admin-service-row code,
+html.light .admin-user-row code { color: #8a4b2d; }
+html.light .admin-user-row { color: #59636f; }
+html.light .admin-user-row.is-head { background: #f7f7f8; }
+html.light :is(.admin-user-actions button, .admin-panel-title > button) { border-color: rgb(255 79 0 / .28); background: rgb(255 79 0 / .06); }
