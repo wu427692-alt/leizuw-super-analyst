@@ -142,6 +142,27 @@ def test_series_name_lookup_does_not_initialize_market_providers(market_db, monk
     assert result["stock_name"] == "华懋科技"
 
 
+def test_intraday_series_reads_only_latest_second_bucket_when_minutes_exist(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    today = datetime.now().date()
+    repo.upsert_intraday("603306", [{
+        "timestamp": datetime.combine(today, datetime.min.time()).replace(hour=10),
+        "open": 10, "high": 10, "low": 10, "close": 10, "volume": 100,
+    }], source="test.minute")
+    repo.upsert_ticks([
+        {"code": "603306", "timestamp": datetime.combine(today, datetime.min.time()).replace(hour=9, minute=31, second=1), "price": 9.8},
+        {"code": "603306", "timestamp": datetime.combine(today, datetime.min.time()).replace(hour=10, second=1), "price": 10.1},
+        {"code": "603306", "timestamp": datetime.combine(today, datetime.min.time()).replace(hour=10, second=2), "price": 10.2},
+    ], source="test.tick")
+    monkeypatch.setattr(repo, "tick_range", lambda *_args, **_kwargs: pytest.fail("full tick history scanned"))
+    service = MarketDataService(repository=repo, tushare=_UnavailableGateway())
+
+    result = service.get_series("603306", period="intraday", range_key="1d")
+
+    assert result["data"][-1]["close"] == 10.2
+    assert result["source"] == "test.tick"
+
+
 def test_legacy_snapshot_uses_exchange_date_and_time_instead_of_poll_time():
     fallback = datetime(2026, 8, 22, 0, 23, 57)
     parsed = _legacy_snapshot_timestamp(

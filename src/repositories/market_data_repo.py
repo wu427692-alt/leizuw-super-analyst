@@ -192,6 +192,32 @@ class MarketDataRepository:
                 .order_by(StockTick.timestamp)
             ).scalars().all())
 
+    def latest_tick_minute(self, code: str) -> List[StockTick]:
+        """Return only snapshots from the newest minute stored for a symbol.
+
+        Minute charts use completed 1MIN bars for history and second snapshots
+        only to rebuild the currently changing final minute. Reading several
+        full days of second rows on every chart poll is unnecessary.
+        """
+        storage_code = normalize_daily_storage_code(code)
+        with self.db.get_session() as session:
+            latest = session.execute(
+                select(func.max(StockTick.timestamp)).where(StockTick.code == storage_code)
+            ).scalar_one_or_none()
+            if latest is None:
+                return []
+            start = latest.replace(second=0, microsecond=0)
+            end = start + timedelta(minutes=1)
+            return list(session.execute(
+                select(StockTick)
+                .where(and_(
+                    StockTick.code == storage_code,
+                    StockTick.timestamp >= start,
+                    StockTick.timestamp < end,
+                ))
+                .order_by(StockTick.timestamp)
+            ).scalars().all())
+
     def prune_realtime_sessions(self, *, keep_sessions: int = 5) -> Dict[str, int]:
         """Keep only the newest N observed trading dates in second-level tables."""
         safe_sessions = max(1, min(int(keep_sessions), 30))

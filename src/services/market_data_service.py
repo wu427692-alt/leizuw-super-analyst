@@ -86,23 +86,30 @@ class MarketDataService:
             refreshed = self.refresh_ticks([code]) > 0 if refresh else False
             session_count = 5 if selected_range == "5d" else 1
             storage_days = 14 if session_count == 5 else 7
-            raw_tick_rows = self._tick_rows(code, storage_days, minimum_sessions=session_count)
-            tick_rows = self._regular_session_rows(raw_tick_rows, code)
-            minute_rows = self._regular_session_rows(
-                self._intraday_rows(code, storage_days, minimum_sessions=session_count), code
-            )
+
+            def local_rows(*, allow_tick_history: bool = False) -> tuple[List[Any], List[Any], List[Any]]:
+                minutes = self._regular_session_rows(
+                    self._intraday_rows(code, storage_days, minimum_sessions=session_count), code,
+                )
+                minute_sessions = {row.timestamp.date() for row in minutes}
+                raw_ticks = (
+                    self._tick_rows(code, storage_days, minimum_sessions=session_count)
+                    if allow_tick_history or len(minute_sessions) < session_count
+                    else self.repo.latest_tick_minute(code)
+                )
+                ticks = self._regular_session_rows(raw_ticks, code)
+                return raw_ticks, ticks, minutes
+
+            # With normal 1MIN history present, second snapshots are needed
+            # only for the newest live minute—not for the entire 7/14-day DB.
+            raw_tick_rows, tick_rows, minute_rows = local_rows()
             available_dates = {row.timestamp.date() for row in [*tick_rows, *minute_rows]}
             if refresh or len(available_dates) < session_count:
                 refreshed = self.refresh_historical_intraday([code], sessions=session_count) > 0 or refreshed
-                raw_tick_rows = self._tick_rows(code, storage_days, minimum_sessions=session_count)
-                tick_rows = self._regular_session_rows(raw_tick_rows, code)
-                minute_rows = self._regular_session_rows(
-                    self._intraday_rows(code, storage_days, minimum_sessions=session_count), code
-                )
+                raw_tick_rows, tick_rows, minute_rows = local_rows()
             if not tick_rows and not minute_rows:
                 refreshed = self.refresh_ticks([code]) > 0 or refreshed
-                raw_tick_rows = self._tick_rows(code, storage_days, minimum_sessions=session_count)
-                tick_rows = self._regular_session_rows(raw_tick_rows, code)
+                raw_tick_rows, tick_rows, minute_rows = local_rows(allow_tick_history=True)
             rows = _merge_second_and_minute_rows(tick_rows, minute_rows, sessions=session_count)
             completed_session = _latest_completed_a_share_session()
             rows = _append_completed_stock_close(
