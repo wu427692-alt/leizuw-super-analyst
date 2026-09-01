@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 import pandas as pd
 
 from data_provider.base import DataFetcherManager, normalize_stock_code
+from src.data.stock_index_loader import get_index_stock_name
 from src.repositories.market_data_repo import MarketDataRepository
 from src.repositories.stock_repo import StockRepository
 from src.services.financial_data_service import FinancialDataUpstreamError, TushareGatewayService
@@ -674,10 +675,15 @@ class MarketDataService:
         return recent if len(recent) > len(rows) else rows
 
     def _stock_name(self, code: str) -> Optional[str]:
+        # Normal page reads must stay local. Constructing DataFetcherManager
+        # initializes every configured market provider and used to happen for
+        # each 15-second chart poll merely to resolve a display label.
+        if self.fetcher is None:
+            return get_index_stock_name(code)
         try:
-            return (self.fetcher or DataFetcherManager()).get_stock_name(code, allow_realtime=False)
+            return self.fetcher.get_stock_name(code, allow_realtime=False)
         except Exception:
-            return None
+            return get_index_stock_name(code)
 
     @staticmethod
     def _intraday_item(row: Any) -> Dict[str, Any]:

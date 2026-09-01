@@ -119,6 +119,29 @@ def test_realtime_tick_is_upserted_and_returned_from_sqlite(market_db, monkeypat
     assert service.status()["tick_rows"] == 1
 
 
+def test_series_name_lookup_does_not_initialize_market_providers(market_db, monkeypatch):
+    with market_db.get_session() as session:
+        for offset in range(20):
+            session.add(StockDaily(
+                code="603306", date=date.today() - timedelta(days=offset),
+                open=74, high=75, low=73, close=74.5, data_source="test.daily",
+            ))
+        session.commit()
+    monkeypatch.setattr(
+        "src.services.market_data_service.DataFetcherManager",
+        lambda: pytest.fail("local series reads must not initialize upstream providers"),
+    )
+    monkeypatch.setattr(
+        "src.services.market_data_service.get_index_stock_name", lambda code: "华懋科技",
+    )
+
+    result = MarketDataService(
+        repository=MarketDataRepository(market_db), tushare=_UnavailableGateway(),
+    ).get_series("603306", period="daily", range_key="1m")
+
+    assert result["stock_name"] == "华懋科技"
+
+
 def test_legacy_snapshot_uses_exchange_date_and_time_instead_of_poll_time():
     fallback = datetime(2026, 8, 22, 0, 23, 57)
     parsed = _legacy_snapshot_timestamp(
@@ -449,8 +472,9 @@ def test_five_day_intraday_keeps_minute_history_and_only_latest_minute_live(mark
 
 
 def test_index_five_day_intraday_prefers_local_seconds_and_keeps_minute_fallback(market_db):
+    latest_day = datetime.now().date()
     minute_rows = [{
-        "timestamp": datetime(2026, 8, 14 + offset, 10, 0),
+        "timestamp": datetime.combine(latest_day - timedelta(days=4 - offset), datetime.min.time()).replace(hour=10),
         "open": 3800 + offset,
         "high": 3800 + offset,
         "low": 3800 + offset,
@@ -466,7 +490,7 @@ def test_index_five_day_intraday_prefers_local_seconds_and_keeps_minute_fallback
     )
     service.refresh_historical_index_intraday(["000001.SH"], sessions=5)
     service.repo.upsert_index("000001.SH", [{
-        "timestamp": datetime(2026, 8, 18, 10, 0, 1),
+        "timestamp": datetime.combine(latest_day, datetime.min.time()).replace(hour=10, second=1),
         "open": 3810,
         "high": 3810,
         "low": 3810,
@@ -477,7 +501,7 @@ def test_index_five_day_intraday_prefers_local_seconds_and_keeps_minute_fallback
 
     result = service.get_index_series("000001.SH", period="intraday", range_key="5d")
 
-    assert result["data"][-1]["date"] == "2026-08-18T10:00:01"
+    assert result["data"][-1]["date"] == f"{latest_day.isoformat()}T10:00:01"
     assert result["source"] == "tencent.5day_minute+test.index.1sec"
     assert service.status()["index_tick_symbols"] == 1
 
