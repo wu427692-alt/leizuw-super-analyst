@@ -23,7 +23,6 @@ const DATA_SOURCE_LABELS: Record<string, string> = {
   'tushare.daily': 'Tushare 全市场日线',
   'tushare.moneyflow_ind_ths': 'Tushare 同花顺行业',
   'tushare.moneyflow_ind_dc': 'Tushare 东方财富行业',
-  'tushare.moneyflow_hsgt': 'Tushare 沪深港通',
   'akshare.sina_a_spot': '新浪全A股实时行情',
   'akshare.sina_sector_spot': '新浪行业板块实时行情',
   'tencent.snapshot': '腾讯实时行情',
@@ -309,11 +308,10 @@ const MarketDashboardPage = () => {
     <div className="space-y-1.5">
       <section className="market-panel overflow-hidden border border-border/70 bg-card/90">
         <div className="market-overview-header flex flex-col border-b border-border/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><div className="flex items-center gap-2"><RadioTower className="h-4 w-4 text-cyan" /><h1 className="text-base font-semibold">市场总览</h1><Badge variant="info">本地秒库</Badge></div><p className="mt-0.5 text-[10px] text-secondary-text">{data?.marketTime ?? '正在同步市场时间'} · 自选与大盘读取 SQLite 秒快照 · 广度、资金和海外指数按所示交易日</p></div>
+          <div><div className="flex items-center gap-2"><RadioTower className="h-4 w-4 text-cyan" /><h1 className="text-base font-semibold">市场总览</h1><Badge variant="info">本地秒库</Badge></div><p className="mt-0.5 text-[10px] text-secondary-text">{data?.marketTime ?? '正在同步市场时间'} · 自选与大盘读取 SQLite 秒快照 · 广度、行业和海外指数按所示交易日</p></div>
           <button className="btn-secondary mt-2 inline-flex items-center gap-2 sm:mt-0" disabled={refreshing} onClick={() => void load(true)}><RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />刷新数据</button>
         </div>
-        <div className="market-index-rail flex overflow-x-auto">{cnIndices.map((item) => <IndexTicker key={item.code} item={item} selected={item.code === leadIndex?.code} onSelect={() => setSelectedIndexCode(item.code)} />)}
-          <div className="min-w-[188px] flex-1 px-3 py-2.5"><p className="text-[11px] text-secondary-text">北向资金</p><p className={`mt-0.5 text-lg font-semibold tabular-nums ${tone(data?.northbound.northMoneyYi)}`}>{formatNumber(data?.northbound.northMoneyYi)}亿</p><p className="text-[9px] text-secondary-text">{shortTime(data?.northbound.tradeDate)} · {sourceLabel(data?.northbound.source)}</p></div></div>
+        <div className="market-index-rail flex overflow-x-auto">{cnIndices.map((item) => <IndexTicker key={item.code} item={item} selected={item.code === leadIndex?.code} onSelect={() => setSelectedIndexCode(item.code)} />)}</div>
       </section>
 
       <EvidenceRail className="market-evidence-rail" items={[
