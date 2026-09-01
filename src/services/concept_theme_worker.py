@@ -58,6 +58,8 @@ class ConceptThemeWorker:
             return cls._instance
 
     def start(self) -> Dict[str, Any]:
+        if os.getenv("CONCEPT_THEME_RUN_MODE", "embedded").strip().lower() == "external":
+            return {**self.status(), "external": True, "deferred": True}
         with self._lock:
             if self._thread is None or not self._thread.is_alive():
                 self._stop_event.clear()
@@ -84,6 +86,18 @@ class ConceptThemeWorker:
         actual refresh remains asynchronous so adding a watchlist item never
         blocks the user-facing request.
         """
+        if os.getenv("CONCEPT_THEME_RUN_MODE", "embedded").strip().lower() == "external":
+            # Production runs the expensive exposure calculator in the
+            # low-priority collector process.  The external worker audits the
+            # shared watchlist on its normal cadence, so an API request never
+            # starts the same CPU-heavy job inside the web process.
+            return {
+                **self.status(),
+                "external": True,
+                "deferred": True,
+                "watchlist_refresh_requested": True,
+                "symbol": str(symbol or "").strip().upper() or None,
+            }
         with self._lock:
             self._last_watchlist_refresh_at = None
             if symbol:

@@ -111,3 +111,18 @@ def test_new_watchlist_trigger_bypasses_periodic_defer(monkeypatch) -> None:
     assert worker._priority_watchlist_codes == {"300308.SZ"}
     assert result["watchlist_refresh_requested"] is True
     assert result["refresh_requested"] is True
+
+
+def test_external_mode_never_starts_heavy_worker_in_web_process(monkeypatch) -> None:
+    worker = ConceptThemeWorker()
+    monkeypatch.setenv("CONCEPT_THEME_RUN_MODE", "external")
+
+    start_result = worker.start()
+    refresh_result = worker.trigger_watchlist_refresh("300308.SZ")
+
+    assert start_result["external"] is True
+    assert start_result["deferred"] is True
+    assert worker._thread is None
+    assert worker._priority_watchlist_codes == set()
+    assert refresh_result["watchlist_refresh_requested"] is True
+    assert refresh_result["symbol"] == "300308.SZ"

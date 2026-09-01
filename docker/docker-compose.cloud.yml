@@ -71,6 +71,11 @@ services:
       - ESSAY_SUMMARY_CACHE_MAX_ENTRIES=16
       - USER_SESSION_CACHE_SECONDS=30
       - ESSAY_QUANT_AUTO_START=false
+      # Concept exposure calculation can scan broad themes and consume a full
+      # CPU core. Run it in the throttled collector container so page requests
+      # keep their own CPU/GIL budget.
+      - CONCEPT_THEME_AUTO_START=false
+      - CONCEPT_THEME_RUN_MODE=external
       - DATA_STORAGE_MAINTENANCE_AUTO_START=false
       - SYNC_WATCHDOG_AUTO_START=true
       - ICLOUD_KNOWLEDGE_AUTO_START=false
@@ -115,6 +120,11 @@ services:
       - INVESTMENT_MONITOR_POLL_SEC=15
       - INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES=10
       - INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES=360
+      - CONCEPT_THEME_AUTO_START=true
+      - CONCEPT_THEME_RUN_MODE=embedded
+      - CONCEPT_THEME_SYNC_BATCH_SIZE=20
+      - CONCEPT_THEME_SYNC_INTERVAL_SEC=1800
+      - CONCEPT_THEME_WATCHLIST_INTERVAL_SEC=21600
       - SQLITE_CACHE_SIZE_KIB=8192
       - SQLITE_MMAP_SIZE_MB=0
       - MALLOC_ARENA_MAX=1
