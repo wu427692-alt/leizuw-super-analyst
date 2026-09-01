@@ -515,21 +515,24 @@ class MarketDataService:
             session_count = 5 if selected_range == "5d" else 1
             storage_days = 14 if session_count == 5 else 7
             broad_start = end - timedelta(days=storage_days)
-            second_rows = self._regular_session_rows(
-                self.repo.index_range(qualified, broad_start, end, frequency="1SEC"), qualified,
-            )
-            minute_rows = self._regular_session_rows(
-                self.repo.index_range(qualified, broad_start, end, frequency="1MIN"), qualified,
-            )
+
+            def local_index_rows() -> tuple[List[Any], List[Any]]:
+                minutes = self._regular_session_rows(
+                    self.repo.index_range(qualified, broad_start, end, frequency="1MIN"), qualified,
+                )
+                minute_sessions = {row.timestamp.date() for row in minutes}
+                raw_seconds = (
+                    self.repo.index_range(qualified, broad_start, end, frequency="1SEC")
+                    if len(minute_sessions) < session_count
+                    else self.repo.latest_index_minute(qualified)
+                )
+                return self._regular_session_rows(raw_seconds, qualified), minutes
+
+            second_rows, minute_rows = local_index_rows()
             available_dates = {row.timestamp.date() for row in [*second_rows, *minute_rows]}
             if refresh or len(available_dates) < session_count:
                 self.refresh_historical_index_intraday([qualified], sessions=session_count)
-                second_rows = self._regular_session_rows(
-                    self.repo.index_range(qualified, broad_start, end, frequency="1SEC"), qualified,
-                )
-                minute_rows = self._regular_session_rows(
-                    self.repo.index_range(qualified, broad_start, end, frequency="1MIN"), qualified,
-                )
+                second_rows, minute_rows = local_index_rows()
             rows = _merge_second_and_minute_rows(second_rows, minute_rows, sessions=session_count)
             completed_session = _latest_completed_a_share_session()
             daily_tail = self.repo.index_range(

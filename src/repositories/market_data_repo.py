@@ -396,6 +396,33 @@ class MarketDataRepository:
                 .order_by(MarketIndexBar.timestamp)
             ).scalars().all())
 
+    def latest_index_minute(self, symbol: str) -> List[MarketIndexBar]:
+        """Return only the newest minute of second-level index snapshots."""
+        normalized = str(symbol or "").strip().upper()
+        if not normalized:
+            return []
+        with self.db.get_session() as session:
+            latest = session.execute(
+                select(func.max(MarketIndexBar.timestamp)).where(and_(
+                    MarketIndexBar.symbol == normalized,
+                    MarketIndexBar.frequency == "1SEC",
+                ))
+            ).scalar_one_or_none()
+            if latest is None:
+                return []
+            start = latest.replace(second=0, microsecond=0)
+            end = start + timedelta(minutes=1)
+            return list(session.execute(
+                select(MarketIndexBar)
+                .where(and_(
+                    MarketIndexBar.symbol == normalized,
+                    MarketIndexBar.frequency == "1SEC",
+                    MarketIndexBar.timestamp >= start,
+                    MarketIndexBar.timestamp < end,
+                ))
+                .order_by(MarketIndexBar.timestamp)
+            ).scalars().all())
+
     def latest_index_bars(self, symbols: Iterable[str], *, frequency: str = "1SEC") -> Dict[str, MarketIndexBar]:
         normalized = list(dict.fromkeys(str(symbol).upper() for symbol in symbols if str(symbol or "").strip()))
         if not normalized:

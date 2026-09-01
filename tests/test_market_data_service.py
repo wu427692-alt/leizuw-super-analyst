@@ -527,6 +527,39 @@ def test_index_five_day_intraday_prefers_local_seconds_and_keeps_minute_fallback
     assert service.status()["index_tick_symbols"] == 1
 
 
+def test_index_intraday_reads_only_latest_second_bucket_when_minutes_exist(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    today = datetime.now().date()
+    repo.upsert_index("000001.SH", [{
+        "timestamp": datetime.combine(today, datetime.min.time()).replace(hour=10),
+        "open": 3800, "high": 3800, "low": 3800, "close": 3800, "volume": 100,
+    }], frequency="1MIN", source="test.minute")
+    repo.upsert_index("000001.SH", [
+        {
+            "timestamp": datetime.combine(today, datetime.min.time()).replace(hour=9, minute=31, second=1),
+            "open": 3790, "high": 3790, "low": 3790, "close": 3790, "volume": 10,
+        },
+        {
+            "timestamp": datetime.combine(today, datetime.min.time()).replace(hour=10, second=2),
+            "open": 3802, "high": 3802, "low": 3802, "close": 3802, "volume": 20,
+        },
+    ], frequency="1SEC", source="test.tick")
+    original_index_range = repo.index_range
+
+    def bounded_index_range(symbol, start, end, *, frequency):
+        if frequency == "1SEC":
+            pytest.fail("full index tick history scanned")
+        return original_index_range(symbol, start, end, frequency=frequency)
+
+    monkeypatch.setattr(repo, "index_range", bounded_index_range)
+    service = MarketDataService(repository=repo, tushare=_UnavailableGateway())
+
+    result = service.get_index_series("000001.SH", period="intraday", range_key="1d")
+
+    assert result["data"][-1]["close"] == 3802
+    assert result["source"] == "test.tick"
+
+
 def test_index_intraday_ends_on_official_close_when_snapshot_missed_1500(market_db, monkeypatch):
     repo = MarketDataRepository(market_db)
     repo.upsert_index("000001.SH", [{
