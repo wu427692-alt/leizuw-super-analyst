@@ -28,6 +28,10 @@ class StartupWarmupService:
         essays = EssayAnalysisService()
         monitor = InvestmentMonitorService()
         essential: tuple[WarmupTask, ...] = (
+            # This is maintenance, not request-path work.  It used to run every
+            # time InvestmentMonitorService was constructed, forcing unrelated
+            # page requests to scan the full essay-event table.
+            ("zsxq-topic-url-backfill", monitor.repo.backfill_zsxq_topic_urls),
             ("stock-name-index", get_stock_name_index_map),
             ("essay-library-stats", essays.historical_backlog),
             ("essay-status", lambda: essays.progress(days=30)),

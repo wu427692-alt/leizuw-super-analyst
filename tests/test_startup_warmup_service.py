@@ -30,6 +30,10 @@ def test_startup_warmup_isolates_failed_views():
 
 
 class _StubService:
+    @property
+    def repo(self):
+        return self
+
     def __getattr__(self, _name):
         return lambda *args, **kwargs: None
 
@@ -48,6 +52,7 @@ def test_essential_warmup_keeps_heavy_analytics_lazy(monkeypatch):
     names = [name for name, _ in StartupWarmupService()._default_tasks()]
 
     assert names == [
+        "zsxq-topic-url-backfill",
         "stock-name-index",
         "essay-library-stats",
         "essay-status",

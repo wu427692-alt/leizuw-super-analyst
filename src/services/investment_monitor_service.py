@@ -187,7 +187,6 @@ class InvestmentMonitorService:
         self.announcement_artifacts = announcement_artifacts or AnnouncementArtifactService()
         self.guba = guba or EastmoneyGubaService()
         self.repo.ensure_sources(BUILTIN_MONITORING_SOURCES)
-        self.repo.backfill_zsxq_topic_urls()
         self._name_cache: Dict[str, str] = {}
         self._watchlist_override: Optional[List[str]] = None
         self._backfill_days: Optional[int] = None
