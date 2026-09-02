@@ -193,6 +193,12 @@ def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path
         assert completed["transcript_artifacts"][0]["file_id"] == "audio-1"
         transcript = service.transcript(submitted["task_id"], "audio-1")
         assert transcript["lines"][0]["text"].startswith("公司预计")
+        transcript_path, transcript_name, transcript_media_type = service.download_transcript(
+            submitted["task_id"], "audio-1",
+        )
+        assert transcript_name == "公司交流_转写原文.txt"
+        assert transcript_media_type.startswith("text/plain")
+        assert "公司预计" in transcript_path.read_text(encoding="utf-8")
 
         markdown_path, markdown_name, media_type = service.download(submitted["task_id"], "md")
         assert markdown_name == "低空经济录音纪要.md"
@@ -252,6 +258,9 @@ def test_selected_audio_can_transcribe_without_calling_ai(tmp_path: Path) -> Non
         assert completed["result"]["transcript_only"] is True
         assert completed["download_urls"].keys() == {"zip"}
         assert "只转写" in service.transcript(submitted["task_id"], "audio-1")["text"]
+        transcript_path, transcript_name, _ = service.download_transcript(submitted["task_id"], "audio-1")
+        assert transcript_name == "公司交流_转写原文.txt"
+        assert "只转写" in transcript_path.read_text(encoding="utf-8")
         bundle_path, _, _ = service.download(submitted["task_id"], "zip")
         with ZipFile(bundle_path) as archive:
             assert len(archive.namelist()) == 1

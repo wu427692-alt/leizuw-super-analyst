@@ -341,6 +341,49 @@ def test_selected_audio_background_task_api_returns_progress_and_completed_archi
     assert downloaded.content == b"zip-content"
 
 
+def test_transcript_download_api_returns_only_plain_text_and_batch_zip(tmp_path, monkeypatch) -> None:
+    transcript_path = tmp_path / "transcript.txt"
+    transcript_path.write_text("[00:00:01] 说话人1：公司订单正在增长。", encoding="utf-8")
+    analysis_service = MagicMock()
+    analysis_service.download_transcript.return_value = (
+        transcript_path, "公司交流_转写原文.txt", "text/plain; charset=utf-8",
+    )
+    analysis_service.transcript_availability.return_value = {
+        ("topic-1", "audio-1"): {
+            "transcribed": True,
+            "transcript_task_id": "audio-analysis-1",
+        },
+    }
+    monkeypatch.setattr(
+        financial_data.ResearchNoteAudioAnalysisTaskService,
+        "get_instance",
+        classmethod(lambda _cls: analysis_service),
+    )
+    app = FastAPI()
+    app.include_router(financial_data.router, prefix="/api/v1/financial-data")
+    client = TestClient(app)
+
+    single = client.get(
+        "/api/v1/financial-data/research-notes/audio-analysis/tasks/audio-analysis-1/transcripts/audio-1/download"
+    )
+    assert single.status_code == 200
+    assert single.content.decode("utf-8").endswith("公司订单正在增长。")
+    assert single.headers["content-type"].startswith("text/plain")
+
+    batch = client.post(
+        "/api/v1/financial-data/research-notes/audio-files/transcripts/batch-download",
+        json={"items": [{"topic_id": "topic-1", "file_id": "audio-1"}]},
+    )
+    assert batch.status_code == 200
+    assert batch.headers["x-transcript-file-count"] == "1"
+    assert batch.headers["x-skipped-file-count"] == "0"
+    with ZipFile(BytesIO(batch.content)) as archive:
+        assert "转写原文/公司交流_转写原文.txt" in archive.namelist()
+        assert archive.read("转写原文/公司交流_转写原文.txt").decode("utf-8").endswith("公司订单正在增长。")
+        manifest = json.loads(archive.read("转写原文清单.json"))
+        assert manifest["downloaded"][0]["file_id"] == "audio-1"
+
+
 def test_import_mcp_page_rejects_unsuccessful_source(research_service) -> None:
     with pytest.raises(FinancialDataUpstreamError, match="Skill 权限"):
         research_service.import_mcp_page({"success": False, "error": "该星球暂未开通 Skill 权限"})

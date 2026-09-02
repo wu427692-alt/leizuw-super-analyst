@@ -289,7 +289,7 @@
 .essay-row-check { display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .essay-row-check input { width: 15px; height: 15px; accent-color: #06b6d4; cursor: pointer; }
 .essay-audio-list { display: flex; flex-direction: column; }
-.essay-audio-row { display: grid; grid-template-columns: 34px 42px minmax(0, 1fr) 100px 108px; gap: 10px; align-items: center; min-height: 82px; padding: 10px; border-top: 1px solid var(--essay-line); transition: background .15s ease; }
+.essay-audio-row { display: grid; grid-template-columns: 34px 42px minmax(0, 1fr) 100px 126px; gap: 10px; align-items: center; min-height: 82px; padding: 10px; border-top: 1px solid var(--essay-line); transition: background .15s ease; }
 .essay-audio-row:hover,.essay-audio-row.is-selected { background: rgba(34, 211, 238, .055); }
 .essay-audio-row.is-selected { box-shadow: inset 2px 0 #22d3ee; }
 .essay-audio-icon { display: flex; width: 36px; height: 36px; align-items: center; justify-content: center; border: 1px solid rgba(34, 211, 238, .3); background: rgba(8, 145, 178, .12); color: #67e8f9; }
@@ -306,6 +306,8 @@
 .essay-audio-row-actions > a,.essay-audio-row-actions > button { min-height: 32px; }
 .essay-audio-transcript-open { display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(134, 239, 172, .32); background: rgba(34, 197, 94, .07); color: #86efac; font-size: 10px; }
 .essay-audio-transcript-open:hover { border-color: rgba(134, 239, 172, .68); background: rgba(34, 197, 94, .13); }
+.essay-audio-transcript-download { display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(251, 146, 60, .42); background: rgba(249, 115, 22, .08); color: #fdba74; font-size: 10px; }
+.essay-audio-transcript-download:hover { border-color: rgba(251, 146, 60, .78); background: rgba(249, 115, 22, .15); }
 .essay-audio-download { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; border: 1px solid rgba(34, 211, 238, .32); color: #67e8f9 !important; font-size: 11px; }
 .essay-audio-download:hover { border-color: rgba(103, 232, 249, .68); background: rgba(8, 145, 178, .16); }
 .essay-audio-unavailable { color: #64748b; font-size: 10px; text-align: center; }

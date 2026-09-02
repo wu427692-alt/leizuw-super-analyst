@@ -419,6 +419,87 @@ def get_research_note_audio_analysis_transcript(task_id: str, file_id: str):
 
 
 @router.get(
+    "/research-notes/audio-analysis/tasks/{task_id}/transcripts/{file_id}/download",
+    summary="只下载一个录音转写后的原文字稿 TXT",
+)
+def download_research_note_audio_analysis_transcript(task_id: str, file_id: str):
+    try:
+        path, filename, media_type = ResearchNoteAudioAnalysisTaskService.get_instance().download_transcript(
+            task_id, file_id,
+        )
+    except ResearchNoteAudioAnalysisError as exc:
+        raise _not_found(exc)
+    return FileResponse(path, filename=filename, media_type=media_type)
+
+
+@router.post(
+    "/research-notes/audio-files/transcripts/batch-download",
+    summary="只打包下载已转写录音的原文字稿",
+)
+def batch_download_research_note_audio_transcripts(request: ResearchNoteAudioBatchDownloadRequest):
+    selected = list(dict.fromkeys((item.topic_id, item.file_id) for item in request.items))
+    analysis = ResearchNoteAudioAnalysisTaskService.get_instance()
+    availability = analysis.transcript_availability(selected)
+    handle = tempfile.NamedTemporaryFile(prefix="zsxq-transcripts-selected-", suffix=".zip", delete=False)
+    handle.close()
+    archive_path = Path(handle.name)
+    manifest = []
+    skipped = []
+    used_names: set[str] = set()
+    try:
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+            for topic_id, file_id in selected:
+                metadata = availability.get((topic_id, file_id)) or {}
+                task_id = str(metadata.get("transcript_task_id") or "")
+                if not task_id:
+                    skipped.append({"topic_id": topic_id, "file_id": file_id, "reason": "尚未转写"})
+                    continue
+                try:
+                    path, filename, _ = analysis.download_transcript(task_id, file_id)
+                except ResearchNoteAudioAnalysisError as exc:
+                    skipped.append({"topic_id": topic_id, "file_id": file_id, "reason": str(exc)})
+                    continue
+                safe_name = Path(filename).name or f"录音-{file_id}_转写原文.txt"
+                candidate = safe_name
+                stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
+                counter = 2
+                while candidate.lower() in used_names:
+                    candidate = f"{stem}_{counter}{suffix}"
+                    counter += 1
+                used_names.add(candidate.lower())
+                archive.write(path, f"转写原文/{candidate}")
+                manifest.append({
+                    "topic_id": topic_id,
+                    "file_id": file_id,
+                    "filename": candidate,
+                    "transcript_task_id": task_id,
+                })
+            if not manifest:
+                raise ResearchNoteAudioAnalysisError("所选录音尚无可下载的转写原文，请先点击“仅转写”")
+            archive.writestr(
+                "转写原文清单.json",
+                json.dumps({"downloaded": manifest, "skipped": skipped}, ensure_ascii=False, indent=2),
+            )
+    except ResearchNoteAudioAnalysisError as exc:
+        archive_path.unlink(missing_ok=True)
+        raise _bad_request(exc)
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
+    suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return FileResponse(
+        archive_path,
+        filename=f"录音转写原文_{suffix}.zip",
+        media_type="application/zip",
+        headers={
+            "X-Transcript-File-Count": str(len(manifest)),
+            "X-Skipped-File-Count": str(len(skipped)),
+        },
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
+    )
+
+
+@router.get(
     "/research-notes/audio-analysis/tasks/{task_id}/download",
     summary="下载录音纪要 Markdown、Word、JSON 或完整 ZIP",
 )

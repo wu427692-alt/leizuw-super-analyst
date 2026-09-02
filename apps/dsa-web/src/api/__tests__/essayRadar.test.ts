@@ -143,6 +143,23 @@ describe('essayRadarApi', () => {
       '/api/v1/financial-data/research-notes/audio-analysis/tasks/audio-analysis-1/download',
       { params: { format: 'docx' }, responseType: 'blob', timeout: 600000 },
     );
+
+    const transcript = new Blob(['raw transcript']);
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: transcript });
+    expect(await essayRadarApi.downloadAudioTranscript('audio-analysis-1', 'audio-1')).toBe(transcript);
+    expect(apiClient.get).toHaveBeenLastCalledWith(
+      '/api/v1/financial-data/research-notes/audio-analysis/tasks/audio-analysis-1/transcripts/audio-1/download',
+      { responseType: 'blob', timeout: 300000 },
+    );
+
+    const transcriptArchive = new Blob(['zip']);
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ data: transcriptArchive });
+    expect(await essayRadarApi.downloadSelectedAudioTranscripts([{ topicId: 'topic-1', fileId: 'audio-1' }])).toBe(transcriptArchive);
+    expect(apiClient.post).toHaveBeenLastCalledWith(
+      '/api/v1/financial-data/research-notes/audio-files/transcripts/batch-download',
+      { items: [{ topic_id: 'topic-1', file_id: 'audio-1' }] },
+      { responseType: 'blob', timeout: 300000 },
+    );
   });
 
   it('downloads only checked essays as an Excel workbook', async () => {

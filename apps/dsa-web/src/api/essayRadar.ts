@@ -218,6 +218,19 @@ export const essayRadarApi = {
     const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-analysis/tasks/${encodeURIComponent(taskId)}/transcripts/${encodeURIComponent(fileId)}`);
     return toCamelCase<EssayAudioTranscript>(response.data);
   },
+  downloadAudioTranscript: async (taskId: string, fileId: string): Promise<Blob> => {
+    const response = await apiClient.get(
+      `/api/v1/financial-data/research-notes/audio-analysis/tasks/${encodeURIComponent(taskId)}/transcripts/${encodeURIComponent(fileId)}/download`,
+      { responseType: 'blob', timeout: 300000 },
+    );
+    return response.data as Blob;
+  },
+  downloadSelectedAudioTranscripts: async (items: Array<{ topicId: string; fileId: string }>): Promise<Blob> => {
+    const response = await apiClient.post('/api/v1/financial-data/research-notes/audio-files/transcripts/batch-download', {
+      items: items.map((item) => ({ topic_id: item.topicId, file_id: item.fileId })),
+    }, { responseType: 'blob', timeout: 300000 });
+    return response.data as Blob;
+  },
   downloadAudioAnalysis: async (taskId: string, format: 'zip' | 'md' | 'docx' | 'json'): Promise<Blob> => {
     const response = await apiClient.get(`/api/v1/financial-data/research-notes/audio-analysis/tasks/${encodeURIComponent(taskId)}/download`, {
       params: { format }, responseType: 'blob', timeout: 600000,

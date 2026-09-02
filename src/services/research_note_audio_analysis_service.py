@@ -736,6 +736,29 @@ class ResearchNoteAudioAnalysisTaskService:
             "lines": self._parse_transcript_lines(text),
         }
 
+    def download_transcript(
+        self,
+        task_id: str,
+        file_id: str,
+        *,
+        owner_id: object = _OWNER_UNSET,
+    ) -> Tuple[Path, str, str]:
+        """Return one owner-scoped raw ASR transcript as a plain-text file."""
+        state = self._read_state(task_id)
+        self._assert_owner(state, owner_id=owner_id)
+        artifact = next(
+            (item for item in state.get("transcript_artifacts") or [] if str(item.get("file_id")) == str(file_id)),
+            None,
+        )
+        if not artifact:
+            raise ResearchNoteAudioAnalysisError("逐字稿不存在或尚未生成")
+        path = self.output_root / task_id / str(artifact.get("artifact_name") or "")
+        if not path.is_file():
+            raise ResearchNoteAudioAnalysisError("逐字稿文件不存在或已过期")
+        source_name = Path(str(artifact.get("filename") or file_id or "录音")).stem
+        filename = f"{self._safe_name(source_name)}_转写原文.txt"
+        return path, filename, "text/plain; charset=utf-8"
+
     def list_tasks(self, limit: int = 20) -> Dict[str, Any]:
         owner_id = self._owner_getter()
         rows = []
