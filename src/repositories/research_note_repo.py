@@ -86,9 +86,30 @@ class ResearchNoteRepository:
                 select(ResearchNote).where(ResearchNote.topic_id == topic_id).limit(1)
             ).scalar_one_or_none()
 
-    def delete_duplicate_audio_memos(self, *, keep_topic_id: str, source_signature: str) -> int:
+    def find_overlapping_audio_memo(
+        self,
+        *,
+        files: Iterable[Any],
+        exclude_topic_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Return an existing memo that already represents any source recording."""
+        requested = self._audio_source_ids(files)
+        if not requested:
+            return None
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(ResearchNote).where(ResearchNote.group_id == "ai-audio-memo")
+            ).scalars().all()
+            for row in rows:
+                if row.topic_id == exclude_topic_id:
+                    continue
+                if requested.intersection(self._audio_source_ids(self._json_list(row.files_json))):
+                    return str(row.topic_id)
+        return None
+
+    def delete_duplicate_audio_memos(self, *, keep_topic_id: str, source_signature: str) -> List[str]:
         """Delete legacy task-id copies that reference the same recording set."""
-        removed = 0
+        removed: List[str] = []
         with self.db.get_session() as session:
             rows = session.execute(
                 select(ResearchNote).where(ResearchNote.group_id == "ai-audio-memo")
@@ -99,11 +120,22 @@ class ResearchNoteRepository:
                 files = self._json_list(row.files_json)
                 if self._audio_source_signature(files) != source_signature:
                     continue
+                removed.append(str(row.topic_id))
                 session.delete(row)
-                removed += 1
             if removed:
                 session.commit()
         return removed
+
+    @staticmethod
+    def _audio_source_ids(files: Iterable[Any]) -> set[str]:
+        identities: set[str] = set()
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            file_id = str(item.get("file_id") or "").strip()
+            if file_id:
+                identities.add(f"file:{file_id}")
+        return identities
 
     @staticmethod
     def _audio_source_signature(files: Iterable[Any]) -> str:

@@ -63,13 +63,14 @@ def _snapshot() -> dict:
 class _RetryCompletesAudioService:
     def __init__(self) -> None:
         self.retry_calls = []
+        self.submit_kwargs = {}
 
     @staticmethod
     def capability():
         return {"configured": True, "transcription_provider": "aliyun_dashscope"}
 
-    @staticmethod
-    def submit(*_args, **_kwargs):
+    def submit(self, *_args, **kwargs):
+        self.submit_kwargs = dict(kwargs)
         return {"task_id": "audio-task-retry", "status": "failed", "message": "临时网络错误"}
 
     def retry(self, task_id, *, owner_id=None):
@@ -158,12 +159,15 @@ def test_industry_audio_failure_retries_once_with_explicit_owner_and_completes(t
         DatabaseManager.reset_instance()
 
     assert audio_service.retry_calls == [("audio-task-retry", "user:7")]
+    assert audio_service.submit_kwargs["generate_memo"] is False
     assert result["audio_pipeline"]["status"] == "completed"
     assert result["audio_pipeline"]["retry_attempted"] is True
     assert result["audio_pipeline"]["transcribed_count"] == 4
     assert result["totals"]["audio_transcripts"] == 4
     assert next(item for item in result["coverage"] if item["key"] == "audio_transcripts")["status"] == "covered"
     evidence = next(item for item in result["evidence"] if item["kind"] == "audio_transcript")
+    assert evidence["source"] == "阿里云语音转写"
+    assert evidence["url"].endswith("/transcripts/audio-1")
     assert evidence["date"] == "2026-08-31T06:59:00Z"
     assert evidence["processed_at"] == "2026-08-31T07:10:00"
     assert evidence["date"] != evidence["processed_at"]

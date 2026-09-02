@@ -119,6 +119,55 @@ def test_audio_memo_is_unique_per_source_and_uses_source_timestamp(
         Config.reset_instance()
 
 
+def test_audio_memo_reuses_existing_note_when_recording_sets_overlap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "audio-memo-overlap.db"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    Config.reset_instance()
+    DatabaseManager.reset_instance()
+    try:
+        service = object.__new__(ResearchNoteAudioAnalysisTaskService)
+        service._should_index = True
+        first = {
+            "title": "华懋科技录音纪要",
+            "executive_summary": "第一次生成",
+            "source_files": [{
+                "filename": "华懋科技.mp3", "topic_id": "source-1",
+                "file_id": "shared-file", "created_at": "2026-08-26T09:30:00+08:00",
+            }],
+            "company_mentions": [{"name": "华懋科技", "ts_code": "603306.SH"}],
+        }
+        second = {
+            **first,
+            "title": "华懋科技深度研究录音纪要",
+            "source_files": [
+                first["source_files"][0],
+                {
+                    "filename": "光通信行业.mp3", "topic_id": "source-2",
+                    "file_id": "another-file", "created_at": "2026-08-27T09:30:00+08:00",
+                },
+            ],
+        }
+
+        first_topic = service._index_completed_memo("task-1", first, "第一版正文")
+        second_topic = service._index_completed_memo("task-2", second, "第二版正文")
+
+        assert second_topic == first_topic
+        notes, total = ResearchNoteRepository().list_notes(group_id="ai-audio-memo", page_size=100)
+        assert total == 1
+        assert notes[0].topic_id == first_topic
+        events, event_total = InvestmentMonitorRepository().list_events(
+            days=3650, source_key="audio.memo.ai", page_size=100,
+        )
+        assert event_total == 1
+        assert events[0]["external_id"] == first_topic
+    finally:
+        DatabaseManager.reset_instance()
+        Config.reset_instance()
+
+
 def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path) -> None:
     token = set_current_user_id(101)
     try:

@@ -5169,7 +5169,7 @@ class IndustryResearchService:
             return self._refresh_snapshot_governance(snapshot)
         service = ResearchNoteAudioAnalysisTaskService.get_instance()
         capability = service.capability()
-        if not capability.get("configured"):
+        if not capability.get("transcription_configured", capability.get("configured")):
             snapshot["audio_pipeline"] = {
                 "status": "unavailable", **pipeline_counts, "transcribed_count": 0,
                 "message": capability.get("message") or "录音转写服务未配置",
@@ -5183,6 +5183,7 @@ class IndustryResearchService:
                 focus=objective,
                 hotwords=snapshot.get("query_terms") or [],
                 owner_id=owner_id,
+                generate_memo=False,
             )
             task_id = str(task.get("task_id") or "")
             wait_seconds = max(60, min(int(os.getenv("INDUSTRY_RESEARCH_AUDIO_WAIT_SEC", "900")), 1800))
@@ -5254,9 +5255,8 @@ class IndustryResearchService:
             # instead of falsely blocking the whole company report.
             completed = selected_completed
             evidence_url = (
-                f"/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/download?format=md"
-                if completed else
-                f"/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/transcripts/{transcript_file_ids[0]}"
+                f"/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}"
+                f"/transcripts/{transcript_file_ids[0]}"
             )
             summary_parts = [
                 str(result.get("executive_summary") or "").strip(),
@@ -5299,7 +5299,7 @@ class IndustryResearchService:
             evidence = {
                 "evidence_id": f"audio:{task_id}",
                 "kind": "audio_transcript",
-                "source": "阿里云语音转写 + 录音纪要",
+                "source": "阿里云语音转写",
                 "title": str(result.get("title") or f"{snapshot.get('topic')}录音纪要"),
                 "summary": "\n".join(value for value in summary_parts if value)[:9000],
                 # Evidence time is the source recording time, not the later ASR

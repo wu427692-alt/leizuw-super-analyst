@@ -14,6 +14,7 @@ from src.storage import (
     DatabaseManager,
     MonitoringEventRecord,
     MonitoringSourceRecord,
+    ResearchNote,
     WatchlistBackfillRecord,
     WatchlistAnnouncementSyncRecord,
     utc_naive_now,
@@ -621,6 +622,48 @@ class InvestmentMonitorRepository:
                 result = payload.get("result") if isinstance(payload, dict) else {}
                 source_files = result.get("source_files") if isinstance(result, dict) else []
                 if self._audio_source_signature(source_files or []) != source_signature:
+                    continue
+                session.delete(row)
+                removed += 1
+            if removed:
+                session.commit()
+        return removed
+
+    def delete_audio_memo_events_for_topics(self, topic_ids: Iterable[str]) -> int:
+        """Remove both native and essay projections for deleted audio memos."""
+        targets = {str(value).strip() for value in topic_ids if str(value).strip()}
+        if not targets:
+            return 0
+        removed = 0
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(MonitoringEventRecord).where(
+                    MonitoringEventRecord.external_id.in_(targets),
+                    MonitoringEventRecord.source_key.in_(("audio.memo.ai", "zsxq.essays")),
+                )
+            ).scalars().all()
+            for row in rows:
+                session.delete(row)
+                removed += 1
+            if removed:
+                session.commit()
+        return removed
+
+    def delete_orphaned_audio_memo_essay_events(self) -> int:
+        """Delete stale essay projections whose audio memo no longer exists."""
+        removed = 0
+        with self.db.get_session() as session:
+            valid_ids = set(session.execute(
+                select(ResearchNote.topic_id).where(ResearchNote.group_id == "ai-audio-memo")
+            ).scalars().all())
+            rows = session.execute(
+                select(MonitoringEventRecord).where(
+                    MonitoringEventRecord.source_key == "zsxq.essays",
+                    MonitoringEventRecord.external_id.like("audio-memo-%"),
+                )
+            ).scalars().all()
+            for row in rows:
+                if row.external_id in valid_ids:
                     continue
                 session.delete(row)
                 removed += 1

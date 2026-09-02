@@ -1353,13 +1353,25 @@ class ResearchNoteAudioAnalysisTaskService:
                 "source_topic_id": str(item.get("topic_id") or ""),
                 "asset_kind": "audio",
             } for item in (result.get("source_files") or []) if isinstance(item, dict)]
+            note_repository = ResearchNoteRepository()
+            monitor_repository = InvestmentMonitorRepository()
+            overlapping_topic_id = note_repository.find_overlapping_audio_memo(
+                files=files,
+                exclude_topic_id=topic_id,
+            )
+            if overlapping_topic_id:
+                monitor_repository.delete_orphaned_audio_memo_essay_events()
+                logger.info(
+                    "Reused audio memo %s because selected recordings already exist",
+                    overlapping_topic_id,
+                )
+                return overlapping_topic_id
             content_hash = research_note_information_hash(
                 title=title,
                 content=markdown,
                 files=files,
                 images=[],
             )
-            note_repository = ResearchNoteRepository()
             note_repository.upsert_notes([{
                 "topic_id": topic_id,
                 "group_id": "ai-audio-memo",
@@ -1382,7 +1394,6 @@ class ResearchNoteAudioAnalysisTaskService:
                 "modified_at": recorded_at,
                 "synced_at": generated,
             }])
-            monitor_repository = InvestmentMonitorRepository()
             monitor_repository.upsert_events([{
                 "source_key": "audio.memo.ai",
                 "source_name": "AI录音纪要",
@@ -1412,12 +1423,16 @@ class ResearchNoteAudioAnalysisTaskService:
                     keep_external_id=topic_id,
                     source_signature=source_signature,
                 )
-                if removed_notes or removed_events:
+                removed_projected_events = monitor_repository.delete_audio_memo_events_for_topics(removed_notes)
+                removed_orphans = monitor_repository.delete_orphaned_audio_memo_essay_events()
+                if removed_notes or removed_events or removed_projected_events or removed_orphans:
                     logger.info(
-                        "Consolidated duplicate audio memos source=%s notes=%s events=%s",
+                        "Consolidated audio memos source=%s notes=%s native_events=%s projected_events=%s orphans=%s",
                         source_signature[:16],
-                        removed_notes,
+                        len(removed_notes),
                         removed_events,
+                        removed_projected_events,
+                        removed_orphans,
                     )
             return topic_id
         except Exception:  # noqa: BLE001 - report generation must survive an index outage.
