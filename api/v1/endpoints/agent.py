@@ -4,8 +4,10 @@ Agent API endpoints.
 """
 
 import asyncio
+from contextvars import copy_context
 import json
 import logging
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +41,21 @@ TOOL_DISPLAY_NAMES: Dict[str, str] = {
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_SSE_HEARTBEAT_SECONDS = 15.0
+_SSE_IDLE_TIMEOUT_SECONDS = 300.0
+_SSE_CLEANUP_TIMEOUT_SECONDS = 5.0
+
+
+class _ChatStreamingResponse(StreamingResponse):
+    async def stream_response(self, send):
+        try:
+            await super().stream_response(send)
+        finally:
+            # ASGI 2.4 send failures can leave an async generator suspended at
+            # yield. Close it explicitly so disconnect cleanup is immediate.
+            await self.body_iterator.aclose()
+
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -176,8 +193,10 @@ async def agent_chat(body: ChatRequest, http_request: Request):
 
         # Offload the blocking call to a thread to avoid blocking the event loop.
         loop = asyncio.get_running_loop()
+        execution_context = copy_context()
         result = await loop.run_in_executor(
             None,
+            execution_context.run,
             lambda: executor.chat(message=body.message, session_id=session_id,
                                   context=_enrich_with_unified_stock_context(ctx, body.message)),
         )
@@ -240,7 +259,7 @@ async def list_chat_sessions(request: Request, limit: int = 50, user_id: Optiona
 
 @router.get("/chat/sessions/{session_id}", response_model=SessionMessagesResponse)
 async def get_chat_session_messages(session_id: str, request: Request, limit: int = 100):
-    """获取单个会话的完整消息"""
+    """获取单个会话最近 N 条消息，按时间正序恢复。"""
     from src.storage import get_db
     current_user_id = int(getattr(request.state, "user_id", 0) or 0)
     storage_session_id = session_id
@@ -429,6 +448,9 @@ async def agent_chat_stream(body: ChatRequest, http_request: Request):
         session_id = client_session_id
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
+    execution_context = copy_context()
+    delivery_open = threading.Event()
+    delivery_open.set()
 
     # Pass explicit skills into context for the orchestrator.
     # Direct assignment so caller-provided skills always take precedence.
@@ -438,11 +460,25 @@ async def agent_chat_stream(body: ChatRequest, http_request: Request):
         stream_ctx["skills"] = skills
 
     def progress_callback(event: dict):
+        if not delivery_open.is_set():
+            return
+        event = {**event, "session_id": client_session_id}
         # Enrich tool events with display names
         if event.get("type") in ("tool_start", "tool_done"):
             tool = event.get("tool", "")
             event["display_name"] = TOOL_DISPLAY_NAMES.get(tool, tool)
-        asyncio.run_coroutine_threadsafe(queue.put(event), loop)
+
+        def deliver():
+            if delivery_open.is_set():
+                queue.put_nowait(event)
+
+        try:
+            # No coroutine is created in the worker thread. After disconnect
+            # or event-loop shutdown, discard transport events while allowing
+            # executor.chat to persist its final answer to the scoped history.
+            loop.call_soon_threadsafe(deliver)
+        except RuntimeError:
+            delivery_open.clear()
 
     def run_sync():
         try:
@@ -454,40 +490,51 @@ async def agent_chat_stream(body: ChatRequest, http_request: Request):
                 progress_callback=progress_callback,
                 context=_enrich_with_unified_stock_context(stream_ctx, body.message),
             )
-            asyncio.run_coroutine_threadsafe(
-                queue.put({
-                    "type": "done",
-                    "success": result.success,
-                    "content": result.content,
-                    "error": result.error,
-                    "total_steps": result.total_steps,
-                    "session_id": client_session_id,
-                }),
-                loop,
-            )
+            progress_callback({
+                "type": "done",
+                "success": result.success,
+                "content": result.content,
+                "error": result.error,
+                "total_steps": result.total_steps,
+            })
         except Exception as exc:
             logger.error(f"Agent stream error: {exc}")
-            asyncio.run_coroutine_threadsafe(
-                queue.put({"type": "error", "message": str(exc)}),
-                loop,
-            )
+            progress_callback({"type": "error", "message": str(exc), "background_continues": False})
 
     async def event_generator():
         # Start executor in a thread so we don't block the event loop
-        fut = loop.run_in_executor(None, run_sync)
+        fut = loop.run_in_executor(None, execution_context.run, run_sync)
+        last_business_event = loop.time()
         try:
             while True:
+                remaining = _SSE_IDLE_TIMEOUT_SECONDS - (loop.time() - last_business_event)
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=300.0)
+                    event = await asyncio.wait_for(
+                        queue.get(), timeout=max(0.001, min(_SSE_HEARTBEAT_SECONDS, remaining)),
+                    )
                 except asyncio.TimeoutError:
-                    yield "data: " + json.dumps({"type": "error", "message": "分析超时"}, ensure_ascii=False) + "\n\n"
-                    break
+                    if loop.time() - last_business_event >= _SSE_IDLE_TIMEOUT_SECONDS:
+                        yield "data: " + json.dumps({
+                            "type": "error",
+                            "message": "连接等待超时，后台分析可能仍在继续，请稍后查看当前会话记录。",
+                            "session_id": client_session_id,
+                            "background_continues": True,
+                        }, ensure_ascii=False) + "\n\n"
+                        break
+                    # SSE comments keep proxies alive without manufacturing
+                    # business progress or extending the analysis idle limit.
+                    yield ": heartbeat\n\n"
+                    continue
+                last_business_event = loop.time()
                 yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
                 if event.get("type") in ("done", "error"):
                     break
         finally:
+            delivery_open.clear()
             try:
-                await asyncio.wait_for(fut, timeout=5.0)
+                # A transport close is not model cancellation. Shield the
+                # running future and retain the existing bounded cleanup wait.
+                await asyncio.wait_for(asyncio.shield(fut), timeout=_SSE_CLEANUP_TIMEOUT_SECONDS)
             except asyncio.CancelledError:
                 pass
             except asyncio.TimeoutError:
@@ -496,7 +543,7 @@ async def agent_chat_stream(body: ChatRequest, http_request: Request):
             except Exception as exc:
                 logger.warning("agent executor cleanup error (ignored): %s", exc, exc_info=True)
 
-    return StreamingResponse(
+    return _ChatStreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={

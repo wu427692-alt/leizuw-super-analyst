@@ -1,0 +1,296 @@
+# Independent Mac mini deployment. Do NOT merge with docker-compose.cloud.yml.
+# All paths below point at a restored WORKING copy, never the live source or
+# the immutable verified migration bundle.
+# Build the existing docker/Dockerfile on the target architecture and explicitly
+# set DSA_MACMINI_IMAGE. No guessed image, implicit pull, platform or fixed name.
+name: ${DSA_MACMINI_PROJECT_NAME:-dsa-macmini}
+
+# Existing admin authentication reads ENV_FILE, not ADMIN_AUTH_ENABLED from the
+# process alone. Check the private file before importing any application code.
+# Keep this guard shared by both services and free of secret-bearing output.
+x-startup-guard: &startup-guard |
+  import base64
+  import binascii
+  import os
+  import sys
+  from pathlib import Path
+  from dotenv import dotenv_values
+
+  def refuse(message):
+      raise SystemExit("Mac mini startup refused: " + message)
+
+  try:
+      config_file = Path(os.environ["ENV_FILE"])
+      if not config_file.is_file():
+          refuse("private config/.env is missing")
+      config = dotenv_values(config_file)
+      for key in ("ADMIN_AUTH_ENABLED", "USER_ACCESS_ENABLED"):
+          if (config.get(key) or "").strip().lower() not in {"true", "1", "yes"}:
+              refuse(key + " must be enabled in private config/.env")
+          if os.environ.get(key) != "true":
+              refuse(key + " must also be enforced by the deployment")
+      database_file = Path(os.environ["DATABASE_PATH"])
+      if not database_file.is_file():
+          refuse("restored database is missing")
+      data_dir = database_file.parent
+      salt, digest = (data_dir / ".admin_password_hash").read_text().strip().split(":")
+      if not base64.b64decode(salt, validate=True) or len(base64.b64decode(digest, validate=True)) != 32:
+          refuse("restored admin credential is invalid")
+      if len((data_dir / ".session_secret").read_bytes()) != 32:
+          refuse("restored session secret is invalid")
+      if len((data_dir / ".user_auth_secret").read_bytes()) != 32:
+          refuse("restored user authentication secret is invalid")
+  except (OSError, ValueError, KeyError, binascii.Error):
+      refuse("private configuration or restored authentication files are unreadable/invalid")
+
+  live_jobs = os.environ.get("DSA_MACMINI_LIVE_JOBS", "false")
+  if live_jobs not in {"false", "true"}:
+      refuse("DSA_MACMINI_LIVE_JOBS must be false or true")
+  if live_jobs == "true" and os.environ.get("DSA_MACMINI_PRODUCTION_CONFIRMED") != "true":
+      refuse("live jobs require confirmed production cutover")
+  for key in ("DSA_MACMINI_CONFIG_READ_ONLY", "DSA_MACMINI_TYC_READ_ONLY"):
+      read_only = os.environ.get(key, "true")
+      if read_only not in {"false", "true"}:
+          refuse(key + " must be false or true")
+      if read_only == "false" and os.environ.get("DSA_MACMINI_PRODUCTION_CONFIRMED") != "true":
+          refuse("writable private runtime mounts require confirmed production cutover")
+      if live_jobs == "true" and read_only != "false":
+          refuse("live jobs require writable config and tyc runtime copies")
+  mode = sys.argv[1]
+  if mode == "collector":
+      if os.environ.get("DSA_MACMINI_COLLECTOR_ENABLED") != "true":
+          refuse("collector requires explicit production cutover opt-in")
+  elif mode == "server":
+      lifespan = os.environ.get("DSA_MACMINI_LIFESPAN", "off")
+      if lifespan not in {"off", "on"}:
+          refuse("DSA_MACMINI_LIFESPAN must be off or on")
+      if lifespan == "on" and os.environ.get("DSA_MACMINI_PRODUCTION_CONFIRMED") != "true":
+          refuse("lifespan on can resume AI/backfill jobs; confirm production cutover first")
+      if live_jobs == "true" and lifespan != "on":
+          refuse("live API jobs require lifespan on")
+  else:
+      refuse("unknown service mode")
+  os.execvp(sys.argv[2], sys.argv[2:])
+
+x-environment: &environment
+  TZ: ${DSA_MACMINI_TZ:-Asia/Shanghai}
+  WEBUI_HOST: "0.0.0.0"
+  API_PORT: "${DSA_MACMINI_API_PORT:-8000}"
+  DATABASE_PATH: /app/data/stock_analysis.db
+  LOG_DIR: /app/logs
+  ENV_FILE: /app/config/.env
+  USER_ACCESS_ENABLED: "true"
+  ADMIN_AUTH_ENABLED: "true"
+  CORS_ALLOW_ALL: "false"
+  DSA_DESKTOP_MODE: "false"
+  DSA_MACMINI_LIVE_JOBS: "${DSA_MACMINI_LIVE_JOBS:-false}"
+  DSA_MACMINI_PRODUCTION_CONFIRMED: "${DSA_MACMINI_PRODUCTION_CONFIRMED:-false}"
+  DSA_MACMINI_CONFIG_READ_ONLY: "${DSA_MACMINI_CONFIG_READ_ONLY:-true}"
+  DSA_MACMINI_TYC_READ_ONLY: "${DSA_MACMINI_TYC_READ_ONLY:-true}"
+  MAX_WORKERS: "${DSA_MACMINI_TASK_WORKERS:-2}"
+  # Keep numeric libraries from multiplying threads inside every background
+  # task. API requests and collection each retain their own CPU allocation.
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  SQLITE_CACHE_SIZE_KIB: "${DSA_MACMINI_SQLITE_CACHE_KIB:-32768}"
+  SQLITE_MMAP_SIZE_MB: "${DSA_MACMINI_SQLITE_MMAP_MB:-512}"
+  SQLITE_POOL_SIZE: "${DSA_MACMINI_SQLITE_POOL_SIZE:-8}"
+  SQLITE_MAX_OVERFLOW: "${DSA_MACMINI_SQLITE_MAX_OVERFLOW:-4}"
+  ESSAY_ANALYSIS_CONCURRENCY: "${DSA_MACMINI_ESSAY_CONCURRENCY:-2}"
+  DATA_ACQUISITION_MAX_WORKERS: "${DSA_MACMINI_DOWNLOAD_WORKERS:-2}"
+  ESSAY_QUANT_PRICE_WORKERS: "${DSA_MACMINI_PRICE_WORKERS:-4}"
+  GENERATION_BACKEND_MAX_CONCURRENCY: "${DSA_MACMINI_GENERATION_CONCURRENCY:-2}"
+  LOCAL_CLI_BACKEND_MAX_CONCURRENCY: "1"
+  # Override migrated settings. API lifespan also starts some durable managers
+  # unconditionally, so these switches ALONE are not a safe preview boundary.
+  SCHEDULE_ENABLED: "false"
+  SCHEDULE_RUN_IMMEDIATELY: "false"
+  RUN_IMMEDIATELY: "false"
+  DSA_RUNTIME_SCHEDULER_SUPPRESS_START: "true"
+  DSA_RUNTIME_SCHEDULER_FORCE_ENABLED: "false"
+  DSA_RUNTIME_SCHEDULER_RUN_IMMEDIATELY: "false"
+  APP_STARTUP_WARMUP: "false"
+  MARKET_STARTUP_BOOTSTRAP_ENABLED: "false"
+  DATA_STORAGE_MAINTENANCE_AUTO_START: "false"
+  MARKET_DATA_AUTO_START: "false"
+  ESSAY_ANALYSIS_AUTO_START: "false"
+  ESSAY_DAILY_REPORT_AUTO_START: "false"
+  ZSXQ_MCP_AUTO_START: "false"
+  ESSAY_QUANT_AUTO_START: "false"
+  CONCEPT_THEME_AUTO_START: "false"
+  CONCEPT_THEME_RUN_MODE: external
+  INVESTMENT_MONITOR_AUTO_START: "false"
+  INVESTMENT_MONITOR_RUN_MODE: external
+  CNINFO_WATCHLIST_AUTO_START: "false"
+  ICLOUD_KNOWLEDGE_AUTO_START: "false"
+  SYNC_WATCHDOG_AUTO_START: "false"
+  FEISHU_STREAM_ENABLED: "false"
+  DINGTALK_STREAM_ENABLED: "false"
+  APP_DEBUG_FILE_LOG_ENABLED: "false"
+  APP_LOG_RETENTION_DAYS: "14"
+
+x-common: &common
+  image: ${DSA_MACMINI_IMAGE:?Set DSA_MACMINI_IMAGE to an explicitly built local target-architecture image}
+  pull_policy: never
+  init: true
+  restart: ${DSA_MACMINI_RESTART_POLICY:-no}
+  # Keep the image entrypoint: it repairs data/log/report/token ownership then
+  # drops to dsa (UID/GID 1000). Do not set user or override entrypoint here.
+  # Application keys are loaded through ENV_FILE from the private bundle.
+  # No Compose env_file: config output must not expand keys into environment.
+  volumes:
+    - type: bind
+      source: ${DSA_MACMINI_RUNTIME_DIR:?Set the absolute restored working runtime directory}/data
+      target: /app/data
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${DSA_MACMINI_RUNTIME_DIR:?Set the absolute restored bundle runtime directory}/logs
+      target: /app/logs
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${DSA_MACMINI_RUNTIME_DIR:?Set the absolute restored bundle runtime directory}/reports
+      target: /app/reports
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${DSA_MACMINI_RUNTIME_DIR:?Set the absolute restored bundle runtime directory}/strategies
+      target: /app/strategies
+      read_only: true
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${DSA_MACMINI_RUNTIME_DIR:?Set the absolute restored bundle runtime directory}/config
+      target: /app/config
+      # API saves ENV_FILE via a sibling .env.tmp + os.replace; production
+      # requires the entire restored directory writable, not a single-file bind.
+      read_only: ${DSA_MACMINI_CONFIG_READ_ONLY:-true}
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${DSA_MACMINI_RUNTIME_DIR:?Set the absolute restored bundle runtime directory}/tyc
+      target: /home/dsa/.tyc
+      # Production CLI credential refresh must persist into the restored copy.
+      read_only: ${DSA_MACMINI_TYC_READ_ONLY:-true}
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${DSA_MACMINI_RUNTIME_DIR:?Set the absolute restored bundle runtime directory}/longbridge_tokens
+      target: /home/dsa/.longbridge
+      bind:
+        create_host_path: false
+  environment: *environment
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  networks:
+    - macmini
+
+services:
+  server:
+    <<: *common
+    # Budget for the verified 8 GiB / 4 CPU VM on the 16 GiB Mac mini.
+    # Leave room for the VM, Docker and filesystem cache; never start multiple
+    # Uvicorn workers (lifespan owns singleton background job managers).
+    cpus: "${DSA_MACMINI_SERVER_CPUS:-3}"
+    mem_limit: "${DSA_MACMINI_SERVER_MEMORY:-5g}"
+    # --lifespan off is intentional: the existing app otherwise unconditionally
+    # resumes research/quant queues and six-month watchlist backfills. Preview
+    # is not full-function or read-only API acceptance. Do not submit jobs.
+    command:
+      - python
+      - -c
+      - *startup-guard
+      - server
+      - python
+      - -m
+      - uvicorn
+      - server:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "${DSA_MACMINI_API_PORT:-8000}"
+      - --lifespan
+      - "${DSA_MACMINI_LIFESPAN:-off}"
+    environment:
+      <<: *environment
+      DSA_MACMINI_LIFESPAN: "${DSA_MACMINI_LIFESPAN:-off}"
+      # These are the API workers enabled by the existing cloud deployment.
+      # Keep its explicit ESSAY_QUANT/CONCEPT/DATA_STORAGE/ICLOUD exclusions.
+      # The original --serve-only path also suppresses scheduler auto-start.
+      MARKET_DATA_AUTO_START: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      ESSAY_ANALYSIS_AUTO_START: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      ESSAY_DAILY_REPORT_AUTO_START: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      ZSXQ_MCP_AUTO_START: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      CNINFO_WATCHLIST_AUTO_START: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      SYNC_WATCHDOG_AUTO_START: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      APP_STARTUP_WARMUP: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      APP_STARTUP_WARMUP_PROFILE: essential
+      APP_STARTUP_WARMUP_DELAY_SECONDS: "${DSA_MACMINI_WARMUP_DELAY_SECONDS:-2}"
+      APP_STARTUP_WARMUP_WORKERS: "${DSA_MACMINI_WARMUP_WORKERS:-2}"
+      WATCHLIST_WORKSPACE_WARMUP_WORKERS: "${DSA_MACMINI_WATCHLIST_WARMUP_WORKERS:-3}"
+    ports:
+      - target: ${DSA_MACMINI_API_PORT:-8000}
+        published: "${DSA_MACMINI_HOST_PORT:-18000}"
+        host_ip: "127.0.0.1"
+        protocol: tcp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import http.client,json,os;
+          c=http.client.HTTPConnection('127.0.0.1',int(os.environ['API_PORT']),timeout=5);
+          c.request('GET','/api/health');r=c.getresponse();
+          assert r.status == 200 and json.loads(r.read()).get('status') == 'ok'
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  monitor-worker:
+    <<: *common
+    cpus: "${DSA_MACMINI_COLLECTOR_CPUS:-1}"
+    mem_limit: "${DSA_MACMINI_COLLECTOR_MEMORY:-1536m}"
+    # Explicit service targeting can bypass Compose profile selection; the
+    # additional false-by-default opt-in is checked before importing the worker.
+    profiles: [collector]
+    command:
+      - python
+      - -c
+      - *startup-guard
+      - collector
+      - python
+      - -m
+      - src.services.investment_monitor_daemon
+    environment:
+      <<: *environment
+      DSA_MACMINI_COLLECTOR_ENABLED: "${DSA_MACMINI_COLLECTOR_ENABLED:-false}"
+      INVESTMENT_MONITOR_AUTO_START: "true"
+      INVESTMENT_MONITOR_RUN_MODE: embedded
+      INVESTMENT_MONITOR_MAX_WORKERS: "${DSA_MACMINI_SOURCE_WORKERS:-4}"
+      INVESTMENT_MONITOR_POLL_SEC: "15"
+      SQLITE_CACHE_SIZE_KIB: "${DSA_MACMINI_COLLECTOR_CACHE_KIB:-16384}"
+      SQLITE_MMAP_SIZE_MB: "${DSA_MACMINI_COLLECTOR_MMAP_MB:-256}"
+      SQLITE_POOL_SIZE: "${DSA_MACMINI_COLLECTOR_POOL_SIZE:-4}"
+      SQLITE_MAX_OVERFLOW: "0"
+      # The cloud worker also owns concepts; restore that only with live jobs.
+      CONCEPT_THEME_AUTO_START: "${DSA_MACMINI_LIVE_JOBS:-false}"
+      CONCEPT_THEME_RUN_MODE: embedded
+      CONCEPT_THEME_SYNC_BATCH_SIZE: "20"
+      CONCEPT_THEME_SYNC_INTERVAL_SEC: "1800"
+      CONCEPT_THEME_WATCHLIST_INTERVAL_SEC: "21600"
+    healthcheck:
+      disable: true
+
+networks:
+  macmini:
+    # Safe preview has no external network route. Enable outbound access only
+    # during the approved cutover; never give the preview a second network.
+    internal: ${DSA_MACMINI_NETWORK_INTERNAL:-true}

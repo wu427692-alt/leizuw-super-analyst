@@ -49,6 +49,7 @@ from sqlalchemy import (
     Table,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import (
     declarative_base,
     sessionmaker,
@@ -57,7 +58,7 @@ from sqlalchemy.orm import (
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src.agent.provider_trace import PROVIDER_TRACE_RETENTION_LIMIT
-from src.config import get_config
+from src.config import get_config, parse_env_int
 from src.utils.sniper_points import extract_sniper_points, parse_sniper_value
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,35 @@ class UserTrustedIp(Base):
         UniqueConstraint("user_id", "ip_hash", name="uix_user_trusted_ip"),
         Index("ix_user_trusted_ip_lookup", "ip_hash", "user_id"),
     )
+
+
+class UserPhoneIdentity(Base):
+    """Verified immutable phone-to-user binding; never stores a clear phone."""
+
+    __tablename__ = "user_phone_identities"
+    phone_hash = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=False, unique=True, index=True)
+    phone_label = Column(String(24), nullable=False)
+    verified_at = Column(Float, nullable=False)
+
+
+class SmsAuthChallenge(Base):
+    """One-use verification reservations and persisted conservative send quota."""
+
+    __tablename__ = "sms_auth_challenges"
+    id = Column(String(64), primary_key=True)
+    phone_hash = Column(String(64), nullable=False, index=True)
+    ip_hash = Column(String(64), nullable=False, index=True)
+    browser_hash = Column(String(64), nullable=False)
+    purpose = Column(String(12), nullable=False)
+    user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=True)
+    scheme_name = Column(String(20), nullable=False, default="")
+    state = Column(String(16), nullable=False, default="reserved")
+    attempts = Column(Integer, nullable=False, default=0)
+    lease = Column(String(64), nullable=True)
+    created_at = Column(Float, nullable=False, index=True)
+    expires_at = Column(Float, nullable=False)
+    consumed_at = Column(Float, nullable=True)
 
 
 class UserWatchlistItem(Base):
@@ -521,6 +551,7 @@ class ResearchReportSyncState(Base):
     end_date = Column(Date)
     total_windows = Column(Integer, nullable=False, default=0)
     completed_windows = Column(Integer, nullable=False, default=0)
+    cursor_offset = Column(Integer, nullable=False, default=0)
     scanned_rows = Column(Integer, nullable=False, default=0)
     saved_rows = Column(Integer, nullable=False, default=0)
     last_error = Column(Text)
@@ -546,6 +577,8 @@ class ZsxqSyncState(Base):
     last_saved = Column(Integer, nullable=False, default=0)
     last_media_downloaded = Column(Integer, nullable=False, default=0)
     total_saved = Column(Integer, nullable=False, default=0)
+    history_checkpoint_json = Column(Text, nullable=True, default='{}')
+    incremental_checkpoint_json = Column(Text, nullable=True, default='{}')
     updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
 
 
@@ -1975,6 +2008,25 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                     "timeout": self._sqlite_busy_timeout_ms / 1000,
                 }
 
+            # Keep a bounded set of file-DB readers warm across requests. Each
+            # connection owns its page cache, so an unbounded overflow defeats
+            # memory budgeting even on a larger host. In-memory databases keep
+            # SQLAlchemy's original pool/connection semantics.
+            engine_url = make_url(db_url)
+            database_name = engine_url.database or ""
+            if (engine_url.get_backend_name() == "sqlite"
+                    and database_name and database_name != ":memory:"
+                    and not database_name.startswith("file::memory:")
+                    and engine_url.query.get("mode") != "memory"):
+                engine_kwargs["pool_size"] = parse_env_int(
+                    os.getenv("SQLITE_POOL_SIZE"), 5,
+                    field_name="SQLITE_POOL_SIZE", minimum=2, maximum=16,
+                )
+                engine_kwargs["max_overflow"] = parse_env_int(
+                    os.getenv("SQLITE_MAX_OVERFLOW"), 10,
+                    field_name="SQLITE_MAX_OVERFLOW", minimum=0, maximum=16,
+                )
+
             # 创建数据库引擎
             created_engine = create_engine(
                 db_url,
@@ -1999,6 +2051,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_user_scope_columns()
             self._ensure_llm_usage_telemetry_columns()
             self._ensure_essay_quant_research_config_column()
+            self._ensure_research_report_cursor_column()
+            self._ensure_zsxq_checkpoint_columns()
             self._ensure_intelligence_item_scope_values()
             self._ensure_schema_migration_record()
             self._ensure_intelligence_items_unique_index()
@@ -2061,6 +2115,39 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             connection.exec_driver_sql(
                 "ALTER TABLE essay_quant_rules ADD COLUMN research_config_json TEXT NOT NULL DEFAULT '{}'"
             )
+
+    def _ensure_research_report_cursor_column(self) -> None:
+        """Resume existing report collectors without rebuilding their completed windows."""
+        if not self._is_sqlite_engine:
+            return
+        with self._engine.begin() as connection:
+            existing = {column["name"] for column in inspect(connection).get_columns(ResearchReportSyncState.__tablename__)}
+            if "cursor_offset" in existing:
+                return
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            # API and collector processes may both start against an older database.
+            existing = {column["name"] for column in inspect(connection).get_columns(ResearchReportSyncState.__tablename__)}
+            if "cursor_offset" not in existing:
+                connection.exec_driver_sql(
+                    "ALTER TABLE research_report_sync_states ADD COLUMN cursor_offset INTEGER NOT NULL DEFAULT 0"
+                )
+
+    def _ensure_zsxq_checkpoint_columns(self) -> None:
+        """Add per-group durable cursors without rewriting stored notes or old state."""
+        if not self._is_sqlite_engine:
+            return
+        columns = ("history_checkpoint_json", "incremental_checkpoint_json")
+        with self._engine.begin() as connection:
+            existing = {column["name"] for column in inspect(connection).get_columns(ZsxqSyncState.__tablename__)}
+            if set(columns).issubset(existing):
+                return
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            existing = {column["name"] for column in inspect(connection).get_columns(ZsxqSyncState.__tablename__)}
+            for name in columns:
+                if name not in existing:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE zsxq_sync_states ADD COLUMN {name} TEXT DEFAULT '{{}}'"
+                    )
 
     def _ensure_schema_migration_record(self) -> None:
         session = self._SessionLocal()
@@ -4035,13 +4122,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
     def get_conversation_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """
-        获取单个会话的完整消息列表（用于前端恢复历史）
+        获取单个会话最近 N 条消息，按时间正序返回（用于前端和机器人恢复历史）。
         """
         with self.session_scope() as session:
             stmt = (
                 select(ConversationMessage)
                 .where(ConversationMessage.session_id == session_id)
-                .order_by(ConversationMessage.created_at)
+                .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
                 .limit(limit)
             )
             messages = session.execute(stmt).scalars().all()
@@ -4052,7 +4139,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                     "content": msg.content,
                     "created_at": msg.created_at.isoformat() if msg.created_at else None,
                 }
-                for msg in messages
+                for msg in reversed(messages)
             ]
 
     def delete_conversation_session(self, session_id: str) -> int:

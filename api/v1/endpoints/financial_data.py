@@ -5,15 +5,16 @@ from __future__ import annotations
 
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 import zipfile
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
@@ -553,7 +554,15 @@ def zsxq_history_backfill(request: ZsxqHistoryBackfillRequest):
             status_code=400,
             detail={"error": "invalid_history_range", "message": "years 只支持 1 或 2"},
         )
-    return ZsxqMcpSyncWorker.get_instance().start_history_backfill(days=request.years * 365)
+    options = {"days": request.years * 365}
+    if request.start_date is not None:
+        # Public dates are inclusive Shanghai calendar dates; service checkpoints
+        # use UTC [start, end), frozen across process restarts.
+        from src.services.financial_data_service import _parse_datetime
+
+        options.update(start_at=_parse_datetime(request.start_date.isoformat(), field_name="create_time"),
+                       end_at=_parse_datetime((request.end_date + timedelta(days=1)).isoformat(), field_name="create_time"))
+    return ZsxqMcpSyncWorker.get_instance().start_history_backfill(**options)
 
 
 @router.post("/zsxq/sync/worker/start", summary="启动知识星球 MCP 近实时增量同步")
@@ -612,3 +621,154 @@ def download_research_note_media(topic_id: str, kind: str, asset_id: str):
         raise _not_found(exc)
     except (ZsxqMcpSyncError, requests.RequestException) as exc:
         raise _upstream_error(exc)
+
+
+@router.get("/annual-report", summary="查询或下载 A 股年报 PDF")
+def annual_report(
+    symbol: str = Query(..., min_length=6, max_length=12),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    report_type: str = Query("annual", pattern="^(annual|semi|q1|q3|all)$"),
+    years: int = Query(1, ge=1, le=10),
+    download: bool = Query(True),
+):
+    """Resolve the latest (or a given year's) annual report from CNINFO."""
+    from src.services.annual_report_service import AnnualReportService
+
+    service = AnnualReportService()
+    if report_type == "all" or years > 1:
+        types = ["annual", "semi", "q1", "q3"] if report_type == "all" else [report_type]
+        return service.package_periodic(symbol, types, years)
+    if download:
+        result = service.download(symbol, year, report_type)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result)
+        return result
+    result = service.find(symbol, year, report_type)
+    if not result:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"未找到 {symbol} 的年报"})
+    return result
+
+
+@router.get("/annual-report/file/{filename}", summary="下载已保存的年报 PDF")
+def annual_report_file(filename: str):
+    safe_name = Path(filename).name
+    path = Path("/app/data/annual_reports") / safe_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "年报文件不存在"})
+    return FileResponse(path, media_type="application/pdf", filename=safe_name)
+
+
+class ReportPackageRequest(BaseModel):
+    symbol: Optional[str] = None
+    keyword: Optional[str] = None
+    urls: Optional[List[str]] = None
+    limit: int = 10
+
+
+@router.post("/reports/package", summary="把研报 PDF 打包成 ZIP")
+def package_research_reports(request: ReportPackageRequest):
+    from src.services.report_pack_service import ReportPackService
+
+    result = ReportPackService().package(
+        symbol=request.symbol,
+        keyword=request.keyword,
+        urls=request.urls,
+        limit=request.limit,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result)
+    return result
+
+
+@router.get("/downloads/{filename}", summary="下载已打包的研报 ZIP")
+def download_report_package(filename: str):
+    safe_name = Path(filename).name
+    path = Path("/app/data/downloads") / safe_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "文件不存在"})
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=safe_name,
+        headers={
+            "Cache-Control": "public, max-age=86400, immutable",
+            "CDN-Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
+@router.get("/workspace-files", summary="按工作区列出已生成文件")
+def list_workspace_files(workspace: str = Query(..., min_length=1, max_length=80)):
+    from urllib.parse import quote
+    safe_ws = Path(workspace).name
+    base = Path("/app/data/downloads") / safe_ws
+    items = []
+    if base.is_dir():
+        files = [p for p in base.iterdir() if p.is_file()]
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in files[:100]:
+            items.append({
+                "filename": path.name,
+                "size": path.stat().st_size,
+                "url": f"/api/v1/financial-data/downloads/{safe_ws}/{quote(path.name)}",
+            })
+    return {"workspace": safe_ws, "items": items}
+
+
+@router.get("/downloads/{workspace}/{filename}", summary="下载工作区文件")
+def download_workspace_file(workspace: str, filename: str):
+    safe_ws = Path(workspace).name
+    safe_name = Path(filename).name
+    path = Path("/app/data/downloads") / safe_ws / safe_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "文件不存在"})
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=safe_name,
+        headers={
+            "Cache-Control": "public, max-age=86400, immutable",
+            "CDN-Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
+@router.get("/reports/package/tasks/{task_id}", summary="查询研报打包任务进度")
+def report_package_task(task_id: str):
+    from src.services.report_pack_service import ReportPackService
+
+    task = ReportPackService().get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "任务不存在"})
+    return task
+
+
+@router.get("/announcements", summary="查询 A 股公告列表")
+def list_announcements(
+    symbol: str = Query(..., min_length=6, max_length=12),
+    days: int = Query(30, ge=1, le=365),
+    category: Optional[str] = Query(None, max_length=64),
+    limit: int = Query(20, ge=1, le=30),
+    download: bool = Query(False),
+):
+    from src.services.annual_report_service import AnnualReportService
+
+    service = AnnualReportService()
+    items = service.list_announcements(symbol, days, category, limit)
+    if download:
+        package = service.package_announcements(symbol, days, limit, category)
+        return {"items": items, "count": len(items), "package": package}
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/documents/download", summary="下载公告/PDF 全文")
+def download_document(
+    url: str = Query(..., min_length=8, max_length=2000),
+    title: str = Query("公告", max_length=200),
+):
+    from src.services.annual_report_service import AnnualReportService
+
+    result = AnnualReportService().download_document(url, title)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result)
+    return result

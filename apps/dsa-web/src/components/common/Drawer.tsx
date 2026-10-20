@@ -1,10 +1,9 @@
 import type React from 'react';
-import { useEffect, useCallback } from 'react';
+import { useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { cn } from '../../utils/cn';
-
-let activeDrawerCount = 0;
+import { useModalFocus } from './useModalFocus';
 
 interface DrawerProps {
   isOpen: boolean;
@@ -18,7 +17,7 @@ interface DrawerProps {
 }
 
 /**
- * Side drawer component with terminal-inspired styling.
+ * Shared page-internal detail reader.
  */
 export const Drawer: React.FC<DrawerProps> = ({
   isOpen,
@@ -31,37 +30,14 @@ export const Drawer: React.FC<DrawerProps> = ({
   backdropClassName,
 }) => {
   const { t } = useUiLanguage();
-  // Close the drawer when Escape is pressed.
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    },
-    [onClose]
-  );
-
-  useEffect(() => {
-    if (isOpen) {
-      document.addEventListener('keydown', handleKeyDown);
-      activeDrawerCount++;
-      if (activeDrawerCount === 1) {
-        document.body.style.overflow = 'hidden';
-      }
-
-      return () => {
-        document.removeEventListener('keydown', handleKeyDown);
-        activeDrawerCount--;
-        if (activeDrawerCount === 0) {
-          document.body.style.overflow = '';
-        }
-      };
-    }
-  }, [isOpen, handleKeyDown]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const generatedTitleId = useId();
+  useModalFocus({ isOpen, dialogRef, initialFocusRef: closeButtonRef, zIndex, onClose });
 
   if (!isOpen) return null;
 
-  const titleId = title ? `drawer-title-${side}` : undefined;
+  const titleId = title ? generatedTitleId : undefined;
   const sidePositionClass = side === 'left' ? 'left-0 justify-start' : 'right-0 justify-end';
   const borderClass = side === 'left' ? 'border-r' : 'border-l';
 
@@ -78,7 +54,9 @@ export const Drawer: React.FC<DrawerProps> = ({
 
       <div className={cn('absolute inset-y-0 flex h-full min-h-0 w-full', sidePositionClass, width)}>
         <div
+          ref={dialogRef}
           role="dialog"
+          tabIndex={-1}
           aria-modal="true"
           aria-labelledby={titleId}
           className={cn(
@@ -88,17 +66,17 @@ export const Drawer: React.FC<DrawerProps> = ({
             side === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'
           )}
         >
-          <div className="flex items-center justify-between border-b border-border/60 px-4 py-3 sm:px-6 sm:py-4">
+          <div className="flex items-center justify-between gap-4 border-b border-border/60 px-4 py-3 sm:px-6 sm:py-4">
             {title ? (
-              <div>
-                <span className="label-uppercase">DETAIL VIEW</span>
-                <h2 id={titleId} className="mt-1 text-lg font-semibold text-foreground">{title}</h2>
+              <div className="min-w-0">
+                <h2 id={titleId} className="break-words text-lg font-semibold text-foreground">{title}</h2>
               </div>
             ) : <div />}
             <button
+              ref={closeButtonRef}
               type="button"
               onClick={onClose}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border/70 bg-card/80 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-card/80 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
               aria-label={t('common.closeDrawer')}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

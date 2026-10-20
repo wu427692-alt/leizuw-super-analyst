@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -111,7 +112,9 @@ def _query_upstream_pack(code: str) -> Dict[str, Any]:
         return api_name, TushareGatewayService().query(api_name, params=params)
 
     with ThreadPoolExecutor(max_workers=5, thread_name_prefix="agent-tushare") as pool:
-        futures = {pool.submit(run, name, params): name for name, params in jobs.items()}
+        # Contexts cannot be entered concurrently: copy once per resource so
+        # request identity survives this second, nested executor boundary.
+        futures = {pool.submit(copy_context().run, run, name, params): name for name, params in jobs.items()}
         for future in as_completed(futures):
             api_name = futures[future]
             try:
@@ -123,9 +126,10 @@ def _query_upstream_pack(code: str) -> Dict[str, Any]:
             except Exception as exc:  # one unavailable endpoint must not erase the rest
                 errors[api_name] = type(exc).__name__
 
+    has_rows = any(rows_by_resource.values())
     payload = {
         "_meta": {
-            "status": "ok" if rows_by_resource else "failed",
+            "status": ("partial" if errors else "ok") if has_rows else ("failed" if errors else "empty"),
             "stock_code": canonical,
             "fetched_at": _now_utc().isoformat().replace("+00:00", "Z"),
             "source": "tushare_direct_fallback",
@@ -183,31 +187,57 @@ def hydrate_agent_stock_context(context: Dict[str, Any], message: str) -> Dict[s
     if not str(enriched.get("stock_name") or "").strip():
         enriched["stock_name"] = get_index_stock_name(canonical) or ""
 
-    shared = InvestmentMonitorService().stock_workspace(canonical, days=365)
+    failures: Dict[str, str] = {}
+    try:
+        shared = InvestmentMonitorService().stock_workspace(canonical, days=365)
+    except Exception as exc:
+        # A broken local workspace must not bypass the existing bounded API
+        # fallback or discard facts supplied by the caller.
+        failures["local_workspace"] = type(exc).__name__
+        logger.info("Agent local workspace unavailable for %s: %s", canonical, type(exc).__name__)
+        shared = {}
     stock = dict(shared.get("stock") or {})
     agent_context = dict(shared.get("agent_context") or {})
     previous_summary = str(enriched.get("analysis_context_pack_summary") or "").strip()
     shared_summary = str(agent_context.get("analysis_context_pack_summary") or "").strip()
     enriched.update(agent_context)
     enriched["stock_code"] = resolved_stock_code
-    if previous_summary and shared_summary:
-        enriched["analysis_context_pack_summary"] = f"{previous_summary}\n{shared_summary}"
+    if previous_summary:
+        enriched["analysis_context_pack_summary"] = "\n".join(part for part in (previous_summary, shared_summary) if part)
     enriched["unified_context_version"] = shared.get("version")
 
-    cached = get_db().get_latest_fundamental_snapshot(_CACHE_QUERY_ID, canonical)
+    try:
+        cached = get_db().get_latest_fundamental_snapshot(_CACHE_QUERY_ID, canonical)
+    except Exception as exc:
+        failures["local_cache"] = type(exc).__name__
+        logger.info("Agent context cache read failed for %s: %s", canonical, type(exc).__name__)
+        cached = None
     upstream = cached if _cache_is_fresh(cached) else None
     if _workspace_needs_upstream(stock) and upstream is None:
-        upstream = _query_upstream_pack(canonical)
-    if isinstance(upstream, dict) and (upstream.get("resources") or {}):
+        try:
+            upstream = _query_upstream_pack(canonical)
+        except Exception as exc:
+            failures["upstream_fallback"] = type(exc).__name__
+            logger.info("Agent upstream context unavailable for %s: %s", canonical, type(exc).__name__)
+    if isinstance(upstream, dict):
         compact = _compact_upstream_pack(upstream)
         fallback_summary = (
             "\n[本地缺口的上游直连补充]\n"
-            "以下为 Tushare 接口按需获取并已回写本地的数据；日期字段必须原样引用，"
+            "以下为 Tushare 接口按需获取或来自本地缓存的数据；日期字段必须原样引用，"
+            "空资源及失败状态不代表已取得数据，"
             "不得把研报预测写成公司已实现业绩。\n"
             + json.dumps(compact, ensure_ascii=False, default=str)
         )
         current = str(enriched.get("analysis_context_pack_summary") or "")
         enriched["analysis_context_pack_summary"] = current + fallback_summary
         enriched["upstream_fallback_context"] = compact
+
+    if failures:
+        current = str(enriched.get("analysis_context_pack_summary") or "")
+        enriched["analysis_context_pack_summary"] = (
+            current + "\n[数据获取状态]\n部分读取失败："
+            + json.dumps(failures, ensure_ascii=False)
+            + "。仅使用实际取得的证据；缺失数据不可推测为已获取。"
+        )
 
     return enriched

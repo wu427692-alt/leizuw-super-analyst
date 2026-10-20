@@ -20,6 +20,7 @@ const TITLES: Record<string, { title: UiTextKey; description: UiTextKey }> = {
   '/industry-research': { title: 'layout.route.industryResearch.title', description: 'layout.route.industryResearch.description' },
   '/concept-themes': { title: 'layout.route.conceptThemes.title', description: 'layout.route.conceptThemes.description' },
   '/essay-radar': { title: 'layout.route.essayRadar.title', description: 'layout.route.essayRadar.description' },
+  '/ai-news': { title: 'layout.route.aiNews.title', description: 'layout.route.aiNews.description' },
   '/investment-monitor': { title: 'layout.route.investmentMonitor.title', description: 'layout.route.investmentMonitor.description' },
   '/super-watchlist': { title: 'layout.route.superWatchlist.title', description: 'layout.route.superWatchlist.description' },
   '/data-acquisition': { title: 'layout.route.dataAcquisition.title', description: 'layout.route.dataAcquisition.description' },

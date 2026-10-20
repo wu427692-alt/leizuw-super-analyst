@@ -12,10 +12,11 @@ import threading
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import desc, select
+from sqlalchemy.orm import load_only
 
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.services.essay_analysis_service import DeepSeekEssayAnalyzer, EssayAnalysisError
-from src.storage import DatabaseManager, EssayConsensusRecord, ResearchNote, utc_naive_now
+from src.storage import DatabaseManager, EssayConsensusRecord, MonitoringEventRecord, ResearchNote, utc_naive_now
 
 logger = logging.getLogger(__name__)
 
@@ -216,14 +217,14 @@ class EssayConsensusService:
         self.analyzer = analyzer or EssayConsensusAnalyzer()
 
     def snapshot(self, symbol: str, stock_name: str, *, limit: int = 20) -> Dict[str, Any]:
-        selected = self._select_notes(symbol, limit=limit)
+        selected = self._select_notes(symbol, limit=limit, include_content=False)
         source_hash = self._source_hash(selected)
         with self.db.get_session() as session:
             row = session.execute(select(EssayConsensusRecord).where(EssayConsensusRecord.symbol == symbol)).scalar_one_or_none()
             return self._snapshot_dict(row, selected=selected, source_hash=source_hash)
 
     def enqueue(self, symbol: str, stock_name: str, *, limit: int = 20, force: bool = True) -> Dict[str, Any]:
-        selected = self._select_notes(symbol, limit=limit)
+        selected = self._select_notes(symbol, limit=limit, include_content=False)
         if not selected:
             raise EssayConsensusError("该股票暂无可供分析的匹配小作文")
         source_hash = self._source_hash(selected)
@@ -242,6 +243,12 @@ class EssayConsensusService:
             elif not force and row.status == "completed" and row.source_hash == source_hash:
                 return self._snapshot_dict(row, selected=selected, source_hash=source_hash)
             else:
+                # A retry keeps the previous result. Freeze its provenance before
+                # replacing the queue's input IDs and completion timestamp.
+                previous_result = self._loads(row.result_json, {})
+                if isinstance(previous_result, dict) and previous_result:
+                    previous_result["_source_snapshot"] = self._report_provenance(row, previous_result)
+                    row.result_json = json.dumps(previous_result, ensure_ascii=False)
                 row.stock_name = stock_name
                 row.status = "pending"
                 row.model = self.analyzer.model
@@ -273,6 +280,7 @@ class EssayConsensusService:
             record_id = row.id
             symbol, stock_name = row.symbol, row.stock_name
             topic_ids = self._loads(row.source_topic_ids_json, [])
+            model, prompt_version = row.model, row.prompt_version
         notes = self._analysis_notes(symbol, topic_ids)
         try:
             response = self.analyzer.analyze(symbol=symbol, stock_name=stock_name, notes=notes)
@@ -281,9 +289,21 @@ class EssayConsensusService:
                 if row is None:
                     return True
                 row.status = "completed"
-                row.result_json = json.dumps(response["result"], ensure_ascii=False)
                 row.error_message = None
                 row.completed_at = utc_naive_now()
+                result = dict(response["result"])
+                # Store only bounded source metadata, never the transcript/body.
+                # These are the notes actually read, not a later 20+5 selection.
+                sources = self._source_metadata(symbol, topic_ids, notes=notes)
+                result["_source_snapshot"] = {
+                    "version": 1, "source_notes": sources, "source_count": len(notes),
+                    "sources_complete": True,
+                    "source_hash": self._source_hash(notes),
+                    "analysis_cutoff_at": self._source_cutoff(sources),
+                    "completed_at": row.completed_at.isoformat() + "Z",
+                    "model": model, "prompt_version": prompt_version,
+                }
+                row.result_json = json.dumps(result, ensure_ascii=False)
                 row.updated_at = row.completed_at
                 for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                     setattr(row, key, int(response.get("usage", {}).get(key) or 0))
@@ -300,41 +320,49 @@ class EssayConsensusService:
                     session.commit()
         return True
 
-    def _select_notes(self, symbol: str, *, limit: int) -> List[Dict[str, Any]]:
-        # Consensus only consumes essay rows.  Loading every announcement,
-        # quote, report, news item and forum post for a popular stock made the
-        # visible workspace read the same multi-thousand-row evidence set twice.
-        events = [
-            event for event in self.monitor_repo.recent_symbol_events(
-                symbol=symbol, days=3650, event_types=("essay",),
-            )
-            if event.get("external_id")
-        ]
-        topic_ids = [str(event["external_id"]) for event in events]
-        event_by_topic = {str(event["external_id"]): event for event in events}
-        notes = self._notes_by_ids(topic_ids)
-        note_by_id = {str(note["topic_id"]): note for note in notes}
-        dedicated: List[Dict[str, Any]] = []
-        related: List[Dict[str, Any]] = []
+    def _select_notes(
+        self, symbol: str, *, limit: int, include_content: bool = True,
+    ) -> List[Dict[str, Any]]:
+        # Find both quotas using metadata first. A fixed recent-page limit can
+        # omit older dedicated notes, while loading ten years of bodies makes
+        # every stock workspace unnecessarily expensive.
         related_limit = max(1, min(int(limit), 20))
-        for topic_id in topic_ids:
-            note = note_by_id.get(topic_id)
-            if not note:
-                continue
-            event = event_by_topic[topic_id]
-            item = {**note, "event_id": event.get("id"), "event_at": event.get("event_at")}
-            if self._is_dedicated(note, symbol):
-                if len(dedicated) < 5:
-                    dedicated.append({**item, "source_kind": "dedicated"})
-            elif len(related) < related_limit:
-                related.append({**item, "source_kind": "related"})
-            if len(dedicated) >= 5 and len(related) >= related_limit:
+        cutoff = utc_naive_now() - timedelta(days=3650)
+        selected: Dict[str, Dict[str, Any]] = {}
+        counts = {"dedicated": 0, "related": 0}
+        limits = {"dedicated": 5, "related": related_limit}
+        seen: set[str] = set()
+        before = None
+        while counts != limits:
+            candidates = self.monitor_repo.consensus_note_candidates(
+                symbol=symbol, cutoff=cutoff, before=before,
+            )
+            if not candidates:
                 break
-        return sorted(
-            [*dedicated, *related],
-            key=lambda item: str(item.get("event_at") or item.get("created_at") or ""),
-            reverse=True,
-        )
+            for candidate in candidates:
+                topic_id = str(candidate["topic_id"])
+                if topic_id in seen:
+                    continue
+                seen.add(topic_id)
+                symbols = str(candidate.get("symbol_codes") or "").split(",")
+                kind = "dedicated" if self._is_dedicated({"symbols": symbols}, symbol) else "related"
+                if counts[kind] < limits[kind]:
+                    selected[topic_id] = {
+                        "event_id": candidate["event_id"],
+                        "event_at": candidate["event_at"].isoformat() + "Z",
+                        "source_kind": kind,
+                    }
+                    counts[kind] += 1
+                if counts == limits:
+                    break
+            last = candidates[-1]
+            before = (last["event_at"], last["event_id"])
+        notes = self._notes_by_ids(list(selected), include_content=include_content)
+        note_by_id = {str(note["topic_id"]): note for note in notes}
+        return [
+            {**note_by_id[topic_id], **metadata}
+            for topic_id, metadata in selected.items() if topic_id in note_by_id
+        ]
 
     def _analysis_notes(self, symbol: str, topic_ids: Sequence[str]) -> List[Dict[str, Any]]:
         note_by_id = {str(note["topic_id"]): note for note in self._notes_by_ids(topic_ids)}
@@ -351,18 +379,28 @@ class EssayConsensusService:
         }
         return symbols == {str(symbol).strip().upper().split(".")[0]}
 
-    def _notes_by_ids(self, topic_ids: Sequence[str]) -> List[Dict[str, Any]]:
+    def _notes_by_ids(
+        self, topic_ids: Sequence[str], *, include_content: bool = True,
+    ) -> List[Dict[str, Any]]:
         normalized = [str(value) for value in topic_ids if str(value)]
         if not normalized:
             return []
+        columns = [
+            ResearchNote.topic_id, ResearchNote.title, ResearchNote.created_at,
+            ResearchNote.author_name, ResearchNote.group_name, ResearchNote.symbol_codes,
+        ]
+        if include_content:
+            columns.append(ResearchNote.content)
         rows = []
         with self.db.get_session() as session:
             for offset in range(0, len(normalized), 500):
                 rows.extend(session.execute(
                     select(ResearchNote).where(ResearchNote.topic_id.in_(normalized[offset:offset + 500]))
+                    .options(load_only(*columns))
                 ).scalars().all())
         return [{
-            "topic_id": row.topic_id, "title": row.title, "content": row.content or "",
+            "topic_id": row.topic_id, "title": row.title,
+            "content": (row.content or "") if include_content else "",
             "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
             "author_name": row.author_name or "", "group_name": row.group_name,
             "symbols": [value for value in (row.symbol_codes or "").split(",") if value],
@@ -375,16 +413,83 @@ class EssayConsensusService:
         )
         return hashlib.sha256(payload.encode()).hexdigest()
 
+    @staticmethod
+    def _source_cutoff(sources: Sequence[Dict[str, Any]]) -> Optional[str]:
+        # Missing dates cannot establish the full report's material cutoff.
+        if not sources or any(not item.get("event_at") for item in sources):
+            return None
+        return max(str(item["event_at"]) for item in sources)
+
+    def _source_metadata(
+        self, symbol: str, topic_ids: Sequence[str], *, notes: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Restore report sources outside the current quota using metadata only."""
+        normalized = list(dict.fromkeys(str(value) for value in topic_ids if value))
+        if notes is None:
+            notes = self._notes_by_ids(normalized, include_content=False)
+        by_topic = {str(item["topic_id"]): item for item in notes}
+        event_ids: Dict[str, int] = {}
+        with self.db.get_session() as session:
+            for offset in range(0, len(normalized), 500):
+                records = session.execute(select(
+                    MonitoringEventRecord.external_id, MonitoringEventRecord.id,
+                ).where(
+                    MonitoringEventRecord.external_id.in_(normalized[offset:offset + 500]),
+                    MonitoringEventRecord.event_type == "essay",
+                ).order_by(MonitoringEventRecord.event_at.desc(), MonitoringEventRecord.id.desc())).all()
+                for topic_id, event_id in records:
+                    event_ids.setdefault(str(topic_id), event_id)
+        return [{
+            "topic_id": topic_id,
+            "event_id": event_ids.get(topic_id),
+            "title": note.get("title"),
+            # ResearchNote.created_at is the timestamp supplied to the model.
+            # A projection's ingestion/update time is not the opinion's date.
+            "event_at": note.get("created_at"),
+            "author_name": note.get("author_name"),
+            "source_kind": note.get("source_kind") or (
+                "dedicated" if self._is_dedicated(note, symbol) else "related"
+            ),
+        } for topic_id in normalized if (note := by_topic.get(topic_id)) is not None]
+
+    def _report_provenance(self, row: EssayConsensusRecord, result: Dict[str, Any]) -> Dict[str, Any]:
+        stored = result.get("_source_snapshot")
+        if isinstance(stored, dict) and stored.get("version") == 1:
+            return stored
+        # Before this metadata was persisted, a completed row still carries its
+        # original input IDs. Legacy retries have already overwritten those IDs;
+        # only the estimate references can be recovered, not the whole sample.
+        complete_inputs = row.status == "completed"
+        topic_ids = self._loads(row.source_topic_ids_json, []) if complete_inputs else [
+            item.get("topic_id") for item in result.get("estimates") or [] if isinstance(item, dict)
+        ]
+        sources = self._source_metadata(row.symbol, topic_ids)
+        source_count = int(row.source_count or 0) if complete_inputs else None
+        complete = bool(complete_inputs and len(sources) == source_count)
+        return {
+            "version": 1, "source_notes": sources, "source_count": source_count,
+            "sources_complete": complete,
+            "source_hash": row.source_hash if complete_inputs else None,
+            "analysis_cutoff_at": self._source_cutoff(sources) if complete else None,
+            "completed_at": row.completed_at.isoformat() + "Z" if complete_inputs and row.completed_at else None,
+            "model": row.model if complete_inputs else None,
+            "prompt_version": row.prompt_version if complete_inputs else None,
+        }
+
     def _snapshot_dict(self, row: Optional[EssayConsensusRecord], *, selected: Sequence[Dict[str, Any]], source_hash: str) -> Dict[str, Any]:
-        selected_by_topic = {str(item["topic_id"]): item for item in selected}
         result = self._loads(row.result_json, {}) if row and row.result_json else {}
+        result = result if isinstance(result, dict) else {}
+        has_report = bool(result)
+        report = self._report_provenance(row, result) if row and has_report else {}
+        report_sources = report.get("source_notes") or []
+        report_by_topic = {str(item["topic_id"]): item for item in report_sources}
         estimates = []
         counts: Dict[str, int] = {}
         for raw in result.get("estimates") or []:
             if not isinstance(raw, dict):
                 continue
             topic_id = str(raw.get("topic_id") or "")
-            source = selected_by_topic.get(topic_id, {})
+            source = report_by_topic.get(topic_id, {})
             metric = str(raw.get("metric") or "other")
             counts[metric] = counts.get(metric, 0) + 1
             proposed_at = source.get("event_at") or source.get("created_at")
@@ -394,16 +499,23 @@ class EssayConsensusService:
                 "title": source.get("title"),
                 "event_at": proposed_at,
                 "proposed_at": proposed_at,
-                "source_kind": source.get("source_kind") or "related",
+                "source_kind": source.get("source_kind"),
             })
-        stale = bool(row and row.source_hash != source_hash)
+        # Queue inputs can be replaced while an earlier analysis is running.
+        # Freshness belongs to the result's frozen inputs, not the mutable job.
+        analyzed_hash = report.get("source_hash") if has_report else None
+        stale = bool(row and (analyzed_hash or row.source_hash) != source_hash)
         status = "not_started" if row is None else "stale" if stale and row.status == "completed" else row.status
-        source_notes = [{
+        candidate_source_notes = [{
             "topic_id": item["topic_id"], "event_id": item.get("event_id"), "title": item.get("title"),
-            "event_at": item.get("event_at") or item.get("created_at"), "author_name": item.get("author_name"),
+            "event_at": item.get("created_at") or item.get("event_at"), "author_name": item.get("author_name"),
             "source_kind": item.get("source_kind") or "related",
-            "estimate_count": sum(1 for value in estimates if value.get("topic_id") == item["topic_id"]),
+            "estimate_count": 0,
         } for item in selected]
+        source_notes = [{
+            **item,
+            "estimate_count": sum(1 for value in estimates if value.get("topic_id") == item["topic_id"]),
+        } for item in report_sources]
         dedicated_count = sum(1 for item in selected if item.get("source_kind") == "dedicated")
         related_count = len(selected) - dedicated_count
         return {
@@ -411,10 +523,13 @@ class EssayConsensusService:
             "source_count": len(selected),
             "related_source_count": related_count,
             "dedicated_source_count": dedicated_count,
-            "analyzed_count": int(row.source_count or 0) if row and row.status == "completed" and not stale else 0,
+            "has_report": has_report,
+            "report_source_count": report.get("source_count"),
+            "report_sources_complete": bool(report.get("sources_complete")),
+            "analyzed_count": int(report.get("source_count") or 0),
             "pending_count": len(selected) if status in {"pending", "processing", "stale", "not_started"} else 0,
-            "model": row.model if row else self.analyzer.model,
-            "prompt_version": row.prompt_version if row else ESSAY_CONSENSUS_PROMPT_VERSION,
+            "model": report.get("model") if has_report else row.model if row else self.analyzer.model,
+            "prompt_version": report.get("prompt_version") if has_report else row.prompt_version if row else ESSAY_CONSENSUS_PROMPT_VERSION,
             "summary": result.get("summary") or "",
             "has_explicit_expectations": bool(result.get("has_explicit_expectations")),
             "profit_outlook": result.get("profit_outlook") or "",
@@ -427,13 +542,12 @@ class EssayConsensusService:
             "verification_conditions": result.get("verification_conditions") or [],
             "caveats": result.get("caveats") or [],
             "source_notes": source_notes,
-            "analysis_cutoff_at": max(
-                (str(item.get("event_at") or item.get("created_at") or "") for item in selected),
-                default="",
-            ) or None,
+            "candidate_source_notes": candidate_source_notes,
+            "candidate_cutoff_at": self._source_cutoff(candidate_source_notes),
+            "analysis_cutoff_at": report.get("analysis_cutoff_at"),
             "error": row.error_message if row else None,
             "updated_at": row.updated_at.isoformat() + "Z" if row and row.updated_at else None,
-            "completed_at": row.completed_at.isoformat() + "Z" if row and row.completed_at else None,
+            "completed_at": report.get("completed_at"),
         }
 
     @staticmethod

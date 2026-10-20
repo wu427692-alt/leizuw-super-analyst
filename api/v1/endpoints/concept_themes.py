@@ -3,6 +3,7 @@
 
 import csv
 import io
+import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -12,6 +13,7 @@ from src.services.concept_theme_service import ConceptThemeError, ConceptThemeSe
 from src.services.concept_theme_worker import ConceptThemeWorker
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _http_error(exc: Exception, status: int = 422) -> HTTPException:
@@ -61,6 +63,17 @@ def theme_detail(
         result = ConceptThemeService().theme_detail(
             theme_id, refresh_if_empty=refresh_if_empty, horizon_days=horizon_days,
         )
+        result["refresh_queued"] = False
+        if refresh_if_empty and result.get("refresh_needed"):
+            try:
+                request_result = ConceptThemeWorker.get_instance().request_theme_refresh(
+                    theme_id, horizon_days=horizon_days,
+                )
+                result["refresh_queued"] = request_result.get("status") in {"queued", "running"}
+                result["refresh_request_status"] = request_result.get("status")
+            except Exception as exc:  # Cached/partial data remains usable when queueing is unavailable.
+                logger.warning("concept theme background request could not be queued: %s", exc)
+                result["refresh_request_status"] = "unavailable"
         watched = _watchlist_codes(request)
         watchlist_stocks = []
         for stock in result.get("stocks", []):
@@ -117,6 +130,17 @@ def stock_lens(
         result = ConceptThemeService().stock_lens(
             ts_code, refresh_if_empty=refresh_if_empty, horizon_days=horizon_days,
         )
+        result["refresh_queued"] = False
+        if refresh_if_empty and result.get("refresh_needed"):
+            try:
+                request_result = ConceptThemeWorker.get_instance().request_stock_refresh(
+                    str(result.get("ts_code") or ts_code), horizon_days=horizon_days,
+                )
+                result["refresh_queued"] = request_result.get("status") in {"queued", "running"}
+                result["refresh_request_status"] = request_result.get("status")
+            except Exception as exc:  # Cached/partial data remains usable when queueing is unavailable.
+                logger.warning("concept stock background request could not be queued: %s", exc)
+                result["refresh_request_status"] = "unavailable"
         total_themes = len(result.get("themes") or [])
         if not include_all and total_themes > 40:
             result["themes"] = result["themes"][:40]

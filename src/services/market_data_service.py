@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 import logging
 import os
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
@@ -41,6 +43,9 @@ def configured_index_symbols() -> List[str]:
 
 
 class MarketDataService:
+    _index_daily_attempts: Dict[tuple, float] = {}
+    _index_daily_lock = threading.Lock()
+
     def __init__(
         self,
         *,
@@ -94,7 +99,8 @@ class MarketDataService:
                 minute_sessions = {row.timestamp.date() for row in minutes}
                 raw_ticks = (
                     self._tick_rows(code, storage_days, minimum_sessions=session_count)
-                    if allow_tick_history or len(minute_sessions) < session_count
+                    if (allow_tick_history or len(minute_sessions) < session_count
+                        or _latest_expected_a_share_session(datetime.now()) not in minute_sessions)
                     else self.repo.latest_tick_minute(code)
                 )
                 ticks = self._regular_session_rows(raw_ticks, code)
@@ -104,7 +110,13 @@ class MarketDataService:
             # only for the newest live minute—not for the entire 7/14-day DB.
             raw_tick_rows, tick_rows, minute_rows = local_rows()
             available_dates = {row.timestamp.date() for row in [*tick_rows, *minute_rows]}
-            if refresh or len(available_dates) < session_count:
+            minute_dates = {row.timestamp.date() for row in minute_rows}
+            expected_session = _latest_expected_a_share_session(datetime.now())
+            if (
+                refresh
+                or len(available_dates) < session_count
+                or expected_session not in minute_dates
+            ):
                 refreshed = self.refresh_historical_intraday([code], sessions=session_count) > 0 or refreshed
                 raw_tick_rows, tick_rows, minute_rows = local_rows()
             if not tick_rows and not minute_rows:
@@ -271,44 +283,58 @@ class MarketDataService:
 
     def refresh_index_ticks(self, symbols: Optional[Iterable[str]] = None) -> int:
         requested = list(symbols or configured_index_symbols())
-        legacy = [f"{'sh' if symbol.endswith('.SH') else 'sz'}{symbol.split('.')[0]}" for symbol in requested]
         saved_symbols: set[str] = set()
         saved = 0
+        # Tencent's batch quote endpoint is both faster and more reliable for
+        # the eight headline indices.  The legacy Tushare/Sina snapshot often
+        # waits several seconds before failing, which made the dashboard flash
+        # yesterday's close before the live cards arrived.  Keep that endpoint
+        # only as a fallback for symbols Tencent did not return.
         try:
-            import tushare as ts
-            frame = ts.get_realtime_quotes(legacy)
-            if frame is None or frame.empty:
-                raise ValueError("empty realtime index snapshot")
-            collected_at = datetime.now().replace(microsecond=0)
-            exchange_fallback = _latest_a_share_close_timestamp(collected_at)
-            rows_by_code = {str(row.get("code") or "").zfill(6): row for _, row in frame.iterrows()}
-            for symbol in requested:
-                row = rows_by_code.get(symbol.split(".")[0])
-                if row is None:
-                    continue
-                price = _float_or_none(row.get("price")); pre_close = _float_or_none(row.get("pre_close"))
-                change_pct = (price - pre_close) / pre_close * 100 if price is not None and pre_close else None
-                timestamp = _legacy_snapshot_timestamp(row, exchange_fallback)
-                saved += self.repo.upsert_index(symbol, [{
-                    "timestamp": timestamp,
-                    "open": row.get("open"), "high": row.get("high"),
-                    "low": row.get("low"), "close": price, "volume": row.get("volume"),
-                    "amount": row.get("amount"), "change_percent": change_pct,
-                }], frequency="1SEC", source="tushare.legacy_snapshot")
-                if _snapshot_is_current(timestamp, collected_at):
-                    saved_symbols.add(symbol)
+            primary_rows = _tencent_realtime_index_snapshots(requested)
+            for symbol, row in primary_rows.items():
+                saved += self.repo.upsert_index(
+                    symbol, [row], frequency="1SEC", source="tencent.snapshot",
+                )
+                saved_symbols.add(symbol)
         except Exception as exc:  # noqa: BLE001
-            logger.info("One-second index batch unavailable: %s", type(exc).__name__)
+            logger.info("Tencent realtime index batch unavailable: %s", type(exc).__name__)
         fallback_symbols = [symbol for symbol in requested if symbol not in saved_symbols]
         if fallback_symbols:
             try:
-                fallback_rows = _tencent_realtime_index_snapshots(fallback_symbols)
-                for symbol, row in fallback_rows.items():
-                    saved += self.repo.upsert_index(
-                        symbol, [row], frequency="1SEC", source="tencent.snapshot",
+                import tushare as ts
+
+                legacy = [
+                    f"{'sh' if symbol.endswith('.SH') else 'sz'}{symbol.split('.')[0]}"
+                    for symbol in fallback_symbols
+                ]
+                frame = ts.get_realtime_quotes(legacy)
+                if frame is None or frame.empty:
+                    raise ValueError("empty realtime index snapshot")
+                collected_at = datetime.now().replace(microsecond=0)
+                exchange_fallback = _latest_a_share_close_timestamp(collected_at)
+                rows_by_code = {
+                    str(row.get("code") or "").zfill(6): row for _, row in frame.iterrows()
+                }
+                for symbol in fallback_symbols:
+                    row = rows_by_code.get(symbol.split(".")[0])
+                    if row is None:
+                        continue
+                    price = _float_or_none(row.get("price"))
+                    pre_close = _float_or_none(row.get("pre_close"))
+                    change_pct = (
+                        (price - pre_close) / pre_close * 100
+                        if price is not None and pre_close else None
                     )
+                    timestamp = _legacy_snapshot_timestamp(row, exchange_fallback)
+                    saved += self.repo.upsert_index(symbol, [{
+                        "timestamp": timestamp,
+                        "open": row.get("open"), "high": row.get("high"),
+                        "low": row.get("low"), "close": price, "volume": row.get("volume"),
+                        "amount": row.get("amount"), "change_percent": change_pct,
+                    }], frequency="1SEC", source="tushare.legacy_snapshot")
             except Exception as exc:  # noqa: BLE001
-                logger.info("Tencent realtime index fallback unavailable: %s", type(exc).__name__)
+                logger.info("Legacy realtime index fallback unavailable: %s", type(exc).__name__)
         return saved
 
     def latest_index_quotes(self, symbols: Optional[Iterable[str]] = None, *, refresh_missing: bool = False) -> List[Dict[str, Any]]:
@@ -407,6 +433,11 @@ class MarketDataService:
             if not parsed:
                 parsed = self._fetch_five_day_minutes(_ts_code(code))
                 source = "tencent.5day_minute"
+            elif _latest_intraday_date(parsed) < _latest_expected_a_share_session(datetime.now()):
+                fallback = self._fetch_five_day_minutes(_ts_code(code))
+                if _latest_intraday_date(fallback) > _latest_intraday_date(parsed):
+                    parsed = fallback
+                    source = "tencent.5day_minute"
             parsed = _keep_latest_sessions(parsed, sessions)
             if parsed:
                 saved += self.repo.upsert_intraday(code, parsed, source=source)
@@ -439,6 +470,11 @@ class MarketDataService:
             if not parsed:
                 parsed = self._fetch_five_day_minutes(symbol)
                 source = "tencent.5day_minute"
+            elif _latest_intraday_date(parsed) < _latest_expected_a_share_session(datetime.now()):
+                fallback = self._fetch_five_day_minutes(symbol)
+                if _latest_intraday_date(fallback) > _latest_intraday_date(parsed):
+                    parsed = fallback
+                    source = "tencent.5day_minute"
             parsed = _keep_latest_sessions(parsed, sessions)
             if parsed:
                 saved += self.repo.upsert_index(symbol, parsed, frequency="1MIN", source=source)
@@ -523,14 +559,21 @@ class MarketDataService:
                 minute_sessions = {row.timestamp.date() for row in minutes}
                 raw_seconds = (
                     self.repo.index_range(qualified, broad_start, end, frequency="1SEC")
-                    if len(minute_sessions) < session_count
+                    if (len(minute_sessions) < session_count
+                        or _latest_expected_a_share_session(end) not in minute_sessions)
                     else self.repo.latest_index_minute(qualified)
                 )
                 return self._regular_session_rows(raw_seconds, qualified), minutes
 
             second_rows, minute_rows = local_index_rows()
             available_dates = {row.timestamp.date() for row in [*second_rows, *minute_rows]}
-            if refresh or len(available_dates) < session_count:
+            minute_dates = {row.timestamp.date() for row in minute_rows}
+            expected_session = _latest_expected_a_share_session(end)
+            if (
+                refresh
+                or len(available_dates) < session_count
+                or expected_session not in minute_dates
+            ):
                 self.refresh_historical_index_intraday([qualified], sessions=session_count)
                 second_rows, minute_rows = local_index_rows()
             rows = _merge_second_and_minute_rows(second_rows, minute_rows, sessions=session_count)
@@ -548,9 +591,7 @@ class MarketDataService:
             )
             pre_close = _intraday_pre_close(
                 rows,
-                fallback=lambda session_date: self.repo.previous_index_close(
-                    qualified, datetime.combine(session_date, datetime.min.time()),
-                ),
+                fallback=lambda session_date: self._index_previous_close(qualified, session_date),
             )
         stored_count = len(rows)
         render_rows = _sample_rows(rows, max_points) if normalized_period == "intraday" else rows
@@ -575,6 +616,33 @@ class MarketDataService:
             "latest_at": data[-1]["date"] if data else None, "refreshed": refreshed, "storage": "sqlite",
             "pre_close": pre_close if normalized_period == "intraday" else None,
         }
+
+    def _index_previous_close(self, symbol: str, session_date: date) -> Optional[float]:
+        from src.core.trading_calendar import is_market_open
+
+        previous = session_date - timedelta(days=1)
+        while previous.weekday() >= 5 or not is_market_open("cn", previous):
+            previous -= timedelta(days=1)
+        start = datetime.combine(previous, datetime.min.time())
+        end = datetime.combine(previous, datetime.max.time())
+        rows = self.repo.index_range(symbol, start, end, frequency="1D")
+        if not rows and self.tushare.available:
+            # Intraday requests previously never refreshed the daily baseline.
+            # Share a bounded retry interval across requests, including failures.
+            key = (id(self.repo.db), symbol, session_date)
+            now = time.monotonic()
+            with self._index_daily_lock:
+                attempts = self._index_daily_attempts
+                for expired in [k for k, t in attempts.items() if now - t >= 180]:
+                    attempts.pop(expired, None)
+                refresh_due = key not in attempts
+                if refresh_due:
+                    attempts[key] = now
+            if refresh_due:
+                self._refresh_index(symbol, "1D", 30)
+                rows = self.repo.index_range(symbol, start, end, frequency="1D")
+        # Never label a close from two or more sessions ago as yesterday's close.
+        return _float_or_none(rows[-1].close) if rows else None
 
     def _refresh_index(self, symbol: str, frequency: str, lookback_days: int) -> int:
         if not self.tushare.available:
@@ -673,7 +741,28 @@ class MarketDataService:
         )
         if not mainland:
             return rows
-        return [row for row in rows if _is_a_share_intraday_timestamp(row.timestamp)]
+        normalized_rows: List[Any] = []
+        for row in rows:
+            timestamp = getattr(row, "timestamp", None)
+            if not callable(getattr(timestamp, "time", None)):
+                continue
+            # Tencent refreshes the quote timestamp during the lunch break even
+            # though the last traded price still belongs to 11:30.  Dropping
+            # that snapshot made the chart fall back to an older trading day.
+            # Clamp only this well-defined pause to the last tradable minute;
+            # impossible overnight/pre-open rows remain excluded.
+            if datetime.strptime("11:30", "%H:%M").time() < timestamp.time() < datetime.strptime("13:00", "%H:%M").time():
+                values = {
+                    key: value for key, value in vars(row).items()
+                    if not key.startswith("_") and key != "timestamp"
+                }
+                normalized_rows.append(SimpleNamespace(
+                    **values,
+                    timestamp=timestamp.replace(hour=11, minute=30, second=0, microsecond=0),
+                ))
+            elif _is_a_share_intraday_timestamp(timestamp):
+                normalized_rows.append(row)
+        return normalized_rows
 
     def _tick_rows(self, code: str, lookback_days: int, *, minimum_sessions: int = 1) -> List[Any]:
         end = datetime.now()
@@ -885,6 +974,20 @@ def _latest_completed_a_share_session(now: Optional[datetime] = None) -> date:
     return candidate
 
 
+def _latest_expected_a_share_session(now: Optional[datetime] = None) -> date:
+    """Return the trading date an intraday chart is expected to contain.
+
+    Before the opening auction the newest complete session is correct.  From
+    09:15 onward a weekday chart should contain today's minute data—even during
+    lunch—otherwise a stale provider response can silently win merely because
+    it returned a non-empty list.
+    """
+    current = now or datetime.now()
+    if current.weekday() < 5 and current.time() >= datetime.strptime("09:15", "%H:%M").time():
+        return current.date()
+    return _latest_completed_a_share_session(current)
+
+
 def _latest_a_share_close_timestamp(now: Optional[datetime] = None) -> datetime:
     """Fallback for legacy quotes that omit exchange date/time after close."""
     current = now or datetime.now()
@@ -924,10 +1027,20 @@ def _a_share_refresh_window(now: datetime) -> bool:
     return local.weekday() < 5 and opening <= local.time() <= closing
 
 
+def _lunch_close_timestamp(now: datetime) -> Optional[datetime]:
+    """During lunch the 11:30 quote is final, not an aging live quote."""
+    if now.weekday() < 5 and 11 * 60 + 30 <= now.hour * 60 + now.minute < 13 * 60:
+        return now.replace(hour=11, minute=30, second=0, microsecond=0)
+    return None
+
+
 def _snapshot_is_current(timestamp: Any, now: datetime) -> bool:
     if not isinstance(timestamp, datetime):
         return False
     local_timestamp = timestamp.astimezone().replace(tzinfo=None) if timestamp.tzinfo else timestamp
+    lunch_close = _lunch_close_timestamp(now)
+    if lunch_close is not None:
+        return local_timestamp.date() == now.date() and local_timestamp >= lunch_close
     if _a_share_refresh_window(now):
         return local_timestamp.date() == now.date() and max(0.0, (now - local_timestamp).total_seconds()) <= 90
     return local_timestamp >= _latest_a_share_close_timestamp(now)
@@ -939,6 +1052,9 @@ def _tick_needs_refresh(row: Any, now: datetime) -> bool:
     timestamp = getattr(row, "timestamp", None)
     if not isinstance(timestamp, datetime):
         return True
+    lunch_close = _lunch_close_timestamp(now)
+    if lunch_close is not None:
+        return timestamp.date() != now.date() or timestamp < lunch_close
     if not _a_share_refresh_window(now):
         # A worker may miss the closing minutes (for example during a deploy or
         # upstream timeout).  Do not freeze that partial intraday quote for the
@@ -951,6 +1067,9 @@ def _tick_needs_refresh(row: Any, now: datetime) -> bool:
 
 def _tick_is_stale(timestamp: datetime, now: datetime) -> bool:
     """A 15-second polling UI may safely display the current minute for 90 seconds."""
+    lunch_close = _lunch_close_timestamp(now)
+    if lunch_close is not None:
+        return timestamp.date() != now.date() or timestamp < lunch_close
     if _a_share_refresh_window(now):
         return timestamp.date() != now.date() or max(0.0, (now - timestamp).total_seconds()) > 90
     return timestamp < _latest_a_share_close_timestamp(now)
@@ -1062,12 +1181,29 @@ def _parse_historical_minute_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[s
     return parsed
 
 
+def _latest_intraday_date(rows: Iterable[Dict[str, Any]]) -> date:
+    dates = [
+        timestamp.date()
+        for row in rows
+        if callable(getattr((timestamp := row.get("timestamp")), "date", None))
+    ]
+    return max(dates) if dates else date.min
+
+
 def _keep_latest_sessions(rows: List[Dict[str, Any]], sessions: int) -> List[Dict[str, Any]]:
     safe_sessions = max(1, min(int(sessions), 30))
-    dates = sorted({row["timestamp"].date() for row in rows if isinstance(row.get("timestamp"), datetime)})
+    dates = sorted({
+        timestamp.date()
+        for row in rows
+        if callable(getattr((timestamp := row.get("timestamp")), "date", None))
+    })
     allowed = set(dates[-safe_sessions:])
     return sorted(
-        (row for row in rows if isinstance(row.get("timestamp"), datetime) and row["timestamp"].date() in allowed),
+        (
+            row for row in rows
+            if callable(getattr(row.get("timestamp"), "date", None))
+            and row["timestamp"].date() in allowed
+        ),
         key=lambda row: row["timestamp"],
     )
 
@@ -1103,6 +1239,11 @@ def _merge_second_and_minute_rows(second_rows: List[Any], minute_rows: List[Any]
     latest_second_bucket = max(seconds_by_minute)
     latest_minute_bucket = max(minutes) if minutes else None
     if minutes:
+        for bucket, snapshot_rows in seconds_by_minute.items():
+            if bucket not in minutes:
+                minutes[bucket] = _minute_snapshot_from_seconds(
+                    snapshot_rows, live=bucket == latest_second_bucket,
+                )
         # An older cached tick must never replace a newer completed minute bar.
         if latest_minute_bucket is None or latest_second_bucket >= latest_minute_bucket:
             minutes[latest_second_bucket] = _minute_snapshot_from_seconds(
@@ -1139,6 +1280,11 @@ def _minute_snapshot_from_seconds(rows: List[Any], *, live: bool) -> Any:
     ]
     latest_price = prices[-1] if prices else None
     timestamp = latest.timestamp if live else latest.timestamp.replace(second=0, microsecond=0)
+    pre_close = _float_or_none(getattr(latest, "pre_close", None))
+    pct_chg = _float_or_none(getattr(latest, "pct_chg", None))
+    # Rounded percentage changes cannot reconstruct an exact previous close.
+    # Preserve only an explicit base; _intraday_pre_close resolves the local
+    # preceding daily close when this snapshot does not carry one.
     common = {
         "timestamp": timestamp,
         "frequency": "1SEC" if live else "1MIN",
@@ -1150,8 +1296,8 @@ def _minute_snapshot_from_seconds(rows: List[Any], *, live: bool) -> Any:
         "amount": _float_or_none(getattr(latest, "amount", None)) if live else (sum(amount_deltas) if amount_deltas else None),
         "volume_delta": sum(volume_deltas) if volume_deltas else None,
         "amount_delta": sum(amount_deltas) if amount_deltas else None,
-        "pct_chg": _float_or_none(getattr(latest, "pct_chg", None)),
-        "pre_close": _float_or_none(getattr(latest, "pre_close", None)),
+        "pct_chg": pct_chg,
+        "pre_close": pre_close,
         "data_source": getattr(latest, "data_source", None),
     }
     if live:

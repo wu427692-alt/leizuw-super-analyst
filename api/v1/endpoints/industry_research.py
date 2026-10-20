@@ -47,8 +47,13 @@ def create_project(request: IndustryResearchProjectRequest):
 
 
 @router.get("/projects", summary="读取本人行业调研课题")
-def list_projects(limit: int = Query(default=30, ge=1, le=100)):
-    return IndustryResearchService().list_projects(limit)
+def list_projects(
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    query: str = Query(default="", max_length=200),
+    status: str = Query(default="all", pattern="^(all|running|completed|limited|failed)$"),
+):
+    return IndustryResearchService().list_projects(limit, offset=offset, query=query, status=status)
 
 
 @router.get("/projects/{project_id}", summary="读取本人行业调研课题详情")

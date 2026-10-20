@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity, Archive, BarChart3, Blocks, Bot, Braces, CheckCircle2, ChevronRight,
@@ -15,7 +16,7 @@ import { AppPage, EmptyState } from '../components/common';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type {
   EssayQuantCatalog, EssayQuantDashboard, EssayQuantPlan,
-  EssayQuantMethod, EssayQuantRule, EssayQuantRunHistory, EssayQuantTaskList, QuantMetric,
+  EssayQuantMethod, EssayQuantRule, EssayQuantRunHistory, EssayQuantTask, EssayQuantTaskList, QuantMetric,
 } from '../types/essayQuant';
 import './EssayQuantPage.css';
 import './EssayQuantTasks.css';
@@ -107,7 +108,18 @@ export default function EssayQuantPage() {
   const requestedSection = searchParams.get('section') || location.pathname.split('/')[2] || 'overview';
   const active: QuantSection = QUANT_SECTIONS.has(requestedSection as QuantSection) ? requestedSection as QuantSection : 'overview';
   const requestedMethodKey = searchParams.get('method');
-  const [data, setData] = useState<EssayQuantDashboard | null>(null);
+  const requestedTaskId = searchParams.get('task');
+  const requestedRun = searchParams.get('run');
+  const parsedRunId = requestedRun && /^[1-9]\d*$/.test(requestedRun) ? Number(requestedRun) : null;
+  const requestedRunId = parsedRunId != null && Number.isSafeInteger(parsedRunId) ? parsedRunId : null;
+  const viewingRun = active === 'results' && requestedRun !== null;
+  const [latestData, setData] = useState<EssayQuantDashboard | null>(null);
+  const [runSnapshot, setRunSnapshot] = useState<{ runId: number; data: EssayQuantDashboard } | null>(null);
+  const [snapshotRead, setSnapshotRead] = useState<{ runId: number; error: string } | null>(null);
+  const [snapshotRetry, setSnapshotRetry] = useState(0);
+  // A selected run is an immutable result, not another view of the live dashboard.
+  // Its ID envelope also prevents a previous request flashing while switching runs.
+  const data = viewingRun ? (runSnapshot?.runId === requestedRunId ? runSnapshot.data : null) : latestData;
   const [catalog, setCatalog] = useState<EssayQuantCatalog | null>(null);
   const [history, setHistory] = useState<EssayQuantRunHistory>({ items: [], total: 0 });
   const [taskList, setTaskList] = useState<EssayQuantTaskList>({ items: [], total: 0 });
@@ -129,11 +141,11 @@ export default function EssayQuantPage() {
       tasks: async () => { setTaskList(await essayQuantApi.tasks()); },
       rules: async () => { const value = await essayQuantApi.rules(); setRules(value.items); },
     };
-    const modules = SECTION_MODULES[active];
+    const modules = SECTION_MODULES[active].filter(key => !(viewingRun && key === 'dashboard'));
     const settled = await Promise.allSettled(modules.map(key => tasks[key]()));
     if (sequence !== loadSequence.current) return;
     setFailedModules(modules.filter((_, index) => settled[index]?.status === 'rejected'));
-  }, [active]);
+  }, [active, viewingRun]);
   const refreshLive = useCallback(async () => {
     const [taskJob, dashboardJob, historyJob] = await Promise.allSettled([
       essayQuantApi.tasks(),
@@ -147,6 +159,22 @@ export default function EssayQuantPage() {
   useEffect(() => {
     void load(); document.title = '量化回测与数据利用 - 乐子乌超级价值';
   }, [load]);
+  useEffect(() => {
+    if (!viewingRun || requestedRunId == null) return undefined;
+    let cancelled = false;
+    setSnapshotRead({ runId: requestedRunId, error: '' });
+    void essayQuantApi.runResult(requestedRunId).then(result => {
+      if (cancelled) return;
+      if (result.runId != null && result.runId !== requestedRunId) {
+        throw new Error('返回的运行编号与所选记录不一致，请重试读取。');
+      }
+      setRunSnapshot({ runId: requestedRunId, data: result });
+    }).catch(error => {
+      if (cancelled) return;
+      setSnapshotRead({ runId: requestedRunId, error: error instanceof Error ? error.message : '结果暂时无法读取' });
+    });
+    return () => { cancelled = true; };
+  }, [requestedRunId, snapshotRetry, viewingRun]);
   const hasActiveTasks = taskList.items.some(item => item.status === 'queued' || item.status === 'running');
   usePageActivationRefresh(refreshLive, {
     intervalMs: hasActiveTasks ? 3_000 : 30_000, minIntervalMs: 1_500, runOnMount: false,
@@ -195,17 +223,11 @@ export default function EssayQuantPage() {
     catch (error) { setMessage(error instanceof Error ? error.message : '方案任务提交失败'); }
     finally { setRunning(false); }
   };
-  const openRunResult = async (runId: number) => {
-    setRunning(true); setMessageScope(active); setMessage(`正在读取运行 #${runId} 的不可变结果快照…`);
-    try {
-      const result = await essayQuantApi.runResult(runId);
-      setData(result); setRule({ ...DEFAULT_RULE, ...result.rule });
-      setMessageScope('results'); navigate('/essay-quant?section=results');
-      setMessage(`已打开运行 #${runId}，结果仅属于当前用户。`);
-    } catch (error) { setMessage(error instanceof Error ? error.message : '结果读取失败'); }
-    finally { setRunning(false); }
+  const openRunResult = (runId: number) => {
+    navigate(`/essay-quant?section=results&run=${encodeURIComponent(runId)}`);
   };
-  const primary = Math.max(...(rule.holdingPeriods.length ? rule.holdingPeriods : [20]));
+  const viewedRule = active === 'results' && data ? data.rule : rule;
+  const primary = Math.max(...(viewedRule.holdingPeriods.length ? viewedRule.holdingPeriods : [20]));
   const metric = (period: number, excess = false): QuantMetric | undefined => (excess ? data?.summary.excessMetrics : data?.summary.metrics)?.find(item => item.period === period);
   const portfolioChart = useMemo(() => { let peak = 0; return (data?.portfolio.curve ?? []).map(item => { const value = (item.value - 1) * 100; peak = Math.max(peak, item.value); return { ...item, value, drawdown: peak ? (item.value / peak - 1) * 100 : 0 }; }); }, [data]);
   const freshness = data?.dataQuality.priceFreshnessRatio ?? 0;
@@ -216,21 +238,30 @@ export default function EssayQuantPage() {
     : '';
   const activeMethod = catalog?.methods.find(item => (
     item.template.strategyType || (item.key === 'event_study' ? 'essay_event' : item.key)
-  ) === rule.strategyType) ?? null;
+  ) === viewedRule.strategyType) ?? null;
   const activeTaskCount = taskList.items.filter(item => item.status === 'queued' || item.status === 'running').length;
+  const snapshotError = snapshotRead?.runId === requestedRunId ? snapshotRead.error : '';
 
   return <AppPage className="aurora-workbench max-w-[1760px] px-2 pb-8 pt-2 md:px-3"><div className="essay-quant-terminal">
     <header className="quant-header"><div><h1>量化研究任务中心</h1><p>从交易假设出发，建立可后台运行、可复现、能解释到交易规则的个人研究任务。</p></div><div className="quant-header-actions">{activeTaskCount ? <Status ok={false}>运行中 {activeTaskCount}</Status> : <Status ok>暂无运行任务</Status>}{active === 'history' ? <Status ok={Boolean(latestHistoryCutoff)}>行情截止 {latestHistoryCutoff || '检测中'}</Status> : <Status ok={freshness >= 98}>行情 {data?.dataQuality.priceTargetDate || '检测中'} · {freshness.toFixed(1)}%</Status>}<span className="quant-auto-sync"><RadioTower />自动同步</span></div></header>
-    <nav className="quant-tabs" aria-label="量化研究栏目">{NAV.map(([key, label, Icon]) => <button key={key} className={active === key ? 'is-active' : ''} onClick={() => navigate(key === 'overview' ? '/essay-quant' : `/essay-quant?section=${key}`)}><Icon />{label}</button>)}</nav>
+    <nav className="quant-tabs" aria-label="量化研究栏目">{NAV.map(([key, label, Icon]) => <button key={key} className={active === key ? 'is-active' : ''} onClick={() => navigate(key === 'overview' ? '/essay-quant' : `/essay-quant?section=${key}${key === 'results' && requestedRunId ? `&run=${requestedRunId}` : ''}`)}><Icon />{label}</button>)}</nav>
     {message && messageScope === active ? <div className="quant-message" aria-live="polite">{running ? <LoaderCircle className="is-spinning" /> : <Activity />}{message}</div> : null}
+    {viewingRun && requestedRunId != null ? <div className="quant-message" aria-live="polite"><Archive />运行 #{requestedRunId} · 历史结果快照，不随最新任务结果变化。<button type="button" onClick={() => navigate('/essay-quant?section=history')}>返回任务档案</button></div> : null}
     {loadNotice ? <div className="quant-message" aria-live="polite"><Activity />{loadNotice}</div> : null}
-    {data && freshness < 98 ? <div className="quant-message is-warning"><TriangleAlert />当前仅 {data.dataQuality.currentPriceSymbolCount ?? 0}/{data.dataQuality.resolvedSymbolCount ?? 0} 个量化标的覆盖目标交易日，后台正在自动补齐；历史结果仍可查看。</div> : null}
+    {data && freshness < 98 ? <div className="quant-message is-warning"><TriangleAlert />{viewingRun ? '该运行生成时' : '当前'}仅 {data.dataQuality.currentPriceSymbolCount ?? 0}/{data.dataQuality.resolvedSymbolCount ?? 0} 个量化标的覆盖目标交易日，{viewingRun ? '后续行情补齐不会改写此快照，需重新运行才能比较更新后的结果。' : '后台正在自动补齐；历史结果仍可查看。'}</div> : null}
     {active === 'overview' && <Overview catalog={catalog} history={history} tasks={taskList} onNew={() => navigate('/essay-quant?section=builder')} onOpenResult={(runId) => void openRunResult(runId)} onMethod={(method) => { setRule(buildMethodRule(method)); navigate(`/essay-quant?section=builder&method=${encodeURIComponent(method.key)}`); }} onNatural={() => navigate('/essay-quant?section=natural-language')} />}
     {active === 'builder' && <Builder method={activeMethod} rule={rule} rules={rules} running={running} setRule={setRule} onRun={() => void run()} onSave={() => void save()} />}
     {active === 'natural-language' && <NaturalLanguage prompt={prompt} setPrompt={setPrompt} plan={plan} running={running} onGenerate={() => void generatePlan()} onExecute={() => void executePlan()} />}
-    {active === 'results' && <Results data={data} primary={primary} metric={metric} portfolioChart={portfolioChart} onBuilder={() => navigate(`/essay-quant?section=builder${activeMethod ? `&method=${encodeURIComponent(activeMethod.key)}` : ''}`)} />}
+    {active === 'results' && (viewingRun && !data ? <main className="quant-page"><section className="quant-panel" aria-live="polite">
+      <SectionTitle icon={requestedRunId == null || snapshotError ? TriangleAlert : LoaderCircle} title={requestedRunId == null ? '运行编号无效' : snapshotError ? `运行 #${requestedRunId} 暂时无法读取` : `正在读取运行 #${requestedRunId}`} note={requestedRunId == null ? '请从任务档案中选择已有记录。' : snapshotError || '正在读取该任务的不可变快照，不会替换为其他运行结果。'} />
+      {requestedRunId != null && snapshotError ? <button type="button" className="quant-primary" onClick={() => setSnapshotRetry(value => value + 1)}>重试读取此运行</button> : null}
+      {requestedRunId == null ? <button type="button" className="quant-primary" onClick={() => navigate('/essay-quant?section=history')}>打开任务档案</button> : null}
+    </section></main> : <Results data={data} primary={primary} metric={metric} portfolioChart={portfolioChart} onBuilder={() => navigate(`/essay-quant?section=builder${activeMethod ? `&method=${encodeURIComponent(activeMethod.key)}` : ''}`)} />)}
     {active === 'data' && <DataAssets catalog={catalog} data={data} />}
-    {active === 'history' && <RunHistory history={history} tasks={taskList} onOpenResult={(runId) => void openRunResult(runId)} />}
+    {active === 'history' && <>
+      {requestedTaskId ? <SelectedQuantTask key={requestedTaskId} taskId={requestedTaskId} onOpenResult={openRunResult} /> : null}
+      <RunHistory history={history} tasks={taskList} onOpenResult={(runId) => void openRunResult(runId)} />
+    </>}
     <footer className="quant-footer"><ShieldCheck /> 历史结果不构成投资建议；研究结论必须结合样本外检验、成交约束和数据截止时间解释。</footer>
   </div></AppPage>;
 }
@@ -329,6 +360,50 @@ function DataAssets({ catalog, data }: { catalog: EssayQuantCatalog | null; data
   const funnel = [['扫描语料', data?.dataQuality.notesScanned ?? 0], ['AI 已分析', data?.dataQuality.analyzedNoteCount ?? 0], ['解析到股票', data?.dataQuality.resolvedNoteCount ?? 0], ['重复事件过滤', data?.dataQuality.duplicateEventCount ?? 0], ['具备行情股票', data?.dataQuality.pricedSymbolCount ?? 0], ['到期有效事件', data?.summary.matureEventCount ?? 0]] as const;
   return <main className="quant-page quant-data-page"><section className="quant-panel"><SectionTitle icon={Database} title="数据资产地图" note="不是接口宣传清单：数量、最近时间和状态来自本地库实时查询。" /><table className="quant-data-table"><thead><tr><th>数据资产</th><th>本地记录</th><th>最近数据</th><th>研究用途</th><th>可用状态</th></tr></thead><tbody>{(catalog?.assets ?? []).map(item => <tr key={item.key}><td><Database />{item.name}</td><td className="mono">{item.count.toLocaleString()}</td><td className="mono">{item.latestAt || '—'}</td><td>{item.usage}</td><td><Status ok={item.status === 'ready'}>{item.status === 'ready' ? '可直接使用' : item.status === 'empty' ? '库为空' : '尚未建库'}</Status></td></tr>)}</tbody></table></section>
     <section className="quant-panel"><SectionTitle icon={FileSearch} title="本次样本漏斗" note="把“为什么最后只有这些样本”完整展示出来。" /><div className="quant-funnel">{funnel.map(([label, value], index) => <div key={label}><span>{index + 1}</span><p>{label}</p><strong>{Number(value).toLocaleString()}</strong>{index < funnel.length - 1 ? <ChevronRight /> : null}</div>)}</div><div className="quant-quality-notes"><div><strong>语料策略</strong><p>{data?.rule.rawNotePolicy === 'include' ? '纳入未分析语料（探索模式）' : '仅 AI 已分析且通过阈值的语料'}</p></div><div><strong>行情口径</strong><p>{data?.dataQuality.priceBasis ?? '等待回测'}</p></div><div><strong>基准与成本</strong><p>{data?.rule.benchmarkCode ?? '—'} · {data?.rule.transactionCostBps ?? 0}bp</p></div><div><strong>数据截止</strong><p>{data?.dataQuality.priceCutoff ?? '—'}</p></div></div></section></main>;
+}
+
+function SelectedQuantTask({ taskId, onOpenResult }: { taskId: string; onOpenResult: (runId: number) => void }) {
+  const [task, setTask] = useState<EssayQuantTask | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const read = async () => {
+      if (document.visibilityState === 'hidden') {
+        timer = window.setTimeout(() => void read(), 3_000); return;
+      }
+      setLoading(true);
+      try {
+        const value = await essayQuantApi.taskStatus(taskId);
+        if (cancelled) return;
+        if (value.taskId !== taskId) throw new Error('返回的任务编号不一致，请重试。');
+        setTask(value); setError('');
+        if (value.status === 'queued' || value.status === 'running') timer = window.setTimeout(() => void read(), 3_000);
+      } catch (cause) {
+        if (cancelled) return;
+        const unavailable = isAxiosError(cause) && [401, 403, 404, 410].includes(cause.response?.status ?? 0);
+        if (unavailable) setTask(null);
+        setError(unavailable ? '该任务不存在或当前账号无权查看，请确认任务链接与登录账号。' : '任务状态暂时未更新，保留上次读取的状态并自动重试。');
+        if (!unavailable) timer = window.setTimeout(() => void read(), 5_000);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void read();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [retry, taskId]);
+  const labels = { queued: '排队中', running: '运行中', completed: '已完成', failed: '失败' } as const;
+  return <section className="quant-panel" aria-label="指定后台任务">
+    <SectionTitle icon={RadioTower} title="已定位任务" note={`任务编号 ${taskId} · 直接读取该任务，不受最近任务列表数量限制。`} />
+    {error ? <div className="quant-message" role="status">{error}<button type="button" disabled={loading} onClick={() => setRetry(value => value + 1)}>重试指定任务</button></div> : null}
+    {task ? <article className={`quant-task-card is-${task.status}`}>
+      <header><strong>{task.name}</strong><span>{labels[task.status]}</span></header>
+      <p>{task.error || task.message}</p><div className="quant-task-progress"><i style={{ width: `${task.progress}%` }} /></div>
+      <footer><span>{task.progress}%</span>{task.status === 'completed' && task.resultRunId ? <button className="quant-primary" onClick={() => onOpenResult(task.resultRunId!)}>查看此任务结果 <ChevronRight /></button> : null}</footer>
+    </article> : !error ? <div className="quant-message" role="status"><LoaderCircle />正在读取指定任务…</div> : null}
+  </section>;
 }
 
 function RunHistory({ history, tasks, onOpenResult }: { history: EssayQuantRunHistory; tasks: EssayQuantTaskList; onOpenResult: (runId: number) => void }) {

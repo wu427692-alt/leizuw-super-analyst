@@ -1,0 +1,34 @@
+AIHOT reference acknowledgment
+https://github.com/KKKKhazix/AIHOT
+Reference commit: 885b736dc0fd3ef3d4c9c70af2bc3a981a99ff38
+
+Leziwu independently implements the public RSS index and time-decay ranking
+in Python/React. Its initial subscription list is based on AIHOT's public
+industry/sources.json examples. No AIHOT hosted API/feed data, logo, fonts,
+database, commercial operating source list, or branded interface is included.
+Third-party article content remains owned by its publishers. Public service
+rules and code license are separate; see https://aihot.news/terms.
+
+The upstream code and documentation license is preserved below:
+
+MIT License
+
+Copyright (c) 2026 数字生命卡兹克
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

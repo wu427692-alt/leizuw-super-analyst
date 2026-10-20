@@ -29,7 +29,71 @@
   width: 13px;
 }
 
+.concept-read-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--concept-line, #385477);
+  border-radius: 10px;
+  background: rgba(75, 139, 230, .08);
+  color: var(--concept-ink, #dbe8fa);
+}
+.concept-read-state > svg { width: 18px; flex-shrink: 0; }
+.concept-read-state strong, .concept-read-state small { display: block; font-size: 13px; line-height: 1.6; }
+.concept-read-state small { color: var(--concept-muted, #a1b0c6); }
+.concept-read-state button, .concept-reset-filters, .concept-window-toolbar button, .concept-compare-selections button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--concept-line, #385477);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+}
+.concept-read-state button { margin-left: auto; flex-shrink: 0; }
+.concept-read-state[data-error="true"] { border-color: #9a6b35; }
+.concept-read-state .is-loading { animation: concept-orbit 1.5s linear infinite; }
+.concept-window-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--concept-line); }
+.concept-window-toolbar strong { font-size: 14px; }
+.concept-window-toolbar span { display: block; color: var(--concept-muted); font-size: 12px; margin-top: 4px; }
+.concept-window-toolbar > div:last-child { display: flex; gap: 8px; flex-shrink: 0; }
+.concept-window-toolbar button[aria-pressed="true"] { background: #315e9a; color: white; border-color: #78acdf; }
+.concept-compare-selections { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; }
+.concept-compare-selections button { display: flex; align-items: center; gap: 6px; }
+.concept-compare-selections svg { width: 14px; height: 14px; }
+.concept-compare-selections span, .concept-filter-empty { color: var(--concept-muted); font-size: 13px; line-height: 1.65; }
+.concept-filter-empty { padding: 18px; }
+.concept-page-nav button strong, .concept-page-nav button > span { font-size: 13px; }
+.concept-page-nav button small { font-size: 11px; }
+.concept-detail-actions button, .concept-stock-tools :is(input, select, button), .concept-pagination :is(button, span) { font-size: 12px; min-height: 34px; }
+.concept-stock-lens:focus { outline: none; }
+.concept-stock-lens__head { position: sticky; top: 0; z-index: 1; background: #0a182c; }
+.concept-stock-lens__head-actions { display: flex; gap: 8px; align-items: center; }
+.concept-stock-lens__head-actions button:first-child { display: flex; width: auto; gap: 6px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
+.concept-stock-lens__head p { font-size: 12px; }
+.concept-lens-summary span { font-size: 11px; }
+.concept-detail :is(p, small, dt), .concept-stock-lens :is(p, small, dt) { font-size: 12px; line-height: 1.6; }
+.concept-stock-lens :is(.concept-horizon-profile small, .concept-lens-list article > div > span) { font-size: 12px !important; }
+.concept-stock-lens :is(.concept-alpha-evidence > a span, .concept-horizon-profile em, .concept-weight-decomp small) { font-size: 11px; }
+.concept-stock-lens .concept-lens-list article dd { font-size: 14px; }
+.concept-stock-lens .concept-alpha-evidence > a strong { font-size: 14px; }
+.concept-stock-lens__head > div:first-child { min-width: 0; }
+.concept-stock-lens__head h2 { overflow-wrap: anywhere; }
+html.light .concept-stock-lens__head { background: #fff; color: #263040; }
+html.light .concept-stock-lens .concept-stock-lens__head-actions > button:first-child { color: #a43e15; border-color: #df9f7e; }
+html.light .concept-stock-lens :is(p, small, dt, .concept-lens-summary span) { color: #536174; }
+html.light .concept-window-toolbar button[aria-pressed="true"] { background: #bd4b1e; border-color: #bd4b1e; color: #fff; }
+@media (prefers-reduced-motion: reduce) { .concept-read-state .is-loading { animation: none; } }
+
 @media (max-width: 720px) {
+  .concept-window-toolbar { align-items: start; flex-direction: column; }
+  .concept-read-state { flex-wrap: wrap; margin: 8px; padding: 12px; }
+  .concept-read-state > span { flex: 1; min-width: 150px; }
+  .concept-read-state button { margin-left: 30px; }
+  .concept-stock-lens__head { padding: 16px; gap: 8px; }
+  .concept-stock-lens__head h2 { font-size: 24px; }
   .concept-compare-actions {
     width: 100%;
     justify-content: space-between;

@@ -11,6 +11,7 @@ import gc
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -25,13 +26,23 @@ from sqlalchemy import desc, select
 from src.config import get_config
 from src.data.stock_index_loader import get_index_stock_name
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
+from src.repositories.market_data_repo import MarketDataRepository
 from src.services.financial_data_service import TushareGatewayService
 from src.services.market_data_service import MarketDataService
 from src.services.cninfo_announcement_service import CninfoAnnouncementError, CninfoAnnouncementService
+from src.services.exchange_announcement_service import ExchangeAnnouncementService
 from src.services.announcement_artifact_service import AnnouncementArtifactError, AnnouncementArtifactService
 from src.services.eastmoney_guba_service import EastmoneyGubaError, EastmoneyGubaService
 from src.services.essay_consensus_service import EssayConsensusError, EssayConsensusService, EssayConsensusWorker
 from src.services.stock_service import StockService
+from src.services.stock_code_utils import _infer_cn_exchange
+from src.utils.financial_statement_selection import (
+    financial_announcement_date,
+    financial_calendar_date,
+    financial_selection_rank,
+    financial_statement_scope_rank,
+)
+from src.utils.research_stock_relation import research_stock_relation
 from src.services.intelligence_service import IntelligenceService
 from src.storage import (
     DatabaseManager,
@@ -47,13 +58,17 @@ logger = logging.getLogger(__name__)
 
 _STOCK_WORKSPACE_CACHE_TTL_SECONDS = 120
 _STOCK_WORKSPACE_CACHE_STALE_SECONDS = 900
-_stock_workspace_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_STOCK_OVERVIEW_CACHE_TTL_SECONDS = 30
+# The third slot is an internal full-view invalidation token. Quote changes and
+# unchanged overview rebuilds retain it; it is never serialized into responses.
+_stock_workspace_cache: Dict[str, tuple[float, Dict[str, Any], object]] = {}
 _stock_workspace_cache_lock = threading.Lock()
 _stock_workspace_refreshing: set[str] = set()
 _stock_workspace_refresh_executor = ThreadPoolExecutor(
     max_workers=2, thread_name_prefix="stock-workspace-refresh",
 )
 _SUPER_WATCHLIST_CACHE_TTL_SECONDS = 30
+_BROKER_CONSENSUS_SAMPLE_LIMIT = 200
 _super_watchlist_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _super_watchlist_cache_lock = threading.Lock()
 _HOMEPAGE_PIN_IMPORTANCE = 70
@@ -148,6 +163,10 @@ BUILTIN_MONITORING_SOURCES = [
             level="reported", apis=("major_news", "cctv_news")),
     _source("cninfo.announcements", "巨潮资讯上市公司公告", "cninfo", "cninfo", "company", 60,
             level="official", apis=("cninfo_announcement",)),
+    _source("sse.announcements", "上交所官方公告（备用）", "exchange", "sse", "company", 60,
+            level="official", apis=("sse_company_bulletin",)),
+    _source("szse.announcements", "深交所官方公告（备用）", "exchange", "szse", "company", 60,
+            level="official", apis=("szse_listed_notice",)),
     _source("tianyancha.enterprise", "天眼查企业事实与风险", "cli", "tianyancha", "enterprise", 600,
             apis=("registration-info", "risk-overview", "credit-evaluation", "ipr-score", "historical-overview")),
     _source("zsxq.essays", "知识星球小作文（待核验）", "mcp", "zsxq", "essay", 10,
@@ -184,17 +203,28 @@ class InvestmentMonitorService:
         cninfo: Optional[CninfoAnnouncementService] = None,
         announcement_artifacts: Optional[AnnouncementArtifactService] = None,
         guba: Optional[EastmoneyGubaService] = None,
+        exchanges: Optional[ExchangeAnnouncementService] = None,
+        initialize_sources: bool = True,
     ):
         self.repo = repository or InvestmentMonitorRepository()
         self.tushare = tushare or TushareGatewayService()
         self.stock_service = stock_service or StockService()
         self.cninfo = cninfo or CninfoAnnouncementService()
-        self.announcement_artifacts = announcement_artifacts or AnnouncementArtifactService()
+        self.exchanges = exchanges or ExchangeAnnouncementService()
+        self._announcement_artifacts = announcement_artifacts
         self.guba = guba or EastmoneyGubaService()
-        self.repo.ensure_sources(BUILTIN_MONITORING_SOURCES)
+        if initialize_sources:
+            self.repo.ensure_sources(BUILTIN_MONITORING_SOURCES)
         self._name_cache: Dict[str, str] = {}
         self._watchlist_override: Optional[List[str]] = None
         self._backfill_days: Optional[int] = None
+
+    @property
+    def announcement_artifacts(self) -> AnnouncementArtifactService:
+        # Reading a stock should not create an announcement cache directory.
+        if self._announcement_artifacts is None:
+            self._announcement_artifacts = AnnouncementArtifactService()
+        return self._announcement_artifacts
 
     def list_sources(self) -> Dict[str, Any]:
         items = self.repo.list_sources()
@@ -277,7 +307,7 @@ class InvestmentMonitorService:
         cadence = max(30, int(source.get("poll_interval_seconds") or 300))
         if category in {"news", "essay", "comment"}:
             return max(900, cadence * 5)
-        if source.get("source_key") == "cninfo.announcements":
+        if source.get("source_key") in {"cninfo.announcements", "sse.announcements", "szse.announcements"}:
             return max(172800, cadence * 5)
         if category in {"market", "technical", "capital"}:
             return max(172800, cadence * 5)
@@ -345,10 +375,18 @@ class InvestmentMonitorService:
                 "id", "source_key", "source_name", "source_type", "external_id", "event_type",
                 "perspective", "title", "url", "symbols", "sentiment", "importance_score",
                 "confidence_score", "tags", "actors", "event_at", "ingested_at",
+                "stock_relation",
             )
         }
         compact["summary"] = str(event.get("summary") or "")[:max(0, summary_limit)] or None
         metrics = {"_evidence": self._event_evidence(event)}
+        if event.get("event_type") == "company_announcement":
+            raw_metrics = dict(event.get("metrics") or {})
+            # Preserve the source's date-only precision without presenting its
+            # storage midnight as an actual publication time. Do not infer it
+            # for older records that never captured disclosure metadata.
+            metrics.update({key: raw_metrics[key] for key in ("time_precision", "disclosure_date")
+                            if key in raw_metrics})
         if event.get("event_type") == "stock_forum_post":
             raw_metrics = dict(event.get("metrics") or {})
             metrics.update({
@@ -400,7 +438,7 @@ class InvestmentMonitorService:
         # not issue a second overlapping request from the generic source loop.
         sources = [
             source for source in self.repo.due_sources()
-            if source["source_key"] != "cninfo.announcements"
+            if source["source_key"] not in {"cninfo.announcements", "sse.announcements", "szse.announcements"}
         ]
         return self._sync_sources(sources)
 
@@ -462,8 +500,8 @@ class InvestmentMonitorService:
         page = max(1, int(filters.get("page") or 1))
         page_size = max(1, min(int(filters.get("page_size") or 50), 500))
         rows, total = self.repo.list_announcements(
-            start_at=datetime.combine(start_date, datetime.min.time()),
-            end_at=datetime.combine(end_date, datetime.max.time()),
+            start_at=datetime.combine(start_date, datetime.min.time(), now.tzinfo).astimezone(timezone.utc).replace(tzinfo=None),
+            end_at=datetime.combine(end_date, datetime.max.time(), now.tzinfo).astimezone(timezone.utc).replace(tzinfo=None),
             symbol=symbol, category=str(filters.get("category") or "").strip() or None,
             query=str(filters.get("query") or "").strip() or None,
             page=page, page_size=page_size,
@@ -481,10 +519,11 @@ class InvestmentMonitorService:
         events = self.repo.get_events_by_ids(event_ids)
         selected = [
             event for event in events
-            if event["source_key"] == "cninfo.announcements" and event["event_type"] == "company_announcement"
+            if event["source_key"] in {"cninfo.announcements", "sse.announcements", "szse.announcements"}
+            and event["event_type"] == "company_announcement"
         ]
         if len(selected) != len(set(int(value) for value in event_ids)):
-            raise InvestmentMonitorError("部分公告不存在或不属于巨潮公告数据源")
+            raise InvestmentMonitorError("部分公告不存在或不属于官方公告数据源")
         try:
             return self.announcement_artifacts.package(selected, include_text=include_text)
         except AnnouncementArtifactError as exc:
@@ -962,58 +1001,87 @@ class InvestmentMonitorService:
                 _super_watchlist_cache.pop(oldest, None)
         return {**payload, "cache": {"hit": False, "ttl_seconds": _SUPER_WATCHLIST_CACHE_TTL_SECONDS}}
 
+    @staticmethod
+    def _overview_news_supersedes_full(overview: Dict[str, Any], full: Dict[str, Any]) -> bool:
+        """Compare bounded visible news, not quote clocks or payload build times."""
+        sections = (overview.get("overview") or {}).get("sections") or []
+        preview = next((section.get("items") or [] for section in sections if section.get("key") == "news"),
+                       (overview.get("messages") or {}).get("items") or [])
+        records = {row.get("id"): row for row in (full.get("messages") or {}).get("items") or []}
+
+        def signature(row: Dict[str, Any]) -> tuple:
+            fields = ("source_key", "external_id", "event_type", "event_at", "title", "source_name", "url")
+            evidence = (row.get("metrics") or {}).get("_evidence") or {}
+            return (*(str(row.get(key) or "") for key in fields),
+                    str(row.get("summary") or "")[:240], str(evidence.get("evidence_level") or ""))
+
+        return any(
+            row.get("event_type") in {"news", "long_news"}
+            and type(row.get("id")) is int and row["id"] > 0
+            and (row["id"] not in records or signature(row) != signature(records[row["id"]]))
+            for row in preview
+        )
+
     def stock_workspace(
-        self, symbol: str, *, days: int = 365, refresh: bool = False,
+        self, symbol: str, *, days: int = 365, refresh: bool = False, view: str = "full",
+        _background_refresh: bool = False,
     ) -> Dict[str, Any]:
         """Return one shared, local-first stock context for every legacy module."""
         safe_days = max(30, min(int(days), 3650))
+        if view not in {"full", "overview"}:
+            raise InvestmentMonitorError("view must be overview or full")
         code = self._canonical_ts_code(symbol)
-        cache_key = f"{code}:{safe_days}"
+        cache_ttl = _STOCK_OVERVIEW_CACHE_TTL_SECONDS if view == "overview" else _STOCK_WORKSPACE_CACHE_TTL_SECONDS
+        database_key = str(getattr(self.repo.db, "_db_url", id(self.repo.db)))
+        cache_key = f"{database_key}:{view}:{code}:{safe_days}"
+        overview_key = f"{database_key}:overview:{code}:{safe_days}"
+        full_key = f"{database_key}:full:{code}:{safe_days}"
+        with _stock_workspace_cache_lock:
+            overview_at_start = _stock_workspace_cache.get(overview_key)
+            full_token_at_start = overview_at_start[2] if overview_at_start else None
+        # Fast-changing quotes have a different lifecycle from the relatively
+        # expensive evidence context. Always overlay a local quote on a copy.
+        quote = self._workspace_latest_quote(code)
         if not refresh:
             with _stock_workspace_cache_lock:
                 cached = _stock_workspace_cache.get(cache_key)
             if cached:
                 age_seconds = max(0.0, time.monotonic() - cached[0])
-                if age_seconds <= _STOCK_WORKSPACE_CACHE_TTL_SECONDS:
+                if age_seconds <= cache_ttl:
                     return {
-                        **cached[1],
+                        **self._workspace_with_quote(cached[1], quote),
                         "cache": {
                             "hit": True, "state": "fresh", "age_seconds": round(age_seconds, 1),
-                            "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS,
+                            "ttl_seconds": cache_ttl,
                         },
                     }
                 if age_seconds <= _STOCK_WORKSPACE_CACHE_STALE_SECONDS:
-                    self._refresh_stock_workspace_in_background(cache_key, code, safe_days)
+                    self._refresh_stock_workspace_in_background(cache_key, code, safe_days, view)
                     return {
-                        **cached[1],
+                        **self._workspace_with_quote(cached[1], quote),
                         "cache": {
                             "hit": True, "state": "stale-refreshing", "age_seconds": round(age_seconds, 1),
-                            "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS,
+                            "ttl_seconds": cache_ttl,
                             "stale_seconds": _STOCK_WORKSPACE_CACHE_STALE_SECONDS,
                         },
                     }
 
-        try:
-            quote_rows = MarketDataService().latest_quotes([code], refresh_missing=False)
-        except Exception as exc:  # noqa: BLE001 - factual context remains useful without a quote.
-            logger.info("Shared quote cache unavailable for %s workspace: %s", code, type(exc).__name__)
-            quote_rows = []
-        quote = next((row for row in quote_rows if row.get("stock_code")), None)
-        source_states = {item["source_key"]: item for item in self.repo.list_sources()}
-        stock = self._super_stock(code, days=safe_days, live_quote=quote, source_states=source_states)
+        source_states = {} if view == "overview" else {item["source_key"]: item for item in self.repo.list_sources()}
+        stock = self._super_stock(code, days=safe_days, live_quote=quote, source_states=source_states, overview=view == "overview")
         payload = {
             "version": "5.2-unified-decision-context",
             "generated_at": utc_naive_now().isoformat() + "Z",
             "days": safe_days,
+            "view": view,
             "stock": stock,
-            "agent_context": self._agent_context_from_stock(stock),
+            **({"agent_context": self._agent_context_from_stock(stock)} if view == "full" else {}),
             "data_policy": {
                 "facts": "monitoring_events + shared market database",
                 "upstream_fetch_on_read": False,
                 "failure_mode": "stale-while-revalidate",
-                "quote_precedence": "shared realtime cache, then latest Tushare snapshot",
+                "quote_precedence": "newest dated shared quote or persisted daily close",
             },
-            "iterations": [
+            "iterations": [] if view == "overview" else [
                 {"version": "V1", "name": "统一事实底座", "result": "原有模块共用同一份个股事实与行情口径"},
                 {"version": "V2", "name": "Tushare 深度接入", "result": "估值、财务、资金、筹码、机构和股东数据进入决策上下文"},
                 {"version": "V3", "name": "非结构化证据", "result": "公告、研报、小作文、天眼查和股评保留时间与来源"},
@@ -1022,20 +1090,40 @@ class InvestmentMonitorService:
             ],
         }
         with _stock_workspace_cache_lock:
-            _stock_workspace_cache[cache_key] = (time.monotonic(), payload)
+            current_overview = _stock_workspace_cache.get(overview_key)
+            current_full = _stock_workspace_cache.get(full_key)
+            full_token = current_overview[2] if current_overview else current_full[2] if current_full else None
+            superseded = False
+            if view == "overview":
+                explicit_refresh = refresh and not _background_refresh
+                preview_changed = bool(current_overview and self._overview_news_supersedes_full(stock, current_overview[1]["stock"]))
+                full_outdated = bool(current_full and self._overview_news_supersedes_full(stock, current_full[1]["stock"]))
+                if explicit_refresh or preview_changed or full_outdated or not (current_overview or current_full):
+                    full_token = object()
+                # If full already contains the new preview, keep that successful
+                # snapshot while advancing the token against older in-flight reads.
+                if explicit_refresh or full_outdated:
+                    _stock_workspace_cache.pop(full_key, None)
+            elif current_overview:
+                # An earlier heavy read must not restore a snapshot invalidated
+                # by a newer preview. Return its status without launching more
+                # work here; the visible client can perform one controlled read.
+                superseded = full_token is not full_token_at_start
+            if not superseded:
+                _stock_workspace_cache[cache_key] = (time.monotonic(), payload, full_token)
             if len(_stock_workspace_cache) > 128:
                 oldest = min(_stock_workspace_cache, key=lambda key: _stock_workspace_cache[key][0])
                 _stock_workspace_cache.pop(oldest, None)
         return {
             **payload,
             "cache": {
-                "hit": False, "state": "rebuilt",
-                "ttl_seconds": _STOCK_WORKSPACE_CACHE_TTL_SECONDS,
+                "hit": False, "state": "superseded" if superseded else "rebuilt",
+                "ttl_seconds": cache_ttl,
                 "stale_seconds": _STOCK_WORKSPACE_CACHE_STALE_SECONDS,
             },
         }
 
-    def _refresh_stock_workspace_in_background(self, cache_key: str, code: str, days: int) -> None:
+    def _refresh_stock_workspace_in_background(self, cache_key: str, code: str, days: int, view: str = "full") -> None:
         """Refresh one stale workspace once while callers keep using its last valid snapshot."""
         with _stock_workspace_cache_lock:
             if cache_key in _stock_workspace_refreshing:
@@ -1044,7 +1132,7 @@ class InvestmentMonitorService:
 
         def refresh_cached_workspace() -> None:
             try:
-                self.stock_workspace(code, days=days, refresh=True)
+                self.stock_workspace(code, days=days, refresh=True, view=view, _background_refresh=True)
             except Exception as exc:  # noqa: BLE001 - the last valid snapshot remains available.
                 logger.warning("Background stock workspace refresh skipped for %s: %s", code, type(exc).__name__)
             finally:
@@ -1056,6 +1144,48 @@ class InvestmentMonitorService:
         except RuntimeError:
             with _stock_workspace_cache_lock:
                 _stock_workspace_refreshing.discard(cache_key)
+
+    def _workspace_latest_quote(self, code: str) -> Optional[Dict[str, Any]]:
+        try:
+            rows = MarketDataService(repository=MarketDataRepository(self.repo.db)).latest_quotes(
+                [code], refresh_missing=False,
+            )
+            return next((row for row in rows if self._canonical_ts_code(str(row.get("stock_code") or "")) == code), None)
+        except Exception as exc:  # noqa: BLE001 - keep factual evidence if the local quote store fails.
+            logger.info("Shared quote cache unavailable for %s workspace: %s", code, type(exc).__name__)
+            return None
+
+    def _workspace_with_quote(self, payload: Dict[str, Any], quote: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        stock = payload["stock"]
+        market = self._market_with_quote(stock.get("market") or {}, quote)
+        updated_stock = {**stock, "market": market}
+        if stock.get("overview"):
+            updated_stock["overview"] = {
+                **stock["overview"],
+                "data_as_of": {**stock["overview"]["data_as_of"], "market": market.get("updated_at")},
+            }
+        return {
+            **payload, "stock": updated_stock,
+            **({"agent_context": self._agent_context_from_stock(updated_stock)} if "agent_context" in payload else {}),
+        }
+
+    def _market_with_quote(self, market: Dict[str, Any], quote: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not quote or self._number(quote.get("current_price")) <= 0:
+            return dict(market)
+        quote_at = self._parse_datetime(quote.get("update_time"))
+        existing_at = self._parse_datetime(market.get("updated_at"))
+        # Do not silently replace a newer close with an older surviving tick.
+        if not quote_at or (existing_at and quote_at < existing_at):
+            return dict(market)
+        source = str(quote.get("source") or "local.sqlite")
+        return {
+            **market, "price": quote["current_price"], "change_pct": quote.get("change_percent"),
+            "change": quote.get("change"), "prev_close": quote.get("prev_close"),
+            "open": quote.get("open"), "high": quote.get("high"), "low": quote.get("low"),
+            "amount": quote.get("amount"), "updated_at": quote.get("update_time"), "source": source,
+            "is_stale": bool(quote.get("is_stale")), "stale_seconds": quote.get("stale_seconds"),
+            "quote_kind": "daily_close" if "daily" in source.lower() else "snapshot",
+        }
 
     @staticmethod
     def _agent_context_from_stock(stock: Dict[str, Any]) -> Dict[str, Any]:
@@ -1077,7 +1207,10 @@ class InvestmentMonitorService:
             "technical": stock.get("technical") or {}, "fundamentals": stock.get("fundamentals") or {},
             "capital": {
                 key: (stock.get("capital") or {}).get(key)
-                for key in ("winner_rate", "weighted_cost", "moneyflow", "margin", "northbound")
+                for key in (
+                    "winner_rate", "weighted_cost", "moneyflow", "margin", "northbound",
+                    "chip_trade_date", "moneyflow_trade_date", "margin_trade_date", "northbound_trade_date", "source",
+                )
             },
             "consensus": stock.get("consensus") or {},
             "signals": list(stock.get("signals") or [])[:10],
@@ -1088,10 +1221,23 @@ class InvestmentMonitorService:
             ],
             "latest_facts": facts,
         }
+        # Tushare source units: moneyflow doc 170 (amounts in 万元),
+        # margin_detail doc 59 (rzye/rzmre/rzche in 元), cyq_perf doc 293 (%).
+        # https://tushare.pro/document/2?doc_id=170
+        # https://tushare.pro/document/2?doc_id=59
+        # https://tushare.pro/document/2?doc_id=293
         summary = (
             "\n[全渠道统一个股事实底稿]\n"
             "以下数据来自本地共享数据库；引用结论时必须注明对应时间与来源，"
             "未核验小作文/股评不得表述为公司事实。\n"
+            "筹码、资金流、融资融券与北向持股依次以 capital 中的 chip_trade_date、"
+            "moneyflow_trade_date、margin_trade_date、northbound_trade_date 为准；"
+            "日期为空表示未知，不得借用行情、技术指标或其他资金数据的日期，也不能用嵌套原始 trade_date 替代。\n"
+            "capital.moneyflow 中 net_mf_amount 与各买卖 *_amount 的原始单位为万元；"
+            "net_mf_amount 是源接口主动资金净流入值，不得用大小单买卖额加总替代。"
+            "capital.margin 中 rzye、rzmre、rzche 的原始单位为元，不得与万元直接相加。"
+            "capital.winner_rate 是百分数表示的筹码模型估算获利比例，不是预测胜率，"
+            "不能据此认定看多、看空或生成买卖指令。\n"
             + json.dumps(compact, ensure_ascii=False, default=str)
         )
         return {
@@ -1111,12 +1257,16 @@ class InvestmentMonitorService:
         self, symbol: str, *, days: int,
         live_quote: Optional[Dict[str, Any]] = None,
         source_states: Optional[Dict[str, Dict[str, Any]]] = None,
+        overview: bool = False,
     ) -> Dict[str, Any]:
         # Interactive workspaces need exact totals, but only bounded visible
         # evidence.  Hydrating every forum post/news row made popular stocks take
         # several seconds and hundreds of MB per request.  The repository keeps
         # totals in narrow SQL aggregates and returns the latest renderable rows.
-        bundle = self.repo.symbol_workspace_bundle(symbol=symbol, days=days)
+        bundle = self.repo.symbol_workspace_bundle(
+            symbol=symbol, days=days, overview=overview,
+            stock_name=(live_quote or {}).get("stock_name") or get_index_stock_name(symbol) or self._name_cache.get(symbol),
+        )
         snapshots = list(bundle["snapshots"])
         research = list(bundle["research"])
         announcements = list(bundle["announcements"])
@@ -1131,6 +1281,11 @@ class InvestmentMonitorService:
         source_states = source_states or {}
 
         def latest(event_type: str) -> Optional[Dict[str, Any]]:
+            if event_type == "fundamental_snapshot":
+                # The repository selects current financial state by valid
+                # report period. A later correction of an older period may
+                # lead the full-view timeline without replacing that state.
+                return next((item for item in snapshots if item["event_type"] == event_type), None)
             return next((item for item in events if item["event_type"] == event_type), None)
 
         def metrics(event_type: str) -> Dict[str, Any]:
@@ -1141,9 +1296,34 @@ class InvestmentMonitorService:
         market = metrics("market_snapshot")
         technical = metrics("technical_factor")
         fundamental = metrics("fundamental_snapshot")
-        indicator = dict(fundamental.get("indicator") or {})
-        income = dict(fundamental.get("income") or {})
-        cashflow = dict(fundamental.get("cashflow") or {})
+
+        # The repository may select each whole statement from a different
+        # immutable source event. An absent section in this mapping means no
+        # eligible source, not permission to borrow the enclosing snapshot.
+        financial_entries = bundle.get("financial_sections")
+        if not isinstance(financial_entries, dict):
+            legacy_event = latest("fundamental_snapshot")
+            financial_entries = {
+                key: {"row": value, "event": legacy_event, "selection_status": "selected"}
+                for key, value in fundamental.items() if isinstance(value, dict)
+            }
+
+        def financial_section(key: str) -> Dict[str, Any]:
+            entry = financial_entries.get(key) or {}
+            if entry.get("selection_status") == "conflict":
+                return {}
+            value = entry.get("row")
+            return dict(value) if isinstance(value, dict) else {}
+
+        indicator = financial_section("indicator")
+        income = financial_section("income")
+        cashflow = financial_section("cashflow")
+        # Historical source records remain inspectable, but explicit quarterly,
+        # parent-only or unknown statement types cannot populate company cards.
+        if financial_statement_scope_rank(income) is None:
+            income = {}
+        if financial_statement_scope_rank(cashflow) is None:
+            cashflow = {}
         capital = metrics("capital_chip_snapshot")
         chip = dict(capital.get("chip_performance") or {})
         moneyflow = dict(capital.get("moneyflow") or {})
@@ -1177,7 +1357,8 @@ class InvestmentMonitorService:
         signals: List[Dict[str, Any]] = []
 
         def signal(kind: str, title: str, detail: str, event_type: str) -> None:
-            event = latest(event_type)
+            event = ((financial_entries.get("indicator") or {}).get("event")
+                     if event_type == "fundamental_snapshot" else latest(event_type))
             signals.append({
                 "kind": kind, "title": title, "detail": detail,
                 "event_id": event.get("id") if event else None,
@@ -1185,23 +1366,28 @@ class InvestmentMonitorService:
                 "source_name": event.get("source_name") if event else None,
             })
 
-        live_price = self._number(live_quote.get("current_price")) if live_quote else 0.0
-        has_live_quote = live_price > 0
-        price = live_price if has_live_quote else market.get("close", opening.get("open"))
-        change_pct = live_quote.get("change_percent") if has_live_quote else market.get("pct_chg", opening.get("open_change_pct"))
         pe_ttm = market.get("valuation_pe_ttm")
-        revenue_yoy = indicator.get("q_sales_yoy", indicator.get("tr_yoy"))
-        profit_yoy = indicator.get("netprofit_yoy", indicator.get("q_netprofit_yoy"))
-        if isinstance(change_pct, (int, float)) and abs(change_pct) >= 5:
-            signal("risk" if change_pct < 0 else "catalyst", f"收盘涨跌 {change_pct:.2f}%", "收盘波动超过 5%，需要结合成交额和公告核验原因。", "market_snapshot")
+        # Keep the field identity: single-quarter sales and cumulative profit
+        # growth are not comparable periods merely because both end in "yoy".
+        revenue_field = next((key for key in ("q_sales_yoy", "or_yoy", "tr_yoy")
+                              if isinstance(indicator.get(key), (int, float)) and math.isfinite(indicator[key])), None)
+        profit_field = next((key for key in ("netprofit_yoy", "q_netprofit_yoy")
+                             if isinstance(indicator.get(key), (int, float)) and math.isfinite(indicator[key])), None)
+        revenue_yoy = indicator.get(revenue_field) if revenue_field else None
+        profit_yoy = indicator.get(profit_field) if profit_field else None
+        # The quote itself already describes the move. A live tick must not
+        # create a "closing" signal attributed to yesterday's daily event.
         if isinstance(revenue_yoy, (int, float)):
-            signal("catalyst" if revenue_yoy > 0 else "risk", f"单季收入同比 {revenue_yoy:.2f}%", "来自最新财务指标口径。", "fundamental_snapshot")
+            revenue_label = "单季收入同比" if revenue_field == "q_sales_yoy" else "累计总收入同比" if revenue_field == "tr_yoy" else "累计收入同比"
+            signal("catalyst" if revenue_yoy > 0 else "risk", f"{revenue_label} {revenue_yoy:.2f}%", "来自最新财务指标口径。", "fundamental_snapshot")
         if isinstance(profit_yoy, (int, float)):
-            signal("catalyst" if profit_yoy > 0 else "risk", f"净利润同比 {profit_yoy:.2f}%", "增长方向用于经营趋势观察，不代表未来预测。", "fundamental_snapshot")
+            profit_label = "单季净利润同比" if profit_field == "q_netprofit_yoy" else "累计净利润同比"
+            signal("catalyst" if profit_yoy > 0 else "risk", f"{profit_label} {profit_yoy:.2f}%", "增长方向用于经营趋势观察，不代表未来预测。", "fundamental_snapshot")
         if isinstance(pe_ttm, (int, float)) and pe_ttm > 80:
             signal("risk", f"滚动市盈率 {pe_ttm:.2f}", "估值处于高倍数区间，需要更高盈利增速消化。", "market_snapshot")
         if isinstance(chip.get("winner_rate"), (int, float)):
-            signal("watch", f"筹码获利比例 {chip['winner_rate']:.2f}%", f"加权平均成本 {chip.get('weight_avg') or '—'}，用于观察筹码压力。", "capital_chip_snapshot")
+            weighted_cost = chip.get("weight_avg")
+            signal("watch", f"筹码获利比例 {chip['winner_rate']:.2f}%", f"加权平均成本 {weighted_cost if weighted_cost is not None else '—'}，用于观察筹码压力。", "capital_chip_snapshot")
         if isinstance(technical.get("rsi_6"), (int, float)):
             signal("watch", f"RSI(6) {technical['rsi_6']:.2f}", "技术指标只描述当前价格状态。", "technical_factor")
 
@@ -1217,7 +1403,7 @@ class InvestmentMonitorService:
             "fundamental": {"types": ("fundamental_snapshot", "earnings_forecast", "earnings_express"), "sources": ("tushare.fundamentals", "tushare.company")},
             "capital": {"types": ("capital_chip_snapshot", "block_trade", "dragon_tiger", "institution_seat"), "sources": ("tushare.capital", "tushare.market_activity")},
             "institution": {"types": ("research_report_pdf", "institution_forecast", "institution_survey", "broker_recommendation"), "sources": ("tushare.institution", "tushare.research_pdf")},
-            "company": {"types": ("company_announcement", "company_profile", "audit_opinion", "executive_roster"), "sources": ("cninfo.announcements", "tushare.company_profile")},
+            "company": {"types": ("company_announcement", "company_profile", "audit_opinion", "executive_roster"), "sources": ("cninfo.announcements", "sse.announcements", "szse.announcements", "tushare.company_profile")},
             "ownership": {"types": ("ownership_snapshot", "holder_trade", "share_unlock", "top_shareholders"), "sources": ("tushare.ownership", "tushare.company_profile")},
             "enterprise": {"types": ("enterprise_registration", "enterprise_risk", "enterprise_credit", "enterprise_ipr"), "sources": ("tianyancha.enterprise",)},
             "essay": {"types": ("essay",), "sources": ("zsxq.essays",)},
@@ -1227,7 +1413,7 @@ class InvestmentMonitorService:
             },
         }
         coverage = []
-        for name, definition in dimensions.items():
+        for name, definition in ([] if overview else dimensions.items()):
             related_count = sum(type_counts[event_type] for event_type in definition["types"])
             related_latest = max(
                 (type_latest.get(event_type) or "" for event_type in definition["types"]),
@@ -1257,32 +1443,147 @@ class InvestmentMonitorService:
                 "source_keys": list(definition["sources"]),
             })
 
-        stock_name = self._stock_name(symbol)
-        try:
-            essay_consensus = EssayConsensusService().snapshot(symbol, stock_name, limit=20)
-        except Exception as exc:  # noqa: BLE001 - an AI cache must never hide the factual stock workspace.
-            logger.info("Essay consensus snapshot unavailable for %s: %s", symbol, type(exc).__name__)
-            essay_consensus = {
-                "status": "failed", "source_count": min(len(essays), 20), "analyzed_count": 0,
-                "related_source_count": min(len(essays), 20), "dedicated_source_count": 0,
-                "pending_count": 0, "summary": "", "estimates": [], "metric_counts": {},
-                "consensus_points": [], "conflicts": [], "time_observations": [],
-                "verification_conditions": [], "caveats": [], "source_notes": [],
-                "error": "一致预期缓存暂时不可用",
-            }
-        cutoff = (utc_naive_now() - timedelta(days=days)).date()
-        with DatabaseManager.get_instance().get_session() as session:
-            bars = session.execute(
-                select(StockDaily).where(
-                    StockDaily.code == symbol.split(".")[0], StockDaily.date >= cutoff,
-                ).order_by(StockDaily.date)
-            ).scalars().all()
-        consensus_payload = self._consensus_payload(research, essays, essay_consensus)
+        stock_name = str(
+            (live_quote or {}).get("stock_name") or get_index_stock_name(symbol)
+            or self._name_cache.get(symbol) or profile.get("com_name") or symbol
+        )
+        essay_consensus = {
+            "status": "not_loaded", "source_count": 0, "analyzed_count": 0,
+            "related_source_count": 0, "dedicated_source_count": 0,
+            "pending_count": 0, "summary": "", "estimates": [], "metric_counts": {},
+            "consensus_points": [], "conflicts": [], "time_observations": [],
+            "verification_conditions": [], "caveats": [], "source_notes": [],
+        }
+        bars = []
+        if not overview:
+            try:
+                essay_consensus = EssayConsensusService(db=self.repo.db).snapshot(symbol, stock_name, limit=20)
+            except Exception as exc:  # noqa: BLE001 - AI cache failure must not hide company facts.
+                logger.info("Essay consensus snapshot unavailable for %s: %s", symbol, type(exc).__name__)
+                essay_consensus = {**essay_consensus, "status": "failed", "error": "一致预期缓存暂时不可用"}
+            cutoff = (utc_naive_now() - timedelta(days=days)).date()
+            with self.repo.db.get_session() as session:
+                bars = session.execute(
+                    select(StockDaily).where(
+                        StockDaily.code == symbol.split(".")[0], StockDaily.date >= cutoff,
+                    ).order_by(StockDaily.date)
+                ).scalars().all()
+        # Research previews mix PDFs, surveys and forecasts. Give numerical
+        # estimates their own bounded input set so PDFs cannot crowd them out.
+        broker_research = [] if overview else self.repo.recent_symbol_events(
+            symbol=symbol, days=days, event_types=("institution_forecast",),
+            limit=_BROKER_CONSENSUS_SAMPLE_LIMIT,
+        )
+        consensus_payload = self._consensus_payload(
+            broker_research, [] if overview else essays, essay_consensus,
+            broker_total_record_count=None if overview else type_counts["institution_forecast"],
+            broker_sample_limit=_BROKER_CONSENSUS_SAMPLE_LIMIT, broker_loaded=not overview,
+            broker_window_days=days, target_symbol=symbol,
+        )
+        if overview:
+            consensus_payload["method"] = ""
         consensus_payload["broker_report_count"] = type_counts["institution_forecast"]
         research_count = sum(type_counts[event_type] for event_type in (
             "research_report_pdf", "institution_forecast", "institution_survey", "broker_recommendation",
         ))
         message_count = sum(type_counts[event_type] for event_type in message_types)
+        market_at = (latest("market_snapshot") or latest("market_open_snapshot") or {}).get("event_at")
+        if market.get("close") is not None and market.get("trade_date"):
+            try:
+                close_date = datetime.strptime(str(market["trade_date"]).replace("-", ""), "%Y%m%d")
+                market_at = close_date.replace(hour=15, tzinfo=timezone(timedelta(hours=8))).isoformat()
+            except ValueError:
+                pass  # Keep the source event time; never invent today's date.
+        market_payload = self._market_with_quote({
+            "price": market.get("close", opening.get("open")),
+            "change_pct": market.get("pct_chg", opening.get("open_change_pct")),
+            "change": market.get("change"), "prev_close": market.get("pre_close"),
+            "open": market.get("open", opening.get("open")), "high": market.get("high"), "low": market.get("low"),
+            # Tushare daily.amount is 千元; shared quote amounts are 元.
+            "amount": self._number(market.get("amount")) * 1000 or None,
+            "updated_at": market_at,
+            "source": "monitoring_events:tushare.daily" if market else "monitoring_events:opening" if opening else None,
+            "is_stale": True, "stale_seconds": None,
+            "quote_kind": "daily_close" if market.get("close") is not None else "snapshot" if opening else "unavailable",
+        }, live_quote)
+
+        def observation_date(value: Any) -> Optional[str]:
+            raw = str(value or "").strip()
+            if len(raw) == 8 and raw.isdigit():
+                try:
+                    return datetime.strptime(raw, "%Y%m%d").date().isoformat()
+                except ValueError:
+                    return None
+            return raw or None
+
+        def capital_observation_date(value: Any) -> Optional[str]:
+            # Source trade dates are calendar dates, not arbitrary timestamp
+            # labels. Keep this stricter contract local to capital data.
+            if isinstance(value, bool) or value is None:
+                return None
+            raw = str(value).strip()
+            if not re.fullmatch(r"\d{8}|\d{4}-\d{2}-\d{2}", raw):
+                return None
+            # Reuse the validated compact-date branch, including leap-day
+            # validation, without changing other observation-date semantics.
+            return observation_date(raw.replace("-", ""))
+
+        # These are independently dated source observations. The enclosing
+        # event time and the newest quote cannot date an undated chip estimate.
+        capital_dates = {
+            "chip_trade_date": capital_observation_date(chip.get("trade_date")),
+            "moneyflow_trade_date": capital_observation_date(moneyflow.get("trade_date")),
+            "margin_trade_date": capital_observation_date(margin.get("trade_date")),
+            "northbound_trade_date": capital_observation_date(northbound.get("trade_date")),
+        }
+
+        def financial_source(key: str) -> Dict[str, Any]:
+            entry = financial_entries[key]
+            row = financial_section(key)
+            event = entry.get("event") or {}
+            period = financial_calendar_date(entry.get("period") or row.get("end_date"))
+            announcement = financial_calendar_date(entry.get("announcement")) or financial_announcement_date(row)
+            conflict = entry.get("selection_status") == "conflict"
+            candidate_ids = [value for value in entry.get("candidate_event_ids", [])
+                             if type(value) is int and value > 0][:5]
+            return {
+                "event_id": None if conflict else event.get("id"),
+                "source": event.get("source_name"),
+                "period": observation_date(period), "announced_at": observation_date(announcement),
+                "report_type": str(row["report_type"]) if row.get("report_type") is not None else None,
+                "selection_status": "conflict" if conflict else "selected",
+                "candidate_event_ids": candidate_ids,
+                "candidate_count": entry.get("candidate_count", len(candidate_ids)),
+            }
+
+        financial_sources = {
+            key: financial_source(key) for key in ("indicator", "income", "cashflow")
+            if isinstance(financial_entries.get(key), dict)
+        }
+        financial_source_ids = {entry["event_id"] for entry in financial_sources.values()
+                                if type(entry.get("event_id")) is int and entry["event_id"] > 0}
+        financial_has_conflict = any(entry["selection_status"] == "conflict" for entry in financial_sources.values())
+        financial_source_names = {entry["source"] for entry in financial_sources.values() if entry.get("source")}
+        # A composite does not have one original. Preserve the legacy link only
+        # when every available financial section actually comes from one event.
+        financial_source_id = next(iter(financial_source_ids)) if len(financial_source_ids) == 1 and not financial_has_conflict else None
+        data_as_of = {
+            "market": market_payload.get("updated_at"),
+            # Older snapshots did not retain the independently dated daily_basic
+            # row. Unknown is more honest than borrowing the quote's trade day.
+            "valuation": observation_date(market.get("valuation_trade_date")),
+            "fundamentals": observation_date(indicator.get("end_date") or income.get("end_date")),
+            "capital": capital_dates["chip_trade_date"],
+            "technical": observation_date(technical.get("trade_date")),
+        }
+        preview_sections = [
+            {"key": key, "label": label, "items": [self.compact_event(row, summary_limit=240) for row in rows[:3]],
+             "latest_at": max((str(row.get("event_at") or "") for row in rows), default="") or None}
+            for key, label, rows in (
+                ("announcements", "公司公告", announcements), ("research", "券商研究", research),
+                ("opinions", "机构段子", essays), ("news", "相关新闻", messages),
+            )
+        ] if overview else []
         return {
             "symbol": symbol, "name": stock_name,
             "history": [{
@@ -1290,37 +1591,36 @@ class InvestmentMonitorService:
                 "low": row.low, "close": row.close, "volume": row.volume,
                 "amount": row.amount, "pct_chg": row.pct_chg,
             } for row in bars],
-            "market": {
-                "price": price, "change_pct": change_pct,
-                "open": live_quote.get("open") if has_live_quote else market.get("open", opening.get("open")),
-                "high": live_quote.get("high") if has_live_quote else market.get("high"),
-                "low": live_quote.get("low") if has_live_quote else market.get("low"),
-                # Tushare daily.amount is 千元; the shared realtime cache stores 元.
-                "amount": live_quote.get("amount") if has_live_quote else self._number(market.get("amount")) * 1000 or None,
-                "updated_at": live_quote.get("update_time") if has_live_quote else (latest("market_snapshot") or latest("market_open_snapshot") or {}).get("event_at"),
-                "source": live_quote.get("source") if has_live_quote else "monitoring_events:tushare.daily",
-                "is_stale": bool(live_quote.get("is_stale")) if has_live_quote else True,
-                "stale_seconds": live_quote.get("stale_seconds") if has_live_quote else None,
-            },
+            "market": market_payload,
             "valuation": {
                 "pe": market.get("valuation_pe"), "pe_ttm": pe_ttm, "pb": market.get("valuation_pb"),
                 "ps_ttm": market.get("valuation_ps_ttm"), "total_mv": market.get("valuation_total_mv"),
                 "turnover_rate": market.get("valuation_turnover_rate"), "volume_ratio": market.get("valuation_volume_ratio"),
+                "as_of": data_as_of["valuation"], "source": (latest("market_snapshot") or {}).get("source_name"),
+                "source_event_id": (latest("market_snapshot") or {}).get("id"),
             },
             "technical": {key: technical.get(key) for key in ("rsi_6", "rsi_12", "rsi_24", "macd", "macd_dif", "macd_dea", "kdj_k", "kdj_d", "kdj_j", "boll_upper", "boll_mid", "boll_lower", "cci", "trade_date")},
             "fundamentals": {
                 "period": indicator.get("end_date") or income.get("end_date"), "revenue": income.get("revenue"),
                 "net_profit": income.get("n_income_attr_p"), "operating_cashflow": cashflow.get("n_cashflow_act"),
                 "revenue_yoy": revenue_yoy, "net_profit_yoy": profit_yoy,
+                "revenue_yoy_field": revenue_field, "net_profit_yoy_field": profit_field,
+                "indicator_period": (financial_sources.get("indicator") or {}).get("period"),
+                "income_period": (financial_sources.get("income") or {}).get("period"),
+                "cashflow_period": (financial_sources.get("cashflow") or {}).get("period"),
                 "gross_margin": indicator.get("grossprofit_margin"), "net_margin": indicator.get("netprofit_margin"),
                 "roe": indicator.get("roe"), "debt_ratio": indicator.get("debt_to_assets"),
                 "current_ratio": indicator.get("current_ratio"), "eps": indicator.get("eps"),
+                "as_of": data_as_of["fundamentals"],
+                "source": next(iter(financial_source_names)) if len(financial_source_names) == 1 else None,
+                "source_event_id": financial_source_id, "sources": financial_sources,
             },
             "capital": {
+                **capital_dates, "source": (latest("capital_chip_snapshot") or {}).get("source_name"),
                 "winner_rate": chip.get("winner_rate"), "weighted_cost": chip.get("weight_avg"),
                 "cost_50pct": chip.get("cost_50pct"), "cost_85pct": chip.get("cost_85pct"),
                 "moneyflow": moneyflow, "margin": margin, "northbound": northbound,
-                "chip_distribution": list(capital.get("chip_distribution") or []),
+                "chip_distribution": [] if overview else list(capital.get("chip_distribution") or []),
             },
             "ownership": {
                 "pledge": ownership.get("pledge") or {},
@@ -1329,7 +1629,7 @@ class InvestmentMonitorService:
                 "repurchases": list(ownership.get("repurchases") or [])[:20],
             },
             "institution": {
-                "research_count": research_count, "latest": [self.compact_event(event) for event in research[:20]],
+                "research_count": research_count, "latest": [self.compact_event(event) for event in research],
                 "institutions": self._counter_rows(Counter(str((event.get("metrics") or {}).get("inst_csname") or event["source_name"]) for event in research), 10),
             },
             "company": {
@@ -1353,7 +1653,7 @@ class InvestmentMonitorService:
                 "items": [self.compact_event(event) for event in stock_comments[:20]],
                 "source_note": "只展示东方财富股吧真实公开帖子；保留作者、时间、正文摘录、互动数和图片并标记待核验，点击可在当前页面查看详情。",
             },
-            "signals": signals,
+            "signals": [] if overview else signals,
             "coverage": coverage,
             "evidence": {
                 "event_count": decision_event_count, "raw_event_count": int(bundle["raw_event_count"]),
@@ -1361,8 +1661,14 @@ class InvestmentMonitorService:
                 "source_count": source_count, "original_link_count": original_count,
                 "original_link_coverage": round(original_count * 100 / decision_event_count, 1) if decision_event_count else 0,
                 "channels": self._counter_rows(channels),
+                "counts_complete": not overview,
             },
             "timeline": [self.compact_event(event) for event in timeline[:40]],
+            **({"overview": {
+                "recent_evidence": [self.compact_event(row, summary_limit=240) for row in timeline],
+                "sections": preview_sections, "data_as_of": data_as_of,
+                "loaded_sections": ["overview"], "evidence_counts_complete": False,
+            }} if overview else {}),
         }
 
     def watchlist(self) -> List[str]:
@@ -1396,12 +1702,12 @@ class InvestmentMonitorService:
 
     def request_backfill(self, symbol: str, *, days: int = 183) -> Dict[str, Any]:
         code = self._canonical_ts_code(symbol)
-        return self.repo.create_backfill_job(code, stock_name=self._stock_name(code), days=max(30, min(days, 365)))
+        return self.repo.create_backfill_job(code, stock_name=self._stock_name(code), days=max(30, min(int(days), 730)))
 
     def run_backfill_job(self, job_id: int, symbol: str, *, days: int = 183) -> Dict[str, Any]:
         """Fetch each configured channel independently and persist its facts idempotently."""
         self._watchlist_override = [self._canonical_ts_code(symbol)]
-        self._backfill_days = max(30, min(int(days), 365))
+        self._backfill_days = max(30, min(int(days), 730))
         channels: Dict[str, Dict[str, Any]] = {}
         self.repo.update_backfill_job(job_id, status="running", progress=1, started_at=utc_naive_now(), channel_status=channels)
         source_map = {item["source_key"]: item for item in self.repo.list_sources()}
@@ -1671,6 +1977,16 @@ class InvestmentMonitorService:
             return self._tushare_long_news_events(source)
         if key == "tianyancha.enterprise":
             return self._tianyancha_events(source)
+        if key in {"sse.announcements", "szse.announcements"}:
+            suffix = ".SH" if key == "sse.announcements" else ".SZ"
+            today = datetime.now(timezone(timedelta(hours=8))).date()
+            rows = []
+            for symbol in self.equity_watchlist():
+                if symbol.endswith(suffix):
+                    rows.extend(self.exchanges.fetch(
+                        symbol=symbol, start_date=today - timedelta(days=2), end_date=today,
+                    ))
+            return self._announcement_events(source, rows)
         if key == "cninfo.announcements":
             # Watchlist symbols are mandatory and queried explicitly. A capped
             # full-market page scan can miss them whenever disclosure volume is
@@ -1707,7 +2023,7 @@ class InvestmentMonitorService:
                 confidence=1.0, event_at=row["announcement_at"],
                 tags=["公司公告", *categories], actors=[str(row.get("name") or "")],
                 metrics={key: value for key, value in row.items() if key not in {"raw", "announcement_at", "title", "pdf_url"}},
-                url=row.get("pdf_url"), raw=row.get("raw") or row,
+                url=row.get("pdf_url") or row.get("original_url"), raw=row.get("raw") or row,
             ))
         return events
 
@@ -1765,7 +2081,7 @@ class InvestmentMonitorService:
             valuation = basic[0] if basic else {}
             trade_date = str(quote.get("trade_date") or end)
             pct = float(quote.get("pct_chg") or 0)
-            metrics = {**quote, **{f"valuation_{key}": value for key, value in valuation.items() if key not in {"ts_code", "trade_date", "close"}}}
+            metrics = {**quote, **{f"valuation_{key}": value for key, value in valuation.items() if key not in {"ts_code", "close"}}}
             events.append(self._base_event(
                 source,
                 external_id=f"{ts_code}:{trade_date}",
@@ -1853,21 +2169,34 @@ class InvestmentMonitorService:
             report_rows = self.tushare.query("report_rc", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for row in report_rows:
+                returned_symbol = str(row.get("ts_code") or "").strip()
+                if returned_symbol and self._canonical_ts_code(returned_symbol) != ts_code:
+                    continue
                 key = "|".join(str(row.get(field) or "") for field in ("report_date", "report_title", "org_name", "author_name"))
                 grouped[key].append(row)
             for key, rows in grouped.items():
                 row = rows[0]
                 rating = str(row.get("rating") or "")
-                targets = [value for item in rows for value in (item.get("min_price"), item.get("max_price")) if value is not None]
+                targets = [
+                    value for item in rows for field in ("min_price", "max_price")
+                    if (value := self._broker_number(item.get(field))) is not None and value > 0
+                ]
                 metrics = {
                     "rating": rating,
+                    "report_identity": hashlib.sha256(key.encode()).hexdigest()[:32],
+                    "report_symbol": ts_code,
+                    "report_date": str(row.get("report_date") or ""),
+                    "org_name": str(row.get("org_name") or "").strip() or None,
+                    "author_name": str(row.get("author_name") or "").strip() or None,
                     "target_price_min": min(targets) if targets else None,
                     "target_price_max": max(targets) if targets else None,
                     "forecasts": [{field: item.get(field) for field in ("quarter", "eps", "pe", "np", "op_rt", "roe")} for item in rows],
                 }
                 events.append(self._base_event(
                     source,
-                    external_id=hashlib.sha256(key.encode()).hexdigest()[:32],
+                    # One industry report can forecast several stocks. The old
+                    # report-only key let the final stock overwrite its peers.
+                    external_id=hashlib.sha256(f"{ts_code}|{key}".encode()).hexdigest()[:32],
                     event_type="institution_forecast",
                     perspective="institution",
                     title=str(row.get("report_title") or f"{self._stock_name(ts_code)} 机构盈利预测"),
@@ -2254,6 +2583,14 @@ class InvestmentMonitorService:
 
     def _tushare_fundamental_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         events = []
+
+        def first_value(row: Dict[str, Any], *keys: str) -> Any:
+            return next((row[key] for key in keys if row.get(key) not in (None, "")), None)
+
+        def summary_value(row: Dict[str, Any], *keys: str) -> Any:
+            value = first_value(row, *keys)
+            return "-" if value is None else value
+
         start = (utc_naive_now() - timedelta(days=550)).strftime("%Y%m%d")
         end = utc_naive_now().strftime("%Y%m%d")
         for ts_code in self.equity_watchlist():
@@ -2262,32 +2599,54 @@ class InvestmentMonitorService:
             balance = self.tushare.query("balancesheet", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             cashflow = self.tushare.query("cashflow", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             forecast = self.tushare.query("forecast", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
-            latest = indicator[0] if indicator else {}
-            latest_income = income[0] if income else {}
-            latest_balance = balance[0] if balance else {}
-            latest_cash = cashflow[0] if cashflow else {}
-            latest_forecast = forecast[0] if forecast else {}
-            period = str(latest.get("end_date") or latest_income.get("end_date") or latest_forecast.get("end_date") or end)
-            metrics = {"indicator": latest, "income": latest_income, "balance_sheet": latest_balance, "cashflow": latest_cash, "forecast": latest_forecast}
-            summary = (
-                f"报告期 {period}；营收同比 {latest.get('q_sales_yoy') or latest.get('revenue_yoy') or '-'}%，"
-                f"归母净利同比 {latest.get('q_netprofit_yoy') or latest.get('netprofit_yoy') or '-'}%，"
-                f"ROE {latest.get('roe') or latest.get('roe_waa') or '-'}%，毛利率 {latest.get('grossprofit_margin') or '-'}%，"
-                f"经营现金流 {latest_cash.get('n_cashflow_act') or '-'}。"
-            )
-            yoy = self._number(latest.get("q_netprofit_yoy") or latest.get("netprofit_yoy"))
-            events.append(self._base_event(
-                source, external_id=f"{ts_code}:{period}", event_type="fundamental_snapshot", perspective="company",
-                title=f"{self._stock_name(ts_code)} 财务质量快照", summary=summary, symbols=[ts_code],
-                sentiment="bullish" if yoy > 10 else "bearish" if yoy < -10 else "neutral",
-                importance=78 if latest_forecast else 70, event_at=self._parse_date(latest.get("ann_date") or latest_income.get("ann_date") or period),
-                tags=["财务指标", "利润表", "资产负债表", "现金流", *( ["业绩预告"] if latest_forecast else [])],
-                actors=[self._stock_name(ts_code)], metrics=metrics, raw=metrics,
-            ))
+            choices = {}
+            for key, rows in (("indicator", indicator), ("income", income), ("balance_sheet", balance),
+                              ("cashflow", cashflow), ("forecast", forecast)):
+                ranked = [(rank, row) for row in rows
+                          if (rank := financial_selection_rank(row, statement=key in {"income", "balance_sheet", "cashflow"})) is not None]
+                best = max((rank for rank, _ in ranked), default=None)
+                # Keep equally ranked conflicting rows even within one API
+                # response. Completeness or text sort order is not a revision.
+                unique = {json.dumps(row, ensure_ascii=False, sort_keys=True, default=str): row
+                          for rank, row in ranked if rank == best}
+                choices[key] = [unique[value] for value in sorted(unique)] or [{}]
+            base = {key: rows[0] for key, rows in choices.items()}
+            if not any(base.values()):
+                continue
+            # A base plus each alternative preserves every highest-tier table
+            # without a Cartesian product. Equal contents are idempotent at
+            # ingestion; the reader identifies conflicts per whole source row.
+            variants = [base, *({**base, key: row} for key, rows in choices.items() for row in rows[1:])]
+            for metrics in variants:
+                latest, latest_cash, latest_forecast = metrics["indicator"], metrics["cashflow"], metrics["forecast"]
+                selected = [row for row in metrics.values() if row]
+                period = max(financial_calendar_date(row["end_date"]) for row in selected)
+                announcement = max((value for row in selected if (value := financial_announcement_date(row))), default=None)
+                summary = (
+                    f"财务指标期 {financial_calendar_date(latest.get('end_date')) or '未标注'}；"
+                    f"营收同比 {summary_value(latest, 'q_sales_yoy', 'revenue_yoy')}%，"
+                    f"归母净利同比 {summary_value(latest, 'q_netprofit_yoy', 'netprofit_yoy')}%，"
+                    f"ROE {summary_value(latest, 'roe', 'roe_waa')}%，毛利率 {summary_value(latest, 'grossprofit_margin')}%；"
+                    f"现金流量表期 {financial_calendar_date(latest_cash.get('end_date')) or '未标注'}，"
+                    f"经营现金流 {summary_value(latest_cash, 'n_cashflow_act')}。"
+                )
+                yoy = self._number(first_value(latest, "q_netprofit_yoy", "netprofit_yoy"))
+                events.append(self._base_event(
+                    source, external_id=f"{ts_code}:{period}", event_type="fundamental_snapshot", perspective="company",
+                    title=f"{self._stock_name(ts_code)} 财务质量快照", summary=summary, symbols=[ts_code],
+                    sentiment="bullish" if yoy > 10 else "bearish" if yoy < -10 else "neutral",
+                    importance=78 if latest_forecast else 70, event_at=self._parse_date(announcement or period),
+                    tags=["财务指标", "利润表", "资产负债表", "现金流", *( ["业绩预告"] if latest_forecast else [])],
+                    actors=[self._stock_name(ts_code)], metrics=metrics, raw=metrics,
+                ))
         return events
 
     def _tushare_capital_events(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         events = []
+
+        def summary_value(value: Any) -> Any:
+            return "-" if value is None or value == "" else value
+
         start = (utc_naive_now() - timedelta(days=self._history_window(45))).strftime("%Y%m%d")
         end = utc_naive_now().strftime("%Y%m%d")
         market_margin_rows = self.tushare.query(
@@ -2302,6 +2661,9 @@ class InvestmentMonitorService:
             "margin_balance": sum(self._number(row.get("rzrqye")) for row in market_margin),
             "exchanges": market_margin,
         }
+        market_margin_balance = market_margin_total["margin_balance"] if any(
+            row.get("rzrqye") not in (None, "") for row in market_margin
+        ) else None
         for ts_code in self.equity_watchlist():
             perf = self.tushare.query("cyq_perf", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
             margin = self.tushare.query("margin_detail", params={"ts_code": ts_code, "start_date": start, "end_date": end})["rows"]
@@ -2315,17 +2677,18 @@ class InvestmentMonitorService:
             latest_north = north[0] if north else {}
             metrics = {"chip_performance": latest, "chip_distribution": chips[:100], "margin": latest_margin,
                        "market_margin": market_margin_total, "moneyflow": latest_moneyflow, "northbound": latest_north}
-            winner = self._number(latest.get("winner_rate"))
             summary = (
-                f"{trade_date} 筹码平均成本 {latest.get('weight_avg') or '-'}，获利比例 {latest.get('winner_rate') or '-'}；"
-                f"融资余额 {latest_margin.get('rzye') or '-'}，融资买入 {latest_margin.get('rzmre') or '-'}；"
-                f"全市场两融余额 {market_margin_total.get('margin_balance') or '-'}；"
-                f"主力净流入 {latest_moneyflow.get('net_mf_amount') or '-'}；最近披露北向持股比例 {latest_north.get('ratio') or '-'}。"
+                f"{trade_date} 筹码平均成本 {summary_value(latest.get('weight_avg'))}，获利比例 {summary_value(latest.get('winner_rate'))}；"
+                f"融资余额 {summary_value(latest_margin.get('rzye'))}，融资买入 {summary_value(latest_margin.get('rzmre'))}；"
+                f"全市场两融余额 {summary_value(market_margin_balance)}；"
+                f"资金净流入 {summary_value(latest_moneyflow.get('net_mf_amount'))}；最近披露北向持股比例 {summary_value(latest_north.get('ratio'))}。"
             )
             events.append(self._base_event(
                 source, external_id=f"{ts_code}:{trade_date}", event_type="capital_chip_snapshot", perspective="investor",
                 title=f"{self._stock_name(ts_code)} 筹码与资金快照", summary=summary, symbols=[ts_code],
-                sentiment="bullish" if winner >= 0.7 else "bearish" if winner and winner <= 0.3 else "neutral",
+                # cyq_perf returns a modeled percentage, not the 0-1
+                # ChipDistribution.profit_ratio and not a buy/sell signal.
+                sentiment="neutral",
                 importance=72, event_at=self._parse_date(trade_date), tags=["筹码分布", "个股资金流", "融资融券", "北向持股"],
                 metrics=metrics, raw=metrics,
             ))
@@ -2827,7 +3190,10 @@ class InvestmentMonitorService:
     ) -> Dict[str, Any]:
         config = source.get("config") or {}
         level = str(config.get("evidence_level") or "unverified")
-        origin_apis = list(_EVENT_ORIGIN_APIS.get(event_type) or config.get("origin_apis") or [])
+        origin_apis = list(
+            config.get("origin_apis") if event_type == "company_announcement" and config.get("origin_apis")
+            else _EVENT_ORIGIN_APIS.get(event_type) or config.get("origin_apis") or []
+        )
         if metrics is not None:
             event_metrics = dict(metrics)
         elif isinstance(raw, dict):
@@ -2914,7 +3280,7 @@ class InvestmentMonitorService:
         if evidence:
             return evidence
         key = str(event.get("source_key") or "")
-        level = "unverified" if key == "zsxq.essays" else "official" if key == "cninfo.announcements" else "reported" if key.startswith("feeds.") else "licensed"
+        level = "unverified" if key == "zsxq.essays" else "official" if key in {"cninfo.announcements", "sse.announcements", "szse.announcements"} else "reported" if key.startswith("feeds.") else "licensed"
         return {"evidence_level": level, "channel": "essay" if key == "zsxq.essays" else "other"}
 
     def _stock_name(self, ts_code: str) -> str:
@@ -3030,7 +3396,7 @@ class InvestmentMonitorService:
             return raw
         digits, suffix = match.groups()
         if not suffix:
-            suffix = "BJ" if digits.startswith(("4", "8")) else "SH" if digits.startswith(("6", "9")) else "SZ"
+            suffix = _infer_cn_exchange(digits)
         return f"{digits}.{suffix}"
 
     def _symbols_for_text(self, text: str, names: Dict[str, str]) -> List[str]:
@@ -3088,7 +3454,7 @@ class InvestmentMonitorService:
         if api_name == "forecast":
             return str(row.get("summary") or row.get("change_reason") or "公司发布业绩预告。")
         if api_name == "express":
-            return f"营业收入 {row.get('revenue')}，归母净利润 {row.get('n_income')}，同比 {row.get('diluted_roe')}。"
+            return f"营业收入 {row.get('revenue')}，净利润 {row.get('n_income')}，摊薄ROE {row.get('diluted_roe')}。"
         if api_name == "repurchase":
             return f"进度 {row.get('proc')}，金额 {row.get('amount')}，数量 {row.get('vol')}。"
         if api_name == "stk_holdertrade":
@@ -3180,35 +3546,147 @@ class InvestmentMonitorService:
         return {"symbol": code, "name": name, "consensus": snapshot, "worker": worker}
 
     @classmethod
+    def _broker_number(cls, value: Any) -> Optional[float]:
+        if isinstance(value, bool):
+            return None
+        number = cls._optional_number(value)
+        return number if number is not None and math.isfinite(number) else None
+
+    @staticmethod
+    def _broker_report_rows(research: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Coalesce old/new IDs for the same stock/report without rewriting rows."""
+        reports: Dict[tuple, Dict[str, Any]] = {}
+        for index, event in enumerate(research):
+            if event.get("event_type") != "institution_forecast":
+                continue
+            metrics = dict(event.get("metrics") or {})
+            relation = event.get("stock_relation") if isinstance(event.get("stock_relation"), dict) else {}
+            subject = relation.get("subject_symbol") or metrics.get("report_symbol")
+            symbols = (subject,) if subject else tuple(sorted(event.get("symbols") or []))
+            identity = metrics.get("report_identity") or event.get("external_id") or f"event:{event.get('id', index)}"
+            key = (event.get("source_key"), symbols, str(identity))
+            previous = reports.get(key)
+
+            def priority(item: Dict[str, Any]) -> tuple:
+                return (
+                    bool((item.get("metrics") or {}).get("report_identity")),
+                    str(item.get("event_at") or ""), str(item.get("ingested_at") or ""),
+                    int(item.get("id") or 0),
+                )
+
+            if previous is None or priority(event) > priority(previous):
+                reports[key] = event
+        return sorted(reports.values(), key=lambda item: (
+            str(item.get("event_at") or ""), int(item.get("id") or 0),
+        ), reverse=True)
+
+    @staticmethod
+    def _broker_institutions(reports: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        # actors[0] is not reliable: when org_name is missing it is the author.
+        names = [str((item.get("metrics") or {}).get("org_name") or "").strip() for item in reports]
+        known = len({name for name in names if name})
+        unknown = sum(not name for name in names)
+        return {
+            "institution_count": None if unknown else known,
+            "known_institution_count": known,
+            "unknown_institution_report_count": unknown,
+        }
+
+    @classmethod
     def _consensus_payload(
         cls, research: Sequence[Dict[str, Any]], essays: Sequence[Dict[str, Any]],
         essay_snapshot: Optional[Dict[str, Any]] = None,
+        *, broker_total_record_count: Optional[int] = None, broker_sample_limit: Optional[int] = None,
+        broker_loaded: bool = True, broker_window_days: Optional[int] = None,
+        target_symbol: Optional[str] = None,
     ) -> Dict[str, Any]:
-        broker_rows = [event for event in research if event.get("event_type") == "institution_forecast"]
+        loaded_rows = [event for event in research if event.get("event_type") == "institution_forecast"]
+
+        def relation(event: Dict[str, Any]) -> Dict[str, Any]:
+            value = event.get("stock_relation")
+            if not isinstance(value, dict) or (target_symbol and value.get("target_symbol") != target_symbol):
+                return research_stock_relation(event, target_symbol) if target_symbol else {}
+            return value
+
+        input_rows = []
+        for event in loaded_rows:
+            event_relation = relation(event)
+            if event_relation.get("kind") == "other_company_mention" or event_relation.get("has_subject_conflict"):
+                continue
+            # The eligibility check, report key, and visible citation must all
+            # use the same current-stock attribution. Never mutate shared rows
+            # that may still be cached for a different stock workspace.
+            input_rows.append({**event, "stock_relation": event_relation})
+        broker_rows = cls._broker_report_rows(input_rows)
+        unknown_relation_count = sum(relation(event).get("kind") != "company_direct" for event in broker_rows)
         ratings: Counter = Counter()
         target_prices: List[float] = []
+        document_targets: List[float] = []
+        target_reports: List[Dict[str, Any]] = []
+        valid_reports: set[int] = set()
+        missing_period_reports: set[int] = set()
         forecast_buckets: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
-        for event in broker_rows:
+        forecast_reports: Dict[str, Dict[int, Dict[str, Any]]] = defaultdict(dict)
+        metric_sources: Dict[str, Dict[str, List[int]]] = defaultdict(lambda: defaultdict(list))
+        conflicts: Dict[str, Counter] = defaultdict(Counter)
+        for report_index, event in enumerate(broker_rows):
             metrics = dict(event.get("metrics") or {})
             rating = str(metrics.get("rating") or "未评级").strip() or "未评级"
             ratings[rating] += 1
+            endpoints = []
             for key in ("target_price_min", "target_price_max"):
-                value = cls._optional_number(metrics.get(key))
-                if value is not None:
+                value = cls._broker_number(metrics.get(key))
+                if value is not None and value > 0:
                     target_prices.append(value)
+                    endpoints.append(value)
+            if endpoints:
+                # Each report has one representative target. An interval's
+                # midpoint is derived, not a separately published target price.
+                document_targets.append(min(endpoints) / 2 + max(endpoints) / 2)
+                target_reports.append(event)
+                valid_reports.add(report_index)
+            report_periods: Dict[str, Dict[str, set[float]]] = defaultdict(lambda: defaultdict(set))
             for row in metrics.get("forecasts") or []:
                 if not isinstance(row, dict):
                     continue
-                period = str(row.get("quarter") or "未注明预测期")
+                period = str(row.get("quarter") or "").strip()
+                if not period:
+                    # Unknown horizons are not one comparable forecast period.
+                    missing_period_reports.add(report_index)
+                    continue
                 for field in ("eps", "pe", "np", "op_rt", "roe"):
-                    value = cls._optional_number(row.get(field))
+                    value = cls._broker_number(row.get(field))
                     if value is not None:
-                        forecast_buckets[period][field].append(value)
+                        report_periods[period][field].add(value)
+            for period, values in report_periods.items():
+                for field, numbers in values.items():
+                    if len(numbers) != 1:
+                        # Do not pick an arbitrary conflicting version from the
+                        # same report/period or give duplicates extra weight.
+                        conflicts[period][field] += 1
+                        continue
+                    forecast_buckets[period][field].append(next(iter(numbers)))
+                    forecast_reports[period][report_index] = event
+                    if event.get("id") is not None:
+                        metric_sources[period][field].append(event["id"])
+                    valid_reports.add(report_index)
 
         forecast_rows = []
-        for period, values in sorted(forecast_buckets.items()):
-            row: Dict[str, Any] = {"period": period, "sample_count": max((len(items) for items in values.values()), default=0)}
+        for period in sorted(set(forecast_buckets) | set(conflicts)):
+            values = forecast_buckets[period]
+            period_reports = list(forecast_reports[period].values())
+            row: Dict[str, Any] = {
+                "period": period, "sample_count": max((len(items) for items in values.values()), default=0),
+                "report_count": len(period_reports),
+                "metric_sample_counts": {field: len(values[field]) for field in ("eps", "pe", "np", "op_rt", "roe")},
+                "source_event_ids": [item["id"] for item in period_reports if item.get("id") is not None],
+                "metric_source_event_ids": dict(metric_sources[period]),
+                "conflicting_metric_counts": dict(conflicts[period]),
+                **cls._broker_institutions(period_reports),
+            }
             for field, items in values.items():
+                if not items:
+                    continue
                 row[f"{field}_median"] = cls._median(items)
                 row[f"{field}_min"] = min(items)
                 row[f"{field}_max"] = max(items)
@@ -3231,10 +3709,43 @@ class InvestmentMonitorService:
             default="",
         ) or None
         return {
-            "broker_report_count": len(broker_rows),
+            # Legacy count remains the raw record count. New clients use the
+            # explicit census/sample distinction below, never an institution count.
+            "broker_report_count": len(loaded_rows) if broker_total_record_count is None else broker_total_record_count,
+            "broker_sample": {
+                "loaded": broker_loaded,
+                "total_record_count": broker_total_record_count,
+                "loaded_record_count": len(loaded_rows),
+                "input_record_count": len(input_rows),
+                "relation_excluded_count": len(loaded_rows) - len(input_rows),
+                "unknown_relation_count": unknown_relation_count,
+                "report_count": len(broker_rows),
+                "valid_report_count": len(valid_reports),
+                "missing_period_report_count": len(missing_period_reports),
+                "duplicate_record_count": len(input_rows) - len(broker_rows),
+                "sample_limit": broker_sample_limit,
+                "window_days": broker_window_days,
+                "truncated": broker_total_record_count > len(loaded_rows) if broker_loaded and broker_total_record_count is not None else None,
+                "oldest_at": min((str(item.get("event_at") or "") for item in broker_rows), default="") or None,
+                "as_of": max((str(item.get("event_at") or "") for item in broker_rows), default="") or None,
+                "aggregation": "report_weighted",
+                **cls._broker_institutions(broker_rows),
+                "source_notes": [{
+                    "event_id": item.get("id"), "title": item.get("title"), "event_at": item.get("event_at"),
+                    "org_name": (item.get("metrics") or {}).get("org_name") or None,
+                    "stock_relation": item.get("stock_relation"),
+                } for item in broker_rows],
+            },
             "ratings": cls._counter_rows(ratings),
             "target_price": {
                 "sample_count": len(target_prices),
+                "endpoint_count": len(target_prices),
+                "document_count": len(document_targets),
+                "document_min": min(document_targets) if document_targets else None,
+                "document_median": cls._median(document_targets),
+                "document_max": max(document_targets) if document_targets else None,
+                "document_method": "每份报告有效目标价范围取中点，按文档等权；单边目标价直接使用，不是机构等权。",
+                **cls._broker_institutions(target_reports),
                 "min": min(target_prices) if target_prices else None,
                 "median": cls._median(target_prices),
                 "max": max(target_prices) if target_prices else None,
@@ -3244,7 +3755,7 @@ class InvestmentMonitorService:
             "essay_expectations": essay_expectations[:20],
             "essay_analysis": essay_analysis,
             "as_of": as_of,
-            "method": "券商数字采用 report_rc 同预测期中位数；小作文侧使用最多 20 篇相关原文与 5 篇股票标签仅含当前标的的单股专属原文，去重后由 DeepSeek 按观点提出时间和预测期提取预期。券商与小作文口径分栏展示、不混算。",
+            "method": "券商数字采用 report_rc 同预测期文档等权中位数，不是机构等权；同篇同预测期重复值只计一次，冲突值不参与该指标。目标价每篇范围取中点后按文档统计，旧 median 字段仅为范围端点中位数。窗口内原始记录总量与实际有界样本分开，不能代表全市场完整覆盖。小作文侧使用最多20篇相关原文与5篇单股专属原文，去重后由配置的分析器按观点时间和预测期提取。券商与小作文口径分栏展示、不混算。",
         }
 
     @staticmethod

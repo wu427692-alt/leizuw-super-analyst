@@ -116,6 +116,7 @@ class SyncWatchdogWorker:
         repairs = []
         workers: Dict[str, Dict[str, Any]] = {}
         errors = []
+        degraded_workers = []
 
         if _enabled("INVESTMENT_MONITOR_AUTO_START"):
             worker = self._get_investment_worker()
@@ -125,7 +126,7 @@ class SyncWatchdogWorker:
             try:
                 overdue = [
                     item["source_key"] for item in self._repository_factory().due_sources()
-                    if item["source_key"] != "cninfo.announcements"
+                    if item["source_key"] not in {"cninfo.announcements", "sse.announcements", "szse.announcements"}
                 ]
             except Exception as exc:  # noqa: BLE001 - worker liveness repair should still proceed.
                 errors.append(f"source_schedule:{type(exc).__name__}")
@@ -177,16 +178,28 @@ class SyncWatchdogWorker:
             if not state.get("running"):
                 worker.start()
                 repairs.append({"worker": "cninfo_watchlist", "action": "restart"})
-            elif self._heartbeat_stale(state, "last_run_age_seconds", "poll_seconds", 120):
+            elif self._heartbeat_stale(
+                state, "last_run_age_seconds", "poll_seconds", 120,
+            ):
+                # A genuinely stale heartbeat still needs a wake. trigger()
+                # preserves each stock's persisted next_retry_at; it neither
+                # restarts an alive thread nor bypasses upstream backoff.
                 worker.trigger()
                 repairs.append({"worker": "cninfo_watchlist", "action": "wake"})
             workers["cninfo_watchlist"] = worker.status()
+            if self._upstream_degraded(workers["cninfo_watchlist"]):
+                degraded_workers.append({
+                    "worker": "cninfo_watchlist",
+                    "reason": "upstream_sync_failed",
+                    "failed_symbols": len(workers["cninfo_watchlist"].get("degraded_symbols") or []),
+                })
 
         result = {
-            "status": "degraded" if errors else "repaired" if repairs else "healthy",
+            "status": "degraded" if errors or degraded_workers else "repaired" if repairs else "healthy",
             "checked_at": self._iso(started),
             "duration_ms": max(0, round((self._clock() - started) * 1000)),
             "repairs": repairs,
+            "degraded_workers": degraded_workers,
             "workers": workers,
             "errors": errors,
         }
@@ -196,7 +209,7 @@ class SyncWatchdogWorker:
             self._repair_count += len(repairs)
             self._last_result = result
             self._last_error = "; ".join(errors) or None
-            if not errors and all(bool(item.get("running")) for item in workers.values()):
+            if not errors and not degraded_workers and all(bool(item.get("running")) for item in workers.values()):
                 self._last_healthy_at = self._last_audit_at
         if repairs:
             logger.warning("[sync-watchdog] repaired background synchronization: %s", repairs)
@@ -228,6 +241,20 @@ class SyncWatchdogWorker:
             return True
         cadence = max(1.0, float(state.get(interval_key) or minimum_seconds))
         return float(age) > max(float(minimum_seconds), cadence * self.stale_multiplier)
+
+    @staticmethod
+    def _upstream_degraded(state: Dict[str, Any]) -> bool:
+        if state.get("status") == "degraded" or state.get("last_error"):
+            return True
+        if any(
+            item.get("status") == "retry"
+            or int(item.get("consecutive_failures") or 0) > 0
+            or bool(item.get("last_error"))
+            for item in state.get("symbols") or []
+        ):
+            return True
+        result = state.get("last_result") or {}
+        return result.get("status") in {"failed", "partial"}
 
     def _get_investment_worker(self) -> Any:
         if self._investment_worker is None:

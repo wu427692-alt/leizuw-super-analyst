@@ -15,15 +15,21 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
+import unicodedata
 from urllib.parse import unquote, urlparse
 import zipfile
 
 from json_repair import repair_json
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 import requests
 
 from src.config import get_config
+from src.data.stock_index_loader import get_stock_entity_index_records
+from src.request_identity import current_owner_id
 from src.llm.provider_schedule import (
     direct_chat_headers,
     prepare_direct_chat_payload,
@@ -35,8 +41,10 @@ from src.services.essay_analysis_service import (
     EssayDailyReportService,
 )
 from src.services.cninfo_announcement_service import CninfoAnnouncementService
+from src.services.acquisition_entity_resolver import resolve_acquisition_entities
 from src.services.financial_data_service import FinancialDataService, FinancialDataValidationError
 from src.services.investment_monitor_service import InvestmentMonitorService
+from src.services.stock_index_remote_service import stock_directory_status
 from src.storage import persist_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -50,6 +58,27 @@ MAX_RESEARCH_REPORT_RESULTS = max(
     20, min(int(os.getenv("DATA_ACQUISITION_REPORT_MAX_RESULTS", "500")), MAX_ROWS_PER_DATASET)
 )
 _RESOURCE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_UNRESOLVED_PACKAGE_OWNER = object()
+_GLOBAL_TUSHARE_RESOURCES = {
+    "news", "major_news", "cctv_news", "trade_cal", "concept", "moneyflow_hsgt",
+    "moneyflow_cnt_ths", "moneyflow_ind_ths", "ths_hot", "dc_hot", "broker_recommend",
+    "margin", "new_share", "limit_list_d", "limit_list_ths",
+    "index_basic",
+}
+_INDEX_TUSHARE_RESOURCES = {"index_daily", "index_weekly", "index_monthly", "index_weight"}
+_ENTITY_CODE_KEYS = ("symbols", "ts_codes", "ts_code", "symbol", "stock_code")
+
+
+def _selector_values(params: Dict[str, Any], keys: tuple[str, ...]) -> List[str]:
+    values = []
+    for key in keys:
+        raw = params.get(key) or []
+        raw = raw if isinstance(raw, list) else (
+            re.split(r"[,，、;；\s]+", str(raw)) if key in _ENTITY_CODE_KEYS else [str(raw)]
+        )
+        values.extend(str(value).strip().upper().replace(".SS", ".SH") if key in _ENTITY_CODE_KEYS else str(value).strip()
+                      for value in raw if str(value).strip())
+    return list(dict.fromkeys(values))
 
 # The planner sees the most useful productized endpoints. The executor still supports
 # every syntactically valid Tushare api_name so the user's full Pro entitlement remains callable.
@@ -123,14 +152,18 @@ _FILE_REQUEST_RE = re.compile(
     re.I,
 )
 MAX_DOWNLOAD_FILES = 100
+MAX_DOWNLOAD_WORKERS = 8
+MAX_DOWNLOAD_PER_HOST = 4
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_PACKAGE_FILE_BYTES = 500 * 1024 * 1024
 
 PLANNER_SYSTEM = """你是财经数据产品的数据调度规划器。把用户需求转成严格 JSON，不回答投资建议。
 只能使用 capability_catalog 中的数据源和资源。只获取用户明确要求的数据维度，不得因为目录中存在其他能力就一并添加；用户要求“只/仅/不要”时必须严格排除未要求渠道。多维综合请求再覆盖行情、财务、资金、公告、新闻、机构观点、知识星球和工商风险中真正相关的维度，避免重复。
 股票代码必须使用 Tushare 格式，如 603306.SH、300476.SZ。日期参数使用 YYYYMMDD；本地库日期使用 YYYY-MM-DD。
+公司名称、全称、简称必须写入 scope.company_names；每个公司专属任务也保留 company_name/company_names 以绑定该任务的目标。没有经数据源证实的股票代码就留空，系统会在生成计划时查本地目录与巨潮官方证券候选，不得编造代码或声称“缺代码只能执行后再处理”。不同公司的任务必须分别绑定目标，不得把所有代码广播给每个任务。用户明确要“所有/全部公告、研报”且未限日期时，time_range_mode=all_history，按上游可提供历史检索，不能填成今天到今天；没有日期也没有全部要求时默认最近两年。明确日期/今天/最近几年等优先于“所有”数量词，最终由服务器复核范围。
 公告必须使用 cninfo.announcements 现场调用巨潮接口重新检索，不得使用本地公告缓存。Tushare 数据必须按维度直接调用对应 api_name；研报 PDF 库使用 research_report，盈利预测使用 report_rc，新闻使用 news/major_news，不能用 monitor.events 代替。不要向新闻接口传 ts_code。
 研报主题请求必须把用户原话中的主题拆成 scope.keywords 和 research_report.params.topics；“或/或者”使用 keyword_mode=any。时间范围必须据 today 精确计算，不得用接口默认的20天代替“最近两年”。“最好是深度研究”设 depth_preference=prefer，“只要/必须是深度研究”设为strict。研报筛选只使用可解释字段和标签，ai_filter 必须为 false，最终由用户人工勾选。
+研报明确按标题筛选时使用 params.title_query，按摘要内容使用 content_query（不是PDF全文），券商用 inst_csname，作者用 author；公司名称只用于公司目标，不要再当行业主题加入 topics。深度研究不是 report_type，必须使用 depth_preference。
 例：“下载最近两年低空经济或无人机方向的深度研报” => scope.keywords=["低空经济","无人机"]，scope.start_date=当天向前两年，scope.end_date=today，task.params={"topics":["低空经济","无人机"],"keyword_mode":"any","depth_preference":"prefer","ai_filter":false,...}，include_files=true。
 知识星球使用 created_from、created_to、query 或 symbol；天眼查的 company_name 可以是单个名称或名称数组。
 必须输出全局 scope：symbols、company_names、keywords、start_date、end_date、market_wide。除非用户明确要求全市场，market_wide 必须为 false。
@@ -168,7 +201,8 @@ _REPORT_TOPIC_ALIASES: Dict[str, List[str]] = {
 }
 _REPORT_INTERNAL_PARAMS = {
     "topics", "keywords", "keyword", "query", "keyword_mode", "depth_preference",
-    "ai_filter", "max_results", "strict_depth",
+    "ai_filter", "max_results", "strict_depth", "company_name", "company_names", "symbols", "symbol",
+    "time_range_mode",
 }
 _REPORT_TOPIC_STOPWORDS = {
     "研报", "报告", "研究", "深度", "深度研究", "主题", "方向", "最近", "近期",
@@ -252,8 +286,24 @@ def _extract_requested_date_range(request_text: str) -> Optional[tuple[str, str]
             continue
         start = _shift_years(today, count) if unit == "年" else today - timedelta(days=count * multiplier)
         return start.isoformat(), today.isoformat()
+    if len(explicit) == 1 or len(compact) == 1:
+        if explicit:
+            year, month, day = explicit[0]
+            point = date(int(year), int(month), int(day))
+        else:
+            point = datetime.strptime(compact[0], "%Y%m%d").date()
+        return point.isoformat(), today.isoformat() if re.search(r"至今|以来|到现在|到今天|至今日|截至今", text) else point.isoformat()
     if "今年" in text:
         return date(today.year, 1, 1).isoformat(), today.isoformat()
+    if "去年" in text:
+        return date(today.year - 1, 1, 1).isoformat(), date(today.year - 1, 12, 31).isoformat()
+    if "本月" in text or "这个月" in text:
+        return today.replace(day=1).isoformat(), today.isoformat()
+    if "昨天" in text or "昨日" in text:
+        day = today - timedelta(days=1)
+        return day.isoformat(), day.isoformat()
+    if any(word in text for word in ("今天", "今日", "当日")):
+        return today.isoformat(), today.isoformat()
     return None
 
 
@@ -372,14 +422,61 @@ class DataAcquisitionService:
                  monitor: Optional[InvestmentMonitorService] = None,
                  cninfo: Optional[CninfoAnnouncementService] = None,
                  output_root: Optional[Path] = None):
-        self.planner = planner or DataAcquisitionPlanner()
-        self.financial = financial or FinancialDataService()
-        self.monitor = monitor or InvestmentMonitorService()
-        self.cninfo = cninfo or CninfoAnnouncementService()
+        self._dependencies_lock = threading.RLock()
+        self._planner = planner
+        self._financial = financial
+        self._monitor = monitor
+        self._cninfo = cninfo
         config = get_config()
         default_root = Path(config.database_path).expanduser().resolve().parent / "data_acquisition"
         self.output_root = Path(output_root or os.getenv("DATA_ACQUISITION_OUTPUT_DIR") or default_root).resolve()
         self.output_root.mkdir(parents=True, exist_ok=True)
+
+    def _dependency(self, attribute: str, factory: Callable[[], Any]) -> Any:
+        # Reading package manifests and serving byte ranges must not initialize
+        # model/data clients or enter the monitor's source-registration SQL path.
+        with self._dependencies_lock:
+            value = getattr(self, attribute)
+            if value is None:
+                value = factory()
+                setattr(self, attribute, value)
+            return value
+
+    @property
+    def planner(self) -> DataAcquisitionPlanner:
+        return self._dependency("_planner", DataAcquisitionPlanner)
+
+    @planner.setter
+    def planner(self, value: Optional[DataAcquisitionPlanner]) -> None:
+        with self._dependencies_lock:
+            self._planner = value
+
+    @property
+    def financial(self) -> FinancialDataService:
+        return self._dependency("_financial", FinancialDataService)
+
+    @financial.setter
+    def financial(self, value: Optional[FinancialDataService]) -> None:
+        with self._dependencies_lock:
+            self._financial = value
+
+    @property
+    def monitor(self) -> InvestmentMonitorService:
+        return self._dependency("_monitor", InvestmentMonitorService)
+
+    @monitor.setter
+    def monitor(self, value: Optional[InvestmentMonitorService]) -> None:
+        with self._dependencies_lock:
+            self._monitor = value
+
+    @property
+    def cninfo(self) -> CninfoAnnouncementService:
+        return self._dependency("_cninfo", CninfoAnnouncementService)
+
+    @cninfo.setter
+    def cninfo(self, value: Optional[CninfoAnnouncementService]) -> None:
+        with self._dependencies_lock:
+            self._cninfo = value
 
     @staticmethod
     def is_supported(source: str, resource: str) -> bool:
@@ -394,7 +491,11 @@ class DataAcquisitionService:
         return source == "tianyancha" and resource in TYC_COMMANDS
 
     def capabilities(self) -> Dict[str, Any]:
+        directory = stock_directory_status()
         return {
+            "stock_directory": {**directory, "refreshing": directory["status"] == "refreshing",
+                                "entry_count": directory.get("listed_count"),
+                                "error": "股票目录更新暂未成功，保留上次目录" if directory.get("error_code") else None},
             "sources": [
                 {"key": "tushare", "name": "Tushare Pro", "mode": "live", "available": self.financial.tushare.available,
                  "resources": [{"key": key, "name": value} for key, value in TUSHARE_CATALOG.items()],
@@ -416,6 +517,20 @@ class DataAcquisitionService:
         request_text = str(request_text or "").strip()
         return self._validate_plan(self.planner.plan(request_text), request_text)
 
+    def validate_plan(self, request_text: str, plan: Optional[Dict[str, Any]], *,
+                      require_ready: bool = False) -> Dict[str, Any]:
+        """Recompute identity and channel checks; never trust client preflight.
+
+        This endpoint does not call an LLM or fetch/download a dataset. The same
+        check is enforced before sync execution and before background queuing.
+        """
+        if plan is None:
+            raise DataAcquisitionError("请先生成取数计划")
+        normalized = self._validate_plan(plan, str(request_text or "").strip())
+        if require_ready and not normalized["preflight"]["can_execute"]:
+            raise DataAcquisitionError("取数计划待确认：" + "；".join(normalized["preflight"]["blockers"])[:400])
+        return normalized
+
     def run(
         self,
         request_text: str,
@@ -423,7 +538,7 @@ class DataAcquisitionService:
         *,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
-        normalized_plan = self._validate_plan(plan or self.plan(request_text), request_text)
+        normalized_plan = self.validate_plan(request_text, plan or self.plan(request_text), require_ready=True)
         self._emit_progress(
             progress_callback,
             progress=3,
@@ -469,9 +584,22 @@ class DataAcquisitionService:
                         )
 
                     rows = self._execute_task(task, normalized_plan["scope"], progress_callback=task_progress)
-                    datasets.append({"task": task, "status": "success", "rows": rows[:MAX_ROWS_PER_DATASET],
-                                     "row_count": len(rows[:MAX_ROWS_PER_DATASET]), "error": None,
-                                     "applied_scope": normalized_plan["scope"]})
+                    retrieval = dict(task.get("retrieval") or {})
+                    truncated = bool(retrieval.get("truncated")) or len(rows) > MAX_ROWS_PER_DATASET
+                    empty = not rows
+                    message = None
+                    if empty:
+                        applied = task.get("resolved_scope") or normalized_plan["scope"]
+                        message = (f"现场接口在 {applied.get('start_date') or '请求起点'} 至 "
+                                   f"{applied.get('end_date') or '请求终点'} 未返回符合条件的数据；"
+                                   "未取得文件，不能视为下载成功。请核对范围、筛选条件及上游覆盖。")
+                    elif truncated:
+                        message = "已保留获取到的结果，但触及分页或导出上限，未取得完整范围，不能视为全部成功。"
+                    datasets.append({"task": task, "status": "failed" if empty or truncated else "success",
+                                     "outcome": "no_data" if empty else "incomplete" if truncated else "data",
+                                     "rows": rows[:MAX_ROWS_PER_DATASET], "retrieval": retrieval,
+                                     "row_count": len(rows[:MAX_ROWS_PER_DATASET]), "error": message,
+                                     "applied_scope": task.get("resolved_scope") or normalized_plan["scope"]})
                 except Exception as exc:  # One source must not invalidate an otherwise useful package.
                     logger.warning("Acquisition task failed source=%s resource=%s error=%s",
                                    task["source"], task["resource"], type(exc).__name__)
@@ -500,7 +628,7 @@ class DataAcquisitionService:
                 progress_callback,
                 progress=100,
                 phase="completed",
-                message="数据包已生成，可以下载",
+                message=self.result_message(manifest),
                 completed_tasks=total_tasks,
                 total_tasks=total_tasks,
                 job_id=job_id,
@@ -512,24 +640,102 @@ class DataAcquisitionService:
 
     def list_jobs(self, limit: int = 20) -> Dict[str, Any]:
         jobs = []
-        for path in sorted(self.output_root.glob("*/manifest.json"), reverse=True)[:max(1, min(limit, 100))]:
+        legacy_owners = None
+        owner_id = current_owner_id()
+        bounded_limit = max(1, min(limit, 100))
+        for path in sorted(self.output_root.glob("*/manifest.json"), reverse=True):
             try:
-                jobs.append(json.loads(path.read_text(encoding="utf-8")))
-            except (OSError, ValueError):
+                manifest = self._read_manifest(path)
+                if "owner_id" not in manifest and legacy_owners is None:
+                    legacy_owners = self._legacy_package_owners()
+                if self._package_owner(manifest, path.parent.name, legacy_owners) != owner_id:
+                    continue
+                jobs.append(self._public_manifest(manifest))
+            except DataAcquisitionError:
                 continue
+            if len(jobs) >= bounded_limit:
+                break
         return {"items": jobs, "total": len(jobs)}
 
     def get_job(self, job_id: str) -> Dict[str, Any]:
         path = self._job_path(job_id) / "manifest.json"
-        if not path.is_file():
-            raise DataAcquisitionError("数据包不存在")
-        return json.loads(path.read_text(encoding="utf-8"))
+        manifest = self._read_manifest(path)
+        if self._package_owner(manifest, job_id) != current_owner_id():
+            # Missing and unauthorized packages intentionally share a response.
+            raise DataAcquisitionError("数据包不存在或无权访问")
+        return self._public_manifest(manifest)
 
     def package_path(self, job_id: str) -> Path:
+        self.get_job(job_id)
         path = self._job_path(job_id) / f"{job_id}.zip"
         if not path.is_file():
             raise DataAcquisitionError("数据包不存在")
         return path
+
+    @staticmethod
+    def _read_manifest(path: Path) -> Dict[str, Any]:
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise DataAcquisitionError("数据包不存在或无权访问") from exc
+        if not isinstance(manifest, dict):
+            raise DataAcquisitionError("数据包不存在或无权访问")
+        return manifest
+
+    @staticmethod
+    def _public_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
+        return {key: value for key, value in manifest.items() if key != "owner_id"}
+
+    def _legacy_package_owners(self) -> Dict[str, Any]:
+        """Read old task evidence; never rewrite legacy packages or task state.
+
+        Old packages did not record owners, but completed asynchronous tasks
+        did. A unique, internally consistent task-to-package link preserves
+        its submitter's download access. Conflicting evidence fails closed.
+        """
+        owners: Dict[str, Any] = {}
+        for path in (self.output_root / ".tasks").glob("acq-*.json"):
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            result = state.get("result")
+            result_job_id = result.get("job_id") if isinstance(result, dict) else None
+            job_id = state.get("job_id")
+            linked_ids = {value for value in (job_id, result_job_id) if isinstance(value, str) and value}
+            owner = state.get("owner_id")
+            valid_owner = owner is None or isinstance(owner, str) and re.fullmatch(r"user:[1-9]\d*", owner)
+            consistent = (
+                state.get("status") == "completed"
+                and state.get("task_id") == path.stem
+                and "owner_id" in state
+                and valid_owner
+                and job_id == result_job_id
+            )
+            candidate = owner if consistent else _UNRESOLVED_PACKAGE_OWNER
+            for linked_id in linked_ids:
+                if linked_id not in owners:
+                    owners[linked_id] = candidate
+                elif owners[linked_id] != candidate:
+                    owners[linked_id] = _UNRESOLVED_PACKAGE_OWNER
+        return owners
+
+    def _package_owner(
+        self, manifest: Dict[str, Any], job_id: str, legacy_owners: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        if manifest.get("job_id") != job_id:
+            return _UNRESOLVED_PACKAGE_OWNER
+        if "owner_id" in manifest:
+            owner = manifest["owner_id"]
+            if owner is None or isinstance(owner, str) and re.fullmatch(r"user:[1-9]\d*", owner):
+                return owner
+            return _UNRESOLVED_PACKAGE_OWNER
+        owners = legacy_owners if legacy_owners is not None else self._legacy_package_owners()
+        # None is the existing unowned/legacy scope, not an administrator
+        # override: it never grants access to another user's owned package.
+        return owners.get(job_id)
 
     def _job_path(self, job_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", job_id or ""):
@@ -559,27 +765,74 @@ class DataAcquisitionService:
         if not tasks:
             raise DataAcquisitionError("取数计划没有可执行任务")
         scope = self.normalize_scope(plan.get("scope"), tasks, request_text)
+        self._enforce_document_time_range(tasks, scope, request_text)
         self._enforce_research_report_constraints(tasks, scope, request_text)
+        preflight = self._preflight_entities(tasks, scope, plan.get("scope"), request_text)
+        caveats = [str(value)[:300] for value in (plan.get("caveats") or [])[:10]]
+        if preflight["can_execute"] and scope["symbols"]:
+            caveats = [value for value in caveats if not re.search(r"(?:未提供|缺少|没有).{0,8}(?:股票|证券)代码", value)]
+        if scope["start_date"] and scope["end_date"]:
+            caveats = [value for value in caveats if not re.search(r"默认.{0,12}(?:全部|所有)历史", value)]
+        if scope.get("time_range_mode") == "all_history":
+            caveats = [value for value in caveats if not re.search(r"未明确时间范围|未指定时间|默认.{0,8}(?:当天|今日|一年)", value)]
+            caveats.append("全部历史按所示范围向官方接口检索其可提供记录；上游历史覆盖与分页、附件上限会在结果中如实标明，不等于保证收齐所有年代资料。")
+        # Existing clients also see the actionable blockers in the plan they
+        # already render; legacy UIs cannot accidentally queue an invalid job.
+        caveats = list(dict.fromkeys([*caveats, *preflight["blockers"]]))[:12]
         return {"title": str(plan.get("title") or "一站式财经数据包")[:120],
                 "objective": str(plan.get("objective") or request_text)[:1000], "tasks": tasks,
                 "scope": scope,
+                "preflight": preflight,
                 "include_files": bool(plan.get("include_files")) or bool(_FILE_REQUEST_RE.search(request_text)),
                 "output_formats": ["json", "csv", "xlsx", "zip"],
-                "caveats": [str(value)[:300] for value in (plan.get("caveats") or [])[:10]],
+                "caveats": caveats,
                 "model": str(plan.get("model") or self.planner.model)[:100],
                 "generated_at": str(plan.get("generated_at") or datetime.now(timezone.utc).isoformat())}
 
     @staticmethod
+    def _enforce_document_time_range(tasks: List[Dict[str, Any]], scope: Dict[str, Any], request_text: str) -> None:
+        """A model's incidental today/today is not a user-selected date filter."""
+        documents = [task for task in tasks if task["source"] == "cninfo" or
+                     task["source"] == "tushare" and task["resource"] == "research_report"]
+        if not documents:
+            return
+        today = datetime.now(timezone(timedelta(hours=8))).date()
+        explicit = _extract_requested_date_range(request_text)
+        if explicit:
+            start, end = explicit
+            mode = "explicit"
+        elif re.search(r"全部|所有|完整历史|历史全部|上市以来", request_text):
+            start, end, mode = "1990-01-01", today.isoformat(), "all_history"
+        else:
+            start, end, mode = _shift_years(today, 2).isoformat(), today.isoformat(), "default_two_years"
+        scope.update(start_date=start, end_date=end, time_range_mode=mode)
+        for task in documents:
+            params = dict(task["params"])
+            params.update(start_date=start.replace("-", ""), end_date=end.replace("-", ""), time_range_mode=mode)
+            # A planner sometimes supplies trade_date=today in addition to the
+            # user's range; the upstream intersects these and produces false 0s.
+            params.pop("trade_date", None)
+            task["params"] = params
+
+    @staticmethod
+    def result_message(result: Dict[str, Any]) -> str:
+        summary = result.get("summary") or {}
+        if not int(summary.get("row_count") or 0):
+            return "未取得符合条件的数据或文件；请查看各渠道检索范围与原因，不能作为下载成功。"
+        if result.get("status") != "success":
+            return "仅部分取得数据或文件；已保留可用结果，请查看未完成渠道与附件明细。"
+        return "数据与所需文件已获取并打包，可以下载" if summary.get("include_files") else "数据包已生成，可以下载"
+
+    @staticmethod
     def normalize_scope(raw_scope: Any, tasks: List[Dict[str, Any]], request_text: str) -> Dict[str, Any]:
         scope = raw_scope if isinstance(raw_scope, dict) else {}
-        serialized = json.dumps([task.get("params") or {} for task in tasks], ensure_ascii=False)
         symbol_values = scope.get("symbols") if isinstance(scope.get("symbols"), list) else []
         symbols = {str(value).strip().upper() for value in symbol_values if str(value).strip()}
-        for match in re.finditer(r"(?<!\d)(\d{6})(?:\.(SH|SS|SZ|BJ))?(?!\d)", f"{request_text}\n{serialized}", re.I):
-            digits, suffix = match.group(1), (match.group(2) or "").upper().replace("SS", "SH")
-            if not suffix:
-                suffix = "BJ" if digits.startswith(("4", "8")) else "SH" if digits.startswith(("6", "9")) else "SZ"
-            symbols.add(f"{digits}.{suffix}")
+        # Extract only user codes and selector fields, never dates/numeric IDs
+        # anywhere inside serialized params. Exchange suffixes are verified by
+        # entity resolution, not guessed from a digit prefix (e.g. 920xxx.BJ).
+        for match in re.finditer(r"(?<![\dA-Za-z.])(\d{6}(?:\.(?:SH|SS|SZ|BJ))?)(?![\dA-Za-z.])", request_text, re.I):
+            symbols.add(match.group(1).upper().replace(".SS", ".SH"))
         names = set()
         keywords = set()
         for value in scope.get("company_names") if isinstance(scope.get("company_names"), list) else []:
@@ -589,6 +842,7 @@ class DataAcquisitionService:
             keywords.update(_split_search_terms(value))
         for task in tasks:
             params = task.get("params") or {}
+            symbols.update(_selector_values(params, _ENTITY_CODE_KEYS))
             for key in ("company_name", "company_names"):
                 values = params.get(key, [])
                 values = values if isinstance(values, list) else [values]
@@ -610,7 +864,147 @@ class DataAcquisitionService:
                 end_date = end_date or str(params.get("end_date") or params.get("created_to") or "").strip()
         return {"symbols": sorted(symbols), "company_names": sorted(names), "keywords": sorted(keywords),
                 "start_date": start_date, "end_date": end_date,
-                "market_wide": bool(scope.get("market_wide", False))}
+                "market_wide": bool(scope.get("market_wide", False)),
+                "entity_queries": [str(value).strip() for value in (scope.get("entity_queries") if isinstance(scope.get("entity_queries"), list) else [])
+                                   if isinstance(value, str) and value.strip()][:40],
+                "entity_selections": {str(key)[:160]: str(value)[:20] for key, value in
+                                      (scope.get("entity_selections") or {}).items()}
+                if isinstance(scope.get("entity_selections"), dict) else {}}
+
+    def _preflight_entities(self, tasks: List[Dict[str, Any]], scope: Dict[str, Any],
+                            raw_scope: Any, request_text: str) -> Dict[str, Any]:
+        raw_scope = raw_scope if isinstance(raw_scope, dict) else {}
+        catalog_records = get_stock_entity_index_records()
+        mentions = resolve_acquisition_entities(company_names=[], symbols=[], request_text=request_text, records=catalog_records)
+        mentioned_names = [row["query"] for row in mentions["entities"] if row.get("kind") == "company"]
+        global_names = _selector_values(raw_scope, ("entity_queries",)) or _selector_values(raw_scope, ("company_names",))
+        global_names = list(dict.fromkeys([*global_names, *mentioned_names]))
+        global_codes = _selector_values(raw_scope, ("symbols",))
+        # The original explicit user code is a constraint even if the model
+        # omits/replaces it. Do not silently "repair" a name/code disagreement.
+        user_codes = [match.group(1).upper().replace(".SS", ".SH") for match in re.finditer(
+            r"(?<![\dA-Za-z.])(\d{6}(?:\.(?:SH|SS|SZ|BJ))?)(?![\dA-Za-z.])", request_text, re.I,
+        )]
+        global_codes = list(dict.fromkeys([*global_codes, *user_codes]))
+        deadline, budget = time.monotonic() + 10.0, {"remaining": 6, "used": 0}
+        issuer_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+        def issuer_search(query: str) -> List[Dict[str, Any]]:
+            if query not in issuer_cache:
+                issuer_cache[query] = self.cninfo.search_securities(
+                    query, deadline_monotonic=deadline, request_budget=budget,
+                )
+            return issuer_cache[query]
+
+        entities: Dict[tuple[str, str], Dict[str, Any]] = {}
+        checks, blockers = [], []
+        validated_codes: set[str] = set()
+        normalized_names: set[str] = set()
+        original_names: set[str] = set()
+        equity_tasks = [task for task in tasks if task["source"] == "cninfo" or task["source"] == "tushare"
+                        and task["resource"] not in _GLOBAL_TUSHARE_RESOURCES | _INDEX_TUSHARE_RESOURCES]
+        equity_local_names = {value for task in equity_tasks for value in _selector_values(task["params"], ("company_name", "company_names"))}
+        corporate_only_names = {value for task in tasks if task["source"] == "tianyancha"
+                                for value in _selector_values(task["params"], ("company_name", "company_names"))} - equity_local_names
+        index_codes = {value for task in tasks if task["source"] == "tushare" and task["resource"] in _INDEX_TUSHARE_RESOURCES
+                       for value in _selector_values(task["params"], _ENTITY_CODE_KEYS)}
+        constraints = resolve_acquisition_entities(
+            company_names=[value for value in global_names if value not in corporate_only_names],
+            symbols=[value for value in global_codes if value not in index_codes], request_text="",
+            selections=scope["entity_selections"], issuer_search=issuer_search, records=catalog_records,
+        ) if equity_tasks else {"entities": [], "symbols": [], "has_unresolved": False}
+        literal_names = [value for value in global_names if value in request_text]
+        # Model-generated codes are not additional user authorization. Keep an
+        # independent constraint from the original explicit code-only/hybrid
+        # request, otherwise an invented global+local ticker could pass once.
+        request_constraints = resolve_acquisition_entities(
+            company_names=literal_names, symbols=[value for value in user_codes if value not in index_codes],
+            request_text="", selections=scope["entity_selections"], issuer_search=issuer_search, records=catalog_records,
+        ) if equity_tasks and user_codes else {"entities": [], "symbols": [], "has_unresolved": False}
+        for entity in constraints["entities"]:
+            entities[(entity["query"], entity["kind"])] = entity
+        for entity in request_constraints["entities"]:
+            if entity["status"] != "resolved":
+                entities[(entity["query"], entity["kind"])] = entity
+        for task in tasks:
+            source, resource, params = task["source"], task["resource"], task["params"]
+            local_names = _selector_values(params, ("company_name", "company_names"))
+            local_codes = _selector_values(params, _ENTITY_CODE_KEYS)
+            has_local_target = bool(local_names or local_codes)
+            names = local_names if has_local_target else global_names
+            codes = local_codes if has_local_target else global_codes
+            if local_codes and not local_names and len(global_names) == 1 and len(global_codes) <= 1:
+                names = global_names
+            original_names.update(names)
+            equity_task = source == "cninfo" or source == "tushare" and resource not in _GLOBAL_TUSHARE_RESOURCES | _INDEX_TUSHARE_RESOURCES
+            task_scope = {**scope, "symbols": list(codes), "company_names": list(names)}
+            if source == "tianyancha":
+                # Corporate identifiers are not securities. Unlisted companies
+                # stay usable through the provider's own identity resolution.
+                task_scope["symbols"] = []
+                ready = bool(names or params.get("search_key") or params.get("searchKey"))
+                message = "企业名称已指定，无需股票代码" if ready else "请补充天眼查企业名称或搜索标识"
+            elif source == "tushare" and resource in _INDEX_TUSHARE_RESOURCES:
+                # 000001.SH is the Shanghai index, not 000001.SZ. Never send
+                # index codes through an equity-only suggestion endpoint.
+                ready = all(re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", value.upper()) for value in codes) and bool(codes)
+                message = "指数代码已指定" if ready else "请为指数任务补充明确的指数代码及市场后缀"
+                validated_codes.update(codes)
+            elif equity_task or names or codes:
+                resolution = resolve_acquisition_entities(
+                    company_names=names, symbols=codes, request_text="",
+                    selections=scope["entity_selections"], issuer_search=issuer_search, records=catalog_records,
+                )
+                for entity in resolution["entities"]:
+                    key = (entity["query"], entity["kind"])
+                    if key not in entities or entity["status"] != "resolved":
+                        entities[key] = entity
+                verified = resolution["symbols"]
+                normalized_names.update(resolution["company_names"])
+                validated_codes.update(verified)
+                task_scope.update(symbols=verified, company_names=list(dict.fromkeys([*names, *resolution["company_names"]])))
+                ready = not resolution["has_unresolved"] if equity_task else True
+                if equity_task and not verified and not scope["market_wide"]:
+                    ready = bool(resource == "research_report" and scope["keywords"] and not names and not codes)
+                missing = [row["query"] for row in resolution["entities"] if row["status"] != "resolved"]
+                if equity_task and constraints["has_unresolved"]:
+                    ready = False
+                    missing.extend(row["query"] for row in constraints["entities"] if row["status"] != "resolved")
+                if equity_task and constraints["symbols"] and any(code not in constraints["symbols"] for code in verified):
+                    ready = False
+                    missing.append("任务局部股票代码与需求范围不一致")
+                if equity_task and (request_constraints["has_unresolved"] or request_constraints["symbols"]
+                                    and any(code not in request_constraints["symbols"] for code in verified)):
+                    ready = False
+                    missing.append("任务目标与原始需求指定的公司/股票代码不一致")
+                message = ("公司与股票代码已核验：" + "、".join(verified)) if verified and ready else (
+                    "主题/全市场范围已明确" if ready else "请确认公司与股票代码：" + "、".join(missing or names or ["未指定目标"])
+                )
+                # Replace every legacy selector so stale task-specific codes
+                # cannot override the verified selector during execution.
+                if equity_task and ready:
+                    for key in _ENTITY_CODE_KEYS:
+                        params.pop(key, None)
+                    if verified:
+                        params["symbols" if source == "cninfo" else "ts_codes"] = verified
+            else:
+                ready, message = True, "本渠道无需股票代码"
+            # Global series and news never receive an equity selector.
+            if source == "tushare" and resource in _GLOBAL_TUSHARE_RESOURCES:
+                for key in _ENTITY_CODE_KEYS:
+                    params.pop(key, None)
+                task_scope["symbols"] = []
+            task["resolved_scope"] = task_scope
+            checks.append({"task_id": task["id"], "status": "ready" if ready else "blocked", "message": message})
+            if not ready:
+                blockers.append(f"{task['label']}：{message}")
+        # Preserve unresolved explicit selectors until confirmation. Removing
+        # one here would let revalidating the same blocked plan lose the error.
+        scope["symbols"] = sorted(validated_codes | (set(global_codes) if blockers else set()))
+        scope["company_names"] = sorted(set(scope["company_names"]) | normalized_names)
+        scope["entity_queries"] = sorted(original_names)
+        return {"status": "needs_confirmation" if blockers else "ready", "can_execute": not blockers,
+                "entities": list(entities.values()), "checks": checks, "blockers": blockers}
 
     @staticmethod
     def _enforce_research_report_constraints(
@@ -639,6 +1033,12 @@ class DataAcquisitionService:
             for key in ("topics", "keywords", "keyword", "query"):
                 topics.extend(_split_search_terms(params.get(key)))
         topics = list(dict.fromkeys(value for value in topics if value))
+        company_labels = {str(value).strip().casefold() for value in scope.get("company_names", [])}
+        code_labels = {str(value).upper() for value in scope.get("symbols", [])}
+        code_labels |= {value.split(".")[0] for value in code_labels}
+        topics = [value for value in topics if not any(label.startswith(value.casefold()) and len(value) >= 2
+                                                     for label in company_labels)
+                  and value.upper() not in code_labels]
         scope["keywords"] = sorted(set(topics))
         if topics:
             # Topic-wide retrieval is still a scoped query; market_wide means no textual filter.
@@ -653,6 +1053,14 @@ class DataAcquisitionService:
         mode = "any" if len(topics) > 1 or re.search(r"(?:或者|或|\bor\b)", request_text, re.I) else "all"
         for task in report_tasks:
             params = dict(task.get("params") or {})
+            for key in ("keyword", "keywords", "query"):
+                params.pop(key, None)  # Canonical topics below must not be re-expanded to company names at execution.
+            if re.search(r"深度", str(params.get("report_type") or "")):
+                # Depth is not an official report_type enum. Retain the
+                # depth_preference below instead of asking the API for a
+                # nonexistent type and receiving a plausible empty response.
+                prefer_depth = True
+                params.pop("report_type", None)
             params.update({
                 "start_date": str(scope["start_date"]).replace("-", ""),
                 "end_date": str(scope["end_date"]).replace("-", ""),
@@ -675,6 +1083,7 @@ class DataAcquisitionService:
         self, task: Dict[str, Any], scope: Dict[str, Any], *,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> List[Dict[str, Any]]:
+        scope = task.get("resolved_scope") or scope
         source, resource, params = task["source"], task["resource"], dict(task["params"])
         if source == "tushare":
             return self._execute_tushare(task, scope, progress_callback=progress_callback)
@@ -720,13 +1129,39 @@ class DataAcquisitionService:
             symbols = symbols or list(scope.get("symbols") or [])
             if not symbols and not scope.get("market_wide"):
                 raise DataAcquisitionError("巨潮现场检索缺少股票代码，已阻止全市场请求")
-            rows = self.cninfo.fetch(
-                start_date=start, end_date=end, symbols=symbols, categories=categories,
-                keyword=str(params.get("keyword") or params.get("query") or ""),
-                page_size=min(int(params.get("page_size") or 100), 100),
-                max_pages=min(int(params.get("max_pages") or 20), 100),
-            )
-            return [_json_safe(row) for row in rows]
+            collected: Dict[str, Dict[str, Any]] = {}
+            windows = []
+            cursor = start
+            while cursor <= end:
+                stop = min(cursor + timedelta(days=3650), end)
+                windows.append((cursor, stop))
+                cursor = stop + timedelta(days=1)
+            audit: Dict[str, Any] = {"mode": "direct_api", "endpoint": "cninfo.hisAnnouncement/query",
+                                     "start_date": start.isoformat(), "end_date": end.isoformat(),
+                                     "symbols": symbols, "pages_fetched": 0, "truncated": False,
+                                     "completed_windows": 0, "total_windows": len(windows)}
+            task["retrieval"] = audit
+            for index, (window_start, window_end) in enumerate(windows):
+                diagnostics: Dict[str, Any] = {}
+                rows = self.cninfo.fetch(
+                    start_date=window_start, end_date=window_end, symbols=symbols, categories=categories,
+                    keyword=str(params.get("keyword") or params.get("query") or ""),
+                    page_size=min(int(params.get("page_size") or 100), 100),
+                    max_pages=min(int(params.get("max_pages") or 100), 100),
+                    exclude_noise=False, diagnostics=diagnostics,
+                )
+                audit["pages_fetched"] += int(diagnostics.get("pages_fetched") or 0)
+                audit["truncated"] = audit["truncated"] or bool(diagnostics.get("truncated"))
+                audit["completed_windows"] = index + 1
+                for row in rows:
+                    item = _json_safe(row)
+                    identity = str(item.get("announcement_id") or item.get("pdf_url") or json.dumps(item, sort_keys=True))
+                    collected[identity] = item
+                if progress_callback:
+                    progress_callback({"fraction": (index + 1) / max(len(windows), 1) * .95,
+                                       "message": f"巨潮现场检索 {index + 1}/{len(windows)} 个时间窗口，已取 {len(collected)} 条",
+                                       "scanned_rows": len(collected)})
+            return sorted(collected.values(), key=lambda row: str(row.get("announcement_at") or ""), reverse=True)
         if source == "monitor":
             base_params = dict(params)
             raw_symbol = base_params.pop("ts_code", None) or base_params.pop("stock_code", None)
@@ -800,6 +1235,8 @@ class DataAcquisitionService:
         if resource == "research_report":
             return self._execute_research_reports(task, scope, progress_callback=progress_callback)
         query_params = dict(task["params"])
+        for key in ("company_name", "company_names", "symbols", "symbol", "stock_code"):
+            query_params.pop(key, None)
         raw_codes = query_params.pop("ts_codes", query_params.get("ts_code", ""))
         codes = raw_codes if isinstance(raw_codes, list) else [value.strip() for value in str(raw_codes).split(",") if value.strip()]
         codes = codes or list(scope.get("symbols") or [])
@@ -886,13 +1323,11 @@ class DataAcquisitionService:
             *(task.get("fields") or []), "trade_date", "abstr", "title", "report_type",
             "author", "name", "ts_code", "inst_csname", "ind_name", "url",
         ]))
-        upstream_base = {
-            key: value for key, value in params.items()
-            if key not in _REPORT_INTERNAL_PARAMS and key not in {"limit", "offset", "ts_codes"}
-            and value not in (None, "", [])
-        }
-        upstream_base.pop("start_date", None)
-        upstream_base.pop("end_date", None)
+        # Only documented upstream selectors go on the wire. A model-supplied
+        # trade_date, title/company alias or internal filter must not silently
+        # intersect the intended period or turn the query into an empty one.
+        upstream_base = {key: value for key, value in params.items()
+                         if key in {"inst_csname", "report_type", "ind_name"} and value not in (None, "", [])}
 
         selectors: List[Optional[str]] = [str(value) for value in codes[:20]] if codes else [None]
         if codes and topics:
@@ -901,11 +1336,22 @@ class DataAcquisitionService:
         rows_by_identity: Dict[str, Dict[str, Any]] = {}
         scanned = 0
         recall_truncated = False
-        date_windows = self._report_date_windows(start, end)
-        total_windows = max(1, len(selectors) * len(date_windows))
+        # The official research_report contract starts at 2017-01-01. The
+        # wider acquisition scope may include older corporate announcements.
+        report_start = max(start, date(2017, 1, 1))
+        selector_windows = [(selector, [(report_start, end)] if selector and report_start <= end
+                            else self._report_date_windows(report_start, end))
+                            for selector in selectors]
+        total_windows = max(1, sum(len(windows) for _, windows in selector_windows))
         completed_windows = 0
-        for selector in selectors:
+        audit: Dict[str, Any] = {"mode": "direct_api", "endpoint": "tushare.research_report",
+                                 "start_date": start.isoformat(), "end_date": end.isoformat(),
+                                 "upstream_start_date": report_start.isoformat(), "provider_history_from": "2017-01-01",
+                                 "symbols": codes, "pages_fetched": 0, "truncated": False, "filtered_rows": 0}
+        task["retrieval"] = audit
+        for selector, date_windows in selector_windows:
             for window_start, window_end in date_windows:
+                page_fingerprints = set()
                 for offset in range(0, MAX_RESEARCH_REPORT_RECALL_ROWS, 1000):
                     current = {
                         **upstream_base,
@@ -919,17 +1365,46 @@ class DataAcquisitionService:
                     result = self.financial.query(
                         source="tushare", resource="research_report", params=current, fields=fields,
                     )
-                    page = result.get("rows") or []
+                    if not isinstance(result, dict) or result.get("error") or not isinstance(result.get("rows"), list):
+                        raise DataAcquisitionError("研报现场接口未返回有效数据列表，不能视为空结果或成功")
+                    page = result["rows"]
+                    if any(not isinstance(row, dict) for row in page):
+                        raise DataAcquisitionError("研报现场接口返回了无效记录，不能完成本次取数")
+                    fingerprint = hashlib.sha256(json.dumps(page, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
+                    if page and fingerprint in page_fingerprints:
+                        raise DataAcquisitionError("研报接口分页重复，未完整遍历请求范围；已停止以防生成重复或伪完整结果")
+                    page_fingerprints.add(fingerprint)
+                    audit["pages_fetched"] += 1
                     scanned += len(page)
                     for raw_row in page:
                         row = _json_safe(raw_row)
+                        if selector and str(row.get("ts_code") or "").upper() not in {selector.upper(), selector.split(".")[0]}:
+                            # A scoped API response is not permission to export
+                            # another company's report. Uncoded topical reports
+                            # are handled only by the explicit topic selector.
+                            audit["filtered_rows"] += 1
+                            continue
+                        if not selector and codes:
+                            company_terms = [*scope.get("company_names", []), *codes,
+                                             *(str(code).split(".")[0] for code in codes)]
+                            subject = f"{row.get('title') or ''} {row.get('abstr') or ''} {row.get('name') or ''}"
+                            if not any(str(term).casefold() in subject.casefold() for term in company_terms if term):
+                                audit["filtered_rows"] += 1
+                                continue
+                        published = str(row.get("trade_date") or "").replace("-", "")[:8]
+                        if not re.fullmatch(r"\d{8}", published) or not start.strftime("%Y%m%d") <= published <= end.strftime("%Y%m%d"):
+                            audit["filtered_rows"] += 1
+                            continue
+                        if not self._report_matches_explicit_filters(row, params):
+                            audit["filtered_rows"] += 1
+                            continue
                         scored = self._score_research_report(row, topics, mode)
                         if scored is None:
                             continue
                         if depth_preference == "strict" and int(scored.get("深度评分") or 0) < 45:
                             continue
                         identity = json.dumps(
-                            [scored.get("trade_date"), scored.get("title"), scored.get("url")],
+                            [scored.get("trade_date"), scored.get("title"), scored.get("url"), scored.get("ts_code")],
                             ensure_ascii=False, default=str,
                         )
                         rows_by_identity[identity] = scored
@@ -971,6 +1446,9 @@ class DataAcquisitionService:
                 })
             review_pool = self._ai_review_research_reports(review_pool, topics, depth_preference)
         selected = review_pool[:max_results]
+        audit.update(scanned_rows=scanned, matched_rows=len(candidates), selected_rows=len(selected),
+                     total_windows=total_windows, completed_windows=completed_windows,
+                     truncated=recall_truncated or len(candidates) > len(selected))
         for row in selected:
             row["检索开始日期"] = start.isoformat()
             row["检索结束日期"] = end.isoformat()
@@ -983,6 +1461,24 @@ class DataAcquisitionService:
                 "scanned_rows": scanned,
             })
         return selected
+
+    @staticmethod
+    def _report_matches_explicit_filters(row: Dict[str, Any], params: Dict[str, Any]) -> bool:
+        """Unsupported upstream filter aliases are applied, never silently lost."""
+        filters = (
+            (("title_query", "title", "report_title"), str(row.get("title") or "")),
+            (("content_query", "content", "abstract_query"), str(row.get("abstr") or "")),
+            (("author", "author_query"), str(row.get("author") or "")),
+            (("broker", "broker_name", "inst_csname"), str(row.get("inst_csname") or "")),
+            (("report_type",), str(row.get("report_type") or "")),
+            (("ind_name",), str(row.get("ind_name") or "")),
+        )
+        def literal_terms(value: Any) -> List[str]:
+            values = value if isinstance(value, (list, tuple)) else [value]
+            return [term for item in values for term in re.split(r"\s+", str(item or "").strip()) if term]
+
+        return all(all(term.casefold() in text.casefold() for term in literal_terms(params.get(key)))
+                   for keys, text in filters for key in keys if params.get(key))
 
     @staticmethod
     def _report_date_windows(start: date, end: date) -> List[tuple[date, date]]:
@@ -1213,7 +1709,11 @@ class DataAcquisitionService:
         except ValueError as exc:
             raise DataAcquisitionError(f"无效日期：{raw}") from exc
 
-    def _download_files(self, directory: Path, task: Dict[str, Any], rows: List[Dict[str, Any]], stem: str) -> List[Dict[str, Any]]:
+    def _download_files(
+        self, directory: Path, task: Dict[str, Any], rows: List[Dict[str, Any]], stem: str, *,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        download_budget: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         candidates: List[Dict[str, str]] = []
         if task["source"] == "cninfo":
             candidates.extend({"url": str(row.get("pdf_url") or ""), "name": str(row.get("title") or row.get("announcement_id") or "公告") + ".pdf"} for row in rows)
@@ -1241,38 +1741,115 @@ class DataAcquisitionService:
                 self._collect_pdf_urls(row.get("payload"), candidates)
 
         target_dir = directory / "attachments" / task["source"] / stem
-        results: List[Dict[str, Any]] = []
+        # Resolving signed media URLs above stays on the caller's identity
+        # context. Workers receive only already-resolved URLs and destinations.
+        unique_candidates: List[Dict[str, str]] = []
         seen = set()
-        total_bytes = 0
-        for index, candidate in enumerate(candidates[:MAX_DOWNLOAD_FILES], start=1):
+        for candidate in candidates:
             url = str(candidate.get("url") or "").strip()
-            name = str(candidate.get("name") or f"file_{index}")
-            identity = url or f"error:{name}"
+            identity = url or f"error:{candidate.get('name') or ''}"
             if identity in seen:
                 continue
             seen.add(identity)
-            if candidate.get("error") or not url:
-                results.append({"name": name, "status": "failed", "error": candidate.get("error") or "原始文件没有可下载地址"})
-                continue
+            unique_candidates.append(candidate)
+
+        budget = download_budget if download_budget is not None else {}
+        condition = budget.setdefault("condition", threading.Condition())
+        with condition:
+            budget.setdefault("remaining", MAX_PACKAGE_FILE_BYTES)
+            budget.setdefault("reserved", 0)
+            budget.setdefault("file_count", 0)
+            available_slots = max(0, MAX_DOWNLOAD_FILES - budget["file_count"])
+            selected = unique_candidates[:available_slots]
+            budget["file_count"] += len(selected)
+        results: List[Optional[Dict[str, Any]]] = [None] * len(selected)
+        jobs: List[tuple[int, str, str, str, Path]] = []
+        host_limits: Dict[str, threading.BoundedSemaphore] = {}
+
+        completed = 0
+        succeeded = 0
+        downloaded_bytes = 0
+
+        def publish(result: Dict[str, Any]) -> None:
+            nonlocal completed, succeeded, downloaded_bytes
+            completed += 1
+            succeeded += int(result["status"] == "success")
+            downloaded_bytes += int(result.get("size_bytes") or 0)
+            self._emit_progress(
+                progress_callback, completed_files=completed, total_files=len(selected),
+                downloaded_bytes=downloaded_bytes, fraction=completed / max(1, len(selected)),
+                message=f"原始文件已处理 {completed}/{len(selected)} 个 · 成功 {succeeded} 个 · 失败 {completed - succeeded} 个",
+            )
+
+        for slot, candidate in enumerate(selected):
+            index = slot + 1
+            url = str(candidate.get("url") or "").strip()
+            name = str(candidate.get("name") or f"file_{index}")
             try:
+                if candidate.get("error") or not url:
+                    raise DataAcquisitionError(candidate.get("error") or "原始文件没有可下载地址")
                 parsed = urlparse(url)
                 if parsed.scheme != "https":
                     raise DataAcquisitionError("只允许下载 HTTPS 原始文件")
                 if task["source"] == "cninfo" and parsed.hostname != "static.cninfo.com.cn":
                     raise DataAcquisitionError("巨潮文件域名不受信任")
+                hostname = (parsed.hostname or "").lower()
+                if not hostname:
+                    raise DataAcquisitionError("原始文件地址缺少域名")
                 target_dir.mkdir(parents=True, exist_ok=True)
                 safe_name = self._safe_filename(Path(unquote(parsed.path)).name or name)
                 if "." not in safe_name:
                     safe_name += ".pdf" if task["resource"] in {"announcements", "research_report"} else ".bin"
                 target = target_dir / f"{index:03d}_{safe_name}"
-                size = self._download_one(url, target, remaining=max(0, MAX_PACKAGE_FILE_BYTES - total_bytes))
-                total_bytes += size
-                results.append({"name": name, "status": "success", "path": str(target.relative_to(directory)), "size_bytes": size})
+                host_limits.setdefault(hostname, threading.BoundedSemaphore(MAX_DOWNLOAD_PER_HOST))
+                jobs.append((slot, url, name, hostname, target))
             except Exception as exc:
-                results.append({"name": name, "status": "failed", "error": self._safe_error(exc)})
-        if len(candidates) > MAX_DOWNLOAD_FILES:
-            results.append({"name": "download_limit", "status": "failed", "error": f"原始文件超过单包上限 {MAX_DOWNLOAD_FILES} 个"})
-        return results
+                result = {"name": name, "status": "failed", "error": self._safe_error(exc)}
+                results[slot] = result
+                publish(result)
+
+        def download(job: tuple[int, str, str, str, Path]) -> tuple[int, Dict[str, Any]]:
+            slot, url, name, hostname, target = job
+            reservation = 0
+            consumed = 0
+            try:
+                with host_limits[hostname]:
+                    with condition:
+                        # In-flight reservations may return unused capacity.
+                        # Wait for those completions before declaring exhaustion.
+                        while budget["remaining"] < MAX_FILE_BYTES and budget["reserved"] > 0:
+                            condition.wait()
+                        if budget["remaining"] <= 0:
+                            raise DataAcquisitionError("原始文件达到单包 500MB 上限")
+                        reservation = min(MAX_FILE_BYTES, budget["remaining"])
+                        budget["remaining"] -= reservation
+                        budget["reserved"] += reservation
+                    try:
+                        # _download_one enforces this reserved byte ceiling
+                        # during streaming, before its atomic target rename.
+                        consumed = self._download_one(url, target, remaining=reservation)
+                        result = {"name": name, "status": "success", "path": str(target.relative_to(directory)),
+                                  "size_bytes": consumed}
+                    finally:
+                        with condition:
+                            budget["remaining"] += reservation - consumed
+                            budget["reserved"] -= reservation
+                            condition.notify_all()
+                return slot, result
+            except Exception as exc:
+                return slot, {"name": name, "status": "failed", "error": self._safe_error(exc)}
+
+        if jobs:
+            with ThreadPoolExecutor(max_workers=min(MAX_DOWNLOAD_WORKERS, len(jobs))) as pool:
+                futures = [pool.submit(download, job) for job in jobs]
+                for future in as_completed(futures):
+                    slot, result = future.result()
+                    results[slot] = result
+                    publish(result)
+        ordered_results = [result for result in results if result is not None]
+        if len(unique_candidates) > available_slots:
+            ordered_results.append({"name": "download_limit", "status": "failed", "error": f"原始文件超过单包上限 {MAX_DOWNLOAD_FILES} 个"})
+        return ordered_results
 
     @staticmethod
     def _collect_pdf_urls(value: Any, candidates: List[Dict[str, str]]) -> None:
@@ -1290,49 +1867,142 @@ class DataAcquisitionService:
     def _download_one(url: str, target: Path, *, remaining: int) -> int:
         if remaining <= 0:
             raise DataAcquisitionError("原始文件达到单包 500MB 上限")
+        if urlparse(url).scheme != "https":
+            raise DataAcquisitionError("只允许下载 HTTPS 原始文件")
         limit = min(MAX_FILE_BYTES, remaining)
         temporary = target.with_suffix(target.suffix + ".part")
         session = requests.Session()
         response: Optional[requests.Response] = None
+        size = 0
+        expected_total: Optional[int] = None
+        validator: Optional[tuple[str, str]] = None
+        challenge_solved = False
+        network_errors = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)
+
+        def content_length(headers: Any) -> Optional[int]:
+            raw = headers.get("Content-Length")
+            if raw is None:
+                return None
+            if not re.fullmatch(r"\d+", str(raw).strip()):
+                raise DataAcquisitionError("原始文件长度响应无效")
+            return int(raw)
+
+        def response_validator(headers: Any) -> Optional[tuple[str, str]]:
+            etag = str(headers.get("ETag") or "").strip()
+            if re.fullmatch(r'"[^"\r\n]*"', etag):
+                return "ETag", etag
+            modified = str(headers.get("Last-Modified") or "").strip()
+            return ("Last-Modified", modified) if modified else None
+
         try:
             hostname = (urlparse(url).hostname or "").lower()
-            headers = {
+            base_headers = {
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36",
                 "Referer": "https://data.eastmoney.com/report/" if hostname == "pdf.dfcfw.com" else "https://www.cninfo.com.cn/",
+                "Accept-Encoding": "identity",
             }
-            response = session.get(url, headers=headers, timeout=(10, 90), stream=True)
-            if hostname == "pdf.dfcfw.com" and response.status_code == 200:
-                declared = int(response.headers.get("Content-Length") or 0)
-                if 0 < declared < 16 * 1024:
-                    challenge = response.content.decode("utf-8", errors="ignore")
-                    cookies = DataAcquisitionService._solve_eastmoney_pdf_challenge(challenge)
-                    response.close()
-                    response = None
-                    if not cookies:
-                        raise DataAcquisitionError("研报 PDF 下载验证失败")
-                    for key, value in cookies.items():
-                        session.cookies.set(key, value, domain="pdf.dfcfw.com", path="/")
+            for attempt in range(3):
+                offset = size if validator and size > 0 else 0
+                headers = dict(base_headers)
+                if offset:
+                    headers.update({"Range": f"bytes={offset}-", "If-Range": validator[1]})
+                try:
                     response = session.get(url, headers=headers, timeout=(10, 90), stream=True)
-            with response:
-                response.raise_for_status()
-                declared = int(response.headers.get("Content-Length") or 0)
-                if declared > limit:
-                    raise DataAcquisitionError("原始文件超过大小上限")
-                size = 0
-                first_chunk = True
-                with temporary.open("wb") as output:
-                    for chunk in response.iter_content(64 * 1024):
-                        if not chunk:
-                            continue
-                        if first_chunk and ".pdf" in urlparse(url).path.lower() and not chunk.startswith(b"%PDF-"):
-                            raise DataAcquisitionError("上游未返回有效 PDF 文件")
-                        first_chunk = False
-                        size += len(chunk)
-                        if size > limit:
-                            raise DataAcquisitionError("原始文件超过大小上限")
-                        output.write(chunk)
-            temporary.replace(target)
-            return size
+                    response.raise_for_status()
+                    declared = content_length(response.headers)
+                    if offset and response.status_code == 206:
+                        matched = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", str(response.headers.get("Content-Range") or ""))
+                        if not matched:
+                            raise DataAcquisitionError("续传响应缺少有效字节范围")
+                        start, stop, total = map(int, matched.groups())
+                        if start != offset or stop < start or stop >= total:
+                            raise DataAcquisitionError("续传响应字节起点或总长度不一致")
+                        if expected_total is not None and total != expected_total:
+                            raise DataAcquisitionError("续传文件总长度已改变，未拼接不同文件")
+                        if response.headers.get(validator[0]) != validator[1]:
+                            raise DataAcquisitionError("续传文件标识已改变，未拼接不同文件")
+                        expected_total = total
+                        expected_body = stop - start + 1
+                        if declared is not None and declared != expected_body:
+                            raise DataAcquisitionError("续传响应长度与字节范围不一致")
+                        mode = "ab"
+                    elif response.status_code == 200:
+                        # A server may ignore Range, or If-Range may select a
+                        # newer object. A full response always replaces .part.
+                        size = 0
+                        offset = 0
+                        expected_total = declared
+                        expected_body = declared
+                        validator = response_validator(response.headers)
+                        mode = "wb"
+                    else:
+                        raise DataAcquisitionError("上游未返回完整文件或合法续传响应")
+                    if (expected_total is not None and expected_total > limit) or (declared is not None and size + declared > limit):
+                        raise DataAcquisitionError("原始文件超过大小上限")
+
+                    stream = iter(response.iter_content(64 * 1024))
+                    prefix = b""
+                    while len(prefix) < 5:
+                        try:
+                            prefix += next(stream)
+                        except StopIteration:
+                            break
+                    if not prefix:
+                        if expected_body:
+                            raise requests.exceptions.ChunkedEncodingError("原始文件提前结束")
+                        raise DataAcquisitionError("上游返回了空文件，未计为下载成功")
+                    if not offset and ".pdf" in urlparse(url).path.lower() and not prefix.startswith(b"%PDF-"):
+                        # Small, valid PDFs are never treated as verification
+                        # pages. Only the existing recognizable script is used.
+                        if hostname == "pdf.dfcfw.com" and not challenge_solved and (declared is None or declared < 16 * 1024):
+                            challenge = bytearray(prefix)
+                            for chunk in stream:
+                                if len(challenge) + len(chunk) > 16 * 1024:
+                                    break
+                                challenge.extend(chunk)
+                            text = challenge.decode("utf-8", errors="ignore")
+                            cookies = DataAcquisitionService._solve_eastmoney_pdf_challenge(text) if (
+                                len(challenge) <= 16 * 1024 and "EO_Bot_Ssid" in text and "__tst_status" in text
+                            ) else {}
+                            if cookies and attempt < 2:
+                                for key, value in cookies.items():
+                                    session.cookies.set(key, value, domain="pdf.dfcfw.com", path="/")
+                                challenge_solved = True
+                                validator, expected_total, size = None, None, 0
+                                continue
+                        raise DataAcquisitionError("上游未返回有效 PDF 文件")
+
+                    received = 0
+                    with temporary.open(mode) as output:
+                        chunk = prefix
+                        while True:
+                            if chunk:
+                                if size + len(chunk) > limit:
+                                    raise DataAcquisitionError("原始文件超过大小上限")
+                                output.write(chunk)
+                                size += len(chunk)
+                                received += len(chunk)
+                            try:
+                                chunk = next(stream)
+                            except StopIteration:
+                                break
+                    if (expected_body is not None and received != expected_body) or (expected_total is not None and size != expected_total):
+                        raise requests.exceptions.ChunkedEncodingError("原始文件提前结束或长度不匹配")
+                    temporary.replace(target)
+                    return size
+                except (requests.HTTPError, *network_errors) as exc:
+                    status = response.status_code if response is not None else None
+                    retryable = not isinstance(exc, requests.HTTPError) or status in {408, 429} or (status is not None and 500 <= status <= 599)
+                    if not retryable:
+                        raise
+                    if attempt >= 2:
+                        raise DataAcquisitionError("原始文件传输中断，三次尝试后仍未完整取得") from exc
+                    time.sleep(.3 * (attempt + 1))
+                finally:
+                    if response is not None:
+                        response.close()
+                        response = None
+            raise DataAcquisitionError("原始文件未完整取得")
         finally:
             if response is not None:
                 response.close()
@@ -1358,6 +2028,7 @@ class DataAcquisitionService:
         generated_at = datetime.now(timezone.utc).isoformat()
         dataset_manifest = []
         workbooks: Dict[str, Workbook] = {}
+        download_budget: Dict[str, Any] = {}
         self._emit_progress(
             progress_callback,
             progress=72,
@@ -1378,10 +2049,25 @@ class DataAcquisitionService:
             if workbook.active.title == "Sheet" and len(workbook.sheetnames) == 1:
                 workbook.remove(workbook.active)
             self._write_sheet(workbook, stem[:31], rows, dataset.get("error"))
-            attachments = self._download_files(directory, task, rows, stem) if plan.get("include_files") else []
+            def file_progress(update: Dict[str, Any]) -> None:
+                fraction = max(0.0, min(float(update.get("fraction") or 0), 1.0))
+                self._emit_progress(
+                    progress_callback, progress=72 + round(((index - 1 + fraction) / max(len(datasets), 1)) * 20),
+                    phase="exporting", message=f"{task['label']}：{update.get('message') or '正在下载原始文件'}",
+                    completed_tasks=len(datasets), total_tasks=len(datasets), current_task_id=task["id"],
+                    current_source=task["source"], completed_files=int(update.get("completed_files") or 0),
+                    total_files=int(update.get("total_files") or 0), downloaded_bytes=int(update.get("downloaded_bytes") or 0),
+                )
+
+            attachments = self._download_files(directory, task, rows, stem, progress_callback=file_progress,
+                                               download_budget=download_budget) if plan.get("include_files") else []
+            attachment_failures = sum(file.get("status") == "failed" for file in attachments)
             dataset_manifest.append({"task_id": task["id"], "label": task["label"], "source": task["source"],
                                      "resource": task["resource"], "status": dataset["status"],
                                      "row_count": dataset["row_count"], "error": dataset["error"],
+                                     "outcome": dataset.get("outcome", "data" if rows else "no_data"),
+                                     "retrieval": dataset.get("retrieval") or task.get("retrieval") or {},
+                                     "attachment_error": f"{attachment_failures} 个原始文件未取得，请查看附件明细" if attachment_failures else None,
                                      "applied_scope": dataset["applied_scope"], "files": [json_name, csv_name],
                                      "attachments": attachments})
             self._emit_progress(
@@ -1399,9 +2085,11 @@ class DataAcquisitionService:
         success_count = sum(item["status"] == "success" for item in dataset_manifest)
         downloaded_count = sum(sum(file["status"] == "success" for file in item["attachments"]) for item in dataset_manifest)
         failed_download_count = sum(sum(file["status"] == "failed" for file in item["attachments"]) for item in dataset_manifest)
-        manifest = {"job_id": job_id, "contract_version": "channel-scoped-v3-live",
+        has_data = any(item["row_count"] > 0 for item in dataset_manifest)
+        manifest = {"job_id": job_id, "owner_id": current_owner_id(), "contract_version": "channel-scoped-v3-live",
                     "title": plan["title"], "request": request_text,
-                    "status": "success" if success_count == len(datasets) else ("partial" if success_count else "failed"),
+                    "status": "success" if has_data and success_count == len(datasets) and not failed_download_count
+                    else "partial" if has_data else "failed",
                     "generated_at": generated_at, "plan": plan, "datasets": dataset_manifest,
                     "summary": {"task_count": len(datasets), "success_count": success_count,
                                 "failed_count": len(datasets) - success_count,
@@ -1429,7 +2117,10 @@ class DataAcquisitionService:
         with zipfile.ZipFile(directory / zip_name, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(directory.rglob("*")):
                 if path.is_file() and path.name != zip_name:
-                    archive.write(path, path.relative_to(directory))
+                    if path == directory / "manifest.json":
+                        archive.writestr("manifest.json", json.dumps(self._public_manifest(manifest), ensure_ascii=False, indent=2))
+                    else:
+                        archive.write(path, path.relative_to(directory))
         self._emit_progress(
             progress_callback,
             progress=99,
@@ -1438,7 +2129,7 @@ class DataAcquisitionService:
             completed_tasks=len(datasets),
             total_tasks=len(datasets),
         )
-        return manifest
+        return self._public_manifest(manifest)
 
     @staticmethod
     def _emit_progress(
@@ -1508,22 +2199,52 @@ class DataAcquisitionService:
     def _write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
         columns = list(dict.fromkeys(key for row in rows for key in row.keys()))
         with path.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns or ["message"])
-            writer.writeheader()
+            writer = csv.writer(handle)
+            writer.writerow([DataAcquisitionService._csv_cell(key) for key in columns or ["message"]])
             for row in rows:
-                writer.writerow({key: DataAcquisitionService._cell(row.get(key)) for key in columns})
+                writer.writerow([DataAcquisitionService._csv_cell(row.get(key)) for key in columns])
+
+    @staticmethod
+    def _csv_cell(value: Any) -> Any:
+        value = DataAcquisitionService._cell(value)
+        if not isinstance(value, str):
+            return value
+        offset = 0
+        leading_control = False
+        # Spreadsheet importers may ignore whitespace, BOMs and control
+        # characters before recognizing a formula. Never trim the source:
+        # prepend the text marker to the complete value instead.
+        for character in value:
+            category = unicodedata.category(character)
+            if not character.isspace() and category not in {"Cc", "Cf"}:
+                break
+            leading_control = leading_control or category in {"Cc", "Cf"}
+            offset += 1
+        if leading_control or value[offset:offset + 1] in {"=", "+", "-", "@"}:
+            return "'" + value
+        return value
 
     @staticmethod
     def _write_sheet(workbook: Workbook, title: str, rows: List[Dict[str, Any]], error: Optional[str]) -> None:
         sheet = workbook.create_sheet(title=title or "dataset")
+
+        def append_text_safe(values: List[Any]) -> None:
+            cells = [DataAcquisitionService._cell(value) for value in values]
+            # XML 1.0 forbids some control characters. Remove them only from
+            # this display format; JSON retains the complete source text.
+            sheet.append([ILLEGAL_CHARACTERS_RE.sub("", value) if isinstance(value, str) else value for value in cells])
+            for cell in sheet[sheet.max_row]:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
+
         if not rows:
-            sheet.append(["status", "message"])
-            sheet.append(["failed" if error else "empty", error or "No rows returned"])
+            append_text_safe(["status", "message"])
+            append_text_safe(["failed" if error else "empty", error or "No rows returned"])
             return
         columns = list(dict.fromkeys(key for row in rows for key in row.keys()))
-        sheet.append(columns)
+        append_text_safe(columns)
         for row in rows:
-            sheet.append([DataAcquisitionService._cell(row.get(key)) for key in columns])
+            append_text_safe([row.get(key) for key in columns])
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = sheet.dimensions
 
@@ -1533,6 +2254,8 @@ class DataAcquisitionService:
             return json.dumps(value, ensure_ascii=False, separators=(",", ":"))[:32000]
         if value is None:
             return ""
+        if isinstance(value, (int, float)):
+            return value
         return str(value)[:32000]
 
     @staticmethod

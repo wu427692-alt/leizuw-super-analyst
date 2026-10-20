@@ -3,7 +3,52 @@ from io import BytesIO
 from unittest.mock import patch
 from zipfile import ZipFile
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+import pytest
+
 from api.v1.endpoints import industry_research as endpoint
+
+
+def test_project_archive_forwards_page_search_and_status_parameters():
+    app = FastAPI()
+    app.include_router(endpoint.router)
+    response_payload = {
+        "items": [], "total": 19, "limit": 12, "offset": 24, "query": "光模块%", "status": "completed",
+        "counts": {"all": 40, "running": 10, "completed": 19, "limited": 5, "failed": 6},
+    }
+    with patch.object(endpoint, "IndustryResearchService") as service_class, TestClient(app) as client:
+        mocked = service_class.return_value.list_projects
+        mocked.return_value = response_payload
+        response = client.get("/projects", params={
+            "limit": 12, "offset": 24, "query": "光模块%", "status": "completed",
+        })
+    assert response.status_code == 200
+    assert response.json() == response_payload
+    mocked.assert_called_once_with(12, offset=24, query="光模块%", status="completed")
+
+
+def test_project_archive_keeps_existing_default_parameters():
+    app = FastAPI()
+    app.include_router(endpoint.router)
+    with patch.object(endpoint, "IndustryResearchService") as service_class, TestClient(app) as client:
+        mocked = service_class.return_value.list_projects
+        mocked.return_value = {"items": [], "total": 0}
+        response = client.get("/projects")
+    assert response.status_code == 200
+    mocked.assert_called_once_with(30, offset=0, query="", status="all")
+
+
+@pytest.mark.parametrize("params", [
+    {"limit": 0}, {"limit": 101}, {"offset": -1}, {"status": "unknown"}, {"query": "x" * 201},
+])
+def test_project_archive_validates_parameters_before_service(params):
+    app = FastAPI()
+    app.include_router(endpoint.router)
+    with patch.object(endpoint, "IndustryResearchService") as service_class, TestClient(app) as client:
+        response = client.get("/projects", params=params)
+    assert response.status_code == 422
+    service_class.assert_not_called()
 
 
 def test_blueprint_forwards_company_research_type():

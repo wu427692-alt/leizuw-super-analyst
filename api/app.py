@@ -24,12 +24,12 @@ import re
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from typing import List, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
@@ -53,6 +53,12 @@ _FRONTEND_ASSET_MEDIA_TYPES = {
     ".js": "text/javascript",
     ".mjs": "text/javascript",
 }
+_LANDING_IMAGE_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
 _SAFE_MISSING_ASSET_MEDIA_TYPES = frozenset(_FRONTEND_ASSET_MEDIA_TYPES.values())
 _FRONTEND_INDEX_NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -66,6 +72,35 @@ def _frontend_index_response(static_dir: Path) -> FileResponse:
         static_dir / "index.html",
         headers=_FRONTEND_INDEX_NO_CACHE_HEADERS,
     )
+
+
+def _is_jev_access_destination(destination: str) -> bool:
+    """Select the isolated login bundle only for a same-site Jev document."""
+    if not is_feature_available("jev"):
+        return False
+    if not destination.startswith("/") or destination.startswith("//") or "\\" in destination:
+        return False
+    if any(ord(char) < 32 or ord(char) == 127 for char in destination):
+        return False
+    try:
+        parsed = urlsplit(destination)
+    except ValueError:
+        return False
+    return (not parsed.scheme and not parsed.netloc
+            and parsed.path in {"/jev-backtest", "/jev-backtest/"})
+
+
+def _is_ai_news_access_destination(destination: str) -> bool:
+    """Only the exact same-site AI news document may select its login bundle."""
+    if not destination.startswith("/") or destination.startswith("//") or "\\" in destination:
+        return False
+    if any(ord(char) < 32 or ord(char) == 127 for char in destination):
+        return False
+    try:
+        parsed = urlsplit(destination)
+    except ValueError:
+        return False
+    return not parsed.scheme and not parsed.netloc and parsed.path in {"/ai-news", "/ai-news/"}
 
 
 def _check_frontend_assets_consistency(static_dir: Path) -> List[str]:
@@ -160,9 +195,11 @@ def _warn_if_open_cors_without_auth() -> None:
 
 from api.v1 import api_v1_router
 from api.middlewares.auth import add_auth_middleware
+from api.middlewares.feature_availability import FeatureAvailabilityMiddleware, unavailable_feature_response
 from api.middlewares.error_handler import add_error_handlers
 from api.v1.schemas.common import HealthResponse
 from src.auth import is_auth_enabled
+from src.feature_availability import is_feature_available, unavailable_feature_for_path
 from src.data.stock_index_loader import find_existing_stock_index_path
 from src.services.system_config_service import SystemConfigService
 from src.services.runtime_scheduler import (
@@ -450,9 +487,22 @@ async def app_lifespan(app: FastAPI):
             logger.warning("Sync watchdog worker did not start: %s", exc)
     _schedule_stock_index_background_refresh(app, "startup")
     _schedule_application_view_warmup(app)
+    # Small independent RSS cache; never starts investment/AI jobs or changes
+    # the main database. Startup and page reads do not wait for publishers.
+    ai_news_service = None
+    if os.getenv("AI_NEWS_AUTO_START", "true").lower() in {"1", "true", "yes", "on"}:
+        try:
+            from src.services.ai_news_service import get_ai_news_service
+
+            ai_news_service = get_ai_news_service()
+            ai_news_service.start()
+        except Exception:
+            logger.exception("AI news background refresh unavailable; main service remains available")
     try:
         yield
     finally:
+        if ai_news_service is not None:
+            ai_news_service.stop()
         # Stop supervision first so it cannot restart a worker while the API is
         # intentionally shutting down.
         if sync_watchdog_worker is not None:
@@ -592,6 +642,8 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
 
     app.add_middleware(GZipMiddleware, minimum_size=1_024, compresslevel=5)
 
+    # Authentication stays outermost; retired routes cannot bypass login.
+    app.add_middleware(FeatureAvailabilityMiddleware)
     add_auth_middleware(app)
     
     # ============================================================
@@ -600,12 +652,76 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     
     app.include_router(api_v1_router, prefix="/api/v1")
     add_error_handlers(app)
+
+    @app.on_event("startup")
+    def _warm_heavy_dashboards():
+        import threading
+
+        def run():
+            try:
+                from src.services.essay_quant_service import EssayQuantService
+
+                EssayQuantService().latest_dashboard()
+                EssayQuantService().latest_institution_dashboard()
+            except Exception:
+                pass
+            try:
+                from src.services.investment_monitor_service import InvestmentMonitorService
+
+                InvestmentMonitorService().intelligence_dashboard(days=14)
+            except Exception:
+                pass
+
+        threading.Thread(target=run, daemon=True).start()
     
     # ============================================================
     # 根路由和健康检查
     # ============================================================
     
     has_frontend = static_dir.exists() and (static_dir / "index.html").exists()
+
+    ai_news_index = static_dir / "ai-news" / "ai-news.html"
+    if ai_news_index.is_file():
+        @app.api_route("/ai-news/", methods=["GET", "HEAD"], include_in_schema=False)
+        @app.api_route("/ai-news", methods=["GET", "HEAD"], include_in_schema=False)
+        async def serve_ai_news():
+            return FileResponse(ai_news_index, media_type="text/html",
+                                headers=_FRONTEND_INDEX_NO_CACHE_HEADERS)
+
+    # A standalone Jev bundle can be released without replacing the site's
+    # existing bundle or shipping unrelated local frontend work.
+    jev_frontend_dir = Path(os.environ.get("JEV_FRONTEND_DIR") or str(static_dir / "jev-backtest"))
+    jev_frontend_index = jev_frontend_dir / "jev-backtest.html"
+    if is_feature_available("jev") and jev_frontend_index.is_file():
+        @app.api_route("/jev-backtest/", methods=["GET", "HEAD"], include_in_schema=False)
+        @app.api_route("/jev-backtest", methods=["GET", "HEAD"], include_in_schema=False)
+        async def serve_jev_backtest():
+            return FileResponse(jev_frontend_index, media_type="text/html",
+                                headers={"Cache-Control": "no-store, private"})
+
+        app.mount("/jev-backtest-assets", StaticFiles(directory=str(jev_frontend_dir)),
+                  name="jev-backtest-assets")
+
+    account_access_index = static_dir / "account-access" / "account-access.html"
+    if has_frontend and (account_access_index.is_file() or ai_news_index.is_file() or jev_frontend_index.is_file()):
+        @app.api_route("/access/", methods=["GET", "HEAD"], include_in_schema=False)
+        @app.api_route("/access", methods=["GET", "HEAD"], include_in_schema=False)
+        async def serve_access(request: Request):
+            # One shared authentication entry for every workspace. Older builds
+            # retain their original access page when this optional bundle is absent.
+            if account_access_index.is_file():
+                return FileResponse(account_access_index, media_type="text/html",
+                                    headers=_FRONTEND_INDEX_NO_CACHE_HEADERS)
+            # A frozen main SPA may predate an isolated route. Login must use
+            # document navigation into that bundle, not an unknown SPA route.
+            destination = request.query_params.get("redirect", "")
+            if ai_news_index.is_file() and _is_ai_news_access_destination(destination):
+                return FileResponse(ai_news_index, media_type="text/html",
+                                    headers=_FRONTEND_INDEX_NO_CACHE_HEADERS)
+            if jev_frontend_index.is_file() and _is_jev_access_destination(destination):
+                return FileResponse(jev_frontend_index, media_type="text/html",
+                                    headers={"Cache-Control": "no-store, private"})
+            return _frontend_index_response(static_dir)
     
     if has_frontend:
         # Surface bundle inconsistencies as soon as the app starts so that
@@ -613,147 +729,58 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         # logs/desktop.log instead of via browser devtools.
         _check_frontend_assets_consistency(static_dir)
 
-        @app.get("/", include_in_schema=False)
-        async def root():
-            """根路由 - 返回前端页面"""
-            return _frontend_index_response(static_dir)
-    else:
-        _FRONTEND_NOT_BUILT_HTML = """<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DSA - Frontend Not Built</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{min-height:100vh;display:flex;align-items:center;justify-content:center;
-       background:#0a0e17;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,monospace}
-  .card{max-width:580px;padding:2.5rem;border:1px solid #1e293b;border-radius:12px;background:#111827}
-  h1{font-size:1.25rem;color:#38bdf8;margin-bottom:.75rem}
-  p{font-size:.9rem;line-height:1.7;color:#94a3b8;margin-bottom:.5rem}
-  code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:.85rem;color:#67e8f9}
-  .hint{margin-top:1.25rem;padding:.75rem 1rem;border-left:3px solid #f59e0b;background:#1c1917;border-radius:0 6px 6px 0}
-  .hint p{color:#fbbf24;margin:0}
-  a{color:#38bdf8;text-decoration:none}
-  a:hover{text-decoration:underline}
-  .status{margin-top:1rem;font-size:.8rem;color:#475569}
-</style></head><body><div class="card">
-<h1>&#9888;&#65039; Frontend Not Built</h1>
-<p>API is running, but the Web UI has not been built yet.</p>
-<p>Build the frontend first:</p>
-<p><code>cd apps/dsa-web &amp;&amp; npm install &amp;&amp; npm run build</code></p>
-<p>Or start with auto-build:</p>
-<p><code>python main.py --serve-only</code></p>
-<div class="hint"><p>If you only need the API, visit <a href="/docs">/docs</a> for the interactive API documentation.</p></div>
-<p class="status">API Version 1.0.0 &bull; <a href="/api/health">/api/health</a></p>
-</div></body></html>"""
-
-        @app.get("/", include_in_schema=False)
-        async def root():
-            """根路由 - 前端未构建时返回引导页面"""
-            return HTMLResponse(content=_FRONTEND_NOT_BUILT_HTML)
-    
-    @app.get(
-        "/health",
-        response_model=HealthResponse,
-        tags=["Health"],
-        summary="健康检查",
-        description="用于负载均衡器或监控系统检查服务状态"
-    )
-    @app.get(
-        "/api/health",
-        response_model=HealthResponse,
-        tags=["Health"],
-        summary="健康检查",
-        description="用于负载均衡器或监控系统检查服务状态"
-    )
-    async def health_check() -> HealthResponse:
-        """健康检查接口"""
-        return HealthResponse(
-            status="ok",
-            timestamp=datetime.now().isoformat()
-        )
-
-    def _stock_index_candidate_paths() -> tuple[Path, ...]:
-        local_candidates = (
-            static_dir / _STOCK_INDEX_FILENAME,
-            _bundled_stock_index_path(),
-        )
-        local_path = next((path for path in local_candidates if path.is_file()), None)
-        if local_path is None:
-            return (get_remote_stock_index_cache_path(),)
-        return (
-            get_remote_stock_index_cache_path(),
-            local_path,
-        )
-
-    def _find_existing_stock_index_path() -> Optional[Path]:
-        remote_cache_path = get_remote_stock_index_cache_path()
-        return find_existing_stock_index_path(
-            _stock_index_candidate_paths(),
-            remote_cache_path=remote_cache_path,
-        )
-
-    @app.api_route(
-        f"/{_STOCK_INDEX_FILENAME}",
-        methods=["GET", "HEAD"],
-        include_in_schema=False,
-    )
-    async def serve_stock_index():
-        """Serve the freshest available stock autocomplete index."""
-        _schedule_stock_index_background_refresh(app, "serve-stock-index")
-
-        index_path = _find_existing_stock_index_path()
-        if index_path is None:
-            return Response(
-                content="stock index not found",
-                status_code=404,
-                media_type="text/plain",
+        def _is_logged_in(request: Request) -> bool:
+            from src.auth import COOKIE_NAME as _ADMIN_COOKIE_NAME, verify_session as _verify_admin_session
+            from src.services.user_account_service import (
+                USER_COOKIE_NAME as _USER_COOKIE_NAME,
+                UserAccountService as _UserAccountService,
             )
-        return FileResponse(
-            index_path,
-            media_type="application/json",
-            headers=_STOCK_INDEX_HEADERS,
-        )
-    
-    # ============================================================
-    # 静态文件托管（前端 SPA）
-    # ============================================================
-    
-    if has_frontend:
-        # Serve `/assets/*` explicitly so that misses return a plain-text
-        # 404 with the correct Content-Type instead of the default JSON
-        # error response. JSON for a JS/CSS request is what masked the
-        # blank-page root cause in #1064; here we make it obvious that the
-        # static file simply does not exist on disk.
-        assets_dir = static_dir / "assets"
 
-        assets_static_files = StaticFiles(directory=str(assets_dir), check_dir=False)
-        assets_root = assets_dir.resolve()
+            admin_cookie = request.cookies.get(_ADMIN_COOKIE_NAME, "")
+            if admin_cookie and _verify_admin_session(admin_cookie):
+                return True
+            return _UserAccountService().account_for_session(request.cookies.get(_USER_COOKIE_NAME, "")) is not None
 
-        @app.api_route(
-            "/assets/{asset_path:path}",
-            methods=["GET", "HEAD"],
-            include_in_schema=False,
-        )
-        async def serve_asset(request: Request, asset_path: str):
-            file_path = _resolve_asset_path(assets_dir, asset_path)
-            if file_path is None:
-                return Response(
-                    content="not found",
-                    status_code=404,
-                    media_type="text/plain",
+        def _serve_investment_home(request: Request):
+            home_page = static_dir / "home.html"
+            if not home_page.is_file():
+                return None
+            if not _is_logged_in(request):
+                return RedirectResponse(url="/access?redirect=/meeting", status_code=307)
+            return FileResponse(
+                home_page,
+                media_type="text/html",
+                headers=_FRONTEND_INDEX_NO_CACHE_HEADERS,
+            )
+
+        @app.get("/", include_in_schema=False)
+        async def root(request: Request):
+            if not _is_logged_in(request):
+                return RedirectResponse(url="/access?redirect=/meeting", status_code=307)
+            return RedirectResponse(url="/meeting", status_code=307)
+
+        @app.get("/dashboard", include_in_schema=False)
+        async def dashboard_home(request: Request):
+            if not _is_logged_in(request):
+                return RedirectResponse(url="/access?redirect=/meeting", status_code=307)
+            return RedirectResponse(url="/meeting", status_code=307)
+
+        @app.get("/meeting-embed", include_in_schema=False)
+        async def meeting_embed(request: Request):
+            return _serve_investment_home(request) or _frontend_index_response(static_dir)
+
+        # 投资会议指挥台
+        command_page = static_dir / "home.html"
+        if not command_page.is_file():
+            command_page = static_dir / "command.html"
+        if command_page.is_file():
+            @app.api_route("/command", methods=["GET", "HEAD"], include_in_schema=False)
+            async def serve_command_page():
+                return FileResponse(
+                    command_page,
+                    media_type="text/html",
+                    headers=_FRONTEND_INDEX_NO_CACHE_HEADERS,
                 )
-            if file_path.is_file():
-                relative_path = file_path.relative_to(assets_root).as_posix()
-                response = await assets_static_files.get_response(relative_path, request.scope)
-                # Vite filenames are content hashed. They can be cached forever,
-                # while index.html remains no-store and selects the current build.
-                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-                return response
-            return Response(
-                content="asset not found",
-                status_code=404,
-                media_type=_missing_asset_media_type(asset_path),
-                headers={"Cache-Control": "no-store"},
-            )
 
         # SPA 路由回退
         @app.get("/{full_path:path}", include_in_schema=False)
@@ -772,6 +799,10 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
             # the bundle root if served unchecked.
             file_path = _resolve_asset_path(static_dir, full_path) if full_path else None
             if file_path is not None and file_path.is_file():
+                # Match resolved aliases/symlinks against the same feature contract.
+                feature = unavailable_feature_for_path("/" + file_path.relative_to(static_dir.resolve()).as_posix())
+                if feature is not None:
+                    return unavailable_feature_response(request.url.path, feature)
                 if file_path == (static_dir / "index.html").resolve():
                     return _frontend_index_response(static_dir)
                 # Issue #520: Explicitly resolve MIME type to avoid

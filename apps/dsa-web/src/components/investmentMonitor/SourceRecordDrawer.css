@@ -1,0 +1,34 @@
+.source-record-reader { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 20px; color: hsl(var(--foreground)); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.75; }
+.source-record-reader h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 650; }
+.source-record-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; padding-bottom: 14px; border-bottom: 1px solid hsl(var(--border)); color: hsl(var(--secondary-text)); font-size: 13px; overflow-wrap: anywhere; }
+.source-record-boundary, .source-record-empty { margin: 8px 0; color: hsl(var(--secondary-text)); font-size: 13px; }
+.source-record-excerpt { margin-top: 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; }
+.source-record-status, .source-record-retry { margin: 0; padding: 12px 14px; background: hsl(var(--elevated)); border-left: 2px solid #FF4F00; font-size: 13px; }
+.source-record-retry p { margin: 0 0 8px; }
+.source-record-retry button, .source-record-original { display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; min-height: 40px; width: fit-content; max-width: 100%; padding: 8px 14px; border: 1px solid hsl(var(--border)); color: hsl(var(--foreground)); background: hsl(var(--card)); font-size: 13px; text-decoration: none; }
+.source-record-original { border-color: #FF4F00; }
+.source-record-reader :is(a, button, [tabindex]):focus-visible, .source-record-reader summary:focus-visible { outline: 2px solid #FF4F00; outline-offset: 3px; }
+.source-record-fields { padding-top: 16px; border-top: 1px solid hsl(var(--border)); }
+.source-record-fields dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 8px 0 0; }
+.source-record-fields dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; padding: 10px 12px 10px 0; border-bottom: 1px solid hsl(var(--border)); }
+.source-record-fields .source-record-wide { grid-column: 1 / -1; }
+.source-record-fields dt { color: hsl(var(--secondary-text)); font-size: 13px; }
+.source-record-fields dd { margin: 0; overflow-wrap: anywhere; }
+.source-record-financial-context { display: grid; gap: 20px; min-width: 0; }
+.source-record-current { min-width: 0; padding-left: 14px; border-left: 2px solid #FF4F00; }
+.source-record-current > .source-record-fields { padding-top: 0; border-top: 0; }
+.source-record-other-fields { min-width: 0; padding-top: 12px; border-top: 1px solid hsl(var(--border)); }
+.source-record-other-fields > summary { min-height: 40px; padding: 8px 0; cursor: pointer; font-size: 14px; font-weight: 600; }
+.source-record-other-fields > .source-record-fields { margin-top: 16px; }
+.source-record-forecasts { min-width: 0; border-top: 1px solid hsl(var(--border)); padding-top: 16px; }
+.source-record-forecasts summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.source-record-table { min-width: 0; max-width: 100%; overflow-x: auto; }
+.source-record-table table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; text-align: left; }
+.source-record-table :is(th, td) { padding: 10px; border-bottom: 1px solid hsl(var(--border)); }
+.source-record-table th { white-space: nowrap; }
+.source-record-table td { min-width: 90px; overflow-wrap: anywhere; }
+.source-record-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; }
+.source-record-pagination span { margin-right: auto; }
+.source-record-pagination button { min-height: 40px; padding: 6px 12px; border: 1px solid hsl(var(--border)); }
+.source-record-pagination button:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 640px) { .source-record-fields dl { grid-template-columns: minmax(0, 1fr); } .source-record-reader { gap: 16px; } }

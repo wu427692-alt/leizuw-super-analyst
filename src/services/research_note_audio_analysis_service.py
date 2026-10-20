@@ -18,6 +18,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from uuid import uuid4
 import zipfile
 
+try:  # Linux/macOS production; guarded for import compatibility on Windows.
+    import fcntl
+except ImportError:  # pragma: no cover - production tasks run on Linux.
+    fcntl = None  # type: ignore[assignment]
+
 import requests
 from json_repair import repair_json
 
@@ -43,6 +48,7 @@ _ACTIVE_STATUSES = {"queued", "running"}
 _OWNER_UNSET = object()
 _TRANSCRIPT_CACHE_SCHEMA_VERSION = 1
 _TRANSCRIPT_CACHE_CONFIG_VERSION = "audio-asr-v1"
+_LEASE_HEARTBEAT_SECONDS = 15.0
 
 
 class ResearchNoteAudioAnalysisError(RuntimeError):
@@ -762,16 +768,18 @@ class ResearchNoteAudioAnalysisTaskService:
     def list_tasks(self, limit: int = 20) -> Dict[str, Any]:
         owner_id = self._owner_getter()
         rows = []
+        total = 0
+        bounded_limit = max(1, min(int(limit), 50))
         for path in sorted(self.task_root.glob("audio-analysis-*.json"), reverse=True):
             try:
                 state = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if state.get("owner_id") == owner_id:
-                rows.append(self._public_state(state, include_result=False))
-            if len(rows) >= max(1, min(int(limit), 50)):
-                break
-        return {"items": rows, "total": len(rows)}
+                total += 1
+                if len(rows) < bounded_limit:
+                    rows.append(self._public_state(state, include_result=False))
+        return {"items": rows, "total": total}
 
     def transcript_availability(
         self,
@@ -850,6 +858,25 @@ class ResearchNoteAudioAnalysisTaskService:
         return path, f"{title}.{artifact if artifact in formats else 'zip'}", media_type
 
     def _run(self, task_id: str, selected: List[Tuple[str, str]]) -> None:
+        lease = self._claim_task(task_id)
+        if lease is None:
+            return
+        heartbeat_stop = threading.Event()
+        heartbeat = threading.Thread(
+            target=self._heartbeat_task,
+            args=(task_id, str(lease["token"]), heartbeat_stop),
+            name=f"audio-analysis-heartbeat-{task_id[-8:]}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            self._run_claimed(task_id, selected)
+        finally:
+            heartbeat_stop.set()
+            heartbeat.join(timeout=1)
+            self._release_task(task_id, lease)
+
+    def _run_claimed(self, task_id: str, selected: List[Tuple[str, str]]) -> None:
         work_dir = self.temp_root / task_id
         output_dir = self.output_root / task_id
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -881,7 +908,11 @@ class ResearchNoteAudioAnalysisTaskService:
                     topic_id=topic_id,
                     file_id=file_id,
                     asset=asset,
-                    hotwords=task_hotwords,
+                    # Only explicit task configuration is part of the cache
+                    # identity. Parent-note titles are derived hints and can
+                    # change when the same stable file is referenced by an AI
+                    # memo; that must not trigger another paid transcription.
+                    hotwords=hotwords,
                     speaker_count=speaker_count,
                 )
                 transcript = ""
@@ -1044,7 +1075,12 @@ class ResearchNoteAudioAnalysisTaskService:
             result["generated_at"] = datetime.now(timezone.utc).isoformat()
             result["source_files"] = [{key: item.get(key) for key in ("filename", "topic_id", "file_id", "note_title", "created_at")} for item in transcripts]
             markdown = self._render_markdown(result)
-            library_topic_id = self._index_completed_memo(task_id, result, markdown)
+            # A signed-in user's focus/title can contain private research intent.
+            # Only system/admin work (no user owner) is published globally.
+            library_topic_id = (
+                self._index_completed_memo(task_id, result, markdown)
+                if state.get("owner_id") is None else None
+            )
             result["library_topic_id"] = library_topic_id
             result["indexed"] = bool(library_topic_id)
             markdown = self._render_markdown(result)
@@ -1056,7 +1092,22 @@ class ResearchNoteAudioAnalysisTaskService:
                     if path.name != "bundle.zip":
                         archive.write(path, arcname=("转写文本/" + path.name) if path.suffix == ".txt" else path.name)
             urls = {fmt: f"/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/download?format={fmt}" for fmt in ("zip", "md", "docx", "json")}
-            self._update(task_id, status="completed", phase="completed", progress=100, message="录音纪要已生成，并写入统一检索与情报库", result=result, download_urls=urls, error=None, indexed=bool(library_topic_id), library_topic_id=library_topic_id)
+            completed_message = (
+                "录音纪要已生成，并写入统一检索与情报库"
+                if library_topic_id else "录音纪要已生成，仅当前用户可在任务中查看"
+            )
+            self._update(
+                task_id,
+                status="completed",
+                phase="completed",
+                progress=100,
+                message=completed_message,
+                result=result,
+                download_urls=urls,
+                error=None,
+                indexed=bool(library_topic_id),
+                library_topic_id=library_topic_id,
+            )
         except Exception as exc:  # noqa: BLE001 - background task failures must stay visible.
             logger.exception("Audio analysis task failed task_id=%s", task_id)
             message = str(exc).strip()[:500] or f"录音分析失败：{type(exc).__name__}"
@@ -1111,10 +1162,85 @@ class ResearchNoteAudioAnalysisTaskService:
             raise ResearchNoteAudioAnalysisError("录音分析任务状态暂时不可读") from exc
 
     def _update(self, task_id: str, **changes: Any) -> None:
-        state = self._read_state(task_id)
-        state.update(changes)
-        state["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self._write_state(state)
+        with self._lock:
+            state = self._read_state(task_id)
+            state.update(changes)
+            state["updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._write_state(state)
+
+    def _claim_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Atomically claim one active task with a crash-released OS lease."""
+        lock_root = self.task_root / ".locks"
+        lock_root.mkdir(parents=True, exist_ok=True)
+        handle = (lock_root / f"{task_id}.lock").open("a+b")
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            return None
+        try:
+            # A delayed duplicate future may acquire the file lock after the
+            # first process completed. Re-check state while holding the lock so
+            # completed work is never executed twice.
+            state = self._read_state(task_id)
+            if state.get("status") not in _ACTIVE_STATUSES:
+                self._unlock_handle(handle)
+                return None
+            token = f"{os.getpid()}:{uuid4().hex}"
+            now = datetime.now(timezone.utc).isoformat()
+            state.update({
+                "lease_owner": token,
+                "lease_acquired_at": now,
+                "lease_heartbeat_at": now,
+                "updated_at": now,
+            })
+            self._write_state(state)
+            return {"handle": handle, "token": token}
+        except Exception:
+            self._unlock_handle(handle)
+            raise
+
+    def _heartbeat_task(self, task_id: str, token: str, stop: threading.Event) -> None:
+        while not stop.wait(_LEASE_HEARTBEAT_SECONDS):
+            try:
+                with self._lock:
+                    state = self._read_state(task_id)
+                    if (
+                        state.get("lease_owner") != token
+                        or state.get("status") not in _ACTIVE_STATUSES
+                    ):
+                        return
+                    now = datetime.now(timezone.utc).isoformat()
+                    state["lease_heartbeat_at"] = now
+                    state["updated_at"] = now
+                    self._write_state(state)
+            except (OSError, ResearchNoteAudioAnalysisError):
+                logger.warning("Could not heartbeat audio task_id=%s", task_id, exc_info=True)
+
+    def _release_task(self, task_id: str, lease: Dict[str, Any]) -> None:
+        handle = lease["handle"]
+        try:
+            try:
+                with self._lock:
+                    state = self._read_state(task_id)
+                    if state.get("lease_owner") == lease.get("token"):
+                        state.pop("lease_owner", None)
+                        state.pop("lease_acquired_at", None)
+                        state.pop("lease_heartbeat_at", None)
+                        self._write_state(state)
+            except ResearchNoteAudioAnalysisError:
+                pass
+        finally:
+            self._unlock_handle(handle)
+
+    @staticmethod
+    def _unlock_handle(handle: Any) -> None:
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
     def _write_state(self, state: Dict[str, Any]) -> None:
         path = self._task_path(str(state["task_id"]))
@@ -1135,7 +1261,10 @@ class ResearchNoteAudioAnalysisTaskService:
 
     @staticmethod
     def _public_state(state: Dict[str, Any], *, include_result: bool = True) -> Dict[str, Any]:
-        result = {key: value for key, value in state.items() if key not in {"owner_id", "items"}}
+        private_keys = {
+            "owner_id", "items", "lease_owner", "lease_acquired_at", "lease_heartbeat_at",
+        }
+        result = {key: value for key, value in state.items() if key not in private_keys}
         result["transcript_artifacts"] = [
             {key: value for key, value in item.items() if key != "artifact_name"}
             for item in (state.get("transcript_artifacts") or [])
@@ -1180,10 +1309,9 @@ class ResearchNoteAudioAnalysisTaskService:
     ) -> Dict[str, str]:
         """Build an opaque cache identity from source and ASR-affecting config.
 
-        A ZSXQ file id is stable, so cache lookup never needs to download the
-        audio. Any upstream checksum exposed in attachment metadata is folded
-        in as an extra guard. Raw IDs, owner IDs and hotwords are never written
-        into the cache entry or its filename.
+        A ZSXQ file id is stable, so parent topic/title and mutable attachment
+        metadata are deliberately excluded. Raw IDs, owner IDs and hotwords are
+        never written into the cache entry or its filename.
         """
         transcriber = self._transcriber
         backend = getattr(transcriber, "backend", transcriber)
@@ -1207,12 +1335,6 @@ class ResearchNoteAudioAnalysisTaskService:
         ).strip()
         effective_speakers = speaker_count or getattr(backend, "speaker_count", None)
         normalized_hotwords = sorted({str(value).strip() for value in hotwords if str(value).strip()})
-        source_hint = ""
-        for key in ("sha256", "file_hash", "content_hash", "checksum", "md5", "etag"):
-            value = asset.get(key)
-            if value not in (None, "", {}):
-                source_hint = f"{key}:{value}"
-                break
         config_payload = {
             "version": cache_config_version,
             "provider": provider,
@@ -1230,13 +1352,10 @@ class ResearchNoteAudioAnalysisTaskService:
         ).hexdigest()
         key_payload = {
             "schema_version": _TRANSCRIPT_CACHE_SCHEMA_VERSION,
-            "topic_id": str(topic_id),
             "file_id": str(file_id),
             "provider": provider,
             "model": model,
             "config_hash": config_hash,
-            "declared_size": max(0, int(asset.get("size") or 0)),
-            "source_hint": source_hint,
         }
         key_hash = hashlib.sha256(
             json.dumps(key_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1524,12 +1643,17 @@ class ResearchNoteAudioAnalysisTaskService:
             if state.get("status") in _ACTIVE_STATUSES:
                 selected = self._selected_from_state(state)
                 if selected:
-                    state.update({"status": "queued", "phase": "resuming", "message": "服务已恢复，正在续跑录音分析", "error": None})
-                    self._write_state(state)
+                    # Every process may discover the task; the OS lease below
+                    # guarantees exactly one executor can actually resume it.
                     self._executor.submit(self._run, str(state["task_id"]), selected)
                 else:
-                    state.update({"status": "failed", "phase": "interrupted", "progress": 100, "message": "旧任务缺少恢复清单，请重新选择录音提交", "error": "旧任务缺少恢复清单，请重新选择录音提交"})
-                    self._write_state(state)
+                    # Legacy state has no durable selection to resume. Do not
+                    # rewrite it here: another process may still be executing
+                    # it from its in-memory selection.
+                    logger.warning(
+                        "Audio task %s is active but has no persisted selection",
+                        state.get("task_id"),
+                    )
 
     def _cleanup_expired_tasks(self) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.retention_hours)
@@ -1543,5 +1667,32 @@ class ResearchNoteAudioAnalysisTaskService:
                 continue
             if state.get("status") in _ACTIVE_STATUSES or updated >= cutoff:
                 continue
-            shutil.rmtree(self.output_root / str(state.get("task_id") or ""), ignore_errors=True)
+            task_id = str(state.get("task_id") or "")
+            output_dir = self.output_root / task_id
+            transcript_names = {
+                str(item.get("artifact_name") or "")
+                for item in (state.get("transcript_artifacts") or [])
+                if isinstance(item, dict) and item.get("artifact_name")
+            }
+            retained_names = {
+                name for name in transcript_names if (output_dir / name).is_file()
+            }
+            if retained_names:
+                # Raw transcripts are a durable owner-scoped research asset.
+                # Expire only generated bundles/report downloads, keeping the
+                # task receipt so availability and single-file downloads work.
+                if output_dir.is_dir():
+                    for artifact_path in output_dir.iterdir():
+                        if artifact_path.name not in retained_names:
+                            if artifact_path.is_dir():
+                                shutil.rmtree(artifact_path, ignore_errors=True)
+                            else:
+                                artifact_path.unlink(missing_ok=True)
+                if not state.get("memo_artifacts_expired") or state.get("download_urls"):
+                    state["memo_artifacts_expired"] = True
+                    state["download_urls"] = {}
+                    self._write_state(state)
+                continue
+            shutil.rmtree(output_dir, ignore_errors=True)
             path.unlink(missing_ok=True)
+            (self.task_root / ".locks" / f"{task_id}.lock").unlink(missing_ok=True)

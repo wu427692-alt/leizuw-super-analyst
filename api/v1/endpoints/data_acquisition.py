@@ -47,6 +47,14 @@ def run(request: DataAcquisitionRunRequest):
         raise _error(exc)
 
 
+@router.post("/validate-plan", summary="无AI调用地复核公司代码、候选选择和各渠道执行条件")
+def validate_plan(request: DataAcquisitionRunRequest):
+    try:
+        return DataAcquisitionService().validate_plan(request.request, request.plan)
+    except DataAcquisitionError as exc:
+        raise _error(exc)
+
+
 @router.post("/run-async", status_code=202, summary="提交后台取数任务并返回真实进度编号")
 def run_async(request: DataAcquisitionRunRequest):
     try:
@@ -82,17 +90,25 @@ def job(job_id: str):
 
 
 @router.get("/jobs/{job_id}/download", summary="下载包含 JSON、CSV、Excel 和来源清单的 ZIP")
+@router.head("/jobs/{job_id}/download", summary="读取数据包长度与续传校验标识")
 def download(job_id: str):
     try:
         path = DataAcquisitionService().package_path(job_id)
     except DataAcquisitionError as exc:
         raise _error(exc, 404)
-    return FileResponse(path, media_type="application/zip", filename=f"财经数据包_{job_id}.zip")
+    # package_path checks ownership before FileResponse stats the file or parses
+    # Range/If-Range. Reuse Starlette's bounded streaming and range implementation.
+    # ZIP is already compressed: a second gzip transform changes byte offsets
+    # and lengths, making otherwise valid browser resumes corrupt the archive.
+    return FileResponse(
+        path, media_type="application/zip", filename=f"财经数据包_{job_id}.zip",
+        headers={"Content-Encoding": "identity", "Cache-Control": "private, no-store, no-transform"},
+    )
 
 
 @router.get("/research-reports/status", summary="读取本地研报库覆盖范围与后台同步进度")
 def research_report_status():
-    return ResearchReportLibraryService.get_instance().ensure_background_sync()
+    return ResearchReportLibraryService.get_instance().status()
 
 
 @router.post("/research-reports/sync", status_code=202, summary="后台补齐最近两年研报元数据与PDF链接")

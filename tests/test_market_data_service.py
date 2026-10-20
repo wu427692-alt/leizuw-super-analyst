@@ -13,6 +13,9 @@ from src.services.market_data_service import (
     _latest_completed_a_share_session,
     _parse_tencent_day_minutes,
     _tick_needs_refresh,
+    _tick_is_stale,
+    _snapshot_is_current,
+    _minute_snapshot_from_seconds,
     _tencent_realtime_stock_snapshots,
 )
 from src.storage import DatabaseManager, StockDaily
@@ -283,6 +286,160 @@ def test_intraday_series_ignores_impossible_overnight_a_share_tick(market_db):
     assert result["data"][-1]["close"] == 74.28
 
 
+def test_intraday_series_keeps_lunch_snapshot_at_last_traded_minute(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_ticks([{
+        "code": "603306", "timestamp": datetime(2026, 9, 3, 11, 48),
+        "price": 74.83, "pre_close": 75.51, "change_percent": -0.90,
+        "volume": 4_603_200, "amount": 346_046_971,
+    }], source="tencent.snapshot")
+    monkeypatch.setattr(
+        "src.services.market_data_service.datetime",
+        type("FixedDateTime", (datetime,), {
+            "now": classmethod(lambda cls: datetime(2026, 9, 3, 11, 49)),
+            "strptime": datetime.strptime,
+            "combine": datetime.combine,
+        }),
+    )
+    service = MarketDataService(
+        repository=repo, fetcher=_NoNetworkFetcher(), tushare=_UnavailableGateway(),
+        realtime_batch_fetcher=lambda _codes: [], minute_history_fetcher=lambda _symbol: [],
+    )
+
+    result = service.get_series("603306", period="intraday", range_key="1d")
+
+    assert result["latest_at"] == "2026-09-03T11:30:00"
+    assert result["data"][-1]["close"] == 74.83
+    assert result["pre_close"] == 75.51
+
+
+def test_index_lunch_snapshot_uses_exact_prior_close(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_index("000001.SH", [{
+        "timestamp": datetime(2026, 9, 2), "close": 3941.39,
+    }], frequency="1D", source="tushare.index_daily")
+    repo.upsert_index("000001.SH", [{
+        "timestamp": datetime(2026, 9, 3, 11, 48), "close": 3958.19,
+        "volume": 320_081_276, "amount": 515_810_580_000,
+        "change_percent": 0.43,
+    }], frequency="1SEC", source="tencent.snapshot")
+    monkeypatch.setattr(
+        "src.services.market_data_service.datetime",
+        type("FixedDateTime", (datetime,), {
+            "now": classmethod(lambda cls: datetime(2026, 9, 3, 11, 49)),
+            "strptime": datetime.strptime,
+            "combine": datetime.combine,
+        }),
+    )
+    service = MarketDataService(
+        repository=repo, fetcher=_NoNetworkFetcher(), tushare=_UnavailableGateway(),
+        minute_history_fetcher=lambda _symbol: [],
+    )
+
+    result = service.get_index_series("000001.SH", period="intraday", range_key="1d")
+
+    assert result["latest_at"] == "2026-09-03T11:30:00"
+    assert result["data"][-1]["close"] == 3958.19
+    assert result["pre_close"] == 3941.39
+
+
+def test_minute_snapshot_does_not_invent_pre_close_from_rounded_percentage():
+    row = SimpleNamespace(timestamp=datetime(2026, 9, 3, 11, 30), close=3958.19, pct_chg=0.43)
+    assert _minute_snapshot_from_seconds([row], live=True).pre_close is None
+
+
+@pytest.mark.parametrize("hour,minute", [(11, 31), (12, 0), (12, 59)])
+def test_lunch_close_remains_fresh_without_redundant_fetch(hour, minute):
+    now = datetime(2026, 9, 3, hour, minute)
+    timestamp = datetime(2026, 9, 3, 11, 30)
+    assert _snapshot_is_current(timestamp, now) is True
+    assert _tick_is_stale(timestamp, now) is False
+    assert _tick_needs_refresh(SimpleNamespace(timestamp=timestamp), now) is False
+    for missing_close in [datetime(2026, 9, 3, 11, 29), datetime(2026, 9, 2, 15)]:
+        assert _snapshot_is_current(missing_close, now) is False
+        assert _tick_is_stale(missing_close, now) is True
+        assert _tick_needs_refresh(SimpleNamespace(timestamp=missing_close), now) is True
+
+
+def test_refresh_resumes_at_afternoon_open():
+    now = datetime(2026, 9, 3, 13)
+    timestamp = datetime(2026, 9, 3, 11, 30)
+    assert _snapshot_is_current(timestamp, now) is False
+    assert _tick_is_stale(timestamp, now) is True
+    assert _tick_needs_refresh(SimpleNamespace(timestamp=timestamp), now) is True
+
+
+def test_index_previous_close_rejects_older_session_and_backfills(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_index("000001.SH", [{"timestamp": datetime(2026, 9, 2), "close": 3941.39}], frequency="1D", source="test")
+    service = MarketDataService(repository=repo, tushare=_UnavailableGateway())
+    assert service._index_previous_close("000001.SH", date(2026, 9, 4)) is None
+    service.tushare = SimpleNamespace(available=True)
+    monkeypatch.setattr(MarketDataService, "_index_daily_attempts", {})
+    calls = []
+
+    def backfill(symbol, frequency, days):
+        calls.append(symbol)
+        return repo.upsert_index(symbol, [{"timestamp": datetime(2026, 9, 3), "close": 3950.12}], frequency=frequency, source="test")
+
+    monkeypatch.setattr(service, "_refresh_index", backfill)
+    assert service._index_previous_close("000001.SH", date(2026, 9, 4)) == 3950.12
+    assert service._index_previous_close("000001.SH", date(2026, 9, 4)) == 3950.12
+    assert calls == ["000001.SH"]
+
+
+def test_missing_index_baseline_retry_is_rate_limited(market_db, monkeypatch):
+    service = MarketDataService(repository=MarketDataRepository(market_db), tushare=SimpleNamespace(available=True))
+    monkeypatch.setattr(MarketDataService, "_index_daily_attempts", {})
+    calls = []
+    monkeypatch.setattr(service, "_refresh_index", lambda *args: calls.append(args) or 0)
+    for _ in range(3):
+        assert service._index_previous_close("000001.SH", date(2026, 9, 4)) is None
+    assert len(calls) == 1
+
+
+def test_old_minute_session_does_not_hide_todays_stored_snapshots(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    repo.upsert_index("000001.SH", [{"timestamp": datetime(2026, 9, 3, 11, 30), "close": 3940}], frequency="1MIN", source="test")
+    repo.upsert_index("000001.SH", [
+        {"timestamp": datetime(2026, 9, 4, 10, minute), "close": 3930 + minute}
+        for minute in range(3)
+    ], frequency="1SEC", source="test")
+    monkeypatch.setattr("src.services.market_data_service.datetime", type("FixedDateTime", (datetime,), {
+        "now": classmethod(lambda cls: datetime(2026, 9, 4, 10, 3)),
+        "combine": datetime.combine, "strptime": datetime.strptime,
+    }))
+    service = MarketDataService(repository=repo, tushare=_UnavailableGateway(), minute_history_fetcher=lambda _: [])
+    result = service.get_index_series("000001.SH", period="intraday", range_key="1d")
+    assert len(result["data"]) == 3
+    assert [point["close"] for point in result["data"]] == [3930, 3931, 3932]
+    assert result["pre_close"] is None
+
+
+def test_realtime_indices_use_tencent_before_legacy_endpoint(market_db, monkeypatch):
+    repo = MarketDataRepository(market_db)
+    called = []
+    monkeypatch.setattr(
+        "src.services.market_data_service._tencent_realtime_index_snapshots",
+        lambda symbols: called.append(list(symbols)) or {
+            "000001.SH": {
+                "timestamp": datetime(2026, 9, 3, 11, 30),
+                "close": 3958.19, "open": 3952.79, "high": 3968.11,
+                "low": 3950.98, "change_percent": 0.43,
+            },
+        },
+    )
+    service = MarketDataService(repository=repo, fetcher=_NoNetworkFetcher(), tushare=_UnavailableGateway())
+
+    saved = service.refresh_index_ticks(["000001.SH"])
+    quote = service.latest_index_quotes(["000001.SH"])[0]
+
+    assert saved == 1
+    assert called == [["000001.SH"]]
+    assert quote["close"] == 3958.19
+    assert quote["source"] == "tencent.snapshot"
+
+
 def test_intraday_zero_axis_uses_displayed_sessions_prior_close_after_close_is_saved(market_db, monkeypatch):
     with market_db.get_session() as session:
         session.add_all([
@@ -409,6 +566,46 @@ class _IndexGateway:
             {"trade_date": "20260818", "open": 3700, "high": 3720, "low": 3690, "close": 3710, "vol": 10, "amount": 20, "pct_chg": .3},
             {"trade_date": "20260819", "open": 3710, "high": 3730, "low": 3700, "close": 3725, "vol": 11, "amount": 21, "pct_chg": .4},
         ]}
+
+
+class _StaleIndexMinuteGateway:
+    available = True
+
+    def query(self, api_name, *, params):
+        assert api_name == "idx_mins"
+        return {"rows": [{
+            "ts_code": "000001.SH", "trade_time": "2026-08-31 15:00:00",
+            "open": 3986.3, "high": 3986.3, "low": 3986.3, "close": 3986.3,
+            "vol": 100, "amount": 1000,
+        }]}
+
+
+def test_index_history_replaces_nonempty_but_stale_provider_response(market_db, monkeypatch):
+    monkeypatch.setattr(
+        "src.services.market_data_service.datetime",
+        type("FixedDateTime", (datetime,), {
+            "now": classmethod(lambda cls: datetime(2026, 9, 3, 11, 20)),
+            "strptime": datetime.strptime,
+        }),
+    )
+    service = MarketDataService(
+        repository=MarketDataRepository(market_db),
+        tushare=_StaleIndexMinuteGateway(),
+        minute_history_fetcher=lambda _symbol: [{
+            "timestamp": datetime(2026, 9, 3, 11, 20),
+            "open": 3958.19, "high": 3958.19, "low": 3958.19, "close": 3958.19,
+            "volume": 100, "amount": 1000,
+        }],
+    )
+
+    saved = service.refresh_historical_index_intraday(["000001.SH"], sessions=1)
+    rows = service.repo.index_range(
+        "000001.SH", datetime(2026, 9, 3), datetime(2026, 9, 3, 23, 59), frequency="1MIN",
+    )
+
+    assert saved == 1
+    assert rows[-1].timestamp == datetime(2026, 9, 3, 11, 20)
+    assert rows[-1].data_source == "tencent.5day_minute"
 
 
 def test_index_uses_exchange_qualified_separate_storage(market_db, monkeypatch):

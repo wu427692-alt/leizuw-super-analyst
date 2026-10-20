@@ -291,7 +291,13 @@ export type ConceptClusterDetail = {
   method: string;
 };
 
-export type ThemeDetail = {
+export type ConceptRefreshState = {
+  refreshNeeded?: boolean;
+  refreshQueued?: boolean;
+  refreshRequestStatus?: 'queued' | 'running' | 'cooldown' | 'unavailable';
+};
+
+export type ThemeDetail = ConceptRefreshState & {
   theme: ConceptTheme;
   sourceNodes: ConceptTheme[];
   stocks: ConceptStock[];
@@ -350,7 +356,7 @@ export type ThemeDetail = {
   methodology: ConceptMethodology;
 };
 
-export type StockThemeLens = {
+export type StockThemeLens = ConceptRefreshState & {
   tsCode: string;
   name: string;
   asOfDate?: string | null;
@@ -464,30 +470,76 @@ export function normalizeConceptOverview(data: unknown): ConceptOverview {
   return normalized;
 }
 
+const conceptQuery = <T>(key: string, query: () => Promise<T>, freshMs: number): Promise<T> => cachedQuery(
+  key,
+  query,
+  { freshMs, staleMs: freshMs },
+);
+
+function validateThemeDetail(value: ThemeDetail, themeId: number, horizonDays: number): ThemeDetail {
+  const matchesRequestedTheme = value.theme?.id === themeId
+    || value.sourceNodes?.some(node => node.id === themeId && node.canonicalName === value.theme?.canonicalName);
+  if (!matchesRequestedTheme || value.horizonDays !== horizonDays) {
+    throw new Error('题材身份或归因窗口与请求不一致');
+  }
+  return value;
+}
+
+function validateStockThemeLens(value: StockThemeLens, tsCode: string, horizonDays: number): StockThemeLens {
+  if (value.tsCode !== tsCode || value.horizonDays !== horizonDays) {
+    throw new Error('股票身份或归因窗口与请求不一致');
+  }
+  return value;
+}
+
+function downloadCsv(blob: Blob, contentDisposition: unknown, fallbackFilename: string): void {
+  const disposition = String(contentDisposition || '');
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  let filename = fallbackFilename;
+  if (encodedName) {
+    try { filename = decodeURIComponent(encodedName); }
+    catch { /* Keep the safe fallback when an upstream filename is malformed. */ }
+  }
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  try {
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+}
+
 export const conceptThemesApi = {
   overview: async (params: OverviewParams = {}): Promise<ConceptOverview> => {
-    const key = `concept:overview:${JSON.stringify(params)}`;
-    return cachedQuery(key, async () => {
+    // Key the actual wire query so omitted defaults and explicit page defaults
+    // share the same preload, independent of object property insertion order.
+    const query = {
+      query: params.query || undefined,
+      theme_type: params.themeType || undefined,
+      source: params.source || undefined,
+      family: params.family || undefined,
+      cluster: params.cluster || undefined,
+      min_sources: params.minSources && params.minSources > 1 ? params.minSources : undefined,
+      readiness: params.readiness && params.readiness !== 'all' ? params.readiness : undefined,
+      view: params.view ?? 'canonical',
+      sort_by: params.sortBy ?? 'heat',
+      page: params.page ?? 1,
+      page_size: params.pageSize ?? 80,
+    };
+    const key = `concept:overview:${JSON.stringify(query)}`;
+    return conceptQuery(key, async () => {
       const response = await apiClient.get('/api/v1/concept-themes/overview', {
-        params: {
-          query: params.query || undefined,
-          theme_type: params.themeType || undefined,
-          source: params.source || undefined,
-          family: params.family || undefined,
-          cluster: params.cluster || undefined,
-          min_sources: params.minSources && params.minSources > 1 ? params.minSources : undefined,
-          readiness: params.readiness && params.readiness !== 'all' ? params.readiness : undefined,
-          view: params.view ?? 'canonical',
-          sort_by: params.sortBy ?? 'heat',
-          page: params.page ?? 1,
-          page_size: params.pageSize ?? 80,
-        },
+        params: query,
         headers: BACKGROUND_ROUTE_HEADERS,
       });
       return normalizeConceptOverview(response.data);
-    }, { freshMs: 20_000, staleMs: 5 * 60_000 });
+    }, 20_000);
   },
-  rotation: async (days = 20, limit = 24): Promise<ConceptRotation> => cachedQuery(
+  rotation: async (days = 20, limit = 24): Promise<ConceptRotation> => conceptQuery(
     `concept:rotation:${days}:${limit}`,
     async () => {
       const response = await apiClient.get('/api/v1/concept-themes/rotation', {
@@ -495,9 +547,9 @@ export const conceptThemesApi = {
       });
       return toCamelCase<ConceptRotation>(response.data);
     },
-    { freshMs: 60_000, staleMs: 15 * 60_000 },
+    60_000,
   ),
-  leaders: async (horizonDays = 60, mode: ConceptLeaders['mode'] = 'consensus', limit = 24): Promise<ConceptLeaders> => cachedQuery(
+  leaders: async (horizonDays = 60, mode: ConceptLeaders['mode'] = 'consensus', limit = 24): Promise<ConceptLeaders> => conceptQuery(
     `concept:leaders:${horizonDays}:${mode}:${limit}`,
     async () => {
       const response = await apiClient.get('/api/v1/concept-themes/leaders', {
@@ -505,9 +557,9 @@ export const conceptThemesApi = {
       });
       return toCamelCase<ConceptLeaders>(response.data);
     },
-    { freshMs: 30_000, staleMs: 5 * 60_000 },
+    30_000,
   ),
-  institutionRadar: async (days = 30, limit = 16): Promise<InstitutionThemeRadar> => cachedQuery(
+  institutionRadar: async (days = 30, limit = 16): Promise<InstitutionThemeRadar> => conceptQuery(
     `concept:institution-radar:${days}:${limit}`,
     async () => {
       const response = await apiClient.get('/api/v1/concept-themes/institution-radar', {
@@ -515,9 +567,9 @@ export const conceptThemesApi = {
       });
       return toCamelCase<InstitutionThemeRadar>(response.data);
     },
-    { freshMs: 60_000, staleMs: 10 * 60_000 },
+    60_000,
   ),
-  lifecycle: async (days = 30, limit = 12): Promise<ConceptLifecycle> => cachedQuery(
+  lifecycle: async (days = 30, limit = 12): Promise<ConceptLifecycle> => conceptQuery(
     `concept:lifecycle:${days}:${limit}`,
     async () => {
       const response = await apiClient.get('/api/v1/concept-themes/lifecycle', {
@@ -525,9 +577,9 @@ export const conceptThemesApi = {
       });
       return toCamelCase<ConceptLifecycle>(response.data);
     },
-    { freshMs: 60_000, staleMs: 10 * 60_000 },
+    60_000,
   ),
-  watchlistMap: async (horizonDays = 60): Promise<WatchlistThemeMap> => cachedQuery(
+  watchlistMap: async (horizonDays = 60): Promise<WatchlistThemeMap> => conceptQuery(
     `concept:watchlist-map:${horizonDays}`,
     async () => {
       const response = await apiClient.get('/api/v1/concept-themes/watchlist-map', {
@@ -535,9 +587,9 @@ export const conceptThemesApi = {
       });
       return toCamelCase<WatchlistThemeMap>(response.data);
     },
-    { freshMs: 30_000, staleMs: 5 * 60_000 },
+    30_000,
   ),
-  membershipChanges: async (days = 7, limit = 24): Promise<ConceptMembershipChanges> => cachedQuery(
+  membershipChanges: async (days = 7, limit = 24): Promise<ConceptMembershipChanges> => conceptQuery(
     `concept:membership-changes:${days}:${limit}`,
     async () => {
       const response = await apiClient.get('/api/v1/concept-themes/membership-changes', {
@@ -545,9 +597,9 @@ export const conceptThemesApi = {
       });
       return toCamelCase<ConceptMembershipChanges>(response.data);
     },
-    { freshMs: 60_000, staleMs: 10 * 60_000 },
+    60_000,
   ),
-  cluster: async (family: string, cluster: string, horizonDays = 60, limit = 80): Promise<ConceptClusterDetail> => cachedQuery(
+  cluster: async (family: string, cluster: string, horizonDays = 60, limit = 80): Promise<ConceptClusterDetail> => conceptQuery(
     `concept:cluster:${family}:${cluster}:${horizonDays}:${limit}`,
     async () => {
       const response = await apiClient.get('/api/v1/concept-themes/cluster-detail', {
@@ -555,9 +607,9 @@ export const conceptThemesApi = {
       });
       return toCamelCase<ConceptClusterDetail>(response.data);
     },
-    { freshMs: 30_000, staleMs: 5 * 60_000 },
+    30_000,
   ),
-  theme: async (themeId: number, refreshIfEmpty = true, horizonDays = 60): Promise<ThemeDetail> => cachedQuery(
+  theme: async (themeId: number, refreshIfEmpty = true, horizonDays = 60): Promise<ThemeDetail> => conceptQuery(
     `concept:theme:${themeId}:${horizonDays}`,
     async () => {
       const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}`, {
@@ -565,11 +617,11 @@ export const conceptThemesApi = {
         headers: BACKGROUND_ROUTE_HEADERS,
         timeout: 90_000,
       });
-      return toCamelCase<ThemeDetail>(response.data);
+      return validateThemeDetail(toCamelCase<ThemeDetail>(response.data), themeId, horizonDays);
     },
-    { freshMs: 20_000, staleMs: 2 * 60_000 },
+    20_000,
   ),
-  stock: async (tsCode: string, refreshIfEmpty = true, horizonDays = 60): Promise<StockThemeLens> => cachedQuery(
+  stock: async (tsCode: string, refreshIfEmpty = true, horizonDays = 60): Promise<StockThemeLens> => conceptQuery(
     `concept:stock:${tsCode}:${horizonDays}`,
     async () => {
       const response = await apiClient.get(`/api/v1/concept-themes/stocks/${encodeURIComponent(tsCode)}`, {
@@ -577,45 +629,27 @@ export const conceptThemesApi = {
         headers: BACKGROUND_ROUTE_HEADERS,
         timeout: 90_000,
       });
-      return toCamelCase<StockThemeLens>(response.data);
+      return validateStockThemeLens(toCamelCase<StockThemeLens>(response.data), tsCode, horizonDays);
     },
-    { freshMs: 30_000, staleMs: 3 * 60_000 },
+    30_000,
   ),
   exportTheme: async (themeId: number, horizonDays = 60): Promise<void> => {
     const response = await apiClient.get(`/api/v1/concept-themes/themes/${themeId}/export.csv`, {
       params: { horizon_days: horizonDays }, responseType: 'blob', timeout: 90_000,
     });
-    const disposition = String(response.headers['content-disposition'] || '');
-    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-    const filename = encodedName ? decodeURIComponent(encodedName) : `题材归因_${themeId}.csv`;
-    const url = URL.createObjectURL(response.data);
-    const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    downloadCsv(response.data, response.headers['content-disposition'], `题材归因_${themeId}.csv`);
   },
   exportStock: async (tsCode: string, horizonDays = 60): Promise<void> => {
     const response = await apiClient.get(`/api/v1/concept-themes/stocks/${encodeURIComponent(tsCode)}/export.csv`, {
       params: { horizon_days: horizonDays }, responseType: 'blob', timeout: 90_000,
     });
-    const disposition = String(response.headers['content-disposition'] || '');
-    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-    const filename = encodedName ? decodeURIComponent(encodedName) : `${tsCode}_题材画像.csv`;
-    const url = URL.createObjectURL(response.data);
-    const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    downloadCsv(response.data, response.headers['content-disposition'], `${tsCode}_题材画像.csv`);
   },
   exportWatchlistMap: async (horizonDays = 60): Promise<void> => {
     const response = await apiClient.get('/api/v1/concept-themes/watchlist-map/export.csv', {
       params: { horizon_days: horizonDays }, responseType: 'blob', timeout: 90_000,
     });
-    const disposition = String(response.headers['content-disposition'] || '');
-    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
-    const filename = encodedName ? decodeURIComponent(encodedName) : '我的自选题材暴露.csv';
-    const url = URL.createObjectURL(response.data);
-    const anchor = document.createElement('a');
-    anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    downloadCsv(response.data, response.headers['content-disposition'], '我的自选题材暴露.csv');
   },
   wakeSync: async (): Promise<void> => {
     await apiClient.post('/api/v1/concept-themes/sync/catalog', {});

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from zipfile import ZipFile, ZIP_STORED
@@ -55,6 +56,7 @@ def test_selected_audio_runs_in_background_and_persists_downloadable_progress(tm
     submitted = service.submit([("topic-1", "audio-1"), ("topic-1", "audio-2")])
     assert submitted["status"] == "queued"
     assert submitted["progress"] == 0
+    assert "items" not in submitted
     service._executor.shutdown(wait=True)  # Wait only in the deterministic unit test.
 
     completed = service.get(submitted["task_id"])
@@ -112,3 +114,46 @@ def test_audio_package_task_is_owner_scoped(tmp_path: Path) -> None:
     with pytest.raises(ResearchNoteMediaTaskError, match="无权访问"):
         service.get(submitted["task_id"])
     service._executor.shutdown(wait=True)
+
+
+def test_media_task_claim_prevents_cross_process_failure_or_duplicate_run(tmp_path: Path) -> None:
+    service = ResearchNoteMediaTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic_id, file_id: f"https://example.test/{file_id}",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(b"must-not-run"),
+        task_root=tmp_path,
+        workers=1,
+        owner_getter=lambda: None,
+    )
+    service._executor.shutdown(wait=True)
+    task_id = "audio-lease-12345678"
+    now = datetime.now(timezone.utc).isoformat()
+    service._write_state({
+        "task_id": task_id,
+        "owner_id": None,
+        "status": "queued",
+        "phase": "queued",
+        "progress": 0,
+        "items": [{"topic_id": "topic-1", "file_id": "audio-1"}],
+        "created_at": now,
+        "updated_at": now,
+    })
+    first_lease = service._claim_task(task_id)
+    assert first_lease is not None
+    assert "lease_owner" not in service.get(task_id)
+
+    competing = ResearchNoteMediaTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic_id, file_id: f"https://example.test/{file_id}",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(b"must-not-run"),
+        task_root=tmp_path,
+        workers=1,
+        owner_getter=lambda: None,
+    )
+    competing._executor.shutdown(wait=True)
+
+    assert competing._claim_task(task_id) is None
+    assert competing.get(task_id)["status"] == "queued"
+    service._update(task_id, status="completed", phase="completed", progress=100)
+    service._release_task(task_id, first_lease)
+    assert competing._claim_task(task_id) is None

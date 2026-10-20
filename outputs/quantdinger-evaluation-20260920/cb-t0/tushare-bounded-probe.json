@@ -1,0 +1,41 @@
+[
+  {
+    "api": "cb_daily",
+    "status": "ok",
+    "rows": 1,
+    "fields": [
+      "ts_code",
+      "trade_date",
+      "pre_close",
+      "open",
+      "high",
+      "low",
+      "close",
+      "change",
+      "pct_chg",
+      "vol",
+      "amount"
+    ],
+    "data": [
+      {
+        "ts_code": "113677.SH",
+        "trade_date": "20260918",
+        "pre_close": 332.99,
+        "open": 339.0,
+        "high": 346.959,
+        "low": 331.367,
+        "close": 332.411,
+        "change": -0.579,
+        "pct_chg": -0.1739,
+        "vol": 215901.0,
+        "amount": 73214.3294
+      }
+    ]
+  },
+  {
+    "api": "SDK realtime_tick permission",
+    "http": 200,
+    "allowed": true,
+    "safe_message": ""
+  }
+]

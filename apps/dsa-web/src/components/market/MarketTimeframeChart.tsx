@@ -112,9 +112,9 @@ function PriceTooltip({ active, payload, basePrice, intraday, intradayRange }: {
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return <div className="min-w-0 border-r border-border/55 px-2 last:border-r-0">
-    <span className="text-[9px] text-secondary-text">{label}</span>
-    <p className="truncate font-mono text-[11px] font-semibold tabular-nums" style={tone ? { color: tone } : undefined}>{value}</p>
+  return <div role="group" aria-label={label} className="min-w-0 border-r border-border/55 px-2 py-1.5 last:border-r-0">
+    <span className="text-[11px] text-secondary-text">{label}</span>
+    <p className="truncate text-[13px] font-semibold tabular-nums" style={tone ? { color: tone } : undefined}>{value}</p>
   </div>;
 }
 
@@ -123,7 +123,11 @@ export function MarketTimeframeChart({
 }: { symbol: string; compact?: boolean; className?: string; assetType?: 'stock' | 'index'; initialPeriod?: MarketPeriod; initialRange?: MarketRange }) {
   const [period, setPeriod] = useState<MarketPeriod>(initialPeriod);
   const [range, setRange] = useState<MarketRange>(initialRange ?? DEFAULT_RANGE[initialPeriod]);
-  const [series, setSeries] = useState<MarketSeries | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; series: MarketSeries } | null>(null);
+  const seriesKey = `${assetType}:${symbol}:${period}:${range}`;
+  // Never relabel the previous company's or timeframe's bars while the next
+  // request is pending. Same-query background refreshes keep their last result.
+  const series = loaded?.key === seriesKey ? loaded.series : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [recoveryAttempt, setRecoveryAttempt] = useState(0);
@@ -139,7 +143,13 @@ export function MarketTimeframeChart({
     try {
       const next = await getMarketSeries(symbol, period, range, force, assetType);
       if (mounted.current && version === requestVersion.current) {
-        setSeries(next);
+        const expected = symbol.trim().toUpperCase();
+        const actual = next.stockCode?.trim().toUpperCase();
+        const sameStock = actual === expected || (assetType === 'stock' && /^\d{6}$/.test(actual || '') && expected.split('.')[0] === actual);
+        if (!sameStock || next.period !== period || (next.range && next.range !== range)) {
+          throw new Error('行情返回的标的或周期不匹配');
+        }
+        setLoaded({ key: seriesKey, series: next });
         setError('');
         setRecoveryAttempt(0);
       }
@@ -153,7 +163,7 @@ export function MarketTimeframeChart({
         if (mounted.current && !silent) setLoading(false);
       }
     }
-  }, [assetType, period, range, symbol]);
+  }, [assetType, period, range, seriesKey, symbol]);
 
   useEffect(() => {
     mounted.current = true;
@@ -220,7 +230,7 @@ export function MarketTimeframeChart({
   }, [chart]);
   const intradayPercentDomain = useMemo(() => adaptivePercentDomain(chart), [chart]);
   const zeroInIntradayDomain = intradayPercentDomain[0] <= 0 && intradayPercentDomain[1] >= 0;
-  const latestIsRealtime = period === 'intraday' && /T\d{2}:\d{2}:\d{2}$/.test(latest?.date ?? '');
+  const quoteAt = latest?.date ?? series?.latestAt;
 
   const selectPeriod = (next: MarketPeriod) => startTransition(() => { setPeriod(next); setRange(DEFAULT_RANGE[next]); });
   const priceHeight = compact ? 205 : 320;
@@ -230,10 +240,10 @@ export function MarketTimeframeChart({
   return <section className={`market-timeframe-chart overflow-hidden border border-border/70 bg-background/25 ${className}`}>
     <div className="market-chart-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-2 py-1.5">
       <div className="market-chart-periods flex shrink-0 items-center">
-        {PERIODS.map((item) => <button key={item.value} onClick={() => selectPeriod(item.value)} className={`h-7 whitespace-nowrap border px-3 text-[10px] font-semibold ${period === item.value ? 'border-cyan/70 bg-cyan/15 text-cyan' : 'border-transparent text-secondary-text hover:border-border'}`}>{item.label}</button>)}
+        {PERIODS.map((item) => <button key={item.value} aria-pressed={period === item.value} onClick={() => selectPeriod(item.value)} className={`h-8 whitespace-nowrap border px-3 text-[12px] font-semibold ${period === item.value ? 'border-cyan/70 bg-cyan/15 text-cyan' : 'border-transparent text-secondary-text hover:border-border'}`}>{item.label}</button>)}
       </div>
       <div className="market-chart-ranges flex shrink-0 items-center gap-1">
-        {RANGES[period].map((item) => <button key={item.value} onClick={() => setRange(item.value)} className={`h-6 whitespace-nowrap px-2 text-[9px] ${range === item.value ? 'border-b-2 border-cyan font-bold text-cyan' : 'text-secondary-text'}`}>{item.label}</button>)}
+        {RANGES[period].map((item) => <button key={item.value} aria-pressed={range === item.value} onClick={() => setRange(item.value)} className={`h-8 whitespace-nowrap px-2 text-[12px] ${range === item.value ? 'border-b-2 border-cyan font-bold text-cyan' : 'text-secondary-text'}`}>{item.label}</button>)}
         <button aria-label="刷新行情" onClick={() => void load(true)} className="ml-1 p-1 text-secondary-text hover:text-cyan"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /></button>
       </div>
     </div>
@@ -242,16 +252,16 @@ export function MarketTimeframeChart({
       <Metric label="最新" value={number(latest?.close)} tone={changeTone} />
       <Metric label="涨跌" value={change == null ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`} tone={changeTone} />
       <Metric label="涨幅" value={changePct == null ? '—' : `${changePct > 0 ? '+' : ''}${changePct.toFixed(2)}%`} tone={changeTone} />
-      <Metric label={period === 'intraday' && range === '5d' ? '区间基准' : '昨收'} value={number(period === 'intraday' ? stageBase : comparison)} />
+      <Metric label={period === 'intraday' && range === '5d' ? '区间基准' : period === 'intraday' || period === 'daily' ? '昨收' : '上期收盘'} value={number(period === 'intraday' ? stageBase : comparison)} />
       <Metric label="开盘" value={number(sessionOpen)} />
       <Metric label="最高" value={number(sessionHigh)} tone={UP} />
       <Metric label="最低" value={number(sessionLow)} tone={DOWN} />
       <Metric label={period === 'intraday' ? '本分钟量' : '成交'} value={compactNumber(period === 'intraday' ? latestIntervalVolume : sessionAmount)} />
     </div>
 
-    <div className="flex flex-wrap items-center justify-between gap-1 border-b border-border/45 px-3 py-1 text-[9px] text-secondary-text">
-      <span>{series?.storedCount ?? 0} 个{period === 'intraday' ? '分钟点' : '数据点'}{latestIsRealtime ? ' · 当前分钟实时' : ''} · SQLite · {series?.source ?? '本地缓存'}</span>
-      <div className="flex items-center gap-3 font-mono"><span className="text-[#E4B64A]">MA5</span><span className="text-[#A987FF]">MA10</span><span className="text-cyan">MA20</span><span>{series?.latestAt?.replace('T', ' ') ?? '暂无时间'}</span></div>
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/45 px-3 py-1.5 text-[11px] text-secondary-text">
+      <span>{series?.storedCount ?? 0} 个{period === 'intraday' ? '分钟点' : '数据点'} · {series?.source ?? '本地缓存'}</span>
+      <div className="flex flex-wrap items-center gap-3 tabular-nums">{period !== 'intraday' ? <><span className="text-[#E4B64A]">MA5</span><span className="text-[#A987FF]">MA10</span><span className="text-cyan">MA20</span></> : null}<span>{quoteAt?.replace('T', ' ') ?? '暂无时间'}</span></div>
     </div>
 
     {error && chart.length ? <div role="status" className="border-b border-warning/20 bg-warning/5 px-3 py-1.5 text-[9px] text-secondary-text">行情更新暂时延迟，当前仍展示最近一次成功数据，系统正在自动重试。</div> : null}
@@ -262,8 +272,8 @@ export function MarketTimeframeChart({
             <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.55} vertical={false} />
             <XAxis dataKey="label" hide />
             <YAxis
-              tick={{ fontSize: 9, fill: 'hsl(var(--secondary-text))' }}
-              width={period === 'intraday' ? 58 : 52}
+              tick={{ fontSize: 11, fill: 'hsl(var(--secondary-text))' }}
+              width={period === 'intraday' ? 64 : 58}
               domain={period === 'intraday' ? intradayPercentDomain : priceDomain}
               tickFormatter={(value) => period === 'intraday' ? `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(2)}%` : Number(value).toFixed(2)}
             />
@@ -286,7 +296,7 @@ export function MarketTimeframeChart({
             <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.35} vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 9, fill: 'hsl(var(--secondary-text))' }}
+              tick={{ fontSize: 11, fill: 'hsl(var(--secondary-text))' }}
               interval="preserveStartEnd"
               minTickGap={range === '5d' ? 70 : compact ? 48 : 36}
               tickMargin={7}

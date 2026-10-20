@@ -15,6 +15,7 @@
 - [访问不了？先检查这几项](#访问不了先检查这几项)
 - [可选：Nginx 反向代理（绑定域名 / 80 端口）](#可选nginx-反向代理绑定域名--80-端口)
 - [安全建议](#安全建议)
+- [手机号自助注册与阿里云短信认证](#手机号自助注册与阿里云短信认证)
 
 ---
 
@@ -336,6 +337,42 @@ ADMIN_AUTH_ENABLED=true
 重启服务后，第一次访问网页时会要求设置初始密码。设置完成后，每次打开设置页面都需要输入密码，可以防止 API Key 等敏感配置被他人看到。
 
 > 如果忘了密码，可以在服务器上执行：`python -m src.auth reset_password`
+
+---
+
+## 手机号自助注册与阿里云短信认证
+
+该功能使用阿里云号码认证服务 **PNVS** 的 `SendSmsVerifyCode` / `CheckSmsVerifyCode`，不是普通短信服务的 `SendSms`。个人账号也可按平台规则开通并使用赠送签名和模板；实际服务状态、收费与可用签名以控制台为准。参见[阿里云新手指引](https://help.aliyun.com/zh/pnvs/getting-started/sms-authentication-service-novice-guide)。
+
+### 账号与权限
+
+- `USER_ACCESS_ENABLED=true` 始终保留业务页面/API的账号认证。开放自助注册不等于匿名访问。
+- `USER_REGISTRATION_MODE=self_service`：新用户使用已验证的手机号直接注册并登录，不进入管理员审批队列。姓名可作为显示名称，不作为手机号身份的合并依据。
+- 旧账号继续使用原密码。绑定手机须先登录原账号、再次验证原密码并核验短信；绑定后仍使用原 `user_id`，自选股、会话和任务不迁移、不复制。绑定冲突不会自动合并。
+- 已绑定的号码不能直接覆盖，更不能通过新注册恢复已停用或被拒绝账号。历史待审核账号也不会被批量批准。
+- 管理员身份仍由独立的管理员认证保护；普通用户自助注册不会获得设置、密钥或管理权限。
+- `USER_REGISTRATION_MODE=approval` 保持旧审批流程。短信未配置时旧密码登录仍可使用，不返回测试验证码或伪装已开通。
+
+### 服务配置
+
+1. 在阿里云号码认证控制台完成实名认证、服务开通，选择可用的**系统赠送签名与配套模板**。不购买服务器或迁移数据库。
+2. 使用专用 RAM 身份，仅授权 `dypns:SendSmsVerifyCode` 和 `dypns:CheckSmsVerifyCode`；这两个接口不支持资源级授权，资源范围需按阿里云文档设置。不要配置主账号高权限密钥，也不要复用录音转写的密钥。
+3. 把 `.env.example` 中的 `ALIYUN_SMS_*` 配置保存在服务器的受限环境文件中，不能提交 Git、放入浏览器或输出到日志。`ALIYUN_SMS_SCHEME_NAME` 同时用于发送和核验，最多20字符。`ALIYUN_SMS_TEMPLATE_CODE` 用于登录/注册；可选的 `ALIYUN_SMS_BIND_TEMPLATE_CODE` 用于原账号绑定手机号，空值沿用登录模板。两者都必须是控制台实际可用的赠送模板，不能凭示例编码假定可用。
+4. 完成真实发送、接收、核验和费用限制检查后，才启用 `SMS_AUTH_ENABLED=true` 与 `USER_REGISTRATION_MODE=self_service`。未经开通、密钥未配置或上游报错时，不应宣称短信登录已上线。
+
+### 防刷与费用限制
+
+短信为付费调用。默认每号码60秒才能再发，验证码6位、5分钟有效、最多核验5次；发送请求按滚动24小时限制每手机号5次、每IP20次、全站100次，配置名分别为 `SMS_AUTH_PHONE_DAILY_LIMIT`、`SMS_AUTH_IP_DAILY_LIMIT`、`SMS_AUTH_GLOBAL_DAILY_LIMIT`。限额可以调整，但不建议无上限开放。
+
+预占和消费记录保存在数据库，服务重启或多个进程不会清空配额。失败或超时的发送也保留额度，不自动重发收费请求。验证码由阿里云产生并验证，应用不保存验证码；手机号仅保存带密钥摘要与脱敏显示。浏览器随机凭证将验证码挑战绑定到发起浏览器和用途，已消费、过期、被替换或不属于当前账号的挑战无法复用。
+
+### 发布、测试与回退
+
+通用登录入口复用 `UserAccessPage`，可单独执行 `npx vite build --config vite.account-access.config.ts` 构建；生成的 `dist-account-access/account-access.html` 发布到后端 `static/account-access/account-access.html`，JS/CSS位于 `static/assets/account-access/`。后端发现此入口后，所有 `/access` 回调统一使用它；不存在时保留原入口。主站同时加载 `public/assets/account-access-navigation.js`，仅在旧SPA页内导航至 `/access` 时转为整页导航，让服务器选用统一入口，不影响其他模块路由。冻结的旧主站发布须把此脚本一并复制到 `static/assets/` 并在主HTML引入；必须同时验证页内导航进入新入口，不能只测试手输网址。
+
+数据库只新增手机身份和验证码挑战表，不改动旧账号主键或旧数据。正式发布前采用 SQLite online backup 保留一致备份（不能仅复制运行中的主库而忽略WAL）。回退只恢复应用镜像和配置，保留新增表与新注册账号，**不回退整库、不删除账号数据**。停用短信后，手机专用账号没有原密码，因此不应把“关闭开关”当作没有影响的回退；需恢复上一可用短信版本或通知用户暂时不可用。
+
+验收必须分开记录：离线单测、浏览器流程、生产匿名鉴权、真实阿里云发送/接收/核验。Mock接口或按钮展示不代表真实短信已接通。本文没有对应独立英文部署指南；已有 `full-guide_EN.md` 不改动与本功能无关的内容。
 
 ---
 

@@ -31,6 +31,8 @@ EXEMPT_PATHS = frozenset({
     "/api/v1/user-auth/register",
     "/api/v1/user-auth/login",
     "/api/v1/user-auth/logout",
+    "/api/v1/user-auth/sms/send",
+    "/api/v1/user-auth/sms/login",
 })
 
 ADMIN_PREFIXES = (
@@ -58,6 +60,7 @@ ADMIN_EXACT_PATHS = frozenset({
     "/api/v1/essay-radar/daily-reports/worker/stop",
     "/api/v1/financial-data/zsxq/sync",
     "/api/v1/financial-data/zsxq/sync/history",
+    "/api/v1/financial-data/zsxq/history/backfill",
     "/api/v1/financial-data/zsxq/sync/worker/start",
     "/api/v1/financial-data/zsxq/sync/worker/stop",
     "/api/v1/investment-monitor/watchdog/audit",
@@ -86,6 +89,7 @@ PUBLIC_FRONTEND_PATHS = frozenset({
 
 PUBLIC_FRONTEND_PREFIXES = (
     "/assets/",
+    "/landing/",  # Dedicated image-only route; never falls back to the SPA.
 )
 
 
@@ -216,7 +220,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
                 content={
                     "error": "user_login_required",
-                    "message": "请先登录，或提交访问申请等待管理员审核",
+                    "message": "请先登录后访问",
                 },
             )
 

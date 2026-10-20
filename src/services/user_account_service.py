@@ -19,13 +19,14 @@ from typing import Any, Optional
 from sqlalchemy import delete, desc, select
 from sqlalchemy.exc import IntegrityError
 
-from src.storage import DatabaseManager, UserAccount, UserTrustedIp, UserWatchlistItem, utc_naive_now
+from src.storage import DatabaseManager, UserAccount, UserPhoneIdentity, UserTrustedIp, UserWatchlistItem, utc_naive_now
 
 USER_COOKIE_NAME = "dsa_user_session"
 USER_AUTO_LOGIN_SUPPRESSION_COOKIE = "dsa_user_auto_login_suppressed"
 SESSION_MAX_AGE_DAYS = 30
 USER_SESSION_VERSION = "v2"
 PASSWORD_ITERATIONS = 240_000
+DISABLED_PASSWORD = "!sms-only-password-disabled!"
 MIN_PASSWORD_LENGTH = 6
 MAX_TRUSTED_IPS = 5
 _SPACE_RE = re.compile(r"\s+")
@@ -45,6 +46,10 @@ class UserAccountError(ValueError):
 def user_access_enabled() -> bool:
     """Return whether front-office account enforcement is enabled."""
     return os.getenv("USER_ACCESS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def registration_mode() -> str:
+    return "self_service" if os.getenv("USER_REGISTRATION_MODE", "approval").strip() == "self_service" else "approval"
 
 
 def normalize_display_name(value: str) -> tuple[str, str]:
@@ -76,6 +81,8 @@ def _hash_password(password: str, salt: Optional[bytes] = None) -> tuple[str, st
 
 
 def _verify_password(password: str, salt_text: str, hash_text: str) -> bool:
+    if salt_text == DISABLED_PASSWORD or hash_text == DISABLED_PASSWORD:
+        return False
     try:
         salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
         expected = base64.urlsafe_b64decode(hash_text.encode("ascii"))
@@ -202,6 +209,8 @@ class UserAccountService:
         return data
 
     def register(self, name: str, password: str, client_ip: str) -> dict[str, Any]:
+        if registration_mode() == "self_service":
+            raise UserAccountError("sms_required", "请通过手机号验证码完成注册")
         display, normalized = normalize_display_name(name)
         password = _validate_password(password)
         salt, password_hash = _hash_password(password)
@@ -263,6 +272,25 @@ class UserAccountService:
             session.flush()
             session.expunge(row)
             return row
+
+    def phone_status(self, user_id: int) -> dict[str, Any]:
+        with self.db.get_session() as session:
+            binding = session.execute(select(UserPhoneIdentity).where(UserPhoneIdentity.user_id == user_id)).scalar_one_or_none()
+            return {"phoneBound": binding is not None, "phoneMasked": binding.phone_label if binding else None}
+
+    def verify_current_password(self, user_id: int, password: str) -> None:
+        """Re-authenticate the same account before adding a login credential.
+
+        Do not resolve by display name or refresh/change the logged-in identity.
+        SMS-only accounts have no usable password and cannot use this pathway
+        to replace their immutable phone binding.
+        """
+        with self.db.get_session() as session:
+            row = session.get(UserAccount, user_id)
+            if row is None or row.status != "approved":
+                raise UserAccountError("account_unavailable", "账号当前不可用")
+            if not _verify_password(password, row.password_salt, row.password_hash):
+                raise UserAccountError("invalid_credentials", "原账号密码错误")
 
     def account_for_session(self, cookie_value: str) -> Optional[UserAccount]:
         user_id = parse_user_session(cookie_value)

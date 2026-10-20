@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:ai-news": "tsc -b && vite build --config vite.ai-news.config.ts",
+    "build:jev": "tsc -b && vite build --config vite.jev.config.ts",
     "lint": "eslint .",
     "test": "vitest run",
     "test:smoke": "playwright test",

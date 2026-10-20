@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft, ArrowRight, BarChart3, BookOpen, Bot, Building2,
@@ -9,6 +10,7 @@ import {
   Star, TableProperties, Target, UserCheck, Workflow, X,
 } from 'lucide-react';
 import './UserGuidePage.css';
+import './UserGuideGlass.css';
 
 type Category = '全部' | '每日使用' | '公司研究' | '行业题材' | '机构语料' | '数据量化' | '系统管理';
 type Hotspot = { number: number; x: number; y: number; title: string; detail: string };
@@ -63,25 +65,25 @@ const legacyChapters: GuideChapter[] = [
   },
   {
     id: 'industry', category: '行业题材', eyebrow: '快速建立可核验认知', title: '行业与公司调研', icon: Landmark,
-    summary: '输入一个行业，后台并行组织产业链、趋势、龙头、痛点、应用场景、验证指标和长篇报告。',
+    summary: '选择行业或上市公司，后台召回多渠道资料，组织产业链、经营财务、竞争格局、验证问题和深度报告。',
     href: '/industry-research', action: '进入深度调研', screenshot: '/landing/screens/industry-research.jpg', alt: '行业与公司调研实机页面截图',
-    purpose: '在尽可能短的时间内建立可继续验证的行业框架，而不是只生成一篇不可追溯的长文。',
-    data: ['两年研报链接与摘要库', '机构段子与录音纪要', '公司公告、财务与行情', '企业事实、新闻与题材关系'],
-    outputs: ['产业链地图', '趋势与拐点', '龙头候选对比', '痛点与应用场景', '访谈提纲', '带引用的长篇报告'],
+    purpose: '围绕行业或公司建立可验证的研究框架，区分已有证据、模型推断和仍需补齐的数据。',
+    data: ['研报链接与摘要库', '机构段子与录音转写', '公司年报/半年报/季报等公告', '财务、行情与企业事实', '互联网检索、新闻与题材关系'],
+    outputs: ['产业链或公司研究地图', '趋势与竞争格局', '候选公司对比', '关键问题与证据缺口', '带引用的长篇报告', '正式报告 Word / PDF'],
     hotspots: [
-      { number: 1, x: 43, y: 34, title: '研究主题', detail: '填写行业名称并选择回看范围；可用关注问题限定研究边界。' },
+      { number: 1, x: 43, y: 34, title: '研究主题', detail: '当前版本先选行业或上市公司，再输入行业主题、公司名或代码，并选择资料回看范围。' },
       { number: 2, x: 76, y: 34, title: '启动后台任务', detail: '提交后任务在服务器继续执行，离开页面不影响进度。' },
-      { number: 3, x: 48, y: 51, title: '任务与历史报告', detail: '按全部/运行中/已完成/失败筛选；点已完成任务重新打开结果。' },
+      { number: 3, x: 48, y: 51, title: '任务与历史报告', detail: '当前版本支持全库标题搜索、状态筛选与分页；完整完成和有限完成的报告均可重开，失败任务可查看原因。' },
       { number: 4, x: 56, y: 83, title: '四阶段方法', detail: '定义边界、建立产业链、验证龙头与趋势、形成结论，避免一步生成空泛报告。' },
     ],
-    steps: ['输入具体行业，必要时增加地区、技术路线或关键问题。', '选择资料回看范围并启动后台任务。', '在任务框观察召回、去重、结构化和写作进度。', '先看研究地图和证据覆盖，再读公司对比与长篇报告。', '沿证据编号打开原始研报、公告或语料，补充开放问题。'],
+    steps: ['选择“行业”或“上市公司”，输入主题或公司名/证券代码，补充重点问题。', '选择资料回看范围，确认研究对象后启动后台任务。', '在任务框观察进度；离开后可用标题搜索、状态筛选和分页找回报告。', '区分完整完成与有限完成，先查证据覆盖，再读报告；失败任务查看原因后重新创建课题。', '沿引用打开原始资料，核验后下载 Word 或 PDF；导出只包含报告本身。'],
     modules: [
-      { name: '任务中心', purpose: '管理运行中、已完成与失败的行业研究。', data: '按用户隔离的后台任务库', actions: ['筛选任务状态', '查看真实进度', '重开历史报告', '失败后重试'], output: '可离页执行、可恢复的研究任务。' },
+      { name: '任务中心', route: '/industry-research', purpose: '查找个人行业与公司报告。', data: '按用户隔离的后台任务库', actions: ['全库标题搜索与分页', '筛选运行中/完整完成/有限完成/失败', '查看真实进度', '重开报告或查看失败原因'], output: '可离页执行、可恢复的研究任务。' },
       { name: '研究地图', purpose: '先建立产业链结构和关键问题。', data: '跨渠道证据召回与实体关系', actions: ['浏览上游/中游/下游', '查看趋势/痛点/应用', '检查开放问题'], output: '行业认知骨架。' },
       { name: '公司对比', purpose: '比较龙头、环节位置和证据强弱。', data: '公司财务、公告、研报、行情与题材关系', actions: ['比较公司候选', '查看证据覆盖', '进入公司研究'], output: '公司候选与差异化线索。' },
       { name: '证据库', purpose: '核验报告中的每个关键判断。', data: '研报/公告/机构语料/企业事实原文索引', actions: ['按来源筛选', '按时间排序', '打开原文'], output: '可追溯引用账本。' },
       { name: '访谈问题', purpose: '把未知点变成可向专家或公司提问的问题。', data: '证据缺口与矛盾项', actions: ['按产业链环节查看', '复制问题', '补充答案'], output: '专家访谈/调研提纲。' },
-      { name: '研究报告', purpose: '输出结论优先、证据可追溯的完整报告。', data: '前述全部结构化结果与引用', actions: ['读执行摘要', '按目录跳转', '核对引用', '继续补强'], output: '长篇行业报告与监控指标。' },
+      { name: '研究报告', route: '/industry-research', purpose: '阅读并导出结论优先、证据可追溯的报告。', data: '结构化结果、引用与研究数据截止时间', actions: ['先在任务框打开指定报告', '按目录阅读执行摘要与正文', '核对引用和局限', '一键下载 Word 或 PDF'], output: '行业或公司深度报告；有限报告须结合缺口说明使用。' },
     ],
     verify: ['报告长度不等于质量，先看证据覆盖和引用。', '龙头公司必须说明所处环节和选择依据。', '趋势判断要同时写出证伪条件和后续监控指标。'],
   },
@@ -121,29 +123,24 @@ const legacyChapters: GuideChapter[] = [
       { name: '多会话研究', purpose: '把不同股票/主题分开管理。', data: '按用户隔离的会话记录', actions: ['新建/切换/删除会话', '继续追问', '查看历史'], output: '连续、可恢复的研究上下文。' },
       { name: '数据工具调用', purpose: '本地没有时再调用可用API。', data: '本地库优先 + 按需实时接口', actions: ['查看取数进度', '核对数据日期', '继续补问缺口'], output: '证据支持的回答。' },
       { name: '分析技能', purpose: '按问题选择不同研究方法。', data: '行情/技术/情绪/基本面上下文', actions: ['选择一个或多个技能', '切回通用分析', '用追问验证'], output: '明确方法边界的分析。' },
-      { name: '导出与协作', purpose: '把研究结果带出平台。', data: '当前消息或完整会话', actions: ['复制回答', '导出单条Markdown', '导出会话Markdown', '发送通知'], output: '可复查的研究记录。' },
+      { name: '导出与协作', purpose: '把研究结果带出平台。', data: '当前消息或完整会话', actions: ['复制回答', '导出单条Markdown', '导出会话Markdown'], output: '可复查的研究记录；普通用户不使用管理员的全局通知渠道。' },
     ],
     verify: ['问题必须包含对象、时间和想验证的假设。', '模型没有列出数据日期时要追问。', '技术分析只是描述价格状态，不能替代公告和财务事实。'],
   },
   {
     id: 'essays', category: '机构语料', eyebrow: '知识星球增量库', title: '机构段子与录音', icon: Mic2,
     summary: '从今日研判到跨期洞察、全文检索、录音转写、趋势跟踪、每日报告和数据管理，完整利用非结构化语料。',
-    href: '/essay-radar', action: '进入机构段子与录音', screenshot: '/landing/screens/essay-radar.jpg', alt: '机构段子洞察图谱实机页面截图',
+    href: '/essay-radar', action: '进入机构段子与录音',
     purpose: '把原始段子、附件和录音变成可检索、可引用、可验证、可回测的研究材料。',
     data: ['知识星球 MCP 增量正文', '图片/文件/录音链接', 'DeepSeek结构化分析', '阿里云录音转写', '个股与指数行情'],
     outputs: ['原文与结构化标签', '短中长期洞察', '语料与行情关联统计', '录音纪要和时间戳转写', '每日长篇报告'],
-    hotspots: [
-      { number: 1, x: 53, y: 20, title: '六个工作子页', detail: '今日研判、洞察图谱、检索与获取、趋势追踪、每日报告、数据管理各有独立用途。' },
-      { number: 2, x: 54, y: 28, title: '研究时间窗', detail: '短期/中期/长期/自定义日期改变整个页面的数据窗口。' },
-      { number: 3, x: 52, y: 37, title: '覆盖与质量', detail: '已分析语料、行情覆盖、已验证股票和多空分歧用于判断结论能否使用。' },
-      { number: 4, x: 51, y: 56, title: '语料与行情关联', detail: '把真实日线和提及量放在同一时间轴，查看事件后1/5/10/20日表现和样本量。' },
-    ],
-    steps: ['今日先看“今日研判”和模型日报，获取新增线索。', '需要查历史时进入“检索与获取”，选择标题或全文搜索。', '勾选小作文导出Excel/原文，或勾选录音提交转写与AI纪要。', '用洞察图谱和趋势追踪检查主题、个股与行情的关系。', '到数据管理查看入库时间范围、分析覆盖和失败重试。'],
+    steps: ['今日先看“今日研判”和模型日报，获取新增线索。', '查历史进入“检索与获取”；小作文支持标题/全文检索，录音严格按文件名检索。', '勾选小作文导出Excel/原文；录音可选仅转写或转写并生成AI纪要。', '已经转写的录音可直接查看逐字稿、下载单份TXT，或勾选后下载原文字稿ZIP，不必再生成纪要。', '用洞察图谱和趋势追踪核验语料与行情关系；在任务账本找回进度与结果。'],
     modules: [
       { name: '今日研判', route: '/essay-radar', purpose: '优先处理新增且重要的机构语料。', data: '最近新增原文 + 自动分析结果', actions: ['看昨日新增', '看自选股信号', '打开原文', '核验高优先级线索'], output: '当日机构语料研究清单。' },
       { name: '洞察图谱', route: '/essay-radar/insights', purpose: '在不同时间尺度观察主题、个股和行情关系。', data: '结构化语料 + 实际日线', actions: ['切短/中/长期', '自定义日期', '看主题迁移', '看事件后收益与置信区间'], output: '语料—行情关联证据。' },
       { name: '检索与获取', route: '/essay-radar/feed', purpose: '查全库正文、附件与录音。', data: 'SQLite全文索引 + 媒体链接', actions: ['标题/全文检索', '按日期/情绪/分类/重要性筛选', '页面内看原文', '批量导出/下载'], output: '筛选后的原文、Excel或文件包。' },
-      { name: '录音AI纪要', route: '/essay-radar/feed', purpose: '把选择的公司录音转成可读研究纪要。', data: '源音频 + 阿里云ASR + DeepSeek', actions: ['填写重点问题/热词/人数', '提交后台任务', '查看时间戳转写', '下载Word/MD/JSON/ZIP'], output: '带证据索引的录音小作文。' },
+      { name: '录音转写与 AI 纪要', route: '/essay-radar/feed?tab=audio', purpose: '只需要原文时不调用AI研判，需要研究摘要时再生成纪要。', data: '选中录音 + 阿里云ASR；纪要另调用已配置大模型', actions: ['按文件名与日期筛选并勾选', '填写专业热词/人数/重点问题', '仅转写（不调用AI）或转写并生成AI纪要', '离页后从任务账本找回', 'AI纪要另可下载Word/Markdown/JSON/完整包'], output: '带时间戳逐字稿或个人AI纪要；用户纪要不重复进入公共小作文。' },
+      { name: '原文字稿查看与下载', route: '/essay-radar/feed?tab=audio', purpose: '复用已完成转写，直接获取原始文字，不夹带音频或AI分析。', data: '当前用户可访问的已转写录音与时间戳文字', actions: ['找到带已转写标记的录音', '点击查看原文，页内切换文件和逐字稿', '单个下载文字稿TXT', '跨页勾选已转写录音后下载文字稿ZIP'], output: '仅ASR原文的TXT或ZIP；未转写的录音需先完成转写。' },
       { name: '趋势追踪', route: '/essay-radar/trends', purpose: '观察股票、标签和主题的日/周/月提及变化。', data: '全库提及与重要性', actions: ['切日/周/月', '看词云/提及云', '查看自选股趋势', '看30日高频股票'], output: '讨论动量与首次提及线索。' },
       { name: '每日报告', route: '/essay-radar/reports', purpose: '让各模型总结前一日新增语料。', data: '前一日新增且已分析语料', actions: ['切换日期和模型', '比较共识/分歧', '阅读长文', '查看候选股票和次日核验项'], output: '可追溯的机构语料日报。' },
       { name: '数据管理', route: '/essay-radar/system', purpose: '查看增量同步和AI分析覆盖。', data: 'MCP同步状态 + AI任务队列', actions: ['查看总量/日期范围', '看已分析/未分析/失败', '选择历史未分析数量', '重试失败'], output: '知识库与分析管线状态。' },
@@ -166,12 +163,12 @@ const legacyChapters: GuideChapter[] = [
     ],
     steps: ['把观点写成可以验证的条件：信号、对象、入场、持有期、基准。', '选择模板或用自然语言生成受控任务参数。', '设置去重、首次提及、成本、组合规模和样本外检验。', '提交后台任务后切换页面，完成后回任务中心查看。', '先读样本与方法，再读净值、超额、回撤、置信区间和稳健性。'],
     modules: [
-      { name: '任务中心', purpose: '统一查看排队、运行、完成和失败任务。', data: '按用户隔离的后台任务', actions: ['筛选状态', '查看阶段进度', '打开完成结果', '重试失败'], output: '可离页运行的任务队列。' },
-      { name: '新建任务', purpose: '用可控表单构建研究。', data: '事件/因子/行情/财务数据目录', actions: ['选模板', '设样本/信号/持有期', '设成本与基准', '保存并运行'], output: '参数明确的量化任务。' },
-      { name: 'AI建任务', purpose: '把自然语言假设翻译成白名单参数。', data: 'DeepSeek + 服务器端安全模板', actions: ['描述假设', '审阅生成参数', '修改约束', '确认执行'], output: '受控任务，不直接执行任意代码。' },
-      { name: '结果研判', purpose: '解释结果能否用于后续研究。', data: '任务结果快照', actions: ['看净值/超额/回撤', '看事件窗', '看月度/分组', '看成本/CI/稳健性'], output: '结果、局限和停止采用条件。' },
-      { name: '数据与方法', purpose: '知道每个指标由什么数据计算。', data: '数据资产目录与方法定义', actions: ['查看覆盖日期', '查看字段定义', '检查缺失与截止时间'], output: '可审计的方法说明。' },
-      { name: '任务档案', purpose: '复现和比较历史实验。', data: '规则、数据哈希、截止时间和结果快照', actions: ['筛选个人任务', '重开历史结果', '比较参数'], output: '可复现研究账本。' },
+      { name: '任务中心', route: '/essay-quant', purpose: '查看正在运行与最近完成的个人任务。', data: '按用户隔离的后台任务', actions: ['查看阶段进度', '打开最近完成结果', '从模板或自然语言新建'], output: '可离页运行的任务队列；失败任务查看原因后重新建任务。' },
+      { name: '新建任务', route: '/essay-quant?section=builder', purpose: '用可控表单构建研究。', data: '事件/因子/行情/财务数据目录', actions: ['选模板', '设样本/信号/持有期', '设成本与基准', '保存并运行'], output: '参数明确的量化任务。' },
+      { name: 'AI建任务', route: '/essay-quant?section=natural-language', purpose: '把自然语言假设翻译成白名单参数。', data: '已配置大模型 + 服务器端安全模板', actions: ['描述假设', '审阅生成参数', '修改约束', '确认执行'], output: '受控任务，不直接执行任意代码。' },
+      { name: '结果研判', route: '/essay-quant?section=results', purpose: '解释结果能否用于后续研究。', data: '任务结果快照', actions: ['从任务中心或档案打开指定运行结果', '看净值/超额/回撤', '看事件窗和月度/分组', '看成本/CI/稳健性'], output: '结果、局限和停止采用条件；指定历史快照不会被最新任务覆盖。' },
+      { name: '数据与方法', route: '/essay-quant?section=data', purpose: '知道每个指标由什么数据计算。', data: '数据资产目录与方法定义', actions: ['查看覆盖日期', '查看字段定义', '检查缺失与截止时间'], output: '可审计的方法说明。' },
+      { name: '任务档案', route: '/essay-quant?section=history', purpose: '查阅已完成的个人实验。', data: '规则、数据哈希、截止时间和结果快照', actions: ['浏览个人任务', '打开不可变历史快照', '核对规则与数据截止日'], output: '可复查的研究账本。' },
     ],
     verify: ['样本数必须是去重后的研究事件，不是统一事件库全部记录。', '结果必须显示基准、成本、到期样本和数据截止日。', '机构预计算属于后台资产，不应混入普通用户任务。', '自然语言入口不能执行任意shell、SQL、文件或交易指令。'],
   },
@@ -200,16 +197,16 @@ const legacyChapters: GuideChapter[] = [
   {
     id: 'watchlist', category: '公司研究', eyebrow: '一只股票的统一事实与行情', title: '自选股超级看板', icon: Star,
     summary: '新增股票后自动补齐历史资料，在一个页面共享行情、财务、资金、公告、研报、机构段子、预期、消息和股评。',
-    href: '/super-watchlist', action: '进入自选股超级看板', screenshot: '/landing/screens/super-watchlist.jpg', alt: '自选股超级看板实机页面截图',
+    href: '/super-watchlist', action: '进入自选股超级看板', screenshot: '/landing/screens/super-watchlist-preview.png', alt: '自选股超级看板实机页面截图',
     purpose: '围绕个人关注股票建立持续更新的公司档案，所有子栏目使用同一个股票代码和共享数据库。',
     data: ['实时快照、分钟线与历史K线', 'Tushare财务/资金/研报', '巨潮公告', '知识星球语料', '天眼查与公开股评'],
     outputs: ['实时行情与图表', '事实时间线', '基本面/估值/筹码快照', '一致预期工作台', '全渠道公司证据'],
     hotspots: [
-      { number: 1, x: 24, y: 23, title: '加入与管理自选', detail: '支持中文名称、拼音简称和股票代码；加入后自动补齐资料，可随时删除。' },
-      { number: 2, x: 49, y: 22, title: '统一实时报价', detail: '大价格、左侧列表、行情统计和分时图必须来自同一最新快照。' },
-      { number: 3, x: 80, y: 22, title: '深度研判', detail: '把当前股票的事实、预期、行情和风险送入研究分析，不改变底层数据。' },
-      { number: 4, x: 62, y: 39, title: '分时与K线', detail: '分时/日K/周K/月K/年K、当日/5日都读取共享行情库。' },
-      { number: 5, x: 63, y: 68, title: '昨收零轴', detail: '分时曲线以昨收为0%，鼠标悬浮值必须与图上时间点一致。' },
+      { number: 1, x: 25, y: 20, title: '加入与管理自选', detail: '支持中文名称、拼音简称和股票代码；加入后建立信息档案，可随时删除。' },
+      { number: 2, x: 50, y: 21, title: '报价与实际时间', detail: '先核对股票代码、报价时间和来源；历史截图内的价格不是今天的行情。' },
+      { number: 3, x: 92, y: 22, title: '深度研判', detail: '围绕当前股票带入已有数据开展研究。生成后仍要回到引用核验。' },
+      { number: 4, x: 93, y: 34, title: '按需展开行情', detail: '研究资料时可收起图表；点击展开行情图后切换分时与K线，并核对昨收零轴。' },
+      { number: 5, x: 60, y: 42, title: '资料与原文', detail: '切换财务、研报、小作文、一致预期等标签；点击资料在页面内看原文或打开官方来源。' },
     ],
     steps: ['输入中文名称、拼音或代码，从候选中确认加入。', '先核对大价格、数据时间、来源和分时图是否一致。', '切换全景/财务/资金/公告研报/小作文等九个标签。', '点击事实时间线的原文，在页面内查看或跳转官方原文。', '用一致预期比较券商预测、机构段子预测和实际财务期。'],
     modules: [
@@ -224,30 +221,30 @@ const legacyChapters: GuideChapter[] = [
       { name: '股评监控', purpose: '查看公开投资者讨论。', data: '东方财富股吧公开内容', actions: ['查看原文', '观察观点分歧', '不按热度当事实'], output: '市场讨论线索。' },
       { name: '全部证据', purpose: '完整查看该股票统一事件库记录。', data: '全部已关联事件', actions: ['筛选来源', '按时间查看', '打开证据'], output: '公司证据总账。' },
     ],
-    verify: ['大价格、列表价格、分时最新价和涨跌幅必须一致。', '新增自选股应触发历史回填，页面显示真实进度。', '小作文按公司简称也应匹配，但必须展示匹配依据。', '股评和机构观点不能标成公司事实。'],
+    verify: ['大价格、列表价格、分时最新价和涨跌幅必须一致。', '新增自选股自动建立档案；判断数据是否齐全，要核对来源和实际日期，而不是只看条数。', '小作文按公司简称也应匹配，但必须展示匹配依据。', '股评和机构观点不能标成公司事实。'],
   },
   {
     id: 'download', category: '数据量化', eyebrow: '筛选、确认、后台打包', title: '数据一站式获取', icon: Download,
-    summary: '研报先查两年本地链接库，其他跨渠道需求按来源拆分执行；只导出用户筛选并确认的数据。',
+    summary: '研报筛选与跨渠道取数是两个工作区：前者人工勾选导出链接表，后者审阅条件计划后后台获取并打包。',
     href: '/data-acquisition', action: '进入数据一站式获取', screenshot: '/landing/screens/data-acquisition.jpg', alt: '数据一站式获取实机页面截图',
     purpose: '把“我要什么数据”变成明确筛选条件、来源任务和可下载交付包，防止误导出全量无关内容。',
     data: ['两年Tushare研报元数据/PDF URL', '知识星球正文/文件/录音', '巨潮公告', 'Tushare各类接口', '天眼查与统一事件库'],
-    outputs: ['人工筛选研报Excel/PDF链接', '按条件筛选的原文和附件包', '跨渠道分源清单', '真实字节进度与历史数据包'],
+    outputs: ['所选研报Excel（摘要/标签/PDF链接）', '按已确认计划获取的原文和附件包', '跨渠道分源清单及失败说明', '后台阶段进度与ZIP下载字节进度'],
     hotspots: [
       { number: 1, x: 53, y: 13, title: '任务总览', detail: '显示可用渠道、规划模型、当前任务和历史数据包，不把后台预加载当用户任务。' },
       { number: 2, x: 49, y: 32, title: '本地研报库状态', detail: '查看两年研报总量、PDF链接数、日期范围和同步进度。' },
       { number: 3, x: 52, y: 55, title: '十二类筛选条件', detail: '标题、摘要、券商、公司、类型、行业、标签、作者、代码、日期、排序、PDF状态。' },
       { number: 4, x: 78, y: 78, title: '点击搜索', detail: '条件仅在点击后生效；搜索只查本地SQLite，不临时扫接口。' },
-      { number: 5, x: 80, y: 91, title: '人工确认与导出', detail: '勾选真正需要的研报，再导出清单和PDF链接。' },
+      { number: 5, x: 80, y: 91, title: '人工确认与导出', detail: '勾选研报加入跨页资料篮，再导出含摘要、标签和PDF链接的Excel；链接表不等于PDF原文件。' },
     ],
-    steps: ['先判断是研报、机构段子、录音、公告还是跨渠道数据。', '研报使用本地筛选台，按标题/摘要/券商/公司/行业/日期等组合。', '点击搜索后逐条检查日期、类型、来源、摘要和PDF状态。', '勾选确认结果；文件需求要明确包含原文或PDF。', '提交后台打包，观察检索、下载、导出、压缩的真实进度。'],
+    steps: ['只需研报清单时选“研报筛选下载”；需要多来源或原文件时选“跨渠道取数与任务”。', '研报按标题/摘要/券商/公司/行业/日期组合，点击搜索才应用条件。', '跨页勾选研报并检查资料篮，导出所选Excel；其中PDF是链接，不是批量PDF文件。', '跨渠道任务在需求中写清对象、日期、主题、格式及是否包含原文件，生成并审阅计划；修改需求后重新生成计划。', '确认计划后后台执行；返回任务看来源结果和阶段进度，下载ZIP时看真实字节进度。'],
     modules: [
-      { name: '两年研报链接库', purpose: '像终端一样细筛研报，不用AI猜测主题。', data: 'Tushare研报元数据、摘要和PDF URL', actions: ['标题/摘要关键词', '券商/公司/类型/行业/标签/作者/代码', '日期与排序', '只看PDF', '勾选导出'], output: '人工确认的研报Excel和PDF链接。' },
-      { name: '自然语言取数规划', purpose: '把复杂需求拆成每个来源的独立任务。', data: '已接入渠道能力目录 + DeepSeek规划', actions: ['描述范围/字段/格式', '审阅分源计划', '修改条件', '确认执行'], output: '可审计的来源级取数计划。' },
-      { name: '来源独立执行', purpose: '每个渠道只获取符合条件的数据。', data: 'Tushare/巨潮/知识星球/天眼查/情报库', actions: ['查看各来源命中数', '单独失败/重试', '保留来源字段'], output: '分来源结果，不是全库倾倒。' },
-      { name: '后台打包与历史包', purpose: '大文件下载和压缩不阻塞页面。', data: '选中结果与远端附件', actions: ['看阶段进度', '看真实字节进度', '离开页面', '从历史下载'], output: '可恢复的ZIP/Excel/JSON/CSV包。' },
+      { name: '两年研报链接库', route: '/data-acquisition?view=reports', purpose: '用确定的筛选条件查本地库，再人工选择。', data: '研报元数据、摘要、标签和PDF URL', actions: ['标题/摘要关键词', '券商/公司/类型/行业/标签/作者/代码', '日期/排序/PDF状态', '跨页勾选、检查或移除资料篮条目', '导出所选Excel'], output: '只有所选研报的Excel链接表；不批量下载PDF。' },
+      { name: '自然语言取数规划', route: '/data-acquisition?view=tasks', purpose: '把复杂需求拆成每个来源的取数条件。', data: '已接入渠道能力目录 + 已配置大模型', actions: ['描述范围/字段/格式/原文件需求', '审阅分源计划', '修改需求后重新生成', '确认整个计划后执行'], output: '可审计的来源级取数计划。' },
+      { name: '来源独立执行', route: '/data-acquisition?view=tasks', purpose: '按已确认的来源条件获取数据。', data: 'Tushare/巨潮/知识星球/天眼查/情报库', actions: ['查看各来源命中数', '检查来源错误和空结果', '需要重做时按修正需求新建任务'], output: '分来源结果与局限说明；不提供单来源重跑按钮。' },
+      { name: '后台打包与历史包', route: '/data-acquisition?view=tasks', purpose: '后台获取与压缩，完成后下载个人任务资料包。', data: '符合计划的数据与所需远端附件', actions: ['看后台阶段百分比', '离开页面后找回任务', '完成后下载ZIP', '下载时看字节进度，传输失败可重试下载'], output: '按任务保存的ZIP数据包；后台阶段进度与下载字节分开显示。' },
     ],
-    verify: ['搜索条件必须真正传入各渠道，不能退化成最近N条。', '摘要检索只代表接口摘要字段，不能冒充PDF全文。', '没有勾选的数据不应进入打包。', '下载进度必须来自已处理文件/字节，而不是前端动画。'],
+    verify: ['搜索条件必须真正传入各渠道，不能退化成最近N条。', '摘要检索只代表接口摘要字段，不能冒充PDF全文。', '研报Excel不含未勾选项；跨渠道包以已确认计划为准，不要求逐条勾选。', '不要把后台阶段百分比当成下载字节比例；结果需核对来源、数量与错误说明。'],
   },
   {
     id: 'screening', category: '数据量化', eyebrow: '可选 AlphaSift 能力', title: 'AlphaSift 选股', icon: Filter,
@@ -309,7 +306,7 @@ const sourceRows = [
   ['巨潮资讯', '上市公司公告与PDF原文', '证券代码、公告发布时间、标题和官方原文'],
   ['知识星球 MCP', '机构段子、图片、文件和录音链接', '原文创建时间、星球来源、附件链接、增量游标'],
   ['阿里云语音识别', '录音转写与时间戳', '专业热词、说话人数、转写置信与源音频'],
-  ['DeepSeek', '结构化标签、日报、录音纪要与研究规划', '引用、空响应/截断、模型与分析时间'],
+  ['已配置大模型', '结构化标签、日报、录音纪要与研究报告', '以任务显示的模型为准；检查引用、空响应/截断和分析时间'],
   ['天眼查', '工商、风险、知识产权等企业事实', '企业主体、事实日期、接口返回字段'],
   ['公开股评', '东方财富股吧公开讨论', '观点属性、作者、发布时间和原文；不能当事实'],
   ['六源题材库', '同花顺、东方财富、开盘啦、通达信、申万等题材关系', '独立来源数、扫描覆盖率、成分关系和交易日'],
@@ -331,13 +328,13 @@ const workflowRows = [
   { title: '重大事件核验', pages: '首页新闻 → 自选股 → 数据一站式获取', process: '发现重要新闻；对照行情与预期；下载官方原文和相关研报。', finish: '形成事件时间线、市场反应和原始证据包。' },
   { title: '行业快速研究', pages: '行业调研 → 概念题材 → 研报库 → 自选股', process: '先建立产业链，再核对题材共识和公司成分，最后进入公司证据。', finish: '形成行业地图、公司候选和验证问题。' },
   { title: '机构观点验证', pages: '机构段子 → 自选股一致预期 → 量化回测', process: '检索原文与预测，按目标期整理，再做事件后走势与样本外检验。', finish: '区分可验证观点、统计关系和无效信号。' },
-  { title: '批量资料交付', pages: '数据一站式获取 → 后台任务 → 历史包', process: '细化条件、人工勾选、后台下载压缩，完成后从历史任务获取。', finish: '只包含确认结果及来源/PDF链接的交付包。' },
+  { title: '批量资料交付', pages: '研报筛选 / 跨渠道取数 → 资料篮 / 后台任务', process: '研报跨页勾选后导出链接Excel；跨渠道审阅计划后后台获取打包，从任务记录下载。', finish: '研报与所选项一致；跨渠道包与确认的来源条件一致。' },
 ];
 const faqs = [
   ['为什么两个页面价格不一样？', '先比较股票代码、交易日、时间戳和数据源。自选列表、大价格、分时最新点应读取同一共享快照；如果仍不一致，应以最新时间的来源为准并反馈具体页面。'],
   ['为什么休市日显示上一交易日？', '行情事实只能来自实际交易日。页面应写清“某日收盘”，市场广度和行业分布也使用最近可用交易日，不能用空白或把旧数据写成今日。'],
   ['为什么搜索结果为空或不相关？', '确认选择的是标题检索还是全文检索，放宽日期/分类等条件后重新点击搜索。录音按文件名严格召回；研报条件只在点击搜索后生效。'],
-  ['后台任务可以离开页面吗？', '可以。行业调研、量化、录音纪要和文件打包都在服务器后台运行。返回对应任务中心即可查看阶段、进度、完成结果或重试失败任务。'],
+  ['后台任务可以离开页面吗？', '可以。行业调研、量化、录音转写/纪要和打包由服务器后台执行。返回任务中心查看结果；读取失败可以重试读取，执行失败则先看原因，再使用该工作台提供的重试或新建入口，不是每类任务都有一键重跑。'],
   ['AI为什么显示空摘要或分析失败？', '模型可能返回空内容、推理字段但正文为空、超时或截断。任务应进入失败/重试而不是伪装完成；请在任务账本重试并查看原始转写或原文。'],
   ['如何确认AI没有编造？', '沿引用打开公告、研报、原始段子或转写时间戳。没有原文支持的内容只能标记为模型推断或待核验，不能写成事实。'],
   ['管理员数据源页里的“收到”和“新增”有什么区别？', '“收到”是上游本轮返回条数；“新增”是去重后首次进入本地库的条数；“更新”是已有记录发生结构化更新。三者不能相加当作新情报。'],
@@ -348,17 +345,19 @@ const searchableText = (chapter: GuideChapter) => [
   chapter.title, chapter.summary, chapter.purpose, chapter.category,
   ...chapter.data, ...chapter.outputs, ...chapter.steps, ...chapter.verify,
   ...chapter.modules.flatMap((module) => [module.name, module.purpose, module.data, module.output, ...module.actions]),
-].join(' ').toLowerCase();
+].join(' ').normalize('NFKC').toLowerCase();
+const searchIndex = chapters.map((chapter) => ({ chapter, text: searchableText(chapter) }));
 
-const AnnotatedScreenshot = ({ chapter, onOpen }: { chapter: GuideChapter; onOpen: () => void }) => {
+const AnnotatedScreenshot = ({ chapter, onOpen }: { chapter: GuideChapter; onOpen: (trigger: HTMLButtonElement) => void }) => {
+  const [showDetails, setShowDetails] = useState(false);
   if (!chapter.screenshot || !chapter.alt) return null;
   return <section className="guide-screenshot-suite" aria-label={`${chapter.title}真实页面截图详解`}>
     <div className="guide-screenshot-heading">
-      <div><small>REAL PRODUCT SCREEN</small><h4>整页定位与局部功能放大</h4></div>
+      <div><small>PRODUCT SCREEN REFERENCE</small><h4>界面定位与操作说明</h4><p>历史实机截图 · 非实时数据，按钮与操作以当前页面为准</p></div>
       <span>{chapter.hotspots?.length ?? 0} 个关键操作点</span>
     </div>
     <div className="guide-anatomy">
-      <button className="guide-shot" type="button" onClick={onOpen} aria-label={`放大查看${chapter.title}截图`}>
+      <button className="guide-shot" type="button" onClick={(event) => onOpen(event.currentTarget)} aria-label={`放大查看${chapter.title}截图`}>
         <img src={chapter.screenshot} alt={chapter.alt} loading="lazy" />
         {chapter.hotspots?.map((hotspot) => <span className="guide-hotspot" style={{ left: `${hotspot.x}%`, top: `${hotspot.y}%` }} key={hotspot.number}>{hotspot.number}</span>)}
         <span className="guide-shot-action"><Expand /> 查看完整实机大图</span>
@@ -367,8 +366,9 @@ const AnnotatedScreenshot = ({ chapter, onOpen }: { chapter: GuideChapter; onOpe
         {chapter.hotspots?.map((hotspot) => <li key={hotspot.number}><b>{hotspot.number}</b><div><strong>{hotspot.title}</strong><p>{hotspot.detail}</p></div></li>)}
       </ol>
     </div>
-    <div className="guide-detail-grid" aria-label={`${chapter.title}局部功能截图`}>
-      {chapter.hotspots?.map((hotspot) => <button type="button" className="guide-detail-card" onClick={onOpen} key={hotspot.number} aria-label={`放大查看${chapter.title}的${hotspot.title}`}>
+    <button className="guide-detail-toggle" type="button" aria-expanded={showDetails} aria-controls={`${chapter.id}-screenshot-details`} onClick={() => setShowDetails((value) => !value)}>{showDetails ? '收起' : '展开'} {chapter.hotspots?.length ?? 0} 个局部操作说明 <ChevronRight /></button>
+    {showDetails ? <div id={`${chapter.id}-screenshot-details`} className="guide-detail-grid" aria-label={`${chapter.title}局部功能截图`}>
+      {chapter.hotspots?.map((hotspot) => <button type="button" className="guide-detail-card" onClick={(event) => onOpen(event.currentTarget)} key={hotspot.number} aria-label={`放大查看${chapter.title}的${hotspot.title}`}>
         <span
           className="guide-detail-viewport"
           role="img"
@@ -377,26 +377,69 @@ const AnnotatedScreenshot = ({ chapter, onOpen }: { chapter: GuideChapter; onOpe
         ><b>{hotspot.number}</b></span>
         <span className="guide-detail-copy"><small>SCREEN DETAIL {String(hotspot.number).padStart(2, '0')}</small><strong>{hotspot.title}</strong><p>{hotspot.detail}</p></span>
       </button>)}
-    </div>
+    </div> : null}
   </section>;
 };
 
 const UserGuidePage = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [lightbox, setLightbox] = useState<GuideChapter | null>(null);
+  const lightboxRef = useRef<HTMLDialogElement>(null);
+  const lightboxTrigger = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category>('全部');
+  const pendingChapter = useRef(location.hash.slice(1));
+  const lastJumpKey = useRef<string | null>(null);
   useEffect(() => { document.title = '完整使用手册 - 乐子乌超级价值'; }, []);
   useEffect(() => {
-    if (!lightbox) return undefined;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setLightbox(null); };
+    const revealHistoryChapter = () => {
+      const id = window.location.hash.slice(1);
+      if (!chapters.some((chapter) => chapter.id === id)) return;
+      pendingChapter.current = id;
+      setQuery('');
+      setCategory('全部');
+    };
+    window.addEventListener('popstate', revealHistoryChapter);
+    return () => window.removeEventListener('popstate', revealHistoryChapter);
+  }, []);
+  useEffect(() => {
+    const dialog = lightboxRef.current;
+    if (!lightbox || !dialog) return;
+    const previousOverflow = document.body.style.overflow;
+    const trigger = lightboxTrigger.current;
     document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', closeOnEscape);
-    return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', closeOnEscape); };
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    };
   }, [lightbox]);
-  const normalizedQuery = query.trim().toLowerCase();
-  const visibleChapters = useMemo(() => chapters.filter((chapter) =>
+  const searchTerms = useMemo(() => query.normalize('NFKC').trim().toLowerCase().split(/\s+/).filter(Boolean), [query]);
+  const visibleChapters = useMemo(() => searchIndex.filter(({ chapter, text }) =>
     (category === '全部' || chapter.category === category)
-    && (!normalizedQuery || searchableText(chapter).includes(normalizedQuery))), [category, normalizedQuery]);
+    && searchTerms.every((term) => text.includes(term))).map(({ chapter }) => chapter), [category, searchTerms]);
+  const hasFilters = searchTerms.length > 0 || category !== '全部';
+  const clearFilters = () => { setQuery(''); setCategory('全部'); };
+  const openChapter = (event: MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    if (!visibleChapters.some((chapter) => chapter.id === id)) clearFilters();
+    pendingChapter.current = id;
+    navigate({ hash: `#${id}` });
+  };
+  useEffect(() => {
+    if (!pendingChapter.current && lastJumpKey.current === location.key) return;
+    const id = pendingChapter.current || location.hash.slice(1);
+    lastJumpKey.current = location.key;
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (!target) return;
+    target.scrollIntoView({ block: 'start' });
+    target.focus({ preventScroll: true });
+    pendingChapter.current = '';
+  }, [location.key, location.hash, visibleChapters]);
   const moduleCount = chapters.reduce((total, chapter) => total + chapter.modules.length, 0);
   const screenshotCount = chapters.filter((chapter) => chapter.screenshot).length;
   const screenshotDetailCount = chapters.reduce((total, chapter) => total + (chapter.hotspots?.length ?? 0), 0);
@@ -409,7 +452,7 @@ const UserGuidePage = () => {
 
     <section className="guide-hero">
       <div className="guide-hero-copy">
-        <span className="guide-kicker"><BookOpen /> COMPLETE OPERATIONS MANUAL · 2026-09-01</span>
+        <span className="guide-kicker"><BookOpen /> 操作手册 · 功能说明更新于 2026-09-06</span>
         <h1><span>不是功能清单。</span><em>是一套能照着完成研究的操作系统。</em></h1>
         <p>覆盖普通用户全部入口、子页面、后台任务和管理员功能。每个模块都写清目的、使用数据、具体操作、输出结果与核验标准；核心页面使用真实截图和编号标注。</p>
         <div className="guide-hero-actions"><a href="#find"><Search /> 搜索功能</a><a href="#workspaces">阅读完整手册 <ArrowRight /></a></div>
@@ -417,23 +460,30 @@ const UserGuidePage = () => {
       <div className="guide-hero-ledger" aria-label="手册覆盖统计">
         <span>MANUAL COVERAGE</span>
         <dl><div><dt>功能工作台</dt><dd>{chapters.length}</dd></div><div><dt>子模块</dt><dd>{moduleCount}</dd></div><div><dt>真实截图 / 细节</dt><dd>{screenshotCount}<small> / {screenshotDetailCount}</small></dd></div><div><dt>跨页流程</dt><dd>{workflowRows.length}</dd></div></dl>
-        <p><CheckCircle2 /> 内容按当前生产功能编写；界面数值会随数据自动更新。</p>
+        <p><CheckCircle2 /> 操作按本版本功能说明；截图为历史界面参考，不代表当前行情或任务状态。</p>
       </div>
     </section>
 
     <section className="guide-finder" id="find" aria-labelledby="guide-finder-title">
-      <div className="guide-finder-copy"><small>FIND A FUNCTION</small><h2 id="guide-finder-title">按你想完成的事情查手册</h2><p>输入“录音、龙虎榜、一致预期、研报PDF、Beta、后台任务”等任意功能词。</p></div>
+      <div className="guide-finder-copy"><small>FIND A FUNCTION</small><h2 id="guide-finder-title">按你想完成的事情查手册</h2><p>例如“录音 转写”“研报 PDF”“一致预期”。多个词用空格分隔，可组合检索。</p></div>
       <label className="guide-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索功能、数据、操作或输出…" aria-label="搜索使用手册" />{query ? <button type="button" onClick={() => setQuery('')} aria-label="清除手册搜索"><X /></button> : null}</label>
-      <div className="guide-categories" aria-label="手册分类">{categories.map((item) => <button type="button" key={item} className={category === item ? 'is-active' : ''} onClick={() => setCategory(item)}>{item}</button>)}</div>
+      <div className="guide-categories" aria-label="手册分类">{categories.map((item) => <button type="button" key={item} aria-pressed={category === item} className={category === item ? 'is-active' : ''} onClick={() => setCategory(item)}>{item}</button>)}</div>
       <p className="guide-match" aria-live="polite">当前显示 {visibleChapters.length} / {chapters.length} 个工作台</p>
-      <div className="guide-quick-grid">{quickTasks.map(({ title, detail, href, icon: Icon }) => <a href={href} key={title}><Icon /><span><strong>{title}</strong><small>{detail}</small></span><ChevronRight /></a>)}</div>
+      {hasFilters ? <div className="guide-search-results" aria-label="手册搜索结果">
+        <div className="guide-results-heading"><strong>{visibleChapters.length ? '找到这些操作说明' : '没有匹配的操作说明'}</strong><button type="button" onClick={clearFilters}>清除全部筛选</button></div>
+        {!visibleChapters.length ? <p>试试更短的关键词，或清除分类限制；不会改变平台内的研究数据。</p> : null}
+        {visibleChapters.map((chapter) => {
+          const matchedModule = searchTerms.length ? chapter.modules.find((module) => searchTerms.every((term) => [module.name, module.purpose, module.data, module.output, ...module.actions].join(' ').normalize('NFKC').toLowerCase().includes(term))) : undefined;
+          return <a href={`#${chapter.id}`} onClick={(event) => openChapter(event, chapter.id)} key={chapter.id}><span><small>{chapter.category}</small><strong>{chapter.title}</strong><p>{matchedModule ? `${matchedModule.name} · ${matchedModule.purpose}` : chapter.summary}</p></span><span>阅读步骤 <ArrowRight /></span></a>;
+        })}
+      </div> : <div className="guide-quick-grid">{quickTasks.map(({ title, detail, href, icon: Icon }) => <a href={href} onClick={(event) => openChapter(event, href.slice(1))} key={title}><Icon /><span><strong>{title}</strong><small>{detail}</small></span><ChevronRight /></a>)}</div>}
     </section>
 
     <div className="guide-layout">
       <aside className="guide-toc" aria-label="完整使用手册目录">
         <span>CONTENTS</span>
         <a href="#start">01 · 注册与权限</a><a href="#read-data">02 · 数据阅读规则</a><a href="#workspaces">03 · 全部工作台</a>
-        {chapters.map((chapter) => <a className="is-child" href={`#${chapter.id}`} key={chapter.id}>{chapter.title}</a>)}
+        {chapters.map((chapter) => <a className="is-child" href={`#${chapter.id}`} onClick={(event) => openChapter(event, chapter.id)} key={chapter.id}>{chapter.title}</a>)}
         <a href="#workflow">04 · 跨页面流程</a><a href="#sources">05 · 数据源字典</a><a href="#faq">06 · 故障与核验</a>
       </aside>
 
@@ -466,7 +516,7 @@ const UserGuidePage = () => {
           {visibleChapters.map((chapter) => {
             const Icon = chapter.icon;
             const index = chapters.findIndex((item) => item.id === chapter.id) + 1;
-            return <section className="guide-chapter" id={chapter.id} key={chapter.id}>
+            return <section className="guide-chapter" id={chapter.id} tabIndex={-1} key={chapter.id}>
               <header className="guide-chapter-head">
                 <span>{String(index).padStart(2, '0')}</span>
                 <div><small>{chapter.category} / {chapter.eyebrow}</small><h3><Icon /> {chapter.title}</h3><p>{chapter.summary}</p></div>
@@ -477,7 +527,7 @@ const UserGuidePage = () => {
                 <article><DatabaseZap /><small>INPUT</small><h4>使用哪些数据</h4><ul>{chapter.data.map((item) => <li key={item}>{item}</li>)}</ul></article>
                 <article><TableProperties /><small>OUTPUT</small><h4>最终得到什么</h4><ul>{chapter.outputs.map((item) => <li key={item}>{item}</li>)}</ul></article>
               </div>
-              <AnnotatedScreenshot chapter={chapter} onOpen={() => setLightbox(chapter)} />
+              <AnnotatedScreenshot chapter={chapter} onOpen={(trigger) => { lightboxTrigger.current = trigger; setLightbox(chapter); }} />
               <div className="guide-procedure"><div><small>OPERATING PROCEDURE</small><h4>推荐操作顺序</h4></div><ol>{chapter.steps.map((step, stepIndex) => <li key={step}><b>{String(stepIndex + 1).padStart(2, '0')}</b><span>{step}</span></li>)}</ol></div>
               <div className="guide-module-block">
                 <div className="guide-subhead"><ListChecks /><div><small>DETAILED FEATURE MAP</small><h4>{chapter.title} · {chapter.modules.length} 个子模块</h4></div></div>
@@ -517,14 +567,14 @@ const UserGuidePage = () => {
       </article>
     </div>
 
-    <footer className="guide-footer"><span>乐子乌超级价值 · 完整使用手册 · 当前版本 2026-09-01</span><nav><Link to="/">产品介绍</Link><Link to="/app">研究平台</Link><a href="#find">搜索手册</a></nav></footer>
-    {lightbox?.screenshot && lightbox.alt ? <div className="guide-lightbox" role="dialog" aria-modal="true" aria-label="页面截图预览" onClick={() => setLightbox(null)}>
-      <button type="button" onClick={() => setLightbox(null)} aria-label="关闭截图预览"><X /></button>
+    <footer className="guide-footer"><span>乐子乌超级价值 · 完整使用手册 · 功能说明更新于 2026-09-06</span><nav><Link to="/">产品介绍</Link><Link to="/app">研究平台</Link><a href="#find">搜索手册</a></nav></footer>
+    {lightbox?.screenshot && lightbox.alt ? <dialog ref={lightboxRef} className="guide-lightbox" aria-label="页面截图预览" onCancel={() => setLightbox(null)} onClick={(event) => { if (event.target === event.currentTarget) setLightbox(null); }}>
+      <button type="button" onClick={() => setLightbox(null)} aria-label="关闭截图预览" autoFocus><X /></button>
       <div className="guide-lightbox-shell" onClick={(event) => event.stopPropagation()}>
         <div className="guide-lightbox-image"><img src={lightbox.screenshot} alt={lightbox.alt} />{lightbox.hotspots?.map((hotspot) => <span className="guide-hotspot" style={{ left: `${hotspot.x}%`, top: `${hotspot.y}%` }} key={hotspot.number}>{hotspot.number}</span>)}</div>
-        <aside><small>SCREEN ANATOMY</small><h2>{lightbox.title}</h2><ol>{lightbox.hotspots?.map((hotspot) => <li key={hotspot.number}><b>{hotspot.number}</b><div><strong>{hotspot.title}</strong><p>{hotspot.detail}</p></div></li>)}</ol></aside>
+        <aside><small>历史实机截图 · 非实时数据</small><h2>{lightbox.title}</h2><a href={lightbox.screenshot} target="_blank" rel="noreferrer">打开原尺寸图片 <Expand /></a><ol>{lightbox.hotspots?.map((hotspot) => <li key={hotspot.number}><b>{hotspot.number}</b><div><strong>{hotspot.title}</strong><p>{hotspot.detail}</p></div></li>)}</ol></aside>
       </div>
-    </div> : null}
+    </dialog> : null}
   </main>;
 };
 

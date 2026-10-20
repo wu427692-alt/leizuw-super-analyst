@@ -15,6 +15,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from uuid import uuid4
 import zipfile
 
+try:  # Linux/macOS production; guarded for import compatibility on Windows.
+    import fcntl
+except ImportError:  # pragma: no cover - production tasks run on Linux.
+    fcntl = None  # type: ignore[assignment]
+
 import requests
 
 from src.request_identity import current_owner_id
@@ -30,6 +35,7 @@ logger = logging.getLogger(__name__)
 _TASK_ID_RE = re.compile(r"^audio-[A-Za-z0-9_-]{8,80}$")
 _ACTIVE_STATUSES = {"queued", "running"}
 _RETENTION_HOURS = 48
+_LEASE_HEARTBEAT_SECONDS = 15.0
 
 
 class ResearchNoteMediaTaskError(RuntimeError):
@@ -70,7 +76,7 @@ class ResearchNoteMediaTaskService:
             thread_name_prefix="research-note-audio",
         )
         self._lock = threading.RLock()
-        self._repair_interrupted_tasks()
+        self._resume_interrupted_tasks()
         self._cleanup_expired_tasks()
 
     @classmethod
@@ -113,6 +119,7 @@ class ResearchNoteMediaTaskService:
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
             "expires_at": (now + timedelta(hours=_RETENTION_HOURS)).isoformat(),
+            "items": [{"topic_id": topic_id, "file_id": file_id} for topic_id, file_id in selected],
         }
         self._write_state(state)
         self._executor.submit(self._run, task_id, selected)
@@ -164,6 +171,25 @@ class ResearchNoteMediaTaskService:
         return archive_path, str(state.get("download_name") or f"知识星球录音_{task_id}.zip")
 
     def _run(self, task_id: str, selected: List[Tuple[str, str]]) -> None:
+        lease = self._claim_task(task_id)
+        if lease is None:
+            return
+        heartbeat_stop = threading.Event()
+        heartbeat = threading.Thread(
+            target=self._heartbeat_task,
+            args=(task_id, str(lease["token"]), heartbeat_stop),
+            name=f"audio-package-heartbeat-{task_id[-8:]}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            self._run_claimed(task_id, selected)
+        finally:
+            heartbeat_stop.set()
+            heartbeat.join(timeout=1)
+            self._release_task(task_id, lease)
+
+    def _run_claimed(self, task_id: str, selected: List[Tuple[str, str]]) -> None:
         part_path = self._archive_path(task_id).with_suffix(".zip.part")
         archive_path = self._archive_path(task_id)
         part_path.unlink(missing_ok=True)
@@ -336,7 +362,10 @@ class ResearchNoteMediaTaskService:
 
     @staticmethod
     def _public_state(state: Dict[str, Any]) -> Dict[str, Any]:
-        return {key: value for key, value in state.items() if key != "owner_id"}
+        private_keys = {
+            "owner_id", "items", "lease_owner", "lease_acquired_at", "lease_heartbeat_at",
+        }
+        return {key: value for key, value in state.items() if key not in private_keys}
 
     def _write_state(self, state: Dict[str, Any]) -> None:
         path = self._task_path(str(state["task_id"]))
@@ -344,6 +373,76 @@ class ResearchNoteMediaTaskService:
         with self._lock:
             temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary.replace(path)
+
+    def _claim_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        lock_root = self.task_root / ".locks"
+        lock_root.mkdir(parents=True, exist_ok=True)
+        handle = (lock_root / f"{task_id}.lock").open("a+b")
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            return None
+        try:
+            state = self._read_state(task_id)
+            if state.get("status") not in _ACTIVE_STATUSES:
+                self._unlock_handle(handle)
+                return None
+            token = f"{os.getpid()}:{uuid4().hex}"
+            now = datetime.now(timezone.utc).isoformat()
+            state.update({
+                "lease_owner": token,
+                "lease_acquired_at": now,
+                "lease_heartbeat_at": now,
+                "updated_at": now,
+            })
+            self._write_state(state)
+            return {"handle": handle, "token": token}
+        except Exception:
+            self._unlock_handle(handle)
+            raise
+
+    def _heartbeat_task(self, task_id: str, token: str, stop: threading.Event) -> None:
+        while not stop.wait(_LEASE_HEARTBEAT_SECONDS):
+            try:
+                with self._lock:
+                    state = self._read_state(task_id)
+                    if (
+                        state.get("lease_owner") != token
+                        or state.get("status") not in _ACTIVE_STATUSES
+                    ):
+                        return
+                    now = datetime.now(timezone.utc).isoformat()
+                    state["lease_heartbeat_at"] = now
+                    state["updated_at"] = now
+                    self._write_state(state)
+            except (OSError, ResearchNoteMediaTaskError):
+                logger.warning("Could not heartbeat audio package task_id=%s", task_id, exc_info=True)
+
+    def _release_task(self, task_id: str, lease: Dict[str, Any]) -> None:
+        handle = lease["handle"]
+        try:
+            try:
+                with self._lock:
+                    state = self._read_state(task_id)
+                    if state.get("lease_owner") == lease.get("token"):
+                        state.pop("lease_owner", None)
+                        state.pop("lease_acquired_at", None)
+                        state.pop("lease_heartbeat_at", None)
+                        self._write_state(state)
+            except ResearchNoteMediaTaskError:
+                pass
+        finally:
+            self._unlock_handle(handle)
+
+    @staticmethod
+    def _unlock_handle(handle: Any) -> None:
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
     def _task_path(self, task_id: str) -> Path:
         if not _TASK_ID_RE.fullmatch(str(task_id or "")):
@@ -355,7 +454,7 @@ class ResearchNoteMediaTaskService:
             raise ResearchNoteMediaTaskError("无效的录音打包任务编号")
         return self.archive_root / f"{task_id}.zip"
 
-    def _repair_interrupted_tasks(self) -> None:
+    def _resume_interrupted_tasks(self) -> None:
         for path in self.task_root.glob("audio-*.json"):
             try:
                 state = json.loads(path.read_text(encoding="utf-8"))
@@ -363,15 +462,13 @@ class ResearchNoteMediaTaskService:
                 continue
             if state.get("status") not in _ACTIVE_STATUSES:
                 continue
-            state.update({
-                "status": "failed",
-                "phase": "interrupted",
-                "message": "服务重启中断了打包任务，请重新提交",
-                "error": "服务重启中断了打包任务，请重新提交",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-            self._write_state(state)
-            self._archive_path(str(state.get("task_id"))).with_suffix(".zip.part").unlink(missing_ok=True)
+            selected = [
+                (str(item.get("topic_id") or ""), str(item.get("file_id") or ""))
+                for item in (state.get("items") or []) if isinstance(item, dict)
+                and item.get("topic_id") and item.get("file_id")
+            ]
+            if selected:
+                self._executor.submit(self._run, str(state["task_id"]), selected)
 
     def _cleanup_expired_tasks(self) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=_RETENTION_HOURS)
@@ -389,4 +486,5 @@ class ResearchNoteMediaTaskService:
             if _TASK_ID_RE.fullmatch(task_id):
                 self._archive_path(task_id).unlink(missing_ok=True)
                 self._archive_path(task_id).with_suffix(".zip.part").unlink(missing_ok=True)
+                (self.task_root / ".locks" / f"{task_id}.lock").unlink(missing_ok=True)
             path.unlink(missing_ok=True)

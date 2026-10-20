@@ -1,0 +1,5 @@
+body.ai-news-document { margin: 0; background: var(--workspace-backdrop); }
+body.ai-news-document #root { min-height: 100vh; }
+body.ai-news-document .user-access-page *, body.ai-news-document .user-access-page *::before, body.ai-news-document .user-access-page *::after { box-sizing: border-box; }
+body.ai-news-document .user-access-page button, body.ai-news-document .user-access-page input { font: inherit; }
+body.ai-news-document .user-access-page a { text-decoration: none; }

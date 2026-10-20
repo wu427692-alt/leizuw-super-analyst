@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import datetime, timezone
 import json
 import logging
@@ -52,6 +53,11 @@ class DataAcquisitionTaskService:
             return cls._instance
 
     def submit(self, request_text: str, plan: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        # Predictable selector errors must not become queued jobs which only
+        # fail after costly provider calls/downloads. Recompute server-owned
+        # checks even when the client sends can_execute=true.
+        service = self._service_factory()
+        plan = service.validate_plan(request_text, plan or service.plan(request_text), require_ready=True)
         now = datetime.now(timezone.utc)
         task_id = f"acq-{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:10]}"
         total_tasks = min(len((plan or {}).get("tasks") or []), 12)
@@ -83,7 +89,10 @@ class DataAcquisitionTaskService:
             "updated_at": now.isoformat(),
         }
         self._write_state(state)
-        self._executor.submit(self._run, task_id, str(request_text or "").strip(), plan)
+        # ThreadPoolExecutor does not inherit request ContextVars. Capture a
+        # separate context per submission so package ownership and downstream
+        # user-scoped reads survive both queuing and executor thread reuse.
+        self._executor.submit(copy_context().run, self._run, task_id, str(request_text or "").strip(), plan)
         return self._public_state(state)
 
     def get(self, task_id: str) -> Dict[str, Any]:
@@ -137,17 +146,17 @@ class DataAcquisitionTaskService:
             )
             self._update(
                 task_id,
-                status="completed",
+                status="failed" if result.get("status") == "failed" else "completed",
                 progress=100,
-                phase="completed",
-                message="数据包已生成，可以下载",
+                phase="failed" if result.get("status") == "failed" else "completed",
+                message=DataAcquisitionService.result_message(result),
                 completed_tasks=int((result.get("summary") or {}).get("task_count") or 0),
                 total_tasks=int((result.get("summary") or {}).get("task_count") or 0),
                 current_task_id=None,
                 current_source=None,
                 job_id=result.get("job_id"),
                 result=result,
-                error=None,
+                error=DataAcquisitionService.result_message(result) if result.get("status") == "failed" else None,
             )
         except DataAcquisitionError as exc:
             self._fail(task_id, str(exc)[:500])

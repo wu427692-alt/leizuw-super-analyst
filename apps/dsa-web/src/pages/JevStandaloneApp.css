@@ -1,0 +1,11 @@
+.jev-standalone { min-height: 100vh; background: #F7F7F8; color: #20242B; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+.jev-standalone-nav { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px max(24px, calc((100vw - 1452px) / 2)); border-bottom: 1px solid #DDE0E5; background: #FFFFFF; }
+.jev-standalone-nav a { display: inline-flex; align-items: center; gap: 7px; color: #656B76; text-decoration: none; font-size: 12px; }
+.jev-standalone-nav a.jev-site-name { color: #002FA7; font-size: 15px; font-weight: 650; }
+.jev-standalone-nav a:hover { color: #002FA7; }
+.jev-standalone a:focus-visible { outline: 2px solid #002FA7; outline-offset: 4px; }
+.jev-standalone-gate { margin: 0 auto; padding: 64px 24px; max-width: 1452px; text-align: left; }
+.jev-standalone-gate h1 { font-size: 26px; font-weight: 600; margin: 0 0 14px; }
+.jev-standalone-gate p { color: #656B76; font-size: 14px; margin-bottom: 24px; }
+.jev-standalone-gate a { display: inline-block; background: #002FA7; color: #FFFFFF; text-decoration: none; font-size: 14px; padding: 10px 16px; }
+@media (max-width: 480px) { .jev-standalone-nav { padding: 15px; } .jev-standalone-nav a.jev-site-name { font-size: 13px; } }

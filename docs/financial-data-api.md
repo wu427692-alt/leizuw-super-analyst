@@ -125,7 +125,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/financial-data/query \
 ## 从知识星球 MCP 同步
 
 知识星球登录态留在 MCP，不写入本项目。常驻服务现在会直接连接 Streamable HTTP MCP，
-按星球最新主题时间游标增量拉取，并按 `topic_id` 幂等新增或更新：
+按星球已完整覆盖的时间游标增量拉取，并按 `topic_id` 只插入尚未入库的主题：
 
 ```dotenv
 ZSXQ_MCP_AUTO_START=true
@@ -135,7 +135,7 @@ ZSXQ_MCP_GROUPS=28855458518111:调研纪要
 
 `ZSXQ_MCP_URL` 属于敏感配置，优先由部署环境注入；本机未配置该变量时会读取 Codex
 `mcp_servers.zsxq.url`，不会把 URL 或密钥写入日志和 SQLite。`ZSXQ_MCP_GROUPS` 留空时复用
-SQLite 中已经存在的星球，避免首次启动意外回填所有已加入星球的大量历史主题。
+SQLite 中已经存在的真实数字 ID 星球，不把本地生成的录音纪要来源当成远端星球；本地没有可用来源时才向 MCP 查询已加入星球。生产恢复应显式配置需要回补的已授权星球 ID，避免意外扩大范围。
 
 图片和文件采用远端按需模式：同步时只保存附件 ID、名称、尺寸等元数据，不请求文件内容，
 也不写入本地目录；用户点击查看后，服务才通过 MCP 获取短期有效的知识星球签名链接并跳转。
@@ -160,11 +160,11 @@ JSONL 每行既可以是 MCP 原始响应，也可以是带星球信息的包装
 ```
 
 也可向 `POST /api/v1/financial-data/zsxq/import` 发送同样的 `mcp_page`。同步时保存正文、
-作者、文件元数据、图片元数据、统计信息和可检索股票代码；临时签名参数不会写入 SQLite。
+作者、文件元数据、图片元数据和可检索股票代码；点赞等互动统计不参与信息内容更新，临时签名参数不会写入 SQLite。
 图片和文件内容不会下载到本地。页面只展示“查看”入口，用户点击后才向 MCP 申请新的
 临时签名链接，并由浏览器直接访问知识星球远端地址。当前不执行图片 OCR。
 
-导入成功后，每篇新增或正文发生变化的纪要会按内容哈希自动进入 DeepSeek 分析队列。
+直接 MCP 增量同步只自动分析原文创建时间在最近 24 小时内、首次发现且有正文信息的主题。断线追赶时首次发现的旧文只入库，不自动分析；纯录音、文件或图片附件主题同样只入库，已有 ID 不重新刷新正文、点赞或既有分析。显式 JSONL / `zsxq/import` 导入仍保留原有按内容哈希新增或更新的能力，其分析入队参数与后台历史任务独立，不应把批量旧资料误提交到默认自动分析的导入入口。
 知识星球登录态和抓取能力仍由 MCP 持有；本服务不保存 Cookie，也不会绕过 MCP 直接抓取。
 
 ## 机构段子与录音的实时分析
@@ -194,7 +194,7 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 - `GET /api/v1/essay-radar/word-cloud`：股票、标签、主题的日/周/月词云及前周期变化。
 - `GET /api/v1/essay-radar/daily-reports`：读取各模型独立生成的前一日小作文报告。
 - `POST /api/v1/essay-radar/daily-reports/run`：立即生成或补跑指定日期日报。
-- `GET /api/v1/financial-data/research-notes/audio-files`：严格按录音文件名检索，一个源文件一行。
+- `GET /api/v1/financial-data/research-notes/audio-files`：严格按录音文件名检索，一个源文件一行；服务端按稳定文件 ID 去重并排除 AI 生成纪要，避免生成结果再次被当成源录音。
 - `POST /api/v1/financial-data/research-notes/audio-files/batch-download-tasks`：将最多 100 个勾选录音提交到后台下载与 ZIP 打包，立即返回持久化任务编号。
 - `GET /api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}`：读取逐文件、源文件字节与压缩包进度；页面离开后任务继续运行。
 - `GET /api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}/download`：下载已完成 ZIP；任务与压缩包默认保留 48 小时。
@@ -205,7 +205,9 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 - `GET /api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/transcripts/{file_id}`：按文件读取带时间戳、说话人的逐字稿，供页面内证据回溯。
 - `GET /api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/download?format=zip|md|docx|json`：下载完整资料包、录音小作文 Markdown、Word 报告或结构化结果；完整包同时包含逐录音转写文本，不包含源音频。
 
-创建任务时可额外传入 `hotwords`（最多 100 个金融、公司或产品术语）和 `speaker_count`（2～20）；任务输入会随状态持久化，服务器重启后自动从原录音清单续跑。完成报告同时写入 `research_notes` 和 `monitoring_events`，因此可在机构段子全文检索、投资情报台和匹配到证券代码的自选股证据链中复用。
+录音打包及转写任务的状态读取遇到临时网络错误时，页面保留任务编号和最近已知进度，按 5、10、20、30 秒退避重试，最长间隔 30 秒；不会因为一次状态请求失败就认定后台任务失败或清空下载入口。页面隐藏期间暂停查询，重新可见后恢复。只有接口明确返回 404/410 才清理当前失效任务句柄并提示检查任务记录；服务器返回的真实失败状态仍显示原原因，供用户重试。此恢复机制不重复提交 AI 或打包任务。
+
+创建任务时可额外传入 `hotwords`（最多 100 个金融、公司或产品术语）和 `speaker_count`（2～20）；任务输入会随状态持久化，服务器重启后自动从原录音清单续跑。登录用户创建的纪要只保留在其本人任务台账，不写入公共 `research_notes` 或 `monitoring_events`；只有明确以系统身份运行的共享任务才可发布到统一检索与情报库，防止自定义标题和关注问题跨用户可见。
 
 录音 AI 纪要是明确按需功能，不会对全部录音自动消耗额度。默认转写链路是阿里云百炼
 `qwen-audio-3.0-asr-flash-filetrans` 异步录音文件识别：配置 `DASHSCOPE_API_KEY` 即可，
@@ -218,7 +220,7 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 
 文本整理继续使用 `DEEPSEEK_API_KEY` 和 `AUDIO_MEMO_ANALYSIS_MODEL`（留空复用
 `ESSAY_ANALYSIS_MODEL`）。源音频只存在于任务临时目录，完成转写或任务失败后都会删除；
-报告按用户隔离并默认保留 7 天。阿里云文件转写需要公网可访问的录音 URL；若知识星球临时
+报告按用户隔离，纪要资料包默认保留 7 天，逐字稿及其可发现索引长期保留并继续支持页内查看与下载。阿里云文件转写需要公网可访问的录音 URL；若知识星球临时
 地址无法被阿里云读取，任务会保留上游错误而不会生成空纪要。
 
 日报使用 Asia/Shanghai 自然日口径。`ESSAY_DAILY_REPORT_MODELS` 以逗号配置多个模型；每个
@@ -235,24 +237,82 @@ ESSAY_ANALYSIS_BACKFILL_DAYS=30
 并汇总最新论点、催化剂、风险、立场、重要度与置信度。当前实际有多少模型由配置决定；只有
 一个模型时界面如实显示单模型结论，不虚构跨模型共识。
 
-近实时链路为：常驻 worker 每 30 秒调用知识星球 MCP → 游标增量拉取 → SQLite 幂等入库
-→ 图片/文件缓存与索引 → 自动进入 DeepSeek 队列 → 原始纪要立即进入统一监控事件流 →
+近实时链路为：常驻 worker 按 `ZSXQ_MCP_POLL_SEC`（默认 10 秒，上方示例为 30 秒）调用知识星球 MCP → 游标增量拉取 → SQLite 幂等入库
+→ 图片/文件元数据与索引 → 符合实时正文条件的新增记录进入分析队列 → 原始纪要进入统一监控事件流 →
 AI 结果完成后更新同一事件。“机构段子与录音”会分别显示 MCP 拉取状态和 DeepSeek 分析状态，
 不再把“只轮询本地数据库”描述成实时获取。
 
-### 一年 / 两年历史纪要
+### 一年 / 两年历史纪要与固定范围恢复
 
-“机构段子与录音”可选择回填近 1 年或近 2 年知识星球主题。历史任务从最新主题向前分页，达到目标日期
-后停止，并以 `topic_id` 和内容哈希幂等写入 `research_notes`；已经入库且内容未变化的主题只计为
-`unchanged`，不会重复写库。历史纪要默认不创建 DeepSeek 任务，只供原文检索、首次提及统计和
-量化事件研究使用；点赞等互动数变化仍不会触发数据库更新。
+历史恢复是“扫描指定范围、只插缺失 ID”，不是“从库中最早一条继续往前”。即使最早和最新日期都已存在，任务仍扫描中间日期，补齐迁移、断线造成的空档；每页只请求主题列表，不为已入库主题逐条取详情，不刷新点赞，不覆盖正文或已有 AI 分析。图片、PDF、录音只保存索引和源文件元数据，不批量下载、不自动转写。
 
-- `POST /api/v1/financial-data/zsxq/history/backfill`：请求体为 `{"years":1}` 或 `{"years":2}`，后台按所选范围同步。
-- `GET /api/v1/financial-data/zsxq/sync/status`：返回同步进度、分页数、已获取、新增和跳过数量。
-- 需要分析历史内容时，在“机构段子与录音”明确选择近 1 年或近 2 年并点击“按需 AI 分析”；系统先提示可能产生的模型消耗。
+以下写入口需要管理员会话；已审核的普通用户也不能启动全库回填。沿用管理员接口现有拒绝契约：非管理员返回 HTTP 401，且不会创建后台任务。
 
-`ZSXQ_MCP_HISTORY_MAX_PAGES` 控制单次历史任务的分页安全上限，未配置时默认至少 500 页；达到上限但
-尚未覆盖目标日期时任务标记为 `incomplete`，再次执行仍会跳过已经入库且内容未变化的主题。
+- `POST /api/v1/financial-data/zsxq/history/backfill`：兼容 `{"years":1}` / `{"years":2}`；新任务把相对范围冻结为确定的 UTC 起止时间，重试同一未完成范围时复用原断点。
+- 也可同时传 `start_date`、`end_date`，格式为 `YYYY-MM-DD`，表示 **Asia/Shanghai 自然日，两端都包含**。两项必须一起提供，起止顺序必须有效，范围最多两年（兼容闰年与结束日）。明确日期优先于相对 `years`。
+- 接口不接受单次 `group_id` 筛选；会处理 `ZSXQ_MCP_GROUPS` 配置的全部星球。若要恢复两个星球，先确认配置恰好包含两个已授权 ID；在任务状态 `groups` 中逐个核对，不以总进度代替每个星球的完成情况。
+
+固定两年范围示例，使用已登录管理员的 Cookie 文件，不把会话值写入代码或文档：
+
+```bash
+curl --fail-with-body -b /path/to/admin-cookie.txt \
+  -X POST http://127.0.0.1:8000/api/v1/financial-data/zsxq/history/backfill \
+  -H 'Content-Type: application/json' \
+  -d '{"years":2,"start_date":"2024-09-15","end_date":"2026-09-15"}'
+```
+
+上述请求的持久范围为 UTC `[2024-09-14T16:00:00Z, 2026-09-15T16:00:00Z)`，不会随重启或跨日变化。返回 `started` 仅表示已启动后台处理，不代表两年数据已全部恢复；来源若未保存或无权限提供某段数据，不会凭空生成。
+
+#### 断点与实时同步互不阻塞
+
+每个星球在 `zsxq_sync_states` 中分别保存 `history_checkpoint_json` 和 `incremental_checkpoint_json`。每页成功提交资料后才保存下一页游标；请求失败、响应缺字段、分页游标不前进或落库失败均不会跳过失败页。资料已提交但断点写失败时，下次重放该页并跳过已有 ID，保证不漏数据。相同固定范围已经 `completed` 后再次调用不会重复扫描；需要检查新日期时创建新的固定范围。
+
+持久范围仍使用 UTC；发送给 MCP 的 `end_time` 单独转换为接口接受的上海毫秒格式，例如 `2026-09-16T00:00:00.000+0800`，不能直接发送 UTC 微秒 `Z` 格式（接口会返回无效时间错误）。转换时对不足一毫秒的排他上界向上取整，召回后仍按原 UTC 半开区间过滤，避免截断末毫秒造成漏文。此修复不修改已保存断点，旧失败任务由常驻 worker 原位续跑，无需重置或重新入库。
+
+历史和实时采用不同的跨进程执行锁；只有很短的页面提交阶段共享写锁，远端请求、限流等待和分页间隔不占实时锁。文件锁位于数据库同目录的 `.zsxq-sync-locks/`，API 与采集进程必须挂载同一数据目录；进程退出后内核自动释放锁，不需要删除锁文件，也不提供跨主机分布式锁保证。
+
+`ZSXQ_MCP_HISTORY_MAX_PAGES` 控制每批分页安全上限；未配置时为 `max(500, lookback_days * 20)`，最终限制在 1～50,000 页。达到上限但未覆盖完，状态为 `incomplete`，常驻 worker 在约 60 秒退避加下一次轮询后继续原断点。短暂失败也保留断点后重试，不会跳过失败窗口把任务标成完成。
+
+实时增量每轮仍受 `ZSXQ_MCP_MAX_PAGES_PER_SYNC`（默认 10 页，每页 30 条）限制。超过 300 条时，先保存未补完区间，**不提前推进已完整覆盖水位**；随后每轮先取最新头页保证新消息可见，再继续补旧缺口。发现时间超过 24 小时的旧文不进入自动 AI 队列。
+
+正常 FastAPI lifespan 在 `ZSXQ_MCP_AUTO_START=true` 时调用 `ZsxqMcpSyncWorker.start()`；每次后台轮询都会先检查磁盘中未完成、失败或暂停的历史断点，再以其原始起止时间恢复历史线程，同时继续实时线程。守护进程也可通过同一 `start()` 路径恢复停止的 worker。如果关闭了自动启动且没有其他常驻进程启动该 worker，单次手动任务到分页上限后不会自行拥有轮询器，需要管理员显式调用 `/zsxq/sync/worker/start`。重启能恢复的是已持久化断点；若在连接 MCP、尚未发现星球并首次写入断点前就中止，需重新提交同一固定日期请求。
+
+#### 如何验证真实进度与入库日期
+
+`GET /api/v1/financial-data/zsxq/sync/status` 的 `available=true` 只表示配置了 MCP 地址，不是远端请求成功证明。应逐个检查 `groups[].history_checkpoint`：
+
+| 字段 | 核验含义 |
+| --- | --- |
+| `start_at` / `end_at` | 本次冻结的 UTC 半开区间 |
+| `status` | `incomplete`、`paused`、`failed` 或 `completed`；必须两个星球分别完成 |
+| `next_end_time` / `pages_fetched` / `updated_at` | 分页游标向更早日期推进，已提交页数和断点时间持续变化 |
+| `coverage_percent` | 已扫描的日期跨度覆盖率，不是已知全量文件数百分比；日期分布稀疏时增长不均匀 |
+| `received` / `unchanged` | 已确认在库的主题计次、跳过的已有 ID；可能包含重放页/重复项，不等于全库去重总数 |
+| `created` / `updated` | 随断点成功确认的新增/更新计数；恢复任务不更新已有记录。若先插入成功、断点失败后重放，`created` 可能低于实际净增，应以数据库去重统计为准 |
+| `error` | 安全错误摘要；失败不得当成完成 |
+
+`history_backfill.running` 是当前 API 进程内的线程状态；采集由另一个进程执行时，应以共享 `groups` 断点推进和实际入库时间判断，不把一个进程的 `running=false` 当成全局停止。`last_topic_at` 是实时已完整覆盖水位，历史任务不会用旧日期覆盖它。
+
+核验原文日期可以按星球和日期调用 `GET /api/v1/financial-data/research-notes?group_id=实际ID&created_from=20240915&created_to=20240916&page_size=20`，查看响应中的 `created_at`，不能把当前 `synced_at` 当成录音/纪要原始日期。`GET /api/v1/essay-radar/historical-backlog` 提供全库总数、原文日期范围和最近入库时间；最早/最晚日期齐全仍不能单独证明中间没有缺口。
+
+需要确认迁移后的实际净增时，可在数据库文件上用 SQLite **只读模式**执行以下聚合，不初始化应用、不运行维护脚本：
+
+```sql
+PRAGMA query_only=ON;
+SELECT group_id, COUNT(*) AS unique_topics,
+       MIN(created_at) AS earliest_original_utc,
+       MAX(created_at) AS latest_original_utc,
+       MAX(synced_at) AS latest_ingested_utc
+FROM research_notes
+WHERE group_id IN ('第一个实际星球ID', '第二个实际星球ID')
+  AND created_at >= '2024-09-14 16:00:00'
+  AND created_at <  '2026-09-15 16:00:00'
+GROUP BY group_id;
+```
+
+恢复前后分别保存上述聚合；还可以按 `date(created_at, '+8 hours')` 分组比较每日数量，结合每组已完成断点检查中间月份是否实际补齐。无需查询用户账号、密钥或正文内容来做进度验证。
+
+历史恢复始终 `enqueue_analysis=false`，包括扫描区间内最近日期的主题；不清除已有分析。需要分析未处理旧文时，使用下述按篇数补分析入口，明确选择数量后再产生模型消耗，不能把恢复任务当成全量 AI 重跑。
 
 ### 按篇数补分析历史小作文
 

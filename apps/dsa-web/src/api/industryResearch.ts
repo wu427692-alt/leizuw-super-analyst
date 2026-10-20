@@ -1,6 +1,6 @@
 import apiClient, { BACKGROUND_ROUTE_HEADERS } from './index';
 import { toCamelCase } from './utils';
-import type { IndustryResearchBlueprint, IndustryResearchProject } from '../types/industryResearch';
+import type { IndustryResearchBlueprint, IndustryResearchProject, IndustryResearchProjectFilter, IndustryResearchProjectList } from '../types/industryResearch';
 import { cachedQuery, invalidateCachedQueries } from './requestCache';
 
 export const industryResearchApi = {
@@ -32,11 +32,17 @@ export const industryResearchApi = {
     invalidateCachedQueries('industry:projects');
     return toCamelCase<IndustryResearchProject>(response.data);
   },
-  projects: async (): Promise<{ items: IndustryResearchProject[]; total: number }> => {
-    return cachedQuery('industry:projects', async () => {
-      const response = await apiClient.get('/api/v1/industry-research/projects', { headers: BACKGROUND_ROUTE_HEADERS });
-      return toCamelCase(response.data);
-    }, { freshMs: 5_000, staleMs: 30_000 });
+  projects: async (options: {
+    limit?: number; offset?: number; query?: string; status?: IndustryResearchProjectFilter; force?: boolean;
+  } = {}): Promise<IndustryResearchProjectList> => {
+    const { limit = 30, offset = 0, status = 'all', force = false } = options;
+    const query = options.query?.trim() ?? '';
+    return cachedQuery(`industry:projects:${JSON.stringify([limit, offset, query, status])}`, async () => {
+      const response = await apiClient.get('/api/v1/industry-research/projects', {
+        params: { limit, offset, query, status }, headers: BACKGROUND_ROUTE_HEADERS,
+      });
+      return toCamelCase<IndustryResearchProjectList>(response.data);
+    }, { freshMs: 5_000, staleMs: 30_000, force });
   },
   project: async (projectId: string): Promise<IndustryResearchProject> => {
     const response = await apiClient.get(`/api/v1/industry-research/projects/${encodeURIComponent(projectId)}`, {

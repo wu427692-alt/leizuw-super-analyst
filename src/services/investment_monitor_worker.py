@@ -103,9 +103,28 @@ class InvestmentMonitorWorker:
     def _run(self) -> None:
         try:
             service = InvestmentMonitorService()
+            last_report_check: Optional[float] = None
             while not self._stop_event.is_set():
                 with self._state_lock:
                     self._last_cycle_started_at = time.time()
+                report_check_at = time.monotonic()
+                if last_report_check is None or report_check_at - last_report_check >= 300:
+                    # Wake the shared library even without visitors. The
+                    # library owns due dates and asynchronous synchronization;
+                    # do not scan its metadata on every 15-second source poll.
+                    last_report_check = report_check_at
+                    try:
+                        from src.services.stock_index_remote_service import ensure_stock_directory_refresh
+
+                        ensure_stock_directory_refresh()
+                    except Exception as exc:  # noqa: BLE001 - identity sync must not stop source collection.
+                        logger.warning("[investment-monitor] stock directory wake failed: %s", type(exc).__name__)
+                    try:
+                        from src.services.research_report_library_service import ResearchReportLibraryService
+
+                        ResearchReportLibraryService.get_instance().ensure_background_sync()
+                    except Exception as exc:  # noqa: BLE001 - report maintenance must not stop other collectors.
+                        logger.warning("[investment-monitor] report library wake failed: %s", type(exc).__name__)
                 try:
                     result = service.sync_due_sources()
                     with self._state_lock:

@@ -17,7 +17,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
-from sqlalchemy import and_, desc, func, or_, select, update
+from sqlalchemy import and_, case, desc, func, or_, select, update
 
 from src.data.stock_index_loader import get_index_stock_name
 from src.llm.provider_schedule import DEFAULT_KIMI_CHANNEL, DEFAULT_KIMI_MODEL
@@ -754,16 +754,76 @@ class IndustryResearchService:
             raise IndustryResearchError("课题创建后无法读取")
         return project
 
-    def list_projects(self, limit: int = 30) -> Dict[str, Any]:
+    def list_projects(
+        self,
+        limit: int = 30,
+        *,
+        offset: int = 0,
+        query: str = "",
+        status: str = "all",
+    ) -> Dict[str, Any]:
         owner_id = current_owner_id()
+        page_limit = max(1, min(int(limit), 100))
+        page_offset = max(0, int(offset))
+        search_query = str(query or "").strip()[:200]
+        selected_status = str(status or "all").strip().lower()
+        if selected_status not in {"all", "running", "completed", "limited", "failed"}:
+            raise IndustryResearchError("课题状态筛选不受支持")
+        record = IndustryResearchProjectRecord
+        filters = [self._owner_clause(owner_id)]
+        if search_query:
+            # Treat wildcard characters as title text, not a way to broaden
+            # the user's requested search or its status-tab counts.
+            filters.append(record.topic.contains(search_query, autoescape=True))
+
+        # Project only the existing list preview in SQLite. Loading the ORM
+        # record would transfer and parse every full report and evidence
+        # snapshot merely to discard them in the list serializer.
+        report_fields = (
+            "one_sentence", "long_form_char_count", "narrative_char_count", "generation", "generated_at",
+        )
+        report_preview = case(
+            (func.json_valid(record.report_json), func.json_object(*[
+                part
+                for field in report_fields
+                for part in (field, func.json_extract(record.report_json, f"$.{field}"))
+            ])),
+            else_=None,
+        ).label("report_json")
+        metadata_fields = (
+            "project_id", "topic", "research_type", "objective", "lookback_days", "status", "progress",
+            "stage", "message", "query_json", "source_hash", "error_message", "created_at", "updated_at",
+            "started_at", "completed_at",
+        )
         with self.db.get_session() as session:
+            grouped_counts = dict(session.execute(
+                select(record.status, func.count(record.id)).where(*filters).group_by(record.status)
+            ).all())
+            counts = {
+                "all": sum(grouped_counts.values()),
+                "running": sum(grouped_counts.get(value, 0) for value in _ACTIVE_STATUSES),
+                **{value: grouped_counts.get(value, 0) for value in ("completed", "limited", "failed")},
+            }
+            if selected_status == "running":
+                filters.append(record.status.in_(_ACTIVE_STATUSES))
+            elif selected_status != "all":
+                filters.append(record.status == selected_status)
             rows = session.execute(
-                select(IndustryResearchProjectRecord)
-                .where(self._owner_clause(owner_id))
-                .order_by(desc(IndustryResearchProjectRecord.id))
-                .limit(max(1, min(int(limit), 100)))
-            ).scalars().all()
-        return {"items": [self._serialize_project(row, include_snapshot=False) for row in rows], "total": len(rows)}
+                select(*[getattr(record, field) for field in metadata_fields], report_preview)
+                .where(*filters)
+                .order_by(desc(record.created_at), desc(record.id))
+                .limit(page_limit)
+                .offset(page_offset)
+            ).mappings().all()
+        return {
+            "items": [self._serialize_project(record(**row), include_snapshot=False) for row in rows],
+            "total": counts[selected_status],
+            "counts": counts,
+            "limit": page_limit,
+            "offset": page_offset,
+            "query": search_query,
+            "status": selected_status,
+        }
 
     def get_project(self, project_id: str, *, owner_id: object = _OWNER_UNSET) -> Optional[Dict[str, Any]]:
         effective_owner = current_owner_id() if owner_id is _OWNER_UNSET else owner_id

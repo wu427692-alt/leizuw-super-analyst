@@ -12,6 +12,7 @@ API v1 路由聚合
 from fastapi import APIRouter
 
 from api.v1.endpoints import (
+    ai_news,
     agent,
     alerts,
     alphasift,
@@ -36,10 +37,22 @@ from api.v1.endpoints import (
     usage,
     user_auth,
 )
+from src.feature_availability import is_feature_available
 
 # 创建 v1 版本主路由。
 # /api/v1 前缀在 api.app 挂载，避免新版 FastAPI 误判子路由 "" 为 empty path。
 router = APIRouter()
+
+router.include_router(ai_news.router, prefix="/ai-news", tags=["AINews"])
+
+if is_feature_available("jev"):
+    # Do not import a withdrawn feature: its router lifespan may recover a
+    # persistent paper worker even when no visitor opens the page.
+    from api.v1.endpoints import jev_backtest, jev_convertible_t, jev_live_t
+
+    router.include_router(jev_backtest.router, prefix="/jev-backtest", tags=["JevBacktest"])
+    router.include_router(jev_convertible_t.router, prefix="/jev-convertible-t", tags=["JevEventResearch"])
+    router.include_router(jev_live_t.router, prefix="/jev-live-t", tags=["JevLivePaper"])
 
 router.include_router(
     auth.router,

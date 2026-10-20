@@ -126,6 +126,10 @@ def _json_load(value: Optional[str], fallback: Any) -> Any:
 class ResearchNoteService:
     """Normalize, store and query research notes received from the ZSXQ MCP."""
 
+    _audio_index_lock = threading.RLock()
+    _audio_index_cache: Dict[str, Dict[str, Any]] = {}
+    _audio_index_cache_limit = 8
+
     def __init__(self, repository: Optional[ResearchNoteRepository] = None):
         self.repo = repository or ResearchNoteRepository()
 
@@ -241,44 +245,85 @@ class ResearchNoteService:
         query = str(filters.get("query") or "").strip()
         query_terms = [term.casefold() for term in query.split() if term]
         cutoff = utc_naive_now() - timedelta(days=days) if days else None
-        items: List[Dict[str, Any]] = []
-        # The repository query is only a coarse JSON prefilter. A parent post can
-        # contain many unrelated recordings, so every attachment must pass its
-        # own filename match before it is returned.
-        prefilter = query_terms[0] if query_terms else None
-        for row in self.repo.iter_notes_with_files(query=prefilter, created_from=cutoff):
-            note = self._note_to_dict(row)
-            for asset in note["files"]:
-                if asset.get("asset_kind") != "audio":
-                    continue
-                file_id = str(asset.get("file_id") or "").strip()
-                if not file_id:
-                    continue
-                filename = str(asset.get("name") or f"录音-{file_id}")
-                filename_search = filename.casefold()
-                if query_terms and not all(term in filename_search for term in query_terms):
-                    continue
-                items.append({
-                    "asset_id": f"{row.topic_id}:{file_id}",
-                    "topic_id": row.topic_id,
-                    "file_id": file_id,
-                    "name": filename,
-                    "size": asset.get("size"),
-                    "duration_seconds": asset.get("duration_seconds") or asset.get("duration"),
-                    "download_url": asset.get("download_url"),
-                    "group_name": row.group_name,
-                    "author_name": row.author_name,
-                    "note_title": row.title,
-                    "created_at": note.get("created_at"),
-                })
+        indexed_items = self._audio_file_index()
+        items = [
+            item for item in indexed_items
+            if (cutoff is None or item["_created_at"] >= cutoff)
+            and (
+                not query_terms
+                or all(term in item["_filename_search"] for term in query_terms)
+            )
+        ]
         total = len(items)
         start = (page - 1) * page_size
         return {
-            "items": items[start:start + page_size],
+            # Endpoint code enriches returned rows with owner-scoped transcript
+            # state, so never expose mutable objects held in the shared cache.
+            "items": [
+                {
+                    key: value for key, value in item.items()
+                    if not key.startswith("_")
+                }
+                for item in items[start:start + page_size]
+            ],
             "total": total,
             "page": page,
             "page_size": page_size,
         }
+
+    def _audio_file_index(self) -> List[Dict[str, Any]]:
+        """Return a revision-bound, process-wide index of original recordings."""
+        database_key = f"{id(self.repo.db)}:{getattr(self.repo.db, '_db_url', '')}"
+        with self._audio_index_lock:
+            # Read the revision after acquiring the build lock. A request that
+            # waited for another builder must not reuse the waiter's stale
+            # pre-lock revision after a concurrent import committed.
+            revision = self.repo.audio_files_revision()
+            cached = self._audio_index_cache.get(database_key)
+            if cached is not None and cached.get("revision") == revision:
+                return cached["items"]
+
+            indexed: List[Dict[str, Any]] = []
+            seen_file_ids: set[str] = set()
+            # Repository order is newest-first and excludes AI-generated memos,
+            # so the first stable file id is the preferred original source.
+            for row in self.repo.iter_notes_with_files():
+                note = self._note_to_dict(row)
+                created_at = row.created_at
+                if created_at.tzinfo is not None:
+                    created_at = to_utc_naive_datetime(created_at)
+                for asset in note["files"]:
+                    if asset.get("asset_kind") != "audio":
+                        continue
+                    file_id = str(asset.get("file_id") or "").strip()
+                    if not file_id or file_id in seen_file_ids:
+                        continue
+                    seen_file_ids.add(file_id)
+                    filename = str(asset.get("name") or f"录音-{file_id}")
+                    indexed.append({
+                        "asset_id": f"{row.topic_id}:{file_id}",
+                        "topic_id": row.topic_id,
+                        "file_id": file_id,
+                        "name": filename,
+                        "size": asset.get("size"),
+                        "duration_seconds": asset.get("duration_seconds") or asset.get("duration"),
+                        "download_url": asset.get("download_url"),
+                        "group_name": row.group_name,
+                        "author_name": row.author_name,
+                        "note_title": row.title,
+                        "created_at": note.get("created_at"),
+                        "_created_at": created_at,
+                        "_filename_search": filename.casefold(),
+                    })
+
+            if database_key not in self._audio_index_cache:
+                while len(self._audio_index_cache) >= self._audio_index_cache_limit:
+                    self._audio_index_cache.pop(next(iter(self._audio_index_cache)))
+            self._audio_index_cache[database_key] = {
+                "revision": revision,
+                "items": indexed,
+            }
+            return indexed
 
     def source_summary(self) -> List[Dict[str, Any]]:
         return self.repo.source_summary()

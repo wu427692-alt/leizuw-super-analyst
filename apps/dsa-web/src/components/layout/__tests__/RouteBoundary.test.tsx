@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { lazy, useEffect } from 'react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { lazy, useEffect, useState } from 'react';
 import type React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RouteOutletBoundary } from '../RouteBoundary';
+import { PageLoadingFallback, RouteOutletBoundary } from '../RouteBoundary';
 import { Shell } from '../Shell';
-import { finishRouteRequest, resetRouteLoadTrackerForTests, startRouteRequest } from '../../../utils/routeLoadTracker';
+import { finishRouteRequest, getRouteLoadSnapshot, resetRouteLoadTrackerForTests, startRouteRequest } from '../../../utils/routeLoadTracker';
 
 vi.mock('../../../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -26,6 +26,33 @@ vi.mock('../../../stores/agentChatStore', () => {
 
 describe('RouteOutletBoundary', () => {
   beforeEach(() => resetRouteLoadTrackerForTests());
+
+  it('describes an unresolved lazy component without claiming any data percentage', async () => {
+    let finishImport!: (module: { default: React.ComponentType }) => void;
+    const LazyPage = lazy(() => new Promise<{ default: React.ComponentType }>(resolve => { finishImport = resolve; }));
+    render(<MemoryRouter initialEntries={['/lazy']}><Routes>
+      <Route element={<RouteOutletBoundary />}><Route path="/lazy" element={<LazyPage />} /></Route>
+    </Routes></MemoryRouter>);
+
+    const status = screen.getByRole('status', { name: '正在加载页面组件' });
+    expect(status).toHaveTextContent('各模块会分别读取数据');
+    expect(status).not.toHaveTextContent('%');
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.queryByText(/页面数据完整后/)).not.toBeInTheDocument();
+    await act(async () => finishImport({ default: () => <div>页面组件已打开</div> }));
+    expect(await screen.findByText('页面组件已打开')).toBeVisible();
+    expect(screen.queryByRole('status', { name: '正在加载页面组件' })).not.toBeInTheDocument();
+  });
+
+  it('exposes the supplied authorization stage as readable status, without simulated progress', () => {
+    render(<PageLoadingFallback status="正在确认访问权限" detail="验证完成后进入页面，个人数据不会提前显示。" />);
+    const status = screen.getByRole('status', { name: '正在确认访问权限' });
+    expect(status).toHaveTextContent('个人数据不会提前显示');
+    expect(status).not.toHaveTextContent('%');
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(status.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+    expect(status.querySelector('svg')).toHaveClass('motion-safe:animate-spin');
+  });
 
   it('shows the route immediately while initial requests settle in the background', async () => {
     const DataPage = () => {
@@ -48,18 +75,18 @@ describe('RouteOutletBoundary', () => {
     );
 
     expect(screen.getByTestId('data-page')).toBeVisible();
-    await waitFor(() => expect(screen.queryByRole('progressbar', { name: '后台加载进度' })).not.toBeInTheDocument(), { timeout: 2_000 });
+    await waitFor(() => expect(getRouteLoadSnapshot().active).toBe(false));
+    expect(screen.queryByRole('progressbar', { name: '正在读取初始模块' })).not.toBeInTheDocument();
   });
 
-  it('reveals the page shell when an ancillary request is slow instead of freezing navigation', async () => {
+  it('keeps controls usable and a slow module pending after the indeterminate initial hint expires', () => {
+    vi.useFakeTimers();
     const SlowPage = () => {
-      useEffect(() => {
-        startRouteRequest();
-      }, []);
-      return <div data-testid="slow-page">页面自身加载状态</div>;
+      const [clicked, setClicked] = useState(false);
+      useEffect(() => { startRouteRequest(); }, []);
+      return <div data-testid="slow-page"><p>该模块仍在读取</p><button onClick={() => setClicked(true)}>已可使用的操作</button>{clicked ? <p>操作已完成</p> : null}</div>;
     };
-
-    render(
+    const view = render(
       <MemoryRouter initialEntries={['/slow']}>
         <Routes>
           <Route element={<RouteOutletBoundary />}>
@@ -69,7 +96,23 @@ describe('RouteOutletBoundary', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId('slow-page')).toBeVisible();
+    try {
+      expect(screen.getByTestId('slow-page')).toBeVisible();
+      act(() => vi.advanceTimersByTime(250));
+      const hint = screen.getByRole('progressbar', { name: '正在读取初始模块' });
+      expect(hint).not.toHaveAttribute('aria-valuenow');
+      expect(hint).not.toHaveAttribute('aria-valuemax');
+      fireEvent.click(screen.getByRole('button', { name: '已可使用的操作' }));
+      expect(screen.getByText('操作已完成')).toBeVisible();
+      act(() => vi.advanceTimersByTime(1_500));
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+      expect(screen.getByText('该模块仍在读取')).toBeVisible();
+      expect(getRouteLoadSnapshot()).toMatchObject({ active: false, completed: 0, pending: 1 });
+      expect(screen.queryByText(/100%/)).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it('catches rejected lazy route imports inside the shell and resets on navigation', async () => {

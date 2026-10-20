@@ -1,0 +1,89 @@
+# Linux-volume overlay for docker-compose.macmini.yml; never use standalone.
+# Requires Compose 2.24.4+ for !override (target Compose 5.1.1 is supported).
+# Example file order: -f docker-compose.macmini.yml -f docker-compose.macmini-volumes.yml
+# Only replace mounts: authentication, startup guards, preview isolation,
+# collector opt-in, health checks and the non-root entrypoint stay in the base.
+#
+# Before use, explicitly create and restore ALL seven external volumes from a
+# verified stopped-writer bundle; prepare ownership for UID/GID 1000, including
+# config/tyc/strategies which the image entrypoint does not repair. Do not point
+# volumes at macOS directories with driver_opts: that would reintroduce VirtioFS.
+# DSA_MACMINI_VOLUME_PREFIX must identify this one restored working volume set.
+# An existing empty volume is NOT a valid restore; inspect/verify before startup.
+#
+# Compose interpolates each file BEFORE merging. The base still requires a
+# nonempty DSA_MACMINI_RUNTIME_DIR (use the private restore staging directory),
+# although the final merged services contain no host bind mounts. Keep private
+# backup exports outside these working volumes; a VM disk is not the only backup.
+
+services:
+  server:
+    # Replace the entire sequence, not just matching targets: no bind options
+    # from the base may survive. The alias applies the same tag to the worker.
+    volumes: !override &linux-runtime-volumes
+      - type: volume
+        source: data
+        target: /app/data
+        volume:
+          nocopy: true
+      - type: volume
+        source: logs
+        target: /app/logs
+        volume:
+          nocopy: true
+      - type: volume
+        source: reports
+        target: /app/reports
+        volume:
+          nocopy: true
+      - type: volume
+        source: strategies
+        target: /app/strategies
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: config
+        target: /app/config
+        read_only: ${DSA_MACMINI_CONFIG_READ_ONLY:-true}
+        volume:
+          nocopy: true
+      - type: volume
+        source: tyc
+        target: /home/dsa/.tyc
+        read_only: ${DSA_MACMINI_TYC_READ_ONLY:-true}
+        volume:
+          nocopy: true
+      - type: volume
+        source: longbridge_tokens
+        target: /home/dsa/.longbridge
+        volume:
+          nocopy: true
+
+  monitor-worker:
+    volumes: *linux-runtime-volumes
+
+# External means Compose refuses missing volumes; it never creates these.
+# nocopy above prevents image contents silently populating an empty volume.
+volumes:
+  data:
+    external: true
+    name: ${DSA_MACMINI_VOLUME_PREFIX:?Set the verified restored Linux volume prefix}_data
+  logs:
+    external: true
+    name: ${DSA_MACMINI_VOLUME_PREFIX:?Set the verified restored Linux volume prefix}_logs
+  reports:
+    external: true
+    name: ${DSA_MACMINI_VOLUME_PREFIX:?Set the verified restored Linux volume prefix}_reports
+  strategies:
+    external: true
+    name: ${DSA_MACMINI_VOLUME_PREFIX:?Set the verified restored Linux volume prefix}_strategies
+  config:
+    external: true
+    name: ${DSA_MACMINI_VOLUME_PREFIX:?Set the verified restored Linux volume prefix}_config
+  tyc:
+    external: true
+    name: ${DSA_MACMINI_VOLUME_PREFIX:?Set the verified restored Linux volume prefix}_tyc
+  longbridge_tokens:
+    external: true
+    name: ${DSA_MACMINI_VOLUME_PREFIX:?Set the verified restored Linux volume prefix}_longbridge_tokens

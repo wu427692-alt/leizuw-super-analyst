@@ -233,7 +233,9 @@ def test_manual_announcement_sync_is_idempotent_and_queryable(tmp_path):
         payload = {"start_date": "2026-08-18", "end_date": "2026-08-19", "categories": []}
         assert service.sync_announcements(payload)["created"] == 1
         assert service.sync_announcements(payload)["created"] == 0
-        result = service.list_announcements(days=30, symbol="600519")
+        # The fixture is a historical announcement, not relative to the wall
+        # clock on whichever day CI runs. Query the same requested range.
+        result = service.list_announcements(start_date="2026-08-18", end_date="2026-08-19", symbol="600519")
         assert result["total"] == 1
         assert result["items"][0]["perspective"] == "company"
         assert result["items"][0]["url"].endswith("a.PDF")
@@ -357,6 +359,8 @@ def test_watchlist_announcement_worker_keeps_failed_window_for_retry(tmp_path):
         repo = InvestmentMonitorRepository(DatabaseManager.get_instance())
         cninfo = WindowCninfo()
         service = InvestmentMonitorService(repository=repo, cninfo=cninfo)
+        # This regression isolates the primary provider; no live backup network calls.
+        service.exchanges = None
         worker = WatchlistAnnouncementSyncWorker(repository=repo, service=service)
         worker.max_windows_per_cycle = 1
         worker._watchlist_symbols = lambda: ["600519.SH"]

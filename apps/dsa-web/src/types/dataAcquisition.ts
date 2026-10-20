@@ -8,6 +8,23 @@ export type AcquisitionTask = {
   fields: string[];
 };
 
+export type AcquisitionEntityResolution = {
+  query: string;
+  status: 'resolved' | 'ambiguous' | 'unresolved' | 'conflict';
+  name?: string;
+  symbol?: string;
+  source?: string;
+  candidates: Array<{ name: string; symbol: string; source?: string }>;
+};
+
+export type AcquisitionPreflight = {
+  status: 'ready' | 'needs_confirmation';
+  canExecute: boolean;
+  entities: AcquisitionEntityResolution[];
+  checks: Array<{ taskId: string; status: 'ready' | 'blocked'; message: string }>;
+  blockers: string[];
+};
+
 export type AcquisitionPlan = {
   title: string;
   objective: string;
@@ -19,7 +36,10 @@ export type AcquisitionPlan = {
     startDate: string;
     endDate: string;
     marketWide: boolean;
+    entityQueries?: string[];
+    entitySelections?: Record<string, string>;
   };
+  preflight?: AcquisitionPreflight;
   includeFiles?: boolean;
   outputFormats: string[];
   caveats: string[];
@@ -35,6 +55,8 @@ export type AcquisitionDataset = {
   status: 'success' | 'failed';
   rowCount: number;
   error?: string | null;
+  attachmentError?: string | null;
+  outcome?: string;
   files: string[];
 };
 
@@ -74,9 +96,22 @@ export type AcquisitionDownloadProgress = {
   loaded: number;
   total?: number;
   percent?: number;
+  bytesPerSecond?: number;
+  estimatedSecondsRemaining?: number;
+  activeConnections?: number;
+  retryCount?: number;
+  phase?: 'probing' | 'downloading' | 'retrying' | 'assembling' | 'completed';
 };
 
 export type AcquisitionCapabilities = {
+  stockDirectory?: {
+    source: string;
+    lastSuccessAt: string | null;
+    refreshing: boolean;
+    stale: boolean;
+    entryCount: number | null;
+    error?: string | null;
+  };
   sources: Array<{
     key: string;
     name: string;

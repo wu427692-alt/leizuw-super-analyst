@@ -1,5 +1,5 @@
 import type React from 'react';
-import { lazy, useEffect } from 'react';
+import { lazy, useEffect, useLayoutEffect, useState } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Shell } from './components/common';
 import { AdminShell } from './components/admin';
@@ -15,6 +15,8 @@ import { useAgentChatStore } from './stores/agentChatStore';
 import { WEB_BUILD_INFO } from './utils/constants';
 import { chunkRetryKey, isChunkLoadError, reloadWithFreshFrontend } from './utils/chunkRecovery';
 import { canPreloadRoutes, preloadRoute } from './utils/routePreload';
+import { clearRequestCache } from './api/requestCache';
+import { safeUserAccessRedirect } from './utils/userAccessRedirect';
 import LandingPage from './pages/LandingPage';
 import './App.css';
 
@@ -59,6 +61,7 @@ function lazyRoute(
 }
 
 const HomePage = lazyRoute(() => import('./pages/MarketDashboardPage'), 'home');
+const InvestmentMeetingPage = lazyRoute(() => import('./pages/InvestmentMeetingPage'), 'meeting');
 const SettingsPage = lazyRoute(() => import('./pages/SettingsPage'), 'settings');
 const LoginPage = lazyRoute(() => import('./pages/LoginPage'), 'login');
 const UserAccessPage = lazyRoute(() => import('./pages/UserAccessPage'), 'user-access');
@@ -77,6 +80,7 @@ const DragonTigerPage = lazyRoute(() => import('./pages/DragonTigerPage'), 'drag
 const AdminConsolePage = lazyRoute(() => import('./pages/AdminConsolePage'), 'admin-console');
 const UserGuidePage = lazyRoute(() => import('./pages/UserGuidePage'), 'user-guide');
 const TasksHubPage = lazyRoute(() => import('./pages/TasksHubPage'), 'tasks-hub');
+const AiNewsPage = lazyRoute(() => import('./pages/AiNewsPage'), 'ai-news');
 
 const APP_ROUTE_PRELOAD_PATHS = [
   '/super-watchlist',
@@ -135,23 +139,45 @@ const RoutePreloadController = () => {
   return null;
 };
 
+/** A confirmed account change is a new private application session, even when
+ * both identities remain logged in. Clear ownerless request caches before any
+ * new page mounts, not afterwards in a parent effect behind the page's reads. */
+const PrivateApplicationBoundary: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [ready, setReady] = useState(false);
+  useLayoutEffect(() => {
+    clearRequestCache();
+    // One synchronous mount gate prevents a new owner's page from reading the
+    // previous cache; this effect does not run on routine status refreshes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setReady(true);
+    // Existing requests can finish, but their invalidated cache entries cannot
+    // write back; their component state belongs to the unmounted route tree.
+    return clearRequestCache;
+  }, []);
+  return ready ? children : <PageLoadingFallback status="正在准备当前账号页面" detail="正在隔离账号数据，完成后再读取当前账号的内容。" />;
+};
+
 const AppContent: React.FC = () => {
   const location = useLocation();
   const { authEnabled, loggedIn, isLoading } = useAuth();
   const userAccess = useUserAccess();
   const isAdminPath = location.pathname === '/admin' || location.pathname.startsWith('/admin/');
   const isAdminLogin = location.pathname === '/admin/login';
+  const privateSessionKey = JSON.stringify([
+    userAccess.user?.id ?? null, userAccess.user?.status ?? null,
+    userAccess.authMethod, userAccess.accessEnabled,
+  ]);
 
   useEffect(() => {
     useAgentChatStore.getState().setCurrentRoute(location.pathname);
   }, [location.pathname]);
 
   if (isAdminPath && isLoading) {
-    return <PageLoadingFallback />;
+    return <PageLoadingFallback status="正在确认管理员权限" detail="验证完成后进入管理页面。" />;
   }
 
   if (!isAdminPath && userAccess.isLoading) {
-    return <PageLoadingFallback />;
+    return <PageLoadingFallback status="正在确认访问权限" detail="验证完成后进入页面，个人数据不会提前显示。" />;
   }
 
   if (!isAdminPath && location.pathname !== '/access' && !userAccess.loggedIn) {
@@ -160,9 +186,9 @@ const AppContent: React.FC = () => {
   }
 
   if (location.pathname === '/access') {
-    if (userAccess.loggedIn) {
-      const redirect = new URLSearchParams(location.search).get('redirect');
-      return <Navigate to={redirect?.startsWith('/') ? redirect : '/app'} replace />;
+    const accessParams = new URLSearchParams(location.search);
+    if (userAccess.loggedIn && accessParams.get('bind') !== 'phone') {
+      return <Navigate to={safeUserAccessRedirect(accessParams.get('redirect'))} replace />;
     }
     return <StandaloneRouteBoundary><UserAccessPage /></StandaloneRouteBoundary>;
   }
@@ -197,11 +223,14 @@ const AppContent: React.FC = () => {
       <Routes>
       <Route
         element={(
-          <Shell>
-            <RouteOutletBoundary />
-          </Shell>
+          <PrivateApplicationBoundary key={privateSessionKey}>
+            <Shell>
+              <RouteOutletBoundary />
+            </Shell>
+          </PrivateApplicationBoundary>
         )}
       >
+        <Route path="/meeting" element={<InvestmentMeetingPage />} />
         <Route path="/app" element={<HomePage />} />
         <Route path="/dashboard" element={<Navigate to="/app" replace />} />
         <Route path="/chat" element={<ChatPage />} />
@@ -209,6 +238,7 @@ const AppContent: React.FC = () => {
         <Route path="/industry-research" element={<IndustryResearchPage />} />
         <Route path="/concept-themes" element={<ConceptThemesPage />} />
         <Route path="/tasks" element={<TasksHubPage />} />
+        <Route path="/ai-news" element={<AiNewsPage />} />
         <Route path="/portfolio" element={<Navigate to="/app" replace />} />
         <Route path="/decision-signals" element={<Navigate to="/app" replace />} />
         <Route path="/screening" element={<StockScreeningPage />} />
@@ -219,6 +249,7 @@ const AppContent: React.FC = () => {
         <Route path="/essay-radar/reports" element={<EssayRadarPage />} />
         <Route path="/essay-radar/system" element={<EssayRadarPage />} />
         <Route path="/essay-quant/*" element={<EssayQuantPage />} />
+        <Route path="/jev-backtest/*" element={<Navigate to="/app" replace />} />
         <Route path="/investment-monitor" element={<Navigate to="/admin/data-sources" replace />} />
         <Route path="/investment-monitor/bi" element={<Navigate to="/admin/data-sources" replace />} />
         <Route path="/investment-monitor/feed" element={<InvestmentMonitorPage />} />

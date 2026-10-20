@@ -248,11 +248,15 @@ def test_cninfo_announcement_task_queries_official_source_directly(tmp_path: Pat
             }
 
     class StrictCninfo:
-        def fetch(self, *, start_date, end_date, symbols, categories, keyword, page_size, max_pages):
+        def fetch(self, *, start_date, end_date, symbols, categories, keyword, page_size, max_pages,
+                  exclude_noise, diagnostics):
             del categories, keyword, page_size, max_pages
             assert symbols == ["603306.SH"]
-            assert start_date.isoformat() == "2026-08-12"
-            assert end_date.isoformat() == "2026-08-19"
+            today = datetime.now(timezone(timedelta(hours=8))).date()
+            assert start_date == today - timedelta(days=7)
+            assert end_date == today
+            assert exclude_noise is False
+            diagnostics.update(pages_fetched=1, total_pages=1, truncated=False)
             return [{"announcement_id": "1", "code": "603306", "title": "华懋科技公告",
                      "pdf_url": "https://static.cninfo.com.cn/finalpage/test.pdf"}]
 

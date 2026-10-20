@@ -55,6 +55,9 @@ def test_approval_still_requires_password_login_and_session(tmp_path, monkeypatc
         status = applicant.get("/api/v1/user-auth/status", headers=first_ip)
         assert status.json()["loggedIn"] is False
         assert status.json()["authMethod"] is None
+        assert status.headers["cache-control"] == "no-store, private"
+        assert status.headers["pragma"] == "no-cache"
+        assert status.headers["vary"] == "Cookie, Authorization"
         assert "dsa_user_session" not in applicant.cookies
         assert applicant.get("/api/v1/private", headers=first_ip).status_code == 401
         page_redirect = applicant.get("/app?tab=market", headers=first_ip, follow_redirects=False)

@@ -86,14 +86,24 @@ class ResearchNoteRepository:
                 select(ResearchNote).where(ResearchNote.topic_id == topic_id).limit(1)
             ).scalar_one_or_none()
 
+    def existing_topic_ids(self, topic_ids: Iterable[str]) -> set[str]:
+        identifiers = list(dict.fromkeys(str(value) for value in topic_ids if value))
+        found: set[str] = set()
+        with self.db.get_session() as session:
+            for batch in _batched(identifiers):
+                found.update(session.execute(
+                    select(ResearchNote.topic_id).where(ResearchNote.topic_id.in_(batch))
+                ).scalars())
+        return found
+
     def find_overlapping_audio_memo(
         self,
         *,
         files: Iterable[Any],
         exclude_topic_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Return an existing memo that already represents any source recording."""
-        requested = self._audio_source_ids(files)
+        """Return an existing memo only for the exact same recording set."""
+        requested = self._audio_source_signature(files)
         if not requested:
             return None
         with self.db.get_session() as session:
@@ -103,9 +113,31 @@ class ResearchNoteRepository:
             for row in rows:
                 if row.topic_id == exclude_topic_id:
                     continue
-                if requested.intersection(self._audio_source_ids(self._json_list(row.files_json))):
+                if requested == self._audio_source_signature(self._json_list(row.files_json)):
                     return str(row.topic_id)
         return None
+
+    def audio_files_revision(self) -> Tuple[int, int, str]:
+        """Return a cheap revision for the attachment search index.
+
+        ``synced_at`` changes on substantive updates made through this
+        repository, while count/max id cover inserts and deletes. Keeping this
+        aggregate separate from the full JSON scan makes repeated searches
+        inexpensive without hiding newly synchronized notes.
+        """
+        with self.db.get_session() as session:
+            count, max_id, max_synced_at = session.execute(
+                select(
+                    func.count(ResearchNote.id),
+                    func.max(ResearchNote.id),
+                    func.max(ResearchNote.synced_at),
+                )
+            ).one()
+        return (
+            int(count or 0),
+            int(max_id or 0),
+            max_synced_at.isoformat() if isinstance(max_synced_at, datetime) else "",
+        )
 
     def delete_duplicate_audio_memos(self, *, keep_topic_id: str, source_signature: str) -> List[str]:
         """Delete legacy task-id copies that reference the same recording set."""
@@ -125,17 +157,6 @@ class ResearchNoteRepository:
             if removed:
                 session.commit()
         return removed
-
-    @staticmethod
-    def _audio_source_ids(files: Iterable[Any]) -> set[str]:
-        identities: set[str] = set()
-        for item in files:
-            if not isinstance(item, dict):
-                continue
-            file_id = str(item.get("file_id") or "").strip()
-            if file_id:
-                identities.add(f"file:{file_id}")
-        return identities
 
     @staticmethod
     def _audio_source_signature(files: Iterable[Any]) -> str:
@@ -210,6 +231,10 @@ class ResearchNoteRepository:
         conditions = [
             ResearchNote.files_json.is_not(None),
             ResearchNote.files_json != "[]",
+            # Generated memos reference their source audio for traceability but
+            # are not a second downloadable recording.
+            ResearchNote.group_id != "ai-audio-memo",
+            ResearchNote.topic_type != "audio_memo",
         ]
         if created_from is not None:
             conditions.append(ResearchNote.created_at >= created_from)
@@ -297,7 +322,18 @@ class ResearchNoteRepository:
             "last_received": int(row.last_received or 0), "last_saved": int(row.last_saved or 0),
             "last_media_downloaded": int(row.last_media_downloaded or 0),
             "total_saved": int(row.total_saved or 0),
+            "history_checkpoint": self._checkpoint(row.history_checkpoint_json),
+            "incremental_checkpoint": self._checkpoint(row.incremental_checkpoint_json),
         } for row in rows]
+
+    @staticmethod
+    def _checkpoint(value: Optional[str]) -> Dict[str, Any]:
+        if not value:
+            return {}
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict):
+            raise ValueError("Invalid persisted knowledge synchronization checkpoint")
+        return parsed
 
     @staticmethod
     def _iso(value: Optional[datetime]) -> Optional[str]:

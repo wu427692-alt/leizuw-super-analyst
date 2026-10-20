@@ -1,5 +1,15 @@
 export type CountRow = { name: string; count: number };
 
+export type StockResearchRelation = {
+  kind: 'company_direct' | 'industry_related' | 'other_company_mention' | 'unknown';
+  targetSymbol: string;
+  subjectSymbol?: string | null;
+  subjectName?: string | null;
+  matchField?: string | null;
+  matchText?: string | null;
+  hasSubjectConflict?: boolean;
+};
+
 export type MonitorEvent = {
   id: number;
   sourceKey: string;
@@ -20,6 +30,7 @@ export type MonitorEvent = {
   metrics: Record<string, unknown>;
   eventAt: string;
   ingestedAt?: string | null;
+  stockRelation?: StockResearchRelation | null;
 };
 
 export type WatchlistCard = {
@@ -160,7 +171,7 @@ export type EssayExpectationEstimate = {
 };
 
 export type EssayConsensusAnalysis = {
-  status: 'not_started' | 'pending' | 'processing' | 'completed' | 'failed' | 'stale';
+  status: 'not_loaded' | 'not_started' | 'pending' | 'processing' | 'completed' | 'failed' | 'stale';
   sourceCount: number; relatedSourceCount?: number; dedicatedSourceCount?: number;
   analyzedCount: number; pendingCount: number; model?: string | null; promptVersion?: string | null;
   summary: string; hasExplicitExpectations: boolean; profitOutlook: string; valuationOutlook: string;
@@ -168,30 +179,54 @@ export type EssayConsensusAnalysis = {
   consensusPoints: string[]; conflicts: string[]; timeObservations?: string[]; caveats: string[];
   verificationConditions?: Array<{ condition: string; window: string; impact: string; expiryAt: string }>;
   sourceNotes: Array<{ topicId: string; eventId?: number | null; title?: string | null; eventAt?: string | null; authorName?: string | null; sourceKind?: 'related' | 'dedicated' | null; estimateCount: number }>;
+  candidateSourceNotes?: EssayConsensusAnalysis['sourceNotes'];
+  candidateCutoffAt?: string | null;
+  hasReport?: boolean; reportSourceCount?: number | null; reportSourcesComplete?: boolean;
   analysisCutoffAt?: string | null;
   error?: string | null; updatedAt?: string | null; completedAt?: string | null;
+};
+
+export type FundamentalSourceKind = 'indicator' | 'income' | 'cashflow';
+export type FundamentalSource = {
+  eventId: number | null; source: string | null; period: string | null; announcedAt: string | null; reportType: string | null;
+  selectionStatus: 'selected' | 'conflict'; candidateEventIds?: number[]; candidateCount?: number;
 };
 
 export type SuperWatchlistStock = {
   symbol: string; name: string;
   history: Array<{ date: string; open?: number | null; high?: number | null; low?: number | null; close?: number | null; volume?: number | null; amount?: number | null; pctChg?: number | null }>;
-  market: { price?: number | null; changePct?: number | null; open?: number | null; high?: number | null; low?: number | null; amount?: number | null; updatedAt?: string | null; source?: string | null; isStale?: boolean; staleSeconds?: number | null };
-  valuation: { pe?: number | null; peTtm?: number | null; pb?: number | null; psTtm?: number | null; totalMv?: number | null; turnoverRate?: number | null; volumeRatio?: number | null };
+  market: { price?: number | null; changePct?: number | null; prevClose?: number | null; change?: number | null; quoteKind?: 'snapshot' | 'daily_close' | 'unavailable'; open?: number | null; high?: number | null; low?: number | null; amount?: number | null; updatedAt?: string | null; source?: string | null; isStale?: boolean; staleSeconds?: number | null };
+  valuation: { asOf?: string | null; source?: string | null; sourceEventId?: number | null; pe?: number | null; peTtm?: number | null; pb?: number | null; psTtm?: number | null; totalMv?: number | null; turnoverRate?: number | null; volumeRatio?: number | null };
   technical: Record<string, number | string | null | undefined>;
-  fundamentals: { period?: string | null; revenue?: number | null; netProfit?: number | null; operatingCashflow?: number | null; revenueYoy?: number | null; netProfitYoy?: number | null; grossMargin?: number | null; netMargin?: number | null; roe?: number | null; debtRatio?: number | null; currentRatio?: number | null; eps?: number | null };
-  capital: { winnerRate?: number | null; weightedCost?: number | null; cost50pct?: number | null; cost85pct?: number | null; moneyflow: Record<string, unknown>; margin: Record<string, unknown>; northbound: Record<string, unknown>; chipDistribution: Array<{ price?: number; percent?: number }> };
+  fundamentals: { period?: string | null; asOf?: string | null; source?: string | null; sourceEventId?: number | null; sources?: Partial<Record<FundamentalSourceKind, FundamentalSource>> | null; indicatorPeriod?: string | null; incomePeriod?: string | null; cashflowPeriod?: string | null; revenueYoyField?: string | null; netProfitYoyField?: string | null; revenue?: number | null; netProfit?: number | null; operatingCashflow?: number | null; revenueYoy?: number | null; netProfitYoy?: number | null; grossMargin?: number | null; netMargin?: number | null; roe?: number | null; debtRatio?: number | null; currentRatio?: number | null; eps?: number | null };
+  capital: { chipTradeDate?: string | null; moneyflowTradeDate?: string | null; marginTradeDate?: string | null; northboundTradeDate?: string | null; source?: string | null; winnerRate?: number | null; weightedCost?: number | null; cost50Pct?: number | null; cost85Pct?: number | null; moneyflow: Record<string, unknown>; margin: Record<string, unknown>; northbound: Record<string, unknown>; chipDistribution: Array<{ price?: number; percent?: number }> };
   ownership: { pledge: Record<string, unknown>; shareUnlock: Array<Record<string, unknown>>; holderTrades: Array<Record<string, unknown>>; repurchases: Array<Record<string, unknown>> };
   institution: { researchCount: number; latest: MonitorEvent[]; institutions: CountRow[] };
   company: { profile: Record<string, unknown>; announcementCount: number; announcements: MonitorEvent[] };
   alternative: { essayCount: number; essays: MonitorEvent[]; catalysts: string[]; risks: string[] };
   consensus: {
     brokerReportCount: number;
+    brokerSample?: {
+      loaded: boolean; totalRecordCount: number | null; inputRecordCount: number; reportCount: number;
+      loadedRecordCount?: number; relationExcludedCount?: number; unknownRelationCount?: number;
+      validReportCount: number; duplicateRecordCount: number; sampleLimit: number | null; truncated: boolean | null;
+      oldestAt?: string | null; asOf?: string | null; aggregation: string;
+      institutionCount: number | null; knownInstitutionCount: number; unknownInstitutionReportCount: number;
+      missingPeriodReportCount?: number;
+      sourceNotes: Array<{ eventId: number; title: string; eventAt?: string | null; orgName?: string | null; stockRelation?: StockResearchRelation | null }>;
+    };
     ratings: CountRow[];
-    targetPrice: { sampleCount: number; min?: number | null; median?: number | null; max?: number | null };
+    targetPrice: { sampleCount: number; min?: number | null; median?: number | null; max?: number | null;
+      documentCount?: number; documentMin?: number | null; documentMedian?: number | null; documentMax?: number | null;
+      endpointCount?: number; documentMethod?: string };
     forecasts: Array<{
       period: string; sampleCount: number;
+      reportCount?: number; metricSampleCounts?: { eps: number; np: number; pe: number; opRt: number; roe: number };
       epsMedian?: number | null; epsMin?: number | null; epsMax?: number | null;
       peMedian?: number | null; npMedian?: number | null; opRtMedian?: number | null; roeMedian?: number | null;
+      sourceEventIds?: number[];
+      metricSourceEventIds?: Partial<Record<'eps' | 'np' | 'pe' | 'opRt' | 'roe', number[]>>;
+      conflictingMetricCounts?: Partial<Record<'eps' | 'np' | 'pe' | 'opRt' | 'roe', number>>;
     }>;
     essayExpectationCount: number;
     essayExpectations: Array<EssayExpectationEstimate & { text: string }>;
@@ -204,6 +239,13 @@ export type SuperWatchlistStock = {
   coverage: Array<{ name: string; count: number; latestAt?: string | null; available: boolean; freshnessStatus?: 'fresh' | 'stale' | 'empty'; lastSyncAt?: string | null; syncAgeSeconds?: number | null; targetRefreshSeconds?: number | null; sourceKeys?: string[] }>;
   evidence: { eventCount: number; rawEventCount: number; factualCount: number; unverifiedCount: number; sourceCount: number; originalLinkCount: number; originalLinkCoverage: number; channels: CountRow[] };
   timeline: MonitorEvent[];
+  overview?: {
+    recentEvidence: MonitorEvent[];
+    sections: Array<{ key: 'announcements' | 'research' | 'opinions' | 'news'; label: string; items: MonitorEvent[]; latestAt: string | null }>;
+    dataAsOf: { market: string | null; valuation: string | null; fundamentals: string | null; capital: string | null; technical: string | null };
+    loadedSections: string[];
+    evidenceCountsComplete: boolean;
+  };
 };
 
 export type SuperWatchlistDashboard = {
@@ -219,7 +261,8 @@ export type StockWorkspace = {
   generatedAt: string;
   days: number;
   stock: SuperWatchlistStock;
-  agentContext: {
+  view?: 'overview' | 'full';
+  agentContext?: {
     analysisContextPackSummary?: string;
     realtimeQuote?: Record<string, unknown>;
     chipDistribution?: Record<string, unknown>;
@@ -234,7 +277,7 @@ export type StockWorkspace = {
     failureMode: string;
     quotePrecedence: string;
   };
-  cache: { hit: boolean; ttlSeconds: number };
+  cache: { hit: boolean; ttlSeconds: number; state?: 'fresh' | 'stale-refreshing' | 'rebuilt' | 'superseded' };
   iterations: Array<{ version: string; name: string; result: string }>;
 };
 

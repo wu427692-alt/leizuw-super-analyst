@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
@@ -95,3 +96,13 @@ class ResearchNoteImportResponse(BaseModel):
 
 class ZsxqHistoryBackfillRequest(BaseModel):
     years: int = Field(1, ge=1, le=2, description="历史同步范围，只支持 1 年或 2 年")
+    start_date: Optional[date] = Field(None, description="固定起始日期，上海时区，含当日")
+    end_date: Optional[date] = Field(None, description="固定结束日期，上海时区，含当日")
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if (self.start_date is None) != (self.end_date is None):
+            raise ValueError("start_date 与 end_date 必须同时提供")
+        if self.start_date and (self.end_date < self.start_date or (self.end_date - self.start_date).days > 731):
+            raise ValueError("起止日期无效，最长支持两年")
+        return self

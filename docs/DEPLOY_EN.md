@@ -312,6 +312,41 @@ For a constrained `512M` deployment, set `MAX_WORKERS=1`, start only one of `ser
 
 ---
 
+## Cloud frontend release consistency
+
+When nginx serves `/assets/*` from a host release directory but HTML is served by the application, keep both on the same approved frontend version. After a backend-only container update, run:
+
+```bash
+sudo ./scripts/publish-nginx-assets.sh --check
+```
+
+This read-only check prints both entry-document SHA-256 hashes and their direct asset references. Missing entries/assets, absent references, mismatched entries, and conflicting bytes at the same immutable asset URL fail with a nonzero exit status. It uses a disposable snapshot and does not change the active release. Treat failure as a release failure; do not automatically overwrite the host version.
+
+An initial publish can run without flags. Replacing an existing, different frontend requires an explicitly approved release:
+
+```bash
+sudo ./scripts/publish-nginx-assets.sh --publish-new-version
+sudo ./scripts/publish-nginx-assets.sh --check
+```
+
+The explicit publish still validates the incoming entry assets, retains old hashed assets for already-open tabs, and atomically switches the host release symlink. Previous releases remain intact. Existing `LEZIWU_CONTAINER_NAME`, `LEZIWU_STATIC_RELEASE_ROOT`, and `LEZIWU_STATIC_ROOT` overrides remain supported; host Python 3 and the adjacent `check_static_assets.py` helper are required.
+
+Persist the complete approved frontend in the deployment image or an approved read-only mount, not only in a running container: recreating that container otherwise restores the older image entry. Do not rebuild a dirty workspace containing unrelated unverified frontend changes or bypass application authentication for `/app`. Rollback must restore matching container and host frontend versions, followed by the consistency check, public-page/resource checks, and unauthenticated-route checks. Direct-reference validation does not replace browser, dynamic-chunk, image, or authentication testing.
+
+## Page navigation remains on a loading indicator
+
+Loading messages distinguish three stages rather than displaying a fixed percentage for unknown progress:
+
+- **Access verification / account preparation:** existing authentication and account isolation complete before private pages mount. This is not a business-data request; do not remove the login gate to reduce the wait.
+- **Page component loading:** the page's JavaScript chunk is pending. Component failures receive one automatic recovery attempt before a module retry action is shown.
+- **Module data loading:** once components are ready, page structure and available content render without waiting for every API. The stock list, workspace, chart, and task channels retain their own loading, failure, or success states.
+
+The thin line at the top is a nonblocking, indeterminate initial-request activity hint. It appears only if initial requests remain pending after roughly 180 ms and expires after at most roughly 1.4 seconds. Its disappearance neither means all data is ready nor marks pending requests successful. Filters, quote polling, and background refreshes update their modules without covering the whole page again.
+
+Navigation prefetch is limited: the task hub warms page code but not its five task lists; institution-note routes prefetch shared status without dashboard aggregates unused by search; the watchlist prefetches its list and the first stock's overview, not price history or the full research workspace merely on hover. Data prefetch skips hidden pages and shares the chunk preloader's save-data / `2g` / `slow-2g` checks. Browsers without network-information support cannot reliably be classified as slow connections by this guard.
+
+For a prolonged wait, identify the stage first: inspect session requests for access checks; `/assets/*`, release consistency, and the browser console for component loading; specific pending or failed APIs and backend logs for module data. A 422 or 404 may indicate a frontend/backend version mismatch, not data still being prepared. These changes do not publish themselves and do not replace post-deployment browser, authentication, and API acceptance.
+
 ## Quick Migration
 
 Migrate from one server to another:

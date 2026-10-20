@@ -65,11 +65,14 @@ export const agentApi = {
     return response.data.sessions;
   },
   async getChatSessionMessages(sessionId: string): Promise<ChatSessionMessage[]> {
-    const response = await apiClient.get<{ messages: ChatSessionMessage[] }>(`/api/v1/agent/chat/sessions/${sessionId}`);
+    const response = await apiClient.get<{ session_id?: string; messages: ChatSessionMessage[] }>(`/api/v1/agent/chat/sessions/${encodeURIComponent(sessionId)}`);
+    if (response.data.session_id && response.data.session_id !== sessionId) {
+      throw new Error('返回的会话与当前会话不匹配，请重新读取。');
+    }
     return response.data.messages;
   },
   async deleteChatSession(sessionId: string): Promise<void> {
-    await apiClient.delete(`/api/v1/agent/chat/sessions/${sessionId}`);
+    await apiClient.delete(`/api/v1/agent/chat/sessions/${encodeURIComponent(sessionId)}`);
   },
   async sendChat(content: string): Promise<{ success: boolean }> {
     const response = await apiClient.post<{

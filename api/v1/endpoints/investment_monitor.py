@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks
@@ -14,6 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from api.v1.schemas.investment_monitor import AnnouncementPackageRequest, AnnouncementSyncRequest, DragonTigerSyncRequest, ExternalEventBatch, MonitorSyncRequest, MonitoringSourceCreate
 from src.services.investment_monitor_service import InvestmentMonitorError, InvestmentMonitorService
+from src.services.ttl_cache import cached
 from src.services.investment_monitor_worker import InvestmentMonitorWorker
 from src.services.sync_watchdog_worker import SyncWatchdogWorker
 from src.services.watchlist_backfill_worker import WatchlistBackfillWorker
@@ -26,10 +28,26 @@ def _error(exc: Exception, status_code: int = 400) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error": "investment_monitor_error", "message": str(exc)[:500]})
 
 
+def _public_watchdog_state(payload):
+    """Keep the internal all-user announcement target union out of health views."""
+    visible = deepcopy(payload)
+    audit = visible.get("last_result", visible)
+    workers = audit.get("workers") or {}
+    if "cninfo_watchlist" in workers:
+        state = workers["cninfo_watchlist"]
+        workers["cninfo_watchlist"] = {
+            key: state.get(key) for key in (
+                "status", "running", "poll_seconds", "history_days", "recent_days",
+                "started_at", "last_run_at", "last_run_age_seconds", "last_success_at",
+            )
+        }
+    return visible
+
+
 @router.get("/status", summary="监控任务与全部消息源健康状态")
 def status():
     return {
-        "watchdog": SyncWatchdogWorker.get_instance().status(),
+        "watchdog": _public_watchdog_state(SyncWatchdogWorker.get_instance().status()),
         "worker": InvestmentMonitorWorker.get_instance().status(),
         "sources": InvestmentMonitorService().list_sources(),
     }
@@ -37,7 +55,7 @@ def status():
 
 @router.post("/watchdog/audit", summary="立即检查同步心跳并自动修复")
 def audit_sync_watchdog():
-    return SyncWatchdogWorker.get_instance().audit_once()
+    return _public_watchdog_state(SyncWatchdogWorker.get_instance().audit_once())
 
 
 @router.get("/sources", summary="列出内置和外部消息源")
@@ -93,7 +111,7 @@ def dashboard(days: int = Query(7, ge=1, le=90)):
 
 @router.get("/intelligence-dashboard", summary="投资情报台决策看板聚合")
 def intelligence_dashboard(days: int = Query(14, ge=7, le=90)):
-    return InvestmentMonitorService().intelligence_dashboard(days=days)
+    return cached(f"investment:intelligence:{days}", 300, lambda: InvestmentMonitorService().intelligence_dashboard(days=days))
 
 
 @router.get("/source-bi", summary="全部数据源存量、增量、时效与可调用能力 BI")
@@ -154,10 +172,10 @@ def events(
     )
 
 
-@router.get("/events/{event_id}", summary="读取单条情报事件原文与来源信息")
+@router.get("/events/{event_id}", summary="读取单条情报事件已保存内容与来源信息")
 def event_detail(event_id: int):
     try:
-        return InvestmentMonitorService().event_detail(event_id)
+        return InvestmentMonitorService(initialize_sources=False).event_detail(event_id)
     except InvestmentMonitorError as exc:
         raise _error(exc, 404)
 
@@ -177,14 +195,15 @@ def super_watchlist(request: Request, days: int = Query(365, ge=30, le=3650)):
     return InvestmentMonitorService().super_watchlist(days=days, symbols=symbols)
 
 
-@router.get("/stock-workspace/{symbol}", summary="供问股、持仓、信号、回测和告警共享的个股数据上下文")
+@router.get("/stock-workspace/{symbol}", summary="自选看板、问股与研究共用的个股事实和资料")
 def stock_workspace(
     symbol: str,
     days: int = Query(365, ge=30, le=3650),
     refresh: bool = Query(False, description="绕过短时本地缓存重新组装，不直接请求外部数据源"),
+    view: Literal["full", "overview"] = Query("full", description="overview 只读首屏事实与每类三条资料；full 保留完整研究上下文"),
 ):
     try:
-        return InvestmentMonitorService().stock_workspace(symbol, days=days, refresh=refresh)
+        return InvestmentMonitorService(initialize_sources=False).stock_workspace(symbol, days=days, refresh=refresh, view=view)
     except InvestmentMonitorError as exc:
         raise _error(exc, 400)
 
@@ -234,10 +253,10 @@ def refresh_super_watchlist():
     }
 
 
-@router.post("/super-watchlist/{symbol}/backfill", summary="重跑单只自选股最近半年全渠道回填")
-def backfill_watchlist_symbol(symbol: str):
+@router.post("/super-watchlist/{symbol}/backfill", summary="按选定范围回补自选股渠道数据，最多两年")
+def backfill_watchlist_symbol(symbol: str, days: int = Query(183, ge=30, le=730)):
     try:
-        return WatchlistBackfillWorker.get_instance().enqueue(symbol, days=183)
+        return WatchlistBackfillWorker.get_instance().enqueue(symbol, days=days)
     except InvestmentMonitorError as exc:
         raise _error(exc, 400)
 
@@ -247,11 +266,21 @@ def announcement_categories():
     return InvestmentMonitorService().announcement_categories()
 
 
-@router.get("/announcements/watchlist-sync/status", summary="查看自选股巨潮公告实时与一年回补状态")
-def announcement_watchlist_sync_status():
+@router.get("/announcements/watchlist-sync/status", summary="查看本人自选股公告实时与历史回补状态")
+def announcement_watchlist_sync_status(request: Request):
     from src.services.watchlist_announcement_sync_worker import WatchlistAnnouncementSyncWorker
 
-    return WatchlistAnnouncementSyncWorker.get_instance().status()
+    worker = WatchlistAnnouncementSyncWorker.get_instance()
+    user_id = int(getattr(request.state, "user_id", 0) or 0)
+    if user_id > 0:
+        from sqlalchemy import select
+        from src.storage import UserWatchlistItem
+        with worker.repository.db.get_session() as session:
+            symbols = session.execute(select(UserWatchlistItem.symbol).where(UserWatchlistItem.user_id == user_id)).scalars().all()
+        symbols = [worker.service._canonical_ts_code(symbol) for symbol in symbols]
+    else:
+        symbols = worker.service.equity_watchlist()
+    return worker.status(symbols=symbols)
 
 
 @router.post("/announcements/sync", summary="按日期、个股、分类或关键词抓取巨潮公告")

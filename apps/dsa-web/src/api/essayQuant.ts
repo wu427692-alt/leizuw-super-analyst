@@ -43,7 +43,9 @@ export const essayQuantApi = {
   tasks: async (): Promise<EssayQuantTaskList> => cachedQuery(
     'quant:tasks',
     async () => toCamelCase((await apiClient.get('/api/v1/essay-quant/tasks')).data),
-    { freshMs: 1_000, staleMs: 5_000 },
+    // Empty/finished task pages do not poll. Return the refreshed response,
+    // not an old list whose background update would never reach the caller.
+    { freshMs: 1_000, staleMs: 0 },
   ),
   taskStatus: async (taskId: string): Promise<EssayQuantTask> => toCamelCase((await apiClient.get(`/api/v1/essay-quant/tasks/${taskId}`)).data),
   runResult: async (runId: number): Promise<EssayQuantDashboard> => normalizeDashboard((await apiClient.get(`/api/v1/essay-quant/runs/${runId}`)).data),

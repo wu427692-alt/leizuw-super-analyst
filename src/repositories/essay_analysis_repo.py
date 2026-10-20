@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 from datetime import datetime, timedelta
 import json
 import threading
@@ -29,6 +30,7 @@ _SQL_IN_BATCH_SIZE = 500
 _FEED_COUNT_CACHE_TTL_SECONDS = 30.0
 _FEED_COUNT_CACHE_MAX_ENTRIES = 256
 _feed_count_cache: Dict[Tuple[Any, ...], Tuple[float, int]] = {}
+_feed_count_inflight: Dict[Tuple[Any, ...], Future] = {}
 _feed_count_cache_lock = threading.Lock()
 
 
@@ -54,27 +56,70 @@ def _loads(value: Optional[str], fallback: Any) -> Any:
 
 
 def _cached_feed_count(key: Tuple[Any, ...], loader) -> int:
-    """Reuse the expensive full-library count while a user pages one query."""
+    """Cache a factual count and share one cold scan among identical requests."""
     now = time.monotonic()
     with _feed_count_cache_lock:
         cached = _feed_count_cache.get(key)
         if cached and now - cached[0] < _FEED_COUNT_CACHE_TTL_SECONDS:
             return cached[1]
+        pending = _feed_count_inflight.get(key)
+        owns_query = pending is None
+        if owns_query:
+            pending = Future()
+            _feed_count_inflight[key] = pending
 
-    total = int(loader() or 0)
-    with _feed_count_cache_lock:
-        if len(_feed_count_cache) >= _FEED_COUNT_CACHE_MAX_ENTRIES:
-            expired = [
-                cache_key for cache_key, (stored_at, _) in _feed_count_cache.items()
-                if now - stored_at >= _FEED_COUNT_CACHE_TTL_SECONDS
-            ]
-            for cache_key in expired:
-                _feed_count_cache.pop(cache_key, None)
+    if not owns_query:
+        # Do not hold the cache lock while waiting: unrelated filters/databases
+        # must remain independent, and a failed scan must not become a fake 0.
+        return pending.result()
+    try:
+        total = int(loader() or 0)
+        with _feed_count_cache_lock:
             if len(_feed_count_cache) >= _FEED_COUNT_CACHE_MAX_ENTRIES:
-                oldest = min(_feed_count_cache, key=lambda item: _feed_count_cache[item][0])
-                _feed_count_cache.pop(oldest, None)
-        _feed_count_cache[key] = (now, total)
-    return total
+                expired = [
+                    cache_key for cache_key, (stored_at, _) in _feed_count_cache.items()
+                    if now - stored_at >= _FEED_COUNT_CACHE_TTL_SECONDS
+                ]
+                for cache_key in expired:
+                    _feed_count_cache.pop(cache_key, None)
+                if len(_feed_count_cache) >= _FEED_COUNT_CACHE_MAX_ENTRIES:
+                    oldest = min(_feed_count_cache, key=lambda item: _feed_count_cache[item][0])
+                    _feed_count_cache.pop(oldest, None)
+            _feed_count_cache[key] = (now, total)
+        pending.set_result(total)
+        return total
+    except BaseException as exc:
+        pending.set_exception(exc)
+        raise
+    finally:
+        with _feed_count_cache_lock:
+            _feed_count_inflight.pop(key, None)
+
+
+def _feed_keyword_conditions(keyword: str, query_scope: str) -> Tuple[List[Any], List[Any]]:
+    """Keep note/AI recall identical for row, export and count queries."""
+    note_conditions: List[Any] = []
+    analysis_conditions: List[Any] = []
+    for term in topic_search_terms(keyword):
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        note_conditions.append(ResearchNote.title.like(pattern, escape="\\"))
+        if query_scope == "full":
+            note_conditions.extend((
+                ResearchNote.content.like(pattern, escape="\\"),
+                ResearchNote.group_name.like(pattern, escape="\\"),
+                ResearchNote.author_name.like(pattern, escape="\\"),
+                ResearchNote.symbol_codes.like(pattern, escape="\\"),
+                ResearchNote.files_json.like(pattern, escape="\\"),
+            ))
+            analysis_conditions.extend((
+                EssayAnalysisRecord.summary.like(pattern, escape="\\"),
+                EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
+                EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
+                EssayAnalysisRecord.themes_json.like(pattern, escape="\\"),
+                EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
+            ))
+    return note_conditions, analysis_conditions
 
 
 class EssayAnalysisRepository:
@@ -653,7 +698,7 @@ class EssayAnalysisRepository:
         be searchable or visible. AI-only filters naturally narrow the result to
         rows that have matching analysis data.
         """
-        where_clause, count_cache_key = self._feed_where_clause(
+        filters = dict(
             cutoff=cutoff,
             query=query,
             query_scope=query_scope,
@@ -664,17 +709,16 @@ class EssayAnalysisRepository:
             stock=stock,
             min_importance=min_importance,
         )
+        where_clause, count_cache_key = self._feed_where_clause(**filters)
         safe_page = max(1, int(page))
         safe_size = max(1, min(int(page_size), 100))
         with self.db.get_session() as session:
-            total = max(0, int(known_total)) if known_total is not None else _cached_feed_count(
+            # ``known_total`` is only a client-side pagination hint.  Never let
+            # a caller manufacture the factual result count; the short-lived
+            # server cache keeps later pages cheap without trusting the URL.
+            total = _cached_feed_count(
                 count_cache_key,
-                lambda: session.execute(
-                    select(func.count(ResearchNote.id))
-                    .select_from(ResearchNote)
-                    .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
-                    .where(where_clause)
-                ).scalar(),
+                lambda: session.execute(self._feed_count_statement(where_clause, filters)).scalar(),
             )
             rows = session.execute(
                 select(EssayAnalysisRecord, ResearchNote)
@@ -686,6 +730,53 @@ class EssayAnalysisRepository:
                 .limit(safe_size)
             ).all()
         return [self._to_feed_dict(analysis, note) for analysis, note in rows], int(total)
+
+    def _feed_count_statement(self, where_clause: Any, filters: Dict[str, Any]) -> Any:
+        """Count the exact result without joining AI rows for every raw note.
+
+        The full-text OR used to require an indexed AI lookup for each note,
+        even when neither table matched. Split the first keyword's raw/AI
+        matches into two branches so SQLite can scan each source sequentially.
+        (raw OR AI) AND remaining_filters is exactly the UNION of those two
+        branches. Both branches retain every other keyword and filter; in
+        particular, different keywords may match different sources.
+
+        topic_id is unique in both tables, so UNION removes only overlap where
+        one note matches in both places, not distinct essays. This is count-only:
+        ordered pages and exports retain their existing joins and raw content.
+        """
+        keywords = str(filters.get("query") or "").split()
+        scope = "title" if str(filters.get("query_scope") or "").strip().lower() == "title" else "full"
+        requires_analysis = (
+            filters.get("analysis_status") in {"completed", "pending", "processing", "failed", "media_only"}
+            or any(filters.get(key) for key in ("sentiment", "category", "tag"))
+            or int(filters.get("min_importance") or 0) > 0
+        )
+        # These predicates already let SQLite reduce the LEFT JOIN to the much
+        # smaller analysis table. Splitting it would just scan that table twice.
+        if not keywords or scope == "title" or requires_analysis:
+            return (
+                select(func.count(ResearchNote.id))
+                .select_from(ResearchNote)
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(where_clause)
+            )
+
+        note_conditions, analysis_conditions = _feed_keyword_conditions(keywords[0], scope)
+        remaining_where, _ = self._feed_where_clause(**{**filters, "query": " ".join(keywords[1:])})
+        note_matches = (
+            select(ResearchNote.id)
+            .select_from(ResearchNote)
+            .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+            .where(or_(*note_conditions), remaining_where)
+        )
+        analysis_matches = (
+            select(ResearchNote.id)
+            .select_from(EssayAnalysisRecord)
+            .join(ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
+            .where(or_(*analysis_conditions), remaining_where)
+        )
+        return select(func.count()).select_from(note_matches.union(analysis_matches).subquery())
 
     def iter_feed(
         self,
@@ -746,24 +837,8 @@ class EssayAnalysisRepository:
             conditions.append(ResearchNote.created_at >= cutoff)
         normalized_query_scope = "title" if str(query_scope or "").strip().lower() == "title" else "full"
         for keyword in str(query or "").split():
-            equivalent_conditions = []
-            for term in topic_search_terms(keyword):
-                escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                pattern = f"%{escaped}%"
-                equivalent_conditions.append(ResearchNote.title.like(pattern, escape="\\"))
-                if normalized_query_scope == "full":
-                    equivalent_conditions.extend((
-                        ResearchNote.content.like(pattern, escape="\\"),
-                        ResearchNote.group_name.like(pattern, escape="\\"),
-                        ResearchNote.author_name.like(pattern, escape="\\"),
-                        ResearchNote.symbol_codes.like(pattern, escape="\\"),
-                        ResearchNote.files_json.like(pattern, escape="\\"),
-                        EssayAnalysisRecord.summary.like(pattern, escape="\\"),
-                        EssayAnalysisRecord.tags_json.like(pattern, escape="\\"),
-                        EssayAnalysisRecord.industries_json.like(pattern, escape="\\"),
-                        EssayAnalysisRecord.themes_json.like(pattern, escape="\\"),
-                        EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
-                    ))
+            note_conditions, analysis_conditions = _feed_keyword_conditions(keyword, normalized_query_scope)
+            equivalent_conditions = note_conditions + analysis_conditions
             if equivalent_conditions:
                 conditions.append(or_(*equivalent_conditions))
         if analysis_status == "essay":
@@ -771,6 +846,10 @@ class EssayAnalysisRepository:
                 EssayAnalysisRecord.id.is_(None),
                 EssayAnalysisRecord.status != "media_only",
             ))
+            # AI-generated audio memos live in the owner-scoped recording task
+            # ledger.  They are not source essays and must not be projected back
+            # into the institution-note feed (including historical legacy rows).
+            conditions.append(ResearchNote.topic_type != "audio_memo")
         elif analysis_status == "completed":
             conditions.append(EssayAnalysisRecord.status == "completed")
         elif analysis_status == "uncompleted":

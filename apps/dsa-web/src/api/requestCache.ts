@@ -5,11 +5,17 @@ type CacheEntry<T> = {
 };
 
 const entries = new Map<string, CacheEntry<unknown>>();
+let generation = 0;
 
 type CachedQueryOptions = {
   freshMs: number;
   staleMs?: number;
   force?: boolean;
+};
+
+type CachedQueryContext = {
+  /** Whether this request still belongs to the current cache/session. */
+  isCurrent: () => boolean;
 };
 
 /**
@@ -20,7 +26,7 @@ type CachedQueryOptions = {
  */
 export async function cachedQuery<T>(
   key: string,
-  query: () => Promise<T>,
+  query: (context: CachedQueryContext) => Promise<T>,
   { freshMs, staleMs = freshMs, force = false }: CachedQueryOptions,
 ): Promise<T> {
   const now = Date.now();
@@ -33,19 +39,30 @@ export async function cachedQuery<T>(
     return current.inflight;
   }
 
-  const request = query().then((value) => {
-    entries.set(key, { value, updatedAt: Date.now() });
-    return value;
-  }).catch((error) => {
-    const latest = entries.get(key) as CacheEntry<T> | undefined;
-    if (latest?.inflight === request) {
-      if (latest.value !== undefined) entries.set(key, { value: latest.value, updatedAt: latest.updatedAt });
+  // Register ownership before invoking the loader, including its synchronous
+  // portion. Value-only invalidation keeps this identity; logout/force do not.
+  const entry: CacheEntry<T> = { value: current?.value, updatedAt: current?.updatedAt ?? 0 };
+  const isCurrent = () => entries.get(key) === entry;
+  const fail = (error: unknown): never => {
+    if (isCurrent()) {
+      if (entry.value !== undefined) entries.set(key, { value: entry.value, updatedAt: entry.updatedAt });
       else entries.delete(key);
     }
     throw error;
-  });
+  };
+  entries.set(key, entry);
+  let request: Promise<T>;
+  try {
+    request = query({ isCurrent }).then((value) => {
+      // A late response cannot replace a new request or a cleared session.
+      if (isCurrent()) entries.set(key, { value, updatedAt: Date.now() });
+      return value;
+    }).catch(fail);
+  } catch (error) {
+    return fail(error);
+  }
 
-  entries.set(key, { value: current?.value, updatedAt: current?.updatedAt ?? 0, inflight: request });
+  entry.inflight = request;
   if (!force && current?.value !== undefined && age <= staleMs) {
     void request.catch(() => undefined);
     return current.value;
@@ -59,8 +76,30 @@ export function invalidateCachedQueries(prefix: string): void {
   }
 }
 
+/** Invalidate one snapshot while retaining its pending request and deduplication. */
+export function invalidateCachedQueryValue(key: string): void {
+  const entry = entries.get(key);
+  if (entry?.inflight) {
+    entry.value = undefined;
+    entry.updatedAt = 0;
+  } else {
+    entries.delete(key);
+  }
+}
+
+/** Read an existing snapshot without fetching or extending its lifetime. */
+export function peekCachedQuery<T>(key: string): T | undefined {
+  return entries.get(key)?.value as T | undefined;
+}
+
 export function clearRequestCache(): void {
+  generation++;
   entries.clear();
+}
+
+/** Retire multi-step preloads when authentication clears the private cache. */
+export function getRequestCacheGeneration(): number {
+  return generation;
 }
 
 export const resetRequestCacheForTests = clearRequestCache;

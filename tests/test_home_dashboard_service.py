@@ -1,4 +1,27 @@
+from datetime import datetime
+from types import SimpleNamespace
+
+import pytest
+
 from src.services.home_dashboard_service import HomeDashboardService
+
+
+@pytest.fixture(autouse=True)
+def isolated_dashboard_runtime(tmp_path, monkeypatch):
+    """Existing quote adapters may construct repositories before their mocked read."""
+    from src.config import Config
+    from src.storage import DatabaseManager
+
+    monkeypatch.setenv("ENV_FILE", str(tmp_path / "unused.env"))
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "dashboard.db"))
+    monkeypatch.setenv("HOME_DASHBOARD_CACHE_PATH", str(tmp_path / "dashboard.json"))
+    Config.reset_instance()
+    DatabaseManager.reset_instance()
+    try:
+        yield
+    finally:
+        DatabaseManager.reset_instance()
+        Config.reset_instance()
 
 
 class FakeTushare:
@@ -163,6 +186,67 @@ def test_page_activation_can_wake_background_refresh_while_cache_is_fresh(monkey
     assert result["cache"]["hit"] is True
     assert result["cache"]["refreshing"] is True
     assert scheduled == [True]
+
+
+def test_cached_dashboard_overlays_newer_local_index_tick(monkeypatch):
+    class FakeMarketRepo:
+        def latest_index_bars(self, codes, frequency="1SEC"):
+            assert codes == ["000001.SH"]
+            assert frequency == "1SEC"
+            return {"000001.SH": SimpleNamespace(
+                timestamp=datetime(2026, 9, 3, 11, 30),
+                close=3958.19, pct_chg=0.43, open=3952.79,
+                high=3968.11, low=3950.98, amount=515_810_580_000,
+                data_source="tencent.snapshot",
+            )}
+
+    monkeypatch.setattr(
+        "src.repositories.market_data_repo.MarketDataRepository", FakeMarketRepo,
+    )
+    payload = {
+        "cn_indices": [{
+            "code": "000001.SH", "trade_date": "20260902", "close": 3941.39,
+            "change_pct": -0.97, "source": "tushare.index_daily",
+            "history": [{"date": "20260902", "value": 3941.39}],
+        }],
+    }
+
+    result = HomeDashboardService._overlay_local_index_quotes(payload)
+
+    assert result["cn_indices"][0]["close"] == 3958.19
+    assert result["cn_indices"][0]["change_pct"] == 0.43
+    assert result["cn_indices"][0]["update_time"] == "2026-09-03T11:30:00"
+    assert result["cn_indices"][0]["source"] == "tencent.snapshot"
+    assert payload["cn_indices"][0]["close"] == 3941.39
+
+
+def test_official_daily_close_is_not_overwritten_by_same_day_partial_snapshot(monkeypatch):
+    class FakeMarketRepo:
+        def latest_index_bars(self, codes, frequency="1SEC"):
+            return {"000001.SH": SimpleNamespace(
+                timestamp=datetime(2026, 9, 3, 14, 53), close=3900,
+                pct_chg=-1, open=3920, high=3930, low=3890,
+                amount=1000, data_source="tencent.snapshot",
+            )}
+
+    monkeypatch.setattr("src.repositories.market_data_repo.MarketDataRepository", FakeMarketRepo)
+    for raw_date in ["20260903", "2026-09-03"]:
+        payload = {"cn_indices": [{
+            "code": "000001.SH", "trade_date": raw_date,
+            "close": 3958.19, "source": "tushare.index_daily",
+        }]}
+        assert HomeDashboardService._overlay_local_index_quotes(payload) is payload
+
+
+def test_cold_start_chooses_newest_session_not_any_available_tick():
+    daily = SimpleNamespace(timestamp=datetime(2026, 9, 3))
+    for timestamp in [datetime(2026, 9, 2, 15), datetime(2026, 9, 3, 14, 53)]:
+        live = SimpleNamespace(timestamp=timestamp)
+        assert HomeDashboardService._newest_index_card_row(live, daily) is daily
+    live = SimpleNamespace(timestamp=datetime(2026, 9, 4, 9, 31))
+    assert HomeDashboardService._newest_index_card_row(live, daily) is live
+    assert HomeDashboardService._newest_index_card_row(None, daily) is daily
+    assert HomeDashboardService._newest_index_card_row(live, None) is live
 
 
 def test_current_day_breadth_rejects_previous_session_rows():

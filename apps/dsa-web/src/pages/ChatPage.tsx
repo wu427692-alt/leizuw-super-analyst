@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useUserAccess } from '../contexts/UserAccessContext';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChevronDown, SlidersHorizontal } from 'lucide-react';
@@ -149,10 +150,14 @@ const restoreActiveStockContextFromMessages = (messages: Message[]): ActiveStock
   return restoredContext;
 };
 
-const ChatPage: React.FC = () => {
+const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGlobals }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [input, setInput] = useState('');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [showSkillDesc, setShowSkillDesc] = useState<string | null>(null);
   const [mobileSkillPickerOpen, setMobileSkillPickerOpen] = useState(false);
@@ -183,6 +188,10 @@ const ChatPage: React.FC = () => {
   const messagesViewportRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isMountedRef = useRef(true);
+  const skillsRequestRef = useRef(0);
+  const deleteRequestRef = useRef(false);
+  const observedSessionParamRef = useRef<string | null | undefined>(undefined);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const sendToastTimerRef = useRef<number | null>(null);
   const followUpHydrationTokenRef = useRef(0);
   const followUpContextRef = useRef<ChatFollowUpContext | null>(null);
@@ -212,8 +221,9 @@ const ChatPage: React.FC = () => {
     document.title = '问股 - 乐子乌超级价值';
   }, []);
 
-  useEffect(() => () => {
-    isMountedRef.current = false;
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
   }, []);
 
   const loadWatchlist = useCallback(async () => {
@@ -284,11 +294,16 @@ const ChatPage: React.FC = () => {
     sessionId,
     sessions,
     sessionsLoading,
+    messagesLoading,
+    historyError,
+    sessionsError,
     chatError,
     loadSessions,
     loadInitialSession,
     switchSession,
     startStream,
+    retrySession,
+    stopStream,
     clearCompletionBadge,
   } = useAgentChatStore();
 
@@ -362,26 +377,51 @@ const ChatPage: React.FC = () => {
     clearCompletionBadge();
   }, [clearCompletionBadge]);
 
+  const requestedSessionId = searchParams.get('session')?.trim() || null;
   useEffect(() => {
-    loadInitialSession();
-  }, [loadInitialSession]);
+    if (observedSessionParamRef.current === undefined) {
+      observedSessionParamRef.current = requestedSessionId;
+      void loadInitialSession(requestedSessionId ?? undefined);
+    } else if (observedSessionParamRef.current !== requestedSessionId) {
+      observedSessionParamRef.current = requestedSessionId;
+      if (requestedSessionId && requestedSessionId !== sessionId) {
+        followUpHydrationTokenRef.current += 1;
+        followUpContextRef.current = null;
+        setActiveStockContext(null);
+        setActiveStockCode(null);
+        setInput('');
+        void switchSession(requestedSessionId);
+      }
+    }
+  }, [requestedSessionId, sessionId, loadInitialSession, switchSession]);
 
-  useEffect(() => {
-    agentApi.getSkills()
-      .then((res) => {
+  const loadSkills = useCallback(async () => {
+    const requestId = ++skillsRequestRef.current;
+    setSkillsLoading(true);
+    setSkillsError(null);
+    try {
+      const res = await agentApi.getSkills();
+      if (isMountedRef.current && requestId === skillsRequestRef.current) {
         setSkills(res.skills);
         const defaultId =
           res.default_skill_id ||
           res.skills[0]?.id ||
           '';
         setSelectedSkillIds(defaultId ? [defaultId] : []);
-      })
-      .catch((error) => {
-        console.error('Failed to load chat skills:', error);
-      });
+      }
+    } catch (error) {
+      if (isMountedRef.current && requestId === skillsRequestRef.current) {
+        setSkillsError(getParsedApiError(error).message || '分析策略暂未加载');
+      }
+    } finally {
+      if (isMountedRef.current && requestId === skillsRequestRef.current) setSkillsLoading(false);
+    }
   }, []);
 
+  useEffect(() => { void loadSkills(); }, [loadSkills]);
+
   useEffect(() => {
+    if (!canManageGlobals) return;
     let active = true;
 
     void systemConfigApi.getConfig(false)
@@ -409,11 +449,11 @@ const ChatPage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [canManageGlobals]);
 
   const updateContextCompressionEnabled = useCallback(
     async (nextEnabled: boolean) => {
-      if (!contextCompressionLoaded || contextCompressionSaving) {
+      if (!canManageGlobals || !contextCompressionLoaded || contextCompressionSaving) {
         return;
       }
 
@@ -444,6 +484,7 @@ const ChatPage: React.FC = () => {
       }
     },
     [
+      canManageGlobals,
       contextCompressionConfigVersion,
       contextCompressionEnabled,
       contextCompressionLoaded,
@@ -453,7 +494,7 @@ const ChatPage: React.FC = () => {
   );
 
   const availableSkillIds = new Set(skills.map((skill) => skill.id));
-  const quickQuestions = QUICK_QUESTIONS.filter((question) => availableSkillIds.size === 0 || availableSkillIds.has(question.skill));
+  const quickQuestions = QUICK_QUESTIONS.filter((question) => availableSkillIds.has(question.skill));
   const selectedSkillIdSet = new Set(selectedSkillIds);
   const skillLimitReached = selectedSkillIds.length >= MAX_SELECTED_SKILLS;
 
@@ -486,52 +527,88 @@ const ChatPage: React.FC = () => {
   }, []);
 
   const handleStartNewChat = useCallback(() => {
+    followUpHydrationTokenRef.current += 1;
     followUpContextRef.current = null;
+    setIsFollowUpContextLoading(false);
     setActiveStockContext(null);
     setActiveStockCode(null);
+    setInput('');
+    setDeleteError(null);
     requestScrollToBottom('auto');
     useAgentChatStore.getState().startNewChat();
+    observedSessionParamRef.current = null;
+    setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('session'); return next; }, { replace: true });
     setSidebarOpen(false);
-  }, [requestScrollToBottom]);
+  }, [requestScrollToBottom, setSearchParams]);
 
   const handleSwitchSession = useCallback((targetSessionId: string) => {
     if (targetSessionId === sessionId) {
       setSidebarOpen(false);
       return;
     }
+    followUpHydrationTokenRef.current += 1;
     followUpContextRef.current = null;
+    setIsFollowUpContextLoading(false);
     setActiveStockContext(null);
     setActiveStockCode(null);
+    setInput('');
     requestScrollToBottom('auto');
-    switchSession(targetSessionId);
+    observedSessionParamRef.current = targetSessionId;
+    setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set('session', targetSessionId); return next; });
+    void switchSession(targetSessionId);
     setSidebarOpen(false);
-  }, [requestScrollToBottom, sessionId, switchSession]);
+  }, [requestScrollToBottom, sessionId, switchSession, setSearchParams]);
 
   const confirmDelete = useCallback(() => {
-    if (!deleteConfirmId) return;
-    agentApi.deleteChatSession(deleteConfirmId)
+    if (!deleteConfirmId || deleteRequestRef.current) return;
+    const targetSessionId = deleteConfirmId;
+    deleteRequestRef.current = true;
+    setDeletingSessionId(targetSessionId);
+    setDeleteError(null);
+    agentApi.deleteChatSession(targetSessionId)
       .then(() => {
-        loadSessions();
-        if (deleteConfirmId === sessionId) {
+        if (!isMountedRef.current) return;
+        void loadSessions();
+        if (targetSessionId === useAgentChatStore.getState().sessionId) {
           handleStartNewChat();
         }
       })
       .catch((error) => {
-        console.error('Failed to delete chat session:', error);
+        if (isMountedRef.current) setDeleteError(getParsedApiError(error).message || '删除失败，请重试');
+      })
+      .finally(() => {
+        deleteRequestRef.current = false;
+        if (isMountedRef.current) setDeletingSessionId(null);
       });
     setDeleteConfirmId(null);
-  }, [deleteConfirmId, sessionId, loadSessions, handleStartNewChat]);
+  }, [deleteConfirmId, loadSessions, handleStartNewChat]);
 
-  // Handle follow-up from report page: ?stock=600519&name=贵州茅台&recordId=xxx
+  // Prepared research questions carry an explicit stock identity; report
+  // follow-ups may additionally hydrate their saved analysis by recordId.
   useEffect(() => {
     const preparedPrompt = searchParams.get('prompt')?.trim();
-    if (preparedPrompt) {
-      setInput(preparedPrompt.slice(0, 12000));
-      setSearchParams({}, { replace: true });
-      return;
-    }
     const stock = sanitizeFollowUpStockCode(searchParams.get('stock'));
     const name = sanitizeFollowUpStockName(searchParams.get('name'));
+    if (preparedPrompt) {
+      if (stock) {
+        // Do not infer a route's company from prose: comparing facts with
+        // expectations is not a request to retain the previous session stock.
+        // A prepared question is not a request to attach an older report.
+        followUpHydrationTokenRef.current += 1;
+        const context = { stock_code: stock, stock_name: name };
+        followUpContextRef.current = context;
+        setActiveStockCode(stock);
+        setActiveStockContext(context);
+        setIsFollowUpContextLoading(false);
+      }
+      setInput(preparedPrompt.slice(0, 12000));
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        for (const key of ['prompt', 'stock', 'name', 'recordId']) next.delete(key);
+        return next;
+      }, { replace: true });
+      return;
+    }
     const recordId = parseFollowUpRecordId(searchParams.get('recordId'));
 
     if (!stock) return;
@@ -564,13 +641,17 @@ const ChatPage: React.FC = () => {
         setIsFollowUpContextLoading(false);
       }
     });
-    setSearchParams({}, { replace: true });
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const key of ['stock', 'name', 'recordId']) next.delete(key);
+      return next;
+    }, { replace: true });
   }, [searchParams, setSearchParams]);
 
   const handleSend = useCallback(
     async (overrideMessage?: string, overrideSkillIds?: string[]) => {
       const msgText = (overrideMessage ?? input).trim();
-      if (!msgText || loading) return;
+      if (!msgText || loading || messagesLoading || historyError) return;
       const usedSkillIds = normalizeSelectedSkillIds(overrideSkillIds ?? selectedSkillIds);
       const usedSkillNames = usedSkillIds.length > 0 ? getSkillNames(usedSkillIds) : ['通用'];
 
@@ -599,17 +680,19 @@ const ChatPage: React.FC = () => {
 
       setInput('');
       setMobileSkillPickerOpen(false);
+      observedSessionParamRef.current = sessionId;
+      setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set('session', sessionId); return next; }, { replace: true });
       requestScrollToBottom('smooth');
       await startStream(payload, {
         skillNames: usedSkillNames,
         skillName: usedSkillNames.join('、'),
       });
     },
-    [activeStockContext, getSkillNames, input, loading, normalizeSelectedSkillIds, requestScrollToBottom, selectedSkillIds, sessionId, startStream],
+    [activeStockContext, getSkillNames, input, loading, messagesLoading, historyError, normalizeSelectedSkillIds, requestScrollToBottom, selectedSkillIds, sessionId, startStream, setSearchParams],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       handleSend();
     }
@@ -792,14 +875,20 @@ const ChatPage: React.FC = () => {
         </button>
       </div>
       <ScrollArea testId="chat-session-list-scroll" viewportClassName="p-3">
-        {sessionsLoading ? (
+        {sessionsError && (
+          <div className="mb-3 space-y-2 text-xs" role="status">
+            <p className="text-secondary-text">对话列表暂未更新：{sessionsError.message}</p>
+            <Button variant="secondary" size="sm" disabled={sessionsLoading} onClick={() => void loadSessions()}>重试对话列表</Button>
+          </div>
+        )}
+        {sessionsLoading && sessions.length === 0 ? (
           <DashboardStateBlock
             loading
             compact
             title="加载对话中..."
             className="rounded-2xl border border-dashed border-border/50 bg-surface/30"
           />
-        ) : sessions.length === 0 ? (
+        ) : sessions.length === 0 && !sessionsError ? (
           <DashboardStateBlock
             compact
             title="暂无历史对话"
@@ -842,6 +931,7 @@ const ChatPage: React.FC = () => {
                     setDeleteConfirmId(s.session_id);
                   }}
                   aria-label={`删除对话 ${s.title}`}
+                  disabled={deletingSessionId !== null}
                 >
                   <svg
                     className="w-3.5 h-3.5"
@@ -973,7 +1063,7 @@ const ChatPage: React.FC = () => {
                     </Button>
                   </span>
                 </Tooltip>
-                <Tooltip content="发送到已配置的通知机器人/邮箱">
+                {canManageGlobals && <Tooltip content="发送到已配置的通知机器人/邮箱">
                   <span className="inline-flex">
                     <Button
                       variant="action-primary"
@@ -1037,13 +1127,14 @@ const ChatPage: React.FC = () => {
                       发送
                     </Button>
                   </span>
-                </Tooltip>
+                </Tooltip>}
               </div>
             )}
           </div>
           <p className="text-secondary-text text-sm">
             向 AI 询问个股分析，获取基于技能视角的交易建议与实时决策报告。
           </p>
+          {deleteError && <InlineAlert variant="danger" title="对话未删除" message={deleteError} />}
           {sendToast ? (
             <InlineAlert
               variant={sendToast.type === 'success' ? 'success' : 'danger'}
@@ -1063,7 +1154,17 @@ const ChatPage: React.FC = () => {
             viewportClassName="space-y-6 p-4 md:p-6"
             testId="chat-message-scroll"
           >
-            {messages.length === 0 && !loading ? (
+            {messagesLoading && (
+              <DashboardStateBlock loading compact title="正在读取历史会话…" description="读取完成后可继续提问，不会重新发起 AI 分析。" />
+            )}
+            {historyError && (
+              <div className="space-y-2" role="status">
+                <ApiErrorAlert error={historyError} />
+                <Button variant="secondary" size="sm" disabled={messagesLoading || loading} onClick={() => void retrySession()}>重新读取历史会话</Button>
+                <p className="text-xs text-muted-text">已加载内容保留。这里只重新读取记录，不会重复调用 AI。</p>
+              </div>
+            )}
+            {messages.length === 0 && !loading && !messagesLoading && !historyError ? (
               <div className="flex h-full items-center justify-center">
                 <EmptyState
                   title="开始问股"
@@ -1244,7 +1345,25 @@ const ChatPage: React.FC = () => {
           {/* Input area */}
           <div className="chat-composer border-t border-white/6 bg-card/88 p-4 md:p-6 relative z-20">
             <div className="space-y-3">
-              {chatError ? <ApiErrorAlert error={chatError} /> : null}
+              {chatError ? (
+                <div className="space-y-2">
+                  <ApiErrorAlert error={chatError} />
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" disabled={messagesLoading || loading} onClick={() => void retrySession()}>重新读取会话</Button>
+                    <Button variant="secondary" size="sm" disabled={loading || !messages.some((message) => message.role === 'user')} onClick={() => {
+                      const previous = [...messages].reverse().find((message) => message.role === 'user');
+                      if (previous) { setInput(previous.content); inputRef.current?.focus(); }
+                    }}>重新编辑上次问题</Button>
+                  </div>
+                  <p className="text-xs text-muted-text">不会自动重新发送问题；后台可能已保存结果，请先读取会话。</p>
+                  {progressSteps.length > 0 && (
+                    <details className="text-xs text-secondary-text">
+                      <summary className="cursor-pointer">查看断开前的处理进度</summary>
+                      <div className="mt-2 max-h-32 overflow-y-auto">{renderThinkingDetails(progressSteps)}</div>
+                    </details>
+                  )}
+                </div>
+              ) : null}
               {isFollowUpContextLoading ? (
                 <InlineAlert
                   variant="info"
@@ -1253,7 +1372,7 @@ const ChatPage: React.FC = () => {
                   className="rounded-xl px-3 py-2 text-xs shadow-none"
                 />
               ) : null}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/6 bg-surface/25 px-3 py-2">
+              {canManageGlobals && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/6 bg-surface/25 px-3 py-2">
                 <label
                   className={cn(
                     'inline-flex items-center gap-2 text-sm',
@@ -1279,8 +1398,8 @@ const ChatPage: React.FC = () => {
                       ? '已启用'
                       : '未启用'}
                 </span>
-              </div>
-              {contextCompressionError ? (
+              </div>}
+              {canManageGlobals && contextCompressionError ? (
                 <InlineAlert
                   variant="danger"
                   title="上下文压缩设置未保存"
@@ -1288,6 +1407,12 @@ const ChatPage: React.FC = () => {
                   className="rounded-xl px-3 py-2 text-xs shadow-none"
                 />
               ) : null}
+              {skillsError && (
+                <div className="flex flex-wrap items-center gap-2 text-xs" role="status">
+                  <span className="text-secondary-text">分析策略暂未加载，可直接使用通用分析。{skillsError}</span>
+                  <Button variant="secondary" size="sm" disabled={skillsLoading} onClick={() => void loadSkills()}>重新加载策略</Button>
+                </div>
+              )}
               {skills.length > 0 && (
                 <div className="space-y-2">
                   <button
@@ -1394,11 +1519,12 @@ const ChatPage: React.FC = () => {
 
               <div className="flex items-end gap-3">
                 <textarea
+                  ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="例如：分析 600519 / 茅台现在适合买入吗？ (Enter 发送, Shift+Enter 换行)"
-                  disabled={loading}
+                  disabled={loading || messagesLoading || Boolean(historyError)}
                   rows={1}
                   className="input-surface input-focus-glow flex-1 min-h-[44px] max-h-[200px] rounded-xl border bg-transparent px-4 py-2.5 text-sm transition-all focus:outline-none resize-none disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ height: 'auto' }}
@@ -1408,22 +1534,28 @@ const ChatPage: React.FC = () => {
                     t.style.height = `${Math.min(t.scrollHeight, 200)}px`;
                   }}
                 />
-                <Button
+                {loading ? <Button variant="secondary" onClick={stopStream}>停止等待</Button> : <Button
                   variant="primary"
                   onClick={() => handleSend()}
-                  disabled={!input.trim() || loading}
-                  isLoading={loading}
+                  disabled={!input.trim() || messagesLoading || Boolean(historyError)}
                   className="btn-primary flex-shrink-0"
                 >
                   发送
-                </Button>
+                </Button>}
               </div>
+              {loading && <p className="text-xs text-muted-text">停止等待仅断开当前连接，不保证取消后台分析。</p>}
             </div>
           </div>
         </div>
       </div>
     </div>
   );
+};
+
+const ChatPage: React.FC = () => {
+  const { accessEnabled, loggedIn, user, authMethod } = useUserAccess();
+  const identity = `${accessEnabled}:${loggedIn}:${user?.id ?? 'none'}:${user?.status ?? ''}:${authMethod ?? ''}`;
+  return <ChatWorkspace key={identity} canManageGlobals={!accessEnabled || (loggedIn && authMethod === 'admin')} />;
 };
 
 export default ChatPage;

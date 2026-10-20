@@ -83,5 +83,7 @@ describe('Shell', () => {
 
     expect(screen.getByRole('link', { name: '管理员' })).toHaveAttribute('href', '/admin');
     expect(screen.queryByRole('button', { name: '退出' })).not.toBeInTheDocument();
+    expect(screen.getByText('page content').closest('.glass-workspace')).not.toBeNull();
+    expect(screen.getByRole('main')).toContainElement(screen.getByText('page content'));
   });
 });

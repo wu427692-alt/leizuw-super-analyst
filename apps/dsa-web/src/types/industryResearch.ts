@@ -214,3 +214,15 @@ export type IndustryResearchProject = {
   updatedAt: string;
   completedAt?: string;
 };
+
+export type IndustryResearchProjectFilter = 'all' | 'running' | 'completed' | 'limited' | 'failed';
+
+export type IndustryResearchProjectList = {
+  items: IndustryResearchProject[];
+  total: number;
+  limit?: number;
+  offset?: number;
+  // Optional during rolling deployment; new servers return counts for the
+  // current title query across all pages, before applying the status filter.
+  counts?: Record<IndustryResearchProjectFilter, number>;
+};

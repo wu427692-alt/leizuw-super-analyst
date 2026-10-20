@@ -9,12 +9,15 @@ import { ThemeToggle } from '../theme/ThemeToggle';
 import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { MobileBottomNav } from './MobileBottomNav';
+import './GlassWorkspace.css';
 
 type ShellProps = {
   children?: React.ReactNode;
+  /** Isolated entries share this shell but navigate other modules as documents. */
+  documentNavigation?: boolean;
 };
 
-export const Shell: React.FC<ShellProps> = ({ children }) => {
+export const Shell: React.FC<ShellProps> = ({ children, documentNavigation = false }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const collapsed = false;
   const { t } = useUiLanguage();
@@ -37,7 +40,7 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
   }, [mobileOpen]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="glass-workspace min-h-screen bg-background text-foreground">
       <header className="mobile-app-bar lg:hidden">
         <div className="mobile-app-bar__brand">
           <span><BarChart3 aria-hidden="true" /></span>
@@ -60,7 +63,7 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
           aria-label={t('layout.desktopSidebar')}
         >
           <div className="w-full min-w-0">
-            <SidebarNav collapsed={collapsed} variant="rail" onNavigate={() => setMobileOpen(false)} />
+            <SidebarNav documentNavigation={documentNavigation} collapsed={collapsed} variant="rail" onNavigate={() => setMobileOpen(false)} />
           </div>
         </aside>
 
@@ -69,7 +72,7 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
         </main>
       </div>
 
-      <MobileBottomNav />
+      <MobileBottomNav documentNavigation={documentNavigation} />
 
       <Drawer
         isOpen={mobileOpen}
@@ -79,7 +82,7 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
         zIndex={90}
         side="left"
       >
-        <SidebarNav onNavigate={() => setMobileOpen(false)} />
+        <SidebarNav documentNavigation={documentNavigation} onNavigate={() => setMobileOpen(false)} />
       </Drawer>
     </div>
   );

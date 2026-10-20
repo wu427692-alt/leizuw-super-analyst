@@ -432,8 +432,10 @@ class ConceptThemeService:
     """Shared concept catalog, evidence weights, and return attribution service."""
 
     _market_date_lock = threading.Lock()
+    _market_date_upstream_lock = threading.Lock()
     _market_date_value: Optional[date] = None
     _market_date_checked_at: Optional[datetime] = None
+    _market_date_source: Optional[str] = None
     _taxonomy_lock = threading.Lock()
     _taxonomy_cache: Dict[int, Tuple[datetime, Dict[str, Any]]] = {}
     _overview_cache_lock = threading.Lock()
@@ -494,49 +496,91 @@ class ConceptThemeService:
             self.__class__._taxonomy_cache[cache_key] = (now, value)
             return value
 
-    def latest_market_date(self) -> date:
+    def latest_market_date(self, *, allow_upstream: bool = False) -> date:
+        """Return the latest completed market date without surprising read I/O.
+
+        User-facing concept reads call this with the default and resolve from
+        the local price ledger only.  Background refresh paths may opt into a
+        provider calendar lookup.  A local cache is deliberately upgraded once
+        by such a background caller so a preceding GET cannot suppress the
+        authoritative calendar check for the whole cache window.
+        """
         now = datetime.now()
-        cached_at = self.__class__._market_date_checked_at
-        cached_value = self.__class__._market_date_value
-        if cached_value is not None and cached_at is not None and (now - cached_at).total_seconds() < 1800:
+        upstream_requested = allow_upstream and bool(getattr(self.gateway, "available", False))
+
+        def cached(*, require_upstream: bool) -> Optional[date]:
+            checked_at = self.__class__._market_date_checked_at
+            value = self.__class__._market_date_value
+            source = self.__class__._market_date_source
+            if value is None or checked_at is None or (datetime.now() - checked_at).total_seconds() >= 1800:
+                return None
+            if require_upstream and source not in {"upstream", "upstream_fallback"}:
+                return None
+            return value
+
+        cached_value = cached(require_upstream=upstream_requested)
+        if cached_value is not None:
             return cached_value
 
-        with self.__class__._market_date_lock:
-            cached_at = self.__class__._market_date_checked_at
-            cached_value = self.__class__._market_date_value
-            if cached_value is not None and cached_at is not None and (now - cached_at).total_seconds() < 1800:
-                return cached_value
-            # Constituents and close-to-close attribution use the latest completed
-            # exchange session. A malformed weekend StockDaily row must never be
-            # forwarded as a provider trade_date (some concept APIs then return 0 rows).
-            cutoff = date.today() if now.hour >= 16 else date.today() - timedelta(days=1)
-            resolved: Optional[date] = None
-            if getattr(self.gateway, "available", False):
-                try:
-                    calendar = self.gateway.query("trade_cal", params={
-                        "exchange": "SSE",
-                        "start_date": (cutoff - timedelta(days=24)).strftime("%Y%m%d"),
-                        "end_date": cutoff.strftime("%Y%m%d"),
-                        "is_open": "1",
-                    })["rows"]
-                    candidates = [_parse_date(row.get("cal_date")) for row in calendar]
-                    resolved = max((item for item in candidates if item and item <= cutoff), default=None)
-                except FinancialDataUpstreamError:
-                    logger.debug("concept market calendar unavailable; using local completed session")
-            if resolved is None:
-                with self._read_scope() as session:
-                    candidates = session.execute(
-                        select(StockDaily.date).where(StockDaily.date <= cutoff)
-                        .distinct().order_by(desc(StockDaily.date)).limit(12)
-                    ).scalars().all()
-                resolved = next((item for item in candidates if item.weekday() < 5), None)
-            if resolved is None:
-                resolved = cutoff
-                while resolved.weekday() >= 5:
-                    resolved -= timedelta(days=1)
-            self.__class__._market_date_value = resolved
-            self.__class__._market_date_checked_at = now
+        # Constituents and close-to-close attribution use the latest completed
+        # exchange session. A malformed weekend StockDaily row must never be
+        # forwarded as a provider trade_date (some concept APIs then return 0 rows).
+        cutoff = date.today() if now.hour >= 16 else date.today() - timedelta(days=1)
+        if not upstream_requested:
+            resolved = self._local_completed_market_date(cutoff)
+            # Never hold this shared lock while doing database or network I/O.
+            # A foreground read therefore cannot queue behind a slow calendar provider.
+            with self.__class__._market_date_lock:
+                already_cached = cached(require_upstream=False)
+                if already_cached is not None:
+                    return already_cached
+                self.__class__._market_date_value = resolved
+                self.__class__._market_date_checked_at = datetime.now()
+                self.__class__._market_date_source = "local"
             return resolved
+
+        # Only background/write paths enter this lock.  It deduplicates the
+        # provider request without blocking foreground callers, which use the
+        # separate short cache-write lock above.
+        with self.__class__._market_date_upstream_lock:
+            cached_value = cached(require_upstream=True)
+            if cached_value is not None:
+                return cached_value
+            resolved: Optional[date] = None
+            source = "upstream_fallback"
+            try:
+                calendar = self.gateway.query("trade_cal", params={
+                    "exchange": "SSE",
+                    "start_date": (cutoff - timedelta(days=24)).strftime("%Y%m%d"),
+                    "end_date": cutoff.strftime("%Y%m%d"),
+                    "is_open": "1",
+                })["rows"]
+                candidates = [_parse_date(row.get("cal_date")) for row in calendar]
+                resolved = max((item for item in candidates if item and item <= cutoff), default=None)
+                source = "upstream" if resolved is not None else "upstream_fallback"
+            except Exception as exc:  # Provider adapters may wrap transport errors differently.
+                logger.debug("concept market calendar unavailable; using local completed session: %s", exc)
+            if resolved is None:
+                resolved = self._local_completed_market_date(cutoff)
+            with self.__class__._market_date_lock:
+                self.__class__._market_date_value = resolved
+                self.__class__._market_date_checked_at = datetime.now()
+                self.__class__._market_date_source = source
+            return resolved
+
+    def _local_completed_market_date(self, cutoff: date) -> date:
+        with self._read_scope() as session:
+            candidates = session.execute(
+                select(StockDaily.date).where(StockDaily.date <= cutoff)
+                .distinct().order_by(desc(StockDaily.date)).limit(12)
+            ).scalars().all()
+        resolved = next((item for item in candidates if item.weekday() < 5), None)
+        if resolved is not None:
+            return resolved
+        resolved = cutoff
+        while resolved.weekday() >= 5:
+            resolved -= timedelta(days=1)
+        return resolved
 
     def _semantic_cluster_for(self, canonical_name: str, taxonomy: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
         """Resolve a canonical theme to one independent economic narrative.
@@ -596,7 +640,7 @@ class ConceptThemeService:
     def sync_catalog(self, *, market_date: Optional[date] = None) -> Dict[str, Any]:
         if not self.gateway.available:
             raise ConceptThemeError("Tushare 未配置，无法更新题材目录")
-        target = market_date or self.latest_market_date()
+        target = market_date or self.latest_market_date(allow_upstream=True)
         run_id = self._start_run("catalog", target, "读取六套题材目录")
         source_stats: Dict[str, Any] = {}
         normalized: List[Dict[str, Any]] = []
@@ -692,11 +736,61 @@ class ConceptThemeService:
         exposures = self.calculate_canonical_exposures(snapshot["canonical_name"], horizon_days=60) if calculate else 0
         return {"theme_id": theme_id, "received": len(rows), "saved": saved, "exposures": exposures}
 
+    def refresh_theme_bundle(self, theme_id: int, *, horizon_days: int = 60) -> Dict[str, Any]:
+        """Fill all source nodes for one canonical theme in a worker process.
+
+        This contains the former ``theme_detail(refresh_if_empty=True)`` write
+        work so a GET can stay a bounded database read while preserving the
+        multi-provider consensus semantics.
+        """
+        horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
+        current_market_date = self.latest_market_date(allow_upstream=True)
+        with self._read_scope() as session:
+            theme = session.get(ConceptThemeRecord, int(theme_id))
+            if theme is None:
+                raise ConceptThemeError("题材不存在")
+            canonical = theme.canonical_name
+            raw_themes = session.execute(
+                select(ConceptThemeRecord).where(ConceptThemeRecord.canonical_name == canonical)
+                .order_by(desc(ConceptThemeRecord.heat_score))
+            ).scalars().all()
+            theme_ids = [row.id for row in raw_themes]
+            member_counts = dict(session.execute(select(
+                ConceptMembershipRecord.theme_id, func.count(ConceptMembershipRecord.id)
+            ).where(
+                ConceptMembershipRecord.theme_id.in_(theme_ids), ConceptMembershipRecord.active.is_(True)
+            ).group_by(ConceptMembershipRecord.theme_id)).all()) if theme_ids else {}
+            exposure_total = int(session.execute(select(func.count(ConceptExposureRecord.id)).where(
+                ConceptExposureRecord.canonical_name == canonical,
+                ConceptExposureRecord.horizon_days == horizon,
+                ConceptExposureRecord.as_of_date == current_market_date,
+            )).scalar_one())
+
+        refreshed_sources = 0
+        failed_sources = 0
+        for raw_theme in raw_themes[:8]:
+            if int(member_counts.get(raw_theme.id, 0)) > 0:
+                continue
+            try:
+                self.refresh_theme(raw_theme.id, calculate=False)
+                refreshed_sources += 1
+            except Exception as exc:  # One unavailable source must not hide usable providers.
+                failed_sources += 1
+                logger.warning("concept source node refresh failed: %s %s", raw_theme.id, exc)
+        exposures = 0
+        if exposure_total == 0 or refreshed_sources:
+            exposures = self.calculate_canonical_exposures(canonical, horizon_days=horizon)
+        return {
+            "theme_id": int(theme_id), "canonical_name": canonical, "horizon_days": horizon,
+            "refreshed_sources": refreshed_sources, "failed_sources": failed_sources,
+            "exposures": exposures,
+        }
+
     def refresh_stock(self, ts_code: str, *, calculate: bool = True) -> Dict[str, Any]:
         code = _ts_code(ts_code)
         if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", code):
             raise ConceptThemeError("股票代码格式不正确")
-        target = self.latest_market_date()
+        target = self.latest_market_date(allow_upstream=True)
         day_text = target.strftime("%Y%m%d")
         catalog = self._theme_lookup()
         fetched: List[Tuple[str, Dict[str, Any]]] = []
@@ -762,6 +856,38 @@ class ConceptThemeService:
             for canonical in canonicals:
                 exposure_count += self.calculate_canonical_exposures(canonical, horizon_days=60, only_stock=code)
         return {"ts_code": code, "memberships": saved, "exposures": exposure_count, "sources": source_stats}
+
+    def refresh_stock_bundle(self, ts_code: str, *, horizon_days: int = 60) -> Dict[str, Any]:
+        """Fill missing memberships and the specifically requested horizon."""
+        code = _ts_code(ts_code)
+        if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", code):
+            raise ConceptThemeError("股票代码格式不正确")
+        horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
+
+        def canonical_names() -> List[str]:
+            with self._read_scope() as session:
+                return list(session.execute(select(ConceptThemeRecord.canonical_name).join(
+                    ConceptMembershipRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+                ).where(
+                    ConceptMembershipRecord.ts_code == code,
+                    ConceptMembershipRecord.active.is_(True),
+                ).distinct()).scalars().all())
+
+        canonicals = canonical_names()
+        membership_result: Dict[str, Any] = {}
+        if not canonicals:
+            membership_result = self.refresh_stock(code, calculate=False)
+            canonicals = canonical_names()
+        exposures = sum(
+            self.calculate_canonical_exposures(canonical, horizon_days=horizon, only_stock=code)
+            for canonical in canonicals
+        )
+        return {
+            "ts_code": code, "horizon_days": horizon,
+            "memberships": int(membership_result.get("memberships") or 0),
+            "exposures": exposures, "sources": membership_result.get("sources") or {},
+            "canonical_themes": len(canonicals),
+        }
 
     def overview(
         self, *, query: str = "", theme_type: str = "", source: str = "", family: str = "", cluster: str = "",
@@ -938,7 +1064,9 @@ class ConceptThemeService:
                 with self.__class__._overview_cache_lock:
                     self.__class__._overview_cache[cache_key] = (now, deepcopy(result))
                 return result
-            latest_run = session.execute(select(ConceptSyncRunRecord).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
+            latest_run = session.execute(select(ConceptSyncRunRecord).where(
+                ConceptSyncRunRecord.run_type == "catalog",
+            ).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
             source_counts = dict(session.execute(
                 select(ConceptThemeRecord.source, func.count(ConceptThemeRecord.id)).group_by(ConceptThemeRecord.source)
             ).all())
@@ -1079,20 +1207,14 @@ class ConceptThemeService:
                 ConceptExposureRecord.horizon_days == horizon,
                 ConceptExposureRecord.as_of_date == current_market_date,
             )).scalar_one())
-        if refresh_if_empty:
-            # Fill every source node belonging to the canonical theme. One
-            # provider alone cannot form market consensus.
-            refreshed_source = False
-            for raw_theme in raw_themes[:8]:
-                if int(member_counts.get(raw_theme.id, 0)) > 0:
-                    continue
-                try:
-                    self.refresh_theme(raw_theme.id, calculate=False)
-                    refreshed_source = True
-                except Exception as exc:  # One unavailable source must not hide the usable sources.
-                    logger.warning("concept source node refresh failed: %s %s", raw_theme.id, exc)
-            if exposure_total == 0 or refreshed_source:
-                self.calculate_canonical_exposures(canonical, horizon_days=horizon)
+        # ``refresh_if_empty`` is retained as an API compatibility hint.  The
+        # endpoint turns it into a durable worker request; reads never contact
+        # providers or calculate exposure inline.
+        missing_source_nodes = [
+            int(raw_theme.id) for raw_theme in raw_themes[:8]
+            if int(member_counts.get(raw_theme.id, 0)) == 0
+        ]
+        refresh_needed = bool(missing_source_nodes or exposure_total == 0)
         with self._read_scope() as session:
             raw_themes = session.execute(
                 select(ConceptThemeRecord).where(ConceptThemeRecord.canonical_name == canonical)
@@ -1152,6 +1274,8 @@ class ConceptThemeService:
             "history": self._canonical_snapshot_history(canonical, days=20),
             "related_themes": self._related_theme_affinity(canonical, list(stocks)),
             "horizon_days": horizon,
+            "refresh_needed": refresh_needed,
+            "missing_source_nodes": missing_source_nodes,
             "methodology": self.methodology(),
         }
 
@@ -1726,13 +1850,32 @@ class ConceptThemeService:
 
     def stock_lens(self, ts_code: str, *, refresh_if_empty: bool = True, horizon_days: int = 60) -> Dict[str, Any]:
         code = _ts_code(ts_code)
+        if not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", code):
+            raise ConceptThemeError("股票代码格式不正确")
         horizon = min((20, 60, 120), key=lambda item: abs(item - int(horizon_days)))
+        current_market_date = self.latest_market_date()
         with self._read_scope() as session:
-            count = int(session.execute(select(func.count(ConceptMembershipRecord.id)).where(
-                ConceptMembershipRecord.ts_code == code, ConceptMembershipRecord.active.is_(True)
-            )).scalar_one())
-        if count == 0 and refresh_if_empty:
-            self.refresh_stock(code, calculate=True)
+            membership_canonicals = set(session.execute(select(
+                ConceptThemeRecord.canonical_name,
+            ).join(
+                ConceptMembershipRecord, ConceptMembershipRecord.theme_id == ConceptThemeRecord.id,
+            ).where(
+                ConceptMembershipRecord.ts_code == code,
+                ConceptMembershipRecord.active.is_(True),
+            ).distinct()).scalars().all())
+            current_exposure_canonicals = set(session.execute(select(
+                ConceptExposureRecord.canonical_name,
+            ).where(
+                ConceptExposureRecord.ts_code == code,
+                ConceptExposureRecord.horizon_days == horizon,
+                ConceptExposureRecord.as_of_date == current_market_date,
+            ).distinct()).scalars().all())
+        # The endpoint may enqueue this request, but this method itself remains
+        # read-only even when legacy callers pass refresh_if_empty=True.
+        refresh_needed = (
+            not membership_canonicals
+            or not membership_canonicals.issubset(current_exposure_canonicals)
+        )
         with self._read_scope() as session:
             rows = session.execute(
                 select(ConceptMembershipRecord, ConceptThemeRecord)
@@ -1845,6 +1988,7 @@ class ConceptThemeService:
                 "method": "按公司事实标题与摘要做可审计语义归类；方向只描述证据措辞，不等于股价方向或因果 Alpha。",
             },
             "horizon_days": horizon,
+            "refresh_needed": refresh_needed,
             "summary": {
                 "theme_count": len(themes), "source_count": _independent_source_count(
                     source for item in themes for source in item["sources"]
@@ -2056,7 +2200,7 @@ class ConceptThemeService:
         self, canonical_name: str, *, horizon_days: int = 60, only_stock: Optional[str] = None,
     ) -> int:
         horizon = max(20, min(int(horizon_days), 250))
-        as_of = self.latest_market_date()
+        as_of = self.latest_market_date(allow_upstream=True)
         start = as_of - timedelta(days=max(120, horizon * 3))
         with self._read_scope() as session:
             memberships = session.execute(
@@ -2344,7 +2488,7 @@ class ConceptThemeService:
         """Incrementally add 20/120-day profiles for priority research stocks."""
         stock_limit = max(1, min(int(stock_limit), 10))
         themes_per_stock = max(1, min(int(themes_per_stock), 8))
-        market_date = self.latest_market_date()
+        market_date = self.latest_market_date(allow_upstream=True)
         with self._read_scope() as session:
             watchlist_codes = [_ts_code(code) for code in session.execute(
                 select(UserWatchlistItem.symbol).distinct().limit(stock_limit * 3)
@@ -2497,7 +2641,9 @@ class ConceptThemeService:
 
     def sync_status(self) -> Dict[str, Any]:
         with self._read_scope() as session:
-            latest = session.execute(select(ConceptSyncRunRecord).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
+            latest = session.execute(select(ConceptSyncRunRecord).where(
+                ConceptSyncRunRecord.run_type == "catalog",
+            ).order_by(desc(ConceptSyncRunRecord.id)).limit(1)).scalar_one_or_none()
             counts = {
                 "themes": int(session.execute(select(func.count(ConceptThemeRecord.id))).scalar_one()),
                 "memberships": int(session.execute(select(func.count(ConceptMembershipRecord.id))).scalar_one()),
@@ -2608,7 +2754,7 @@ class ConceptThemeService:
             return {"dates": 0, "saved": 0, "deferred": 1}
         days = max(5, min(int(days), 60))
         dates_per_run = max(1, min(int(dates_per_run), 8))
-        latest = self.latest_market_date()
+        latest = self.latest_market_date(allow_upstream=True)
         trade_dates: List[date] = []
         try:
             calendar = self.gateway.query("trade_cal", params={
@@ -2826,7 +2972,7 @@ class ConceptThemeService:
 
     def _fetch_theme_members(self, theme: Dict[str, Any]) -> List[Dict[str, Any]]:
         code = theme["source_code"]
-        day_text = (self.latest_market_date()).strftime("%Y%m%d")
+        day_text = self.latest_market_date(allow_upstream=True).strftime("%Y%m%d")
         source = theme["source"]
         if source == "ths":
             return self.gateway.query("ths_member", params={"ts_code": code})["rows"]

@@ -14,7 +14,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from sqlalchemy import and_, asc, case, desc, func, or_, select
+from sqlalchemy import and_, asc, case, desc, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from src.services.financial_data_service import FinancialDataService
 from src.storage import (
@@ -32,10 +33,17 @@ _FIELDS = [
 ]
 _DEEP_TERMS = ("深度", "专题", "全景", "产业链", "白皮书", "年度策略", "投资策略")
 _QUICK_TERMS = ("日报", "周报", "早报", "晨报", "快评", "点评")
+_ACTIVE_SYNC_STATUSES = ("queued", "running")
+_SYNC_LEASE = timedelta(minutes=15)
+_SYNC_HEARTBEAT_SECONDS = 30
 
 
 class ResearchReportLibraryError(RuntimeError):
     """Safe error exposed by the report-library API."""
+
+
+class _ReportSyncLeaseLost(RuntimeError):
+    """Another process owns this source; the old collector must stop writing."""
 
 
 class ResearchReportLibraryService:
@@ -55,7 +63,8 @@ class ResearchReportLibraryService:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="report-library")
         self._run_lock = threading.RLock()
         self._future = None
-        self._repair_interrupted_state()
+        # Construction is also used by read-only HTTP routes in other
+        # processes. It must not relabel a live collector as interrupted.
 
     @classmethod
     def get_instance(cls) -> "ResearchReportLibraryService":
@@ -74,21 +83,31 @@ class ResearchReportLibraryService:
     def ensure_background_sync(self) -> Dict[str, Any]:
         """Start the two-year backfill or a short incremental refresh when due."""
         status = self.status()
-        if status["status"] in {"queued", "running"}:
-            return status
         today = date.today()
+        if status["status"] in (*_ACTIVE_SYNC_STATUSES, "failed"):
+            heartbeat = self._parse_datetime(status.get("updated_at") or status.get("started_at"))
+            if status["status"] in _ACTIVE_SYNC_STATUSES and heartbeat and utc_naive_now() - heartbeat < _SYNC_LEASE:
+                return status
+            # Only the background entry point may reclaim an expired lease.
+            # Preserve an interrupted request's scope instead of inventing a
+            # second full-history request or silently discarding its range.
+            return self.start_sync(
+                start_date=self._parse_date(status.get("start_date")) or today - timedelta(days=14),
+                end_date=self._parse_date(status.get("end_date")) or today,
+                only_if_due=True,
+            )
         earliest = self._parse_date(status.get("earliest_trade_date"))
-        latest = self._parse_date(status.get("latest_trade_date"))
         completed = self._parse_datetime(status.get("completed_at"))
         due = completed is None or utc_naive_now() - completed >= timedelta(hours=6)
         target_start = today - timedelta(days=730)
         # The exact boundary can be a weekend/holiday with no published report.
         needs_two_years = not status["total"] or earliest is None or earliest > target_start + timedelta(days=14)
-        needs_increment = latest is None or latest < today - timedelta(days=2)
         if needs_two_years:
-            return self.start_sync(start_date=today - timedelta(days=730), end_date=today)
-        if due and needs_increment:
-            return self.start_sync(start_date=today - timedelta(days=14), end_date=today)
+            return self.start_sync(start_date=today - timedelta(days=730), end_date=today, only_if_due=True)
+        # Having a report dated today does not mean later publications were
+        # ingested. Reconcile the short overlap window whenever the cadence is due.
+        if due:
+            return self.start_sync(start_date=today - timedelta(days=14), end_date=today, only_if_due=True)
         return status
 
     def start_sync(
@@ -97,34 +116,85 @@ class ResearchReportLibraryService:
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         force: bool = False,
+        only_if_due: bool = False,
     ) -> Dict[str, Any]:
         with self._run_lock:
             if self._future is not None and not self._future.done():
                 return self.status()
-            current = self.status()
-            if current["status"] in {"queued", "running"} and not force:
-                return current
             end = end_date or date.today()
             start = start_date or (end - timedelta(days=730))
             if start > end:
                 raise ResearchReportLibraryError("研报同步开始日期不能晚于结束日期")
             windows = self._date_windows(start, end)
-            self._write_state(
+            claim = self._claim_sync(
+                only_if_due=only_if_due and not force,
                 status="queued",
                 progress=0,
-                message="过去两年研报链接已进入后台同步队列",
+                message="研报链接同步已进入后台队列",
                 start_date=start,
                 end_date=end,
                 total_windows=len(windows),
                 completed_windows=0,
+                cursor_offset=0,
                 scanned_rows=0,
                 saved_rows=0,
                 last_error=None,
-                started_at=utc_naive_now(),
                 completed_at=None,
             )
-            self._future = self._executor.submit(self._run_sync, start, end, windows)
+            if claim is None:
+                return self.status()
+            try:
+                self._future = self._executor.submit(self._run_sync, start, end, windows, claim_started_at=claim)
+            except RuntimeError as exc:
+                self._write_state(_claim_started_at=claim, status="failed", message="研报同步后台执行器暂时不可用", completed_at=utc_naive_now())
+                raise ResearchReportLibraryError("无法启动研报同步任务") from exc
             return self.status()
+
+    def _claim_sync(self, *, only_if_due: bool, **changes: Any) -> Optional[datetime]:
+        """Atomically claim the existing source row across web/worker processes.
+
+        started_at is the claim identity; updated_at is its renewable lease.
+        Conditional updates prevent a stale reader from replacing a fresh
+        claimant or heartbeat. No schema change or host-specific PID is needed.
+        """
+        now = utc_naive_now()
+        with self.db.get_session() as session:
+            state = session.get(ResearchReportSyncState, _SOURCE_KEY)
+            changes.update(started_at=now, updated_at=now)
+            if state is None:
+                session.add(ResearchReportSyncState(source_key=_SOURCE_KEY, **changes))
+                try:
+                    session.commit()
+                    return now
+                except IntegrityError:
+                    session.rollback()
+                    return None
+            heartbeat = state.updated_at or state.started_at
+            if state.status in _ACTIVE_SYNC_STATUSES and heartbeat and now - heartbeat < _SYNC_LEASE:
+                return None  # Even force must not overlap a live writer.
+            if only_if_due and state.status not in _ACTIVE_SYNC_STATUSES and state.completed_at and now - state.completed_at < timedelta(hours=6):
+                return None
+            # Resume only the same frozen date range. A later independent
+            # request must never inherit completed windows from another scope.
+            if (
+                state.status in (*_ACTIVE_SYNC_STATUSES, "failed")
+                and state.start_date is not None and state.end_date is not None
+                and state.start_date == changes.get("start_date")
+                and state.end_date == changes.get("end_date")
+                and int(state.total_windows or 0) == int(changes.get("total_windows") or 0)
+            ):
+                for field in ("progress", "completed_windows", "cursor_offset", "scanned_rows", "saved_rows"):
+                    changes[field] = int(getattr(state, field) or 0)
+                changes["message"] = "从已保存的研报窗口与分页断点继续同步"
+            claimed = session.execute(
+                update(ResearchReportSyncState).where(
+                    ResearchReportSyncState.source_key == _SOURCE_KEY,
+                    ResearchReportSyncState.updated_at == state.updated_at,
+                    ResearchReportSyncState.started_at == state.started_at,
+                ).values(**changes).execution_options(synchronize_session=False)
+            ).rowcount
+            session.commit()
+            return now if claimed else None
 
     def status(self) -> Dict[str, Any]:
         with self.db.get_session() as session:
@@ -143,11 +213,13 @@ class ResearchReportLibraryService:
             "end_date": self._date_text(state.end_date) if state else None,
             "total_windows": int(state.total_windows or 0) if state else 0,
             "completed_windows": int(state.completed_windows or 0) if state else 0,
+            "cursor_offset": int(state.cursor_offset or 0) if state else 0,
             "scanned_rows": int(state.scanned_rows or 0) if state else 0,
             "saved_rows": int(state.saved_rows or 0) if state else 0,
             "last_error": state.last_error if state else None,
             "started_at": self._datetime_text(state.started_at) if state else None,
             "completed_at": self._datetime_text(state.completed_at) if state else None,
+            "updated_at": self._datetime_text(state.updated_at) if state else None,
             "total": int(total or 0),
             "pdf_count": int(pdf_count or 0),
             "earliest_trade_date": self._date_text(earliest),
@@ -217,14 +289,21 @@ class ResearchReportLibraryService:
         }
 
     def export_selected(self, ids: Iterable[int]) -> bytes:
-        selected_ids = list(dict.fromkeys(int(value) for value in ids))[:1000]
+        selected_ids = list(dict.fromkeys(int(value) for value in ids))
         if not selected_ids:
             raise ResearchReportLibraryError("请至少选择一篇研报")
+        if len(selected_ids) > 1000:
+            raise ResearchReportLibraryError("一次最多导出1000篇研报，请分批选择")
         with self.db.get_session() as session:
             rows = session.execute(
                 select(ResearchReportRecord).where(ResearchReportRecord.id.in_(selected_ids))
                 .order_by(desc(ResearchReportRecord.trade_date), desc(ResearchReportRecord.id))
             ).scalars().all()
+        missing_count = len(selected_ids) - len(rows)
+        if missing_count:
+            raise ResearchReportLibraryError(
+                f"已选研报中有{missing_count}篇已不可用，未生成不完整的导出文件；请重新检索并移除不可用条目"
+            )
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "已选研报"
@@ -239,6 +318,10 @@ class ResearchReportLibraryService:
                 values["broker"], values["author"], values["company_name"], values["ts_code"],
                 values["industry"], " / ".join(values["tags"]), values["pdf_url"],
             ])
+            # Provider-authored text must remain text, not executable spreadsheet formulas.
+            for cell in sheet[sheet.max_row]:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
             if values["pdf_url"]:
                 cell = sheet.cell(row=sheet.max_row, column=11)
                 cell.hyperlink = values["pdf_url"]
@@ -251,13 +334,47 @@ class ResearchReportLibraryService:
         workbook.save(output)
         return output.getvalue()
 
-    def _run_sync(self, start: date, end: date, windows: List[tuple[date, date]]) -> None:
+    def _run_sync(
+        self, start: date, end: date, windows: List[tuple[date, date]],
+        *, claim_started_at: Optional[datetime] = None,
+    ) -> None:
         scanned = 0
         saved = 0
+        stop_heartbeat = threading.Event()
+        heartbeat_thread = None
+
+        def publish(**changes: Any) -> None:
+            if not self._write_state(_claim_started_at=claim_started_at, **changes):
+                raise _ReportSyncLeaseLost()
+
+        def heartbeat() -> None:
+            while not stop_heartbeat.wait(_SYNC_HEARTBEAT_SECONDS):
+                try:
+                    if not self._write_state(_claim_started_at=claim_started_at):
+                        return
+                except Exception as exc:  # retry transient SQLite contention, without resetting task state
+                    logger.warning("Research report heartbeat failed: %s", type(exc).__name__)
+
         try:
-            self._write_state(status="running", progress=1, message="正在从 Tushare 分页同步研报元数据和 PDF 链接")
-            for index, (window_start, window_end) in enumerate(windows, start=1):
-                offset = 0
+            current = self.status()
+            same_scope = (
+                current.get("start_date") == start.isoformat()
+                and current.get("end_date") == end.isoformat()
+                and int(current.get("total_windows") or 0) == len(windows)
+            )
+            completed_windows = int(current.get("completed_windows") or 0) if same_scope else 0
+            cursor_offset = int(current.get("cursor_offset") or 0) if same_scope else 0
+            scanned = int(current.get("scanned_rows") or 0) if same_scope else 0
+            saved = int(current.get("saved_rows") or 0) if same_scope else 0
+            if not 0 <= completed_windows <= len(windows) or cursor_offset < 0 or cursor_offset >= 50_000:
+                raise ResearchReportLibraryError("研报分页断点无效，保留数据等待检查")
+            if claim_started_at is not None:
+                heartbeat_thread = threading.Thread(target=heartbeat, name="report-library-heartbeat", daemon=True)
+                heartbeat_thread.start()
+            publish(status="running", progress=max(1, int(current.get("progress") or 0)) if same_scope else 1,
+                    message="正在从 Tushare 分页同步研报元数据和 PDF 链接")
+            for index, (window_start, window_end) in enumerate(windows[completed_windows:], start=completed_windows + 1):
+                offset = cursor_offset if index == completed_windows + 1 else 0
                 while True:
                     result = self.financial.query(
                         source="tushare",
@@ -270,36 +387,48 @@ class ResearchReportLibraryService:
                         },
                         fields=_FIELDS,
                     )
-                    rows = list(result.get("rows") or [])
-                    scanned += len(rows)
-                    saved += self._upsert(rows)
-                    if len(rows) < 1000:
-                        break
-                    offset += 1000
-                    if offset >= 50_000:
+                    if not isinstance(result, dict) or result.get("error") or not isinstance(result.get("rows"), list):
+                        raise ResearchReportLibraryError("研报接口没有返回有效分页，保留当前断点等待重试")
+                    rows = result["rows"]
+                    finished_window = len(rows) < 1000
+                    next_offset = 0 if finished_window else offset + 1000
+                    if next_offset >= 50_000:
                         raise ResearchReportLibraryError("单个日期窗口超过安全分页上限，请缩短同步窗口")
-                progress = min(99, max(1, round(index / max(1, len(windows)) * 99)))
-                self._write_state(
-                    status="running",
-                    progress=progress,
-                    completed_windows=index,
-                    scanned_rows=scanned,
-                    saved_rows=saved,
-                    message=f"研报链接同步 {index}/{len(windows)} · 已扫描 {scanned:,} 条",
-                )
-            self._write_state(
+                    next_scanned = scanned + len(rows)
+                    checkpoint = {
+                        "completed_windows": index if finished_window else index - 1,
+                        "cursor_offset": next_offset,
+                        "scanned_rows": next_scanned,
+                        "progress": min(99, max(1, round((index if finished_window else index - 1) / max(1, len(windows)) * 99))),
+                        "message": f"研报链接同步 {index}/{len(windows)} · 已扫描 {next_scanned:,} 条 · 本窗偏移 {next_offset}",
+                    }
+                    # Data and its next cursor commit together. A crash before
+                    # commit retries this page; a crash after commit resumes the
+                    # next page, with no window completion inferred from counts.
+                    changed = self._upsert(rows, _claim_started_at=claim_started_at,
+                                           _checkpoint=checkpoint, _saved_before=saved)
+                    scanned = next_scanned
+                    saved += changed
+                    if finished_window:
+                        break
+                    offset = next_offset
+            publish(
                 status="completed",
                 progress=100,
                 completed_windows=len(windows),
+                cursor_offset=0,
                 scanned_rows=scanned,
                 saved_rows=saved,
                 message=f"研报库同步完成：扫描 {scanned:,} 条，新增或更新 {saved:,} 条",
                 completed_at=utc_naive_now(),
                 last_error=None,
             )
+        except _ReportSyncLeaseLost:
+            logger.info("Research report sync stopped after its lease was replaced")
         except Exception as exc:  # noqa: BLE001 - failure must become durable status.
             logger.exception("Research report library sync failed")
             self._write_state(
+                _claim_started_at=claim_started_at,
                 status="failed",
                 progress=min(99, int(self.status().get("progress") or 0)),
                 scanned_rows=scanned,
@@ -308,15 +437,32 @@ class ResearchReportLibraryService:
                 last_error=str(exc)[:500],
                 completed_at=utc_naive_now(),
             )
+        finally:
+            stop_heartbeat.set()
+            if heartbeat_thread is not None and heartbeat_thread.ident is not None:
+                heartbeat_thread.join(timeout=1)
 
-    def _upsert(self, raw_rows: List[Dict[str, Any]]) -> int:
+    def _upsert(
+        self, raw_rows: List[Dict[str, Any]], *, _claim_started_at: Optional[datetime] = None,
+        _checkpoint: Optional[Dict[str, Any]] = None, _saved_before: int = 0,
+    ) -> int:
         normalized = [self._normalize(row) for row in raw_rows]
         normalized = [row for row in normalized if row is not None]
-        if not normalized:
+        if not normalized and _checkpoint is None:
             return 0
         keys = [row["report_key"] for row in normalized]
         changed = 0
         with self.db.get_session() as session:
+            if _claim_started_at is not None:
+                # Fence the data write in the same SQLite transaction as the
+                # ownership check, so a replaced task cannot insert old rows.
+                owned = session.execute(update(ResearchReportSyncState).where(
+                    ResearchReportSyncState.source_key == _SOURCE_KEY,
+                    ResearchReportSyncState.started_at == _claim_started_at,
+                    ResearchReportSyncState.status.in_(_ACTIVE_SYNC_STATUSES),
+                ).values(updated_at=utc_naive_now())).rowcount
+                if not owned:
+                    raise _ReportSyncLeaseLost()
             existing = session.execute(
                 select(ResearchReportRecord).where(ResearchReportRecord.report_key.in_(keys))
             ).scalars().all()
@@ -324,13 +470,29 @@ class ResearchReportLibraryService:
             for fields in normalized:
                 record = by_key.get(fields["report_key"])
                 if record is None:
-                    session.add(ResearchReportRecord(**fields))
+                    record = ResearchReportRecord(**fields)
+                    session.add(record)
+                    by_key[fields["report_key"]] = record
                     changed += 1
+                    continue
+                if all(getattr(record, key) == value for key, value in fields.items() if key not in {"synced_at", "report_key"}):
                     continue
                 for key, value in fields.items():
                     if key != "report_key":
                         setattr(record, key, value)
                 changed += 1
+            if _checkpoint is not None:
+                statement = update(ResearchReportSyncState).where(ResearchReportSyncState.source_key == _SOURCE_KEY)
+                if _claim_started_at is not None:
+                    statement = statement.where(
+                        ResearchReportSyncState.started_at == _claim_started_at,
+                        ResearchReportSyncState.status.in_(_ACTIVE_SYNC_STATUSES),
+                    )
+                owned = session.execute(statement.values(
+                    **_checkpoint, saved_rows=_saved_before + changed, updated_at=utc_naive_now(),
+                )).rowcount
+                if not owned:
+                    raise _ReportSyncLeaseLost()
             session.commit()
         return changed
 
@@ -372,8 +534,16 @@ class ResearchReportLibraryService:
             "synced_at": utc_naive_now(),
         }
 
-    def _write_state(self, **changes: Any) -> None:
+    def _write_state(self, *, _claim_started_at: Optional[datetime] = None, **changes: Any) -> bool:
         with self.db.get_session() as session:
+            if _claim_started_at is not None:
+                changed = session.execute(update(ResearchReportSyncState).where(
+                    ResearchReportSyncState.source_key == _SOURCE_KEY,
+                    ResearchReportSyncState.started_at == _claim_started_at,
+                    ResearchReportSyncState.status.in_(_ACTIVE_SYNC_STATUSES),
+                ).values(**{**changes, "updated_at": utc_naive_now()})).rowcount
+                session.commit()
+                return bool(changed)
             state = session.get(ResearchReportSyncState, _SOURCE_KEY)
             if state is None:
                 state = ResearchReportSyncState(source_key=_SOURCE_KEY)
@@ -383,17 +553,7 @@ class ResearchReportLibraryService:
                     setattr(state, key, value)
             state.updated_at = utc_naive_now()
             session.commit()
-
-    def _repair_interrupted_state(self) -> None:
-        with self.db.get_session() as session:
-            state = session.get(ResearchReportSyncState, _SOURCE_KEY)
-            if state is None or state.status not in {"queued", "running"}:
-                return
-            state.status = "interrupted"
-            state.message = "服务重启中断了研报同步，系统将自动续跑"
-            state.last_error = "service_restarted"
-            state.updated_at = utc_naive_now()
-            session.commit()
+            return True
 
     def _facet(self, column, limit: int) -> List[Dict[str, Any]]:
         with self.db.get_session() as session:

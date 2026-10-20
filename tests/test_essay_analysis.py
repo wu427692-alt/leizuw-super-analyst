@@ -490,11 +490,41 @@ def test_feed_searches_raw_library_without_ai_analysis(essay_service) -> None:
     assert uncompleted.status_code == 200
     assert uncompleted.json()["total"] == 2
 
-    reused_total = client.get(
+    untrusted_total_hint = client.get(
         "/api/v1/essay-radar/feed?days=0&query=全库独家关键词&page=2&known_total=123"
     )
-    assert reused_total.status_code == 200
-    assert reused_total.json()["total"] == 123
+    assert untrusted_total_hint.status_code == 200
+    assert untrusted_total_hint.json()["total"] == 1
+
+
+def test_essay_feed_excludes_generated_audio_memos(essay_service) -> None:
+    ResearchNoteService().import_topics([{
+        "topic_id": "source-essay",
+        "title": "真实机构段子",
+        "content": "来自知识星球的原始正文。",
+        "type": "talk",
+        "create_time": "2026-08-20T09:00:00+0800",
+        "group": {"group_id": "g1", "name": "调研纪要"},
+    }, {
+        "topic_id": "audio-memo-generated",
+        "title": "录音生成纪要",
+        "content": "用户任务生成的逐字稿摘要。",
+        "type": "audio_memo",
+        "create_time": "2026-08-20T10:00:00+0800",
+        "group": {"group_id": "ai-audio-memo", "name": "AI录音纪要"},
+    }], enqueue_analysis=False)
+    app = FastAPI()
+    app.include_router(essay_radar.router, prefix="/api/v1/essay-radar")
+    client = TestClient(app)
+
+    response = client.get("/api/v1/essay-radar/feed?days=0&analysis_status=essay")
+
+    assert response.status_code == 200
+    payload = response.json()
+    topic_ids = [item["topic_id"] for item in payload["items"]]
+    assert "source-essay" in topic_ids
+    assert "audio-memo-generated" not in topic_ids
+    assert payload["total"] == len(topic_ids)
 
 
 def test_feed_export_contains_analysis_columns_and_complete_long_original(essay_service) -> None:

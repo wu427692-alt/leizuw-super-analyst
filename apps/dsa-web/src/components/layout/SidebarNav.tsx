@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, BookOpen, ClipboardCheck, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, Network, Orbit, Radar, Search, Star } from 'lucide-react';
+import { BarChart3, BookOpen, ClipboardCheck, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, MessagesSquare, Network, Newspaper, Orbit, Radar, Search, Star } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
 import { useAgentChatStore } from '../../stores/agentChatStore';
@@ -16,6 +16,7 @@ type SidebarNavProps = {
   collapsed?: boolean;
   onNavigate?: () => void;
   variant?: 'default' | 'rail';
+  documentNavigation?: boolean;
 };
 
 type NavItem = {
@@ -29,11 +30,13 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
+  { key: 'meeting', labelKey: 'layout.nav.meeting', to: '/meeting', icon: MessagesSquare, exact: true, group: 'primary' },
   { key: 'home', labelKey: 'layout.nav.home', to: '/app', icon: Home, exact: true, group: 'primary' },
   { key: 'concept-themes', labelKey: 'layout.nav.conceptThemes', to: '/concept-themes', icon: Orbit, group: 'primary' },
   { key: 'super-watchlist', labelKey: 'layout.nav.superWatchlist', to: '/super-watchlist', icon: Star, group: 'primary' },
   { key: 'industry-research', labelKey: 'layout.nav.industryResearch', to: '/industry-research', icon: Network, group: 'primary' },
   { key: 'tasks', labelKey: 'layout.nav.tasks', to: '/tasks', icon: ClipboardCheck, group: 'primary' },
+  { key: 'ai-news', labelKey: 'layout.nav.aiNews', to: '/ai-news', icon: Newspaper, group: 'tools' },
   { key: 'essay-radar', labelKey: 'layout.nav.essayRadar', to: '/essay-radar', icon: Radar, group: 'tools' },
   { key: 'essay-quant', labelKey: 'layout.nav.essayQuant', to: '/essay-quant', icon: FlaskConical, group: 'tools' },
   { key: 'data-acquisition', labelKey: 'layout.nav.dataAcquisition', to: '/data-acquisition', icon: DatabaseZap, group: 'tools' },
@@ -42,12 +45,13 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'guide', labelKey: 'layout.nav.guide', to: '/guide', icon: BookOpen, group: 'tools' },
 ];
 
-export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate, variant = 'default' }) => {
+export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate, variant = 'default', documentNavigation = false }) => {
   const { t } = useUiLanguage();
   const completionBadge = useAgentChatStore((state) => state.completionBadge);
   const [showAlphaSiftNav, setShowAlphaSiftNav] = useState(false);
 
   useEffect(() => {
+    if (documentNavigation) return;
     let active = true;
 
     const refreshAlphaSiftStatus = async () => {
@@ -72,7 +76,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
       window.removeEventListener(ALPHASIFT_CONFIG_CHANGED_EVENT, refreshAlphaSiftStatus);
       window.removeEventListener(SYSTEM_CONFIG_CHANGED_EVENT, refreshAlphaSiftStatus);
     };
-  }, []);
+  }, [documentNavigation]);
 
   const navItems = showAlphaSiftNav ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.key !== 'screening');
   const isRail = variant === 'rail';
@@ -92,6 +96,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const itemIconClass = cn(isRail ? 'h-[18px] w-[18px]' : 'h-5 w-5', 'shrink-0');
   const itemLabelClass = cn('truncate', isRail ? 'text-center' : '');
   const warmNavigation = (to: string) => {
+    if (documentNavigation) return;
     void Promise.allSettled([preloadRoute(to), preloadRouteData(to)]);
   };
 
@@ -128,6 +133,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           {index === 0 || navItems[index - 1]?.group !== group ? <div className={cn('px-2 pb-1 pt-2 text-[8px] font-semibold uppercase tracking-[.16em] text-secondary-text', (collapsed || isRail) && 'sr-only')}>{t(group === 'primary' ? 'layout.nav.primaryGroup' : 'layout.nav.toolsGroup')}</div> : null}
           <NavLink
             to={to}
+            reloadDocument={documentNavigation || to === '/ai-news'}
             end={exact}
             onClick={onNavigate}
             onMouseEnter={() => warmNavigation(to)}
@@ -185,10 +191,11 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
 
       <NavLink
           to="/admin"
+          reloadDocument={documentNavigation}
           onClick={onNavigate}
-          onMouseEnter={() => void preloadRoute('/admin').catch(() => undefined)}
-          onFocus={() => void preloadRoute('/admin').catch(() => undefined)}
-          onTouchStart={() => void preloadRoute('/admin').catch(() => undefined)}
+          onMouseEnter={() => warmNavigation('/admin')}
+          onFocus={() => warmNavigation('/admin')}
+          onTouchStart={() => warmNavigation('/admin')}
           className={cn(
             itemInteractiveClass,
             'shrink-0',

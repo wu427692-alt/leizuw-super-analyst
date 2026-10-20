@@ -2,6 +2,12 @@ const COMPACT_DATE = /^(\d{4})[-/]?(\d{2})[-/]?(\d{2})/;
 
 export function quoteDateKey(value?: string | null): string | null {
   if (!value) return null;
+  // Offset-bearing quote timestamps must be compared in the exchange zone,
+  // not by the date printed in UTC (which may still be yesterday).
+  if (/[T\s]\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim())) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return shanghaiDateKey(parsed);
+  }
   const match = String(value).trim().match(COMPACT_DATE);
   if (match) return `${match[1]}-${match[2]}-${match[3]}`;
 
@@ -35,15 +41,44 @@ export type MarketQuoteSession = {
 
 function explicitClock(value?: string | null): string | null {
   if (!value) return null;
+  if (/[T\s]\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim())) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      const { minutes } = shanghaiClock(parsed);
+      return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+    }
+  }
   const match = String(value).trim().match(/[T\s](\d{2}):(\d{2})(?::\d{2})?/);
   return match ? `${match[1]}:${match[2]}` : null;
 }
 
+function quoteInstant(value: string, dateKey: string): number | null {
+  const text = value.trim();
+  // A date-only Tushare row is a completed daily close, not midnight. A
+  // same-day 14:00 snapshot must never replace that official 15:00 record.
+  if (/^\d{4}[-/]?\d{2}[-/]?\d{2}$/.test(text)) return Date.parse(`${dateKey}T15:00:00+08:00`);
+  if (!/[T\s]\d{2}:\d{2}/.test(text)) return null;
+  const normalized = text.replaceAll('/', '-').replace(/\s+/, 'T');
+  const timestamp = Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized) ? normalized : `${normalized}+08:00`);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+/** Actual quote time in the exchange timezone, without inventing freshness or a close. */
+export function formatMarketQuoteTimestamp(value?: string | null): string | null {
+  const dateKey = quoteDateKey(value);
+  if (!dateKey || !value) return null;
+  const instant = quoteInstant(value, dateKey);
+  if (instant == null || shanghaiDateKey(new Date(instant)) !== dateKey) return null;
+  const clock = explicitClock(value);
+  return clock ? `${dateKey} ${clock}` : dateKey;
+}
+
 /**
  * Prefer a candidate quote when it belongs to a newer trading day.  On the
- * same trading day a stale candidate must not overwrite an official/current
- * value, but a newer-day partial snapshot is still more truthful than showing
- * yesterday's close as though it were today's market.
+ * same trading day compare actual instants and protect official daily closes.
+ * Polling staleness never outranks an explicitly newer timestamp. In
+ * particular a completed daily close is marked stale by the quote API but
+ * must replace an earlier intraday snapshot. Staleness only breaks a tie.
  */
 export function shouldPreferQuote(
   candidateAt?: string | null,
@@ -55,7 +90,11 @@ export function shouldPreferQuote(
   if (!candidateDate) return false;
   if (!currentDate) return true;
   if (candidateDate !== currentDate) return candidateDate > currentDate;
-  return !candidateIsStale;
+  const candidateInstant = quoteInstant(candidateAt!, candidateDate);
+  const currentInstant = quoteInstant(currentAt!, currentDate);
+  if (candidateInstant == null) return false;
+  return currentInstant == null || candidateInstant > currentInstant
+    || (candidateInstant === currentInstant && !candidateIsStale);
 }
 
 function shanghaiClock(now: Date): { weekday: number; minutes: number } {

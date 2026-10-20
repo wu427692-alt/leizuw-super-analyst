@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+import math
+import random
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -34,6 +37,15 @@ ANNOUNCEMENT_CATEGORIES: Dict[str, str] = {
 class CninfoAnnouncementError(RuntimeError):
     """Safe upstream/validation failure for announcement APIs."""
 
+    def __init__(self, message: str, *, endpoint: Optional[str] = None,
+                 status_code: Optional[int] = None, retry_after_seconds: Optional[float] = None,
+                 attempts: int = 0):
+        super().__init__(message)
+        self.endpoint = endpoint
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+        self.attempts = attempts
+
 
 class CninfoAnnouncementService:
     """Query CNInfo without inheriting GUI, Excel, or package-install side effects."""
@@ -56,6 +68,44 @@ class CninfoAnnouncementService:
     @staticmethod
     def categories() -> List[Dict[str, str]]:
         return [{"code": code, "name": name} for code, name in ANNOUNCEMENT_CATEGORIES.items()]
+
+    def search_securities(
+        self, query: str, *, deadline_monotonic: Optional[float] = None,
+        request_budget: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, str]]:
+        """Return official A-share candidates, not an arbitrarily ranked winner.
+
+        This is a metadata lookup only. It never retrieves announcements or
+        attachments, and uses the same bounded transport as other CNINFO calls.
+        The market is taken from the issuer response, not guessed from digits.
+        """
+        query = str(query or "").strip()
+        if not query or len(query) > 160:
+            return []
+        rows = self._post_json(
+            CNINFO_SEARCH_URL, {"keyWord": query.split(".")[0] if query[:6].isdigit() else query,
+                                "maxNum": 30},
+            deadline_monotonic=deadline_monotonic, request_budget=request_budget,
+        )
+        if not isinstance(rows, list):
+            raise CninfoAnnouncementError("巨潮证券检索返回格式异常")
+        candidates: Dict[str, Dict[str, str]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("category") or "") != "A股" or str(row.get("delisted")).lower() == "true":
+                continue
+            code = str(row.get("code") or "")
+            market = {"shj": "SH", "szj": "SZ", "bj": "BJ", "bjr": "BJ"}.get(str(row.get("type") or ""))
+            name, org_id = str(row.get("zwjc") or "").strip(), str(row.get("orgId") or "").strip()
+            if len(code) != 6 or not code.isdigit() or not market or not name or not org_id:
+                continue
+            symbol = f"{code}.{market}"
+            candidate = {"code": code, "symbol": symbol, "market": market, "name": name,
+                         "org_id": org_id, "source": "cninfo"}
+            candidates[symbol] = candidate
+            self._security_cache[code] = {"code": code, "name": name, "org_id": org_id}
+        return list(candidates.values())
 
     def resolve_security(
         self,
@@ -140,8 +190,10 @@ class CninfoAnnouncementService:
                     deadline_monotonic=deadline_monotonic,
                     request_budget=request_budget,
                 )
-                if not isinstance(data, dict):
+                if not isinstance(data, dict) or "announcements" not in data:
                     raise CninfoAnnouncementError("巨潮公告接口返回格式异常")
+                if data["announcements"] is not None and not isinstance(data["announcements"], list):
+                    raise CninfoAnnouncementError("巨潮公告列表返回格式异常")
                 rows = data.get("announcements") or []
                 if diagnostic_target is not None:
                     diagnostic_target["pages_fetched"] = int(diagnostic_target["pages_fetched"]) + 1
@@ -193,6 +245,9 @@ class CninfoAnnouncementService:
         request_budget: Optional[Dict[str, int]] = None,
     ) -> Any:
         last_error: Optional[Exception] = None
+        status_code: Optional[int] = None
+        retry_after: Optional[float] = None
+        endpoint = {CNINFO_SEARCH_URL: "证券检索", CNINFO_QUERY_URL: "公告查询"}.get(url, "请求")
         for attempt in range(self.retries + 1):
             remaining_seconds: Optional[float] = None
             if deadline_monotonic is not None:
@@ -209,21 +264,62 @@ class CninfoAnnouncementService:
             if remaining_seconds is not None:
                 request_timeout = max(0.25, min(request_timeout, remaining_seconds))
             try:
+                status_code = None
+                retry_after = None
                 response = self.session.post(url, headers=self.headers, data=payload, timeout=request_timeout)
+                status_code = getattr(response, "status_code", None)
+                retry_after = self._retry_after_seconds(getattr(response, "headers", {}).get("Retry-After"))
                 response.raise_for_status()
                 return response.json()
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
-                if attempt < self.retries:
-                    retry_delay = 0.25 * (2 ** attempt)
-                    if deadline_monotonic is not None:
-                        retry_delay = min(
-                            retry_delay,
-                            max(0.0, float(deadline_monotonic) - time.monotonic()),
-                        )
-                    if retry_delay:
-                        time.sleep(retry_delay)
-        raise CninfoAnnouncementError(f"巨潮接口请求失败：{type(last_error).__name__}") from last_error
+                retryable = (
+                    isinstance(exc, (requests.Timeout, requests.ConnectionError))
+                    or status_code in {408, 425, 429, 500, 502, 503, 504}
+                )
+                # Invalid JSON, certificate errors and non-transient HTTP failures
+                # must not generate a burst of identical requests.
+                if isinstance(exc, requests.exceptions.SSLError):
+                    retryable = False
+                if not retryable or attempt >= self.retries:
+                    break
+                retry_delay = max(2 ** attempt + random.uniform(0, 0.25), retry_after or 0)
+                # Long provider cooldowns belong in the durable worker, not a
+                # sleeping API thread. Never shorten Retry-After to fit a budget.
+                if retry_delay > 5:
+                    break
+                if deadline_monotonic is not None:
+                    if retry_delay >= max(0.0, float(deadline_monotonic) - time.monotonic()):
+                        break
+                if request_budget is not None and int(request_budget.get("remaining") or 0) <= 0:
+                    break
+                if retry_delay:
+                    time.sleep(retry_delay)
+        reason = f"HTTP {status_code}" if status_code and status_code >= 400 else type(last_error).__name__
+        cooldown = f"；上游要求等待 {math.ceil(retry_after)} 秒" if retry_after else ""
+        # Do not include exception text, response bodies, cookies or query data.
+        # These messages can be returned by authenticated user-facing APIs.
+        raise CninfoAnnouncementError(
+            f"巨潮{endpoint}失败：{reason}（请求 {attempt + 1} 次{cooldown}）",
+            endpoint=endpoint, status_code=status_code,
+            retry_after_seconds=retry_after, attempts=attempt + 1,
+        ) from last_error
+
+    @staticmethod
+    def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
+        if not value:
+            return None
+        try:
+            seconds = float(value)
+        except (ValueError, TypeError):
+            try:
+                retry_at = parsedate_to_datetime(str(value))
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            except (ValueError, TypeError, OverflowError):
+                return None
+        return max(0.0, seconds) if math.isfinite(seconds) else None
 
     @staticmethod
     def _normalize(raw: Dict[str, Any], categories: Iterable[str]) -> Dict[str, Any]:

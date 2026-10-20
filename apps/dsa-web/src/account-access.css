@@ -1,0 +1,8 @@
+body.account-access-document { margin: 0; }
+body.account-access-document #root { min-height: 100vh; }
+body.account-access-document .user-access-page *,
+body.account-access-document .user-access-page *::before,
+body.account-access-document .user-access-page *::after { box-sizing: border-box; }
+body.account-access-document .user-access-page button,
+body.account-access-document .user-access-page input { font: inherit; }
+body.account-access-document .user-access-page a { text-decoration: none; }

@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from copy import deepcopy
 from datetime import datetime, time as clock_time, timedelta, timezone
 import json
 import logging
@@ -14,9 +15,12 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from data_provider.base import normalize_stock_code
+from src.data.stock_index_loader import get_index_stock_name
 from src.services.financial_data_service import TushareGatewayService
 from src.services.investment_monitor_service import InvestmentMonitorService
 from src.services.market_data_service import INDEX_NAMES, configured_index_symbols
+from src.services.stock_code_utils import _infer_cn_exchange
 
 logger = logging.getLogger(__name__)
 _SHANGHAI_TZ = timezone(timedelta(hours=8))
@@ -37,6 +41,13 @@ class HomeDashboardService:
     _cache_payload: Optional[Dict[str, Any]] = None
     _cache_at = 0.0
     _refresh_thread: Optional[threading.Thread] = None
+    # Public per-symbol evidence is reusable across requests; membership and
+    # live prices are always read separately for the current request.
+    _watchlist_facts_lock = threading.Lock()
+    _watchlist_facts: Dict[tuple[str, str], tuple[float, Dict[str, Any]]] = {}
+    _watchlist_facts_pending: Dict[tuple[str, str], Future] = {}
+    _watchlist_facts_ttl_seconds = 15
+    _watchlist_facts_limit = 256
 
     def __init__(self, *, tushare: Optional[TushareGatewayService] = None,
                  monitor: Optional[InvestmentMonitorService] = None,
@@ -44,7 +55,9 @@ class HomeDashboardService:
                  background_refresh: Optional[bool] = None):
         injected_dependencies = tushare is not None or monitor is not None
         self.tushare = tushare or TushareGatewayService()
-        self.monitor = monitor or InvestmentMonitorService()
+        # This service only reads monitor facts; source registration belongs to
+        # collection/worker startup, not every homepage request.
+        self.monitor = monitor or InvestmentMonitorService(initialize_sources=False)
         self.cache_seconds = max(60, min(int(cache_seconds), 1800))
         self.background_refresh = (
             not injected_dependencies if background_refresh is None else bool(background_refresh)
@@ -60,12 +73,15 @@ class HomeDashboardService:
                                                         "ttl_seconds": self.cache_seconds,
                                                         "age_seconds": round(now - self._cache_at, 1)}}
         if cached_response is not None:
+            if self.background_refresh:
+                cached_response = self._overlay_local_index_quotes(cached_response)
             if refresh:
                 self._schedule_refresh()
             return cached_response
         if not force and self.background_refresh:
             persisted = self._load_persistent_cache()
             if persisted is not None:
+                persisted = self._overlay_local_index_quotes(persisted)
                 with self._cache_lock:
                     self.__class__._cache_payload = persisted
                     self.__class__._cache_at = time.monotonic()
@@ -87,6 +103,199 @@ class HomeDashboardService:
         self._save_cache(payload)
         return {**payload, "cache": {"hit": False, "ttl_seconds": self.cache_seconds, "age_seconds": 0}}
 
+    def watchlist_for_symbols(
+        self, symbols: List[str], *, cached_cards: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build a request-owned watchlist from local data, never the global stock list.
+
+        Public per-symbol price/history cards may be reused, but this result must
+        not enter the shared dashboard cache. Page entry does not fetch missing
+        quotes, perform stock-name lookups upstream, or start analysis jobs.
+        """
+        from src.services.market_data_service import MarketDataService
+
+        codes = list(dict.fromkeys(
+            normalize_stock_code(symbol) for symbol in symbols if str(symbol or "").strip()
+        ))
+        if not codes:
+            return []
+        cached = {
+            normalize_stock_code(str(card.get("symbol") or "")): card
+            for card in (cached_cards or [])
+        }
+        quotes = {
+            normalize_stock_code(str(row.get("stock_code") or "")): row
+            for row in MarketDataService().latest_quotes(codes, refresh_missing=False)
+        }
+        result = []
+        for code in codes:
+            exchange = _infer_cn_exchange(code)
+            symbol = f"{code}.{exchange}" if exchange else code
+            previous = cached.get(code) or {}
+            quote = self._newest_watchlist_quote(quotes.get(code), previous.get("latest_quote"))
+            name = (
+                (quote or {}).get("stock_name") or get_index_stock_name(code)
+                or previous.get("name") or symbol
+            )
+            facts = self._watchlist_symbol_facts(symbol)
+            card = InvestmentMonitorService._symbol_card_from_stats(symbol, name, facts.pop("stats"))
+            result.append({
+                **card,
+                **facts,
+                "latest_quote": quote,
+                "history": list(previous.get("history") or []),
+            })
+        return result
+
+    def _watchlist_symbol_facts(self, symbol: str) -> Dict[str, Any]:
+        """Share bounded local evidence reads without caching a user's list.
+
+        A homepage cache hit previously still hydrated 200 events per stock on
+        every request. Coalesce concurrent misses too, so several visitors do
+        not all repeat that SQL/JSON work. Failed reads never become cache hits.
+        """
+        database_key = str(getattr(self.monitor.repo.db, "_db_url", id(self.monitor.repo.db)))
+        key = (database_key, symbol)
+        with self._watchlist_facts_lock:
+            cached = self._watchlist_facts.get(key)
+            if cached and time.monotonic() - cached[0] < self._watchlist_facts_ttl_seconds:
+                return deepcopy(cached[1])
+            pending = self._watchlist_facts_pending.get(key)
+            owns_read = pending is None
+            if owns_read:
+                pending = Future()
+                self._watchlist_facts_pending[key] = pending
+        if not owns_read:
+            return deepcopy(pending.result())
+        try:
+            stats = self.monitor.repo.symbol_dashboard_stats(symbol=symbol, days=7)
+            events = self.monitor.list_events(days=30, symbol=symbol, page=1, page_size=200)["items"]
+            compact = self.monitor.compact_event
+            facts = {
+                "stats": stats,
+                "latest_catalyst": next((compact(event) for event in events
+                                         if event.get("sentiment") == "bullish"), None),
+                "latest_risk": next((compact(event) for event in events
+                                     if event.get("sentiment") == "bearish"), None),
+                "latest_institution": next((compact(event) for event in events
+                                            if event.get("perspective") == "institution"), None),
+                "latest_events": [compact(event) for event in events[:4]],
+            }
+            with self._watchlist_facts_lock:
+                self._watchlist_facts[key] = (time.monotonic(), facts)
+                if len(self._watchlist_facts) > self._watchlist_facts_limit:
+                    oldest = min(self._watchlist_facts, key=lambda item: self._watchlist_facts[item][0])
+                    self._watchlist_facts.pop(oldest, None)
+            pending.set_result(facts)
+            return deepcopy(facts)
+        except BaseException as exc:
+            # Wake every waiting request even when the owning read is cancelled.
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._watchlist_facts_lock:
+                self._watchlist_facts_pending.pop(key, None)
+
+    @staticmethod
+    def _newest_watchlist_quote(*quotes: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Choose a whole dated quote, not a mixture of two sessions' fields.
+
+        The local DB may lag behind a completed daily row in the shared cache.
+        Polling staleness is not chronological order: today's closing quote is
+        newer than today's afternoon snapshot even when both polls have aged.
+        """
+        selected: Optional[Dict[str, Any]] = None
+        selected_at: Optional[datetime] = None
+        for quote in quotes:
+            if not isinstance(quote, dict):
+                continue
+            price = quote.get("current_price")
+            if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
+                continue
+            quote_at = HomeDashboardService._parse_index_card_time(quote)
+            if (selected is None
+                or (quote_at is not None and (selected_at is None or quote_at > selected_at))
+                or (quote_at == selected_at and selected.get("is_stale") and not quote.get("is_stale"))):
+                selected, selected_at = quote, quote_at
+        # A response consumer must not mutate the shared dashboard's card.
+        return dict(selected) if selected is not None else None
+
+    @staticmethod
+    def _overlay_local_index_quotes(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Overlay cached daily cards with newer SQLite realtime snapshots.
+
+        The full dashboard cache intentionally survives process restarts, but
+        its index cards must not show the prior close while today's minute K
+        line is already live.  This reconciliation is local-only and therefore
+        adds no upstream latency to page entry.
+        """
+        items = payload.get("cn_indices")
+        if not isinstance(items, list) or not items:
+            return payload
+        try:
+            from src.repositories.market_data_repo import MarketDataRepository
+
+            codes = [str(item.get("code") or "").upper() for item in items if isinstance(item, dict)]
+            latest = MarketDataRepository().latest_index_bars(codes, frequency="1SEC")
+        except Exception as exc:  # noqa: BLE001 - cached payload remains valid.
+            logger.info("Home dashboard local index overlay unavailable: %s", type(exc).__name__)
+            return payload
+
+        changed = False
+        merged_items: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                merged_items.append(item)
+                continue
+            code = str(item.get("code") or "").upper()
+            row = latest.get(code)
+            if row is None:
+                merged_items.append(item)
+                continue
+            cached_time = HomeDashboardService._parse_index_card_time(item)
+            if cached_time is not None and row.timestamp <= cached_time:
+                merged_items.append(item)
+                continue
+            history = list(item.get("history") or [])
+            history.append({"date": row.timestamp.isoformat(timespec="seconds"), "value": row.close})
+            merged_items.append({
+                **item,
+                "trade_date": row.timestamp.strftime("%Y%m%d"),
+                "close": row.close,
+                "change_pct": row.pct_chg,
+                "open": row.open,
+                "high": row.high,
+                "low": row.low,
+                "amount": row.amount,
+                "source": row.data_source or "local.sqlite",
+                "update_time": row.timestamp.isoformat(timespec="seconds"),
+                "history": history[-12:],
+            })
+            changed = True
+        return {**payload, "cn_indices": merged_items} if changed else payload
+
+    @staticmethod
+    def _parse_index_card_time(item: Dict[str, Any]) -> Optional[datetime]:
+        raw = str(item.get("update_time") or item.get("trade_date") or "").strip()
+        if not raw:
+            return None
+        if len(raw) == 8 and raw.isdigit():
+            try:
+                return datetime.strptime(raw, "%Y%m%d").replace(hour=15)
+            except ValueError:
+                return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if len(raw) == 10:
+                # Date-only index cards are completed daily bars, not midnight
+                # quotes: a 14:53 snapshot must not replace their final close.
+                return parsed.replace(hour=15)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone(timedelta(hours=8)))
+            return parsed.replace(tzinfo=None)
+        except ValueError:
+            return None
+
     def _schedule_refresh(self) -> None:
         with self._cache_lock:
             current = self.__class__._refresh_thread
@@ -99,6 +308,15 @@ class HomeDashboardService:
             )
             self.__class__._refresh_thread = thread
             thread.start()
+
+    @staticmethod
+    def _newest_index_card_row(live: Any, daily: Any) -> Any:
+        if live is None:
+            return daily
+        if daily is None:
+            return live
+        daily_close_at = daily.timestamp.replace(hour=15, minute=0, second=0, microsecond=0)
+        return live if live.timestamp > daily_close_at else daily
 
     def _refresh_cache(self) -> None:
         try:
@@ -150,7 +368,7 @@ class HomeDashboardService:
                 rows = repo.index_range(code, start, end, frequency="1D")
                 daily = rows[-1] if rows else None
                 live = latest_ticks.get(code)
-                latest = live or daily
+                latest = self._newest_index_card_row(live, daily)
                 cn_indices.append({
                     "code": code, "name": name, "region": "中国A股",
                     "trade_date": latest.timestamp.strftime("%Y%m%d") if latest else None,
@@ -161,7 +379,11 @@ class HomeDashboardService:
                     "low": latest.low if latest else None,
                     "amount": latest.amount if latest else None,
                     "source": latest.data_source if latest else None,
-                    "update_time": latest.timestamp.isoformat(timespec="seconds") if latest else None,
+                    "update_time": (
+                        (latest.timestamp.replace(hour=15, minute=0, second=0, microsecond=0)
+                         if latest is daily else latest.timestamp).isoformat(timespec="seconds")
+                        if latest else None
+                    ),
                     "history": [{"date": row.timestamp.strftime("%Y%m%d"), "value": row.close}
                                 for row in rows[-12:]],
                 })
@@ -564,9 +786,7 @@ class HomeDashboardService:
                 "update_time": latest_daily.get("trade_date"), "source": "tushare.daily",
             } if latest_daily else None
             live_quote = live_by_code.get(symbol.split(".")[0])
-            if live_quote and live_quote.get("is_stale"):
-                live_quote = None
-            result.append({**card, "latest_quote": live_quote or daily_quote or card.get("latest_quote"),
+            result.append({**card, "latest_quote": self._newest_watchlist_quote(live_quote, daily_quote, card.get("latest_quote")),
                            "history": history, "latest_catalyst": catalyst,
                            "latest_risk": risk, "latest_institution": institution,
                            "latest_events": [compact(event) for event in related[:4]]})

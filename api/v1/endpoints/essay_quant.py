@@ -10,6 +10,7 @@ from api.v1.schemas.essay_quant import (
 )
 from src.services.essay_quant_planner import EssayQuantNaturalLanguagePlanner
 from src.services.essay_quant_service import EssayQuantError, EssayQuantService
+from src.services.ttl_cache import cached
 from src.services.essay_quant_task_service import EssayQuantTaskManager
 from src.services.essay_quant_worker import EssayQuantWorker
 
@@ -22,7 +23,7 @@ def _error(exc: Exception, status: int = 400) -> HTTPException:
 
 @router.get("/dashboard", summary="读取最近一次小作文量化回测结果")
 def dashboard():
-    return EssayQuantService().latest_dashboard()
+    return cached("essay-quant:dashboard", 300, lambda: EssayQuantService().latest_dashboard())
 
 
 @router.get("/research-catalog", summary="读取量化研究方法与真实本地数据资产")
@@ -94,7 +95,7 @@ def natural_language_execute(request: EssayQuantExecutePlanRequest):
 
 @router.get("/institution-dashboard", summary="读取后台全机构小作文量化基线")
 def institution_dashboard():
-    return EssayQuantService().latest_institution_dashboard()
+    return cached("essay-quant:institution", 300, lambda: EssayQuantService().latest_institution_dashboard())
 
 
 @router.get("/precompute/status", summary="读取机构排名后台预计算状态")

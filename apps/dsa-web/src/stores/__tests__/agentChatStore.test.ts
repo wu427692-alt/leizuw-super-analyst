@@ -17,7 +17,7 @@ function createStreamResponse(lines: string[]) {
   return new Response(
     new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode(lines.join('\n')));
+        controller.enqueue(encoder.encode(lines.join('\n\n')));
         controller.close();
       },
     }),
@@ -39,7 +39,14 @@ function createDeferred<T>() {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+  vi.mocked(agentApi.getChatSessions).mockReset().mockResolvedValue([]);
+  vi.mocked(agentApi.getChatSessionMessages).mockReset().mockResolvedValue([]);
+  vi.mocked(agentApi.chatStream).mockReset();
   localStorage.clear();
+  useAgentChatStore.getState().setOwnerScope(null);
+  useAgentChatStore.getState().setOwnerScope('user:42');
   useAgentChatStore.setState({
     messages: [],
     loading: false,
@@ -53,7 +60,6 @@ beforeEach(() => {
     hasInitialLoad: true,
     abortController: null,
   });
-  vi.clearAllMocks();
 });
 
 describe('agentChatStore.startStream', () => {
@@ -254,5 +260,167 @@ describe('agentChatStore.switchSession', () => {
     expect(state.messages).toEqual([
       { id: 'msg-b', role: 'assistant', content: 'B 回复' },
     ]);
+  });
+});
+
+describe('chat lifecycle boundaries', () => {
+  it.each([
+    ['premature EOF', ['data: {"type":"thinking","message":"核验中"}']],
+    ['empty answer', ['data: {"type":"done","success":true,"content":" "}']],
+    ['malformed event', ['data: invalid-json']],
+    ['foreign session', ['data: {"type":"done","session_id":"other","content":"private"}']],
+  ])('never manufactures a completed answer after %s', async (_name, lines) => {
+    vi.mocked(agentApi.chatStream).mockResolvedValue(createStreamResponse(lines));
+    await useAgentChatStore.getState().startStream({ message: '问题' });
+    const state = useAgentChatStore.getState();
+    expect(state.messages.map(m => m.content)).toEqual(['问题']);
+    expect(state.chatError).not.toBeNull();
+    expect(state.loading).toBe(false);
+    expect(agentApi.chatStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps progress on disconnection and recovers using only a history GET', async () => {
+    vi.mocked(agentApi.chatStream).mockResolvedValue(createStreamResponse(['data: {"type":"thinking","message":"核验中"}']));
+    await useAgentChatStore.getState().startStream({ message: '问题' });
+    expect(useAgentChatStore.getState().progressSteps).toHaveLength(1);
+    vi.mocked(agentApi.getChatSessionMessages).mockResolvedValue([
+      { id: '1', role: 'user', content: '问题', created_at: null },
+      { id: '2', role: 'assistant', content: '后台已保存的答案', created_at: null },
+    ]);
+    await useAgentChatStore.getState().retrySession();
+    expect(useAgentChatStore.getState().messages.at(-1)?.content).toBe('后台已保存的答案');
+    expect(useAgentChatStore.getState().chatError).toBeNull();
+    expect(agentApi.chatStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains a new unsaved question when readonly recovery returns nonempty old history', async () => {
+    useAgentChatStore.setState({ messages: [{ id: 'old1', role: 'user', content: '旧问题' }, { id: 'old2', role: 'assistant', content: '旧答案' }] });
+    vi.mocked(agentApi.chatStream).mockResolvedValue(createStreamResponse([]));
+    await useAgentChatStore.getState().startStream({ message: '本次新问题' });
+    vi.mocked(agentApi.getChatSessionMessages).mockResolvedValue([
+      { id: 'old1', role: 'user', content: '旧问题', created_at: null },
+      { id: 'old2', role: 'assistant', content: '旧答案', created_at: null },
+    ]);
+    await useAgentChatStore.getState().retrySession();
+    expect(useAgentChatStore.getState().messages.at(-1)?.content).toBe('本次新问题');
+    expect(useAgentChatStore.getState().chatError?.message).toContain('尚未确认保存本次问题');
+    expect(agentApi.chatStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps readonly recovery available until a saved question receives its answer', async () => {
+    vi.mocked(agentApi.chatStream).mockResolvedValue(createStreamResponse([]));
+    await useAgentChatStore.getState().startStream({ message: '问题' });
+    vi.mocked(agentApi.getChatSessionMessages).mockResolvedValue([{ id: 'q', role: 'user', content: '问题', created_at: null }]);
+    await useAgentChatStore.getState().retrySession();
+    expect(useAgentChatStore.getState().chatError?.message).toContain('尚未保存对应答案');
+    expect(useAgentChatStore.getState().messages.at(-1)?.role).toBe('user');
+  });
+
+  it('handles split UTF8, comments, multiline SSE and completes before server closes', async () => {
+    const bytes = encoder.encode(': keepalive\r\n\r\ndata:{"type":"done",\r\ndata:"content":"中文结果"}\r\n\r\n');
+    const cancel = vi.fn();
+    vi.mocked(agentApi.chatStream).mockResolvedValue(new Response(new ReadableStream({
+      start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); }, cancel,
+    }), { headers: { 'content-type': 'text/event-stream' } }));
+    await useAgentChatStore.getState().startStream({ message: '问题' });
+    expect(useAgentChatStore.getState().messages.at(-1)?.content).toBe('中文结果');
+    expect(useAgentChatStore.getState().messages.at(-1)?.thinkingSteps).toEqual([]);
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it('rejects an HTML gateway page instead of reporting empty success', async () => {
+    vi.mocked(agentApi.chatStream).mockResolvedValue(new Response('<html>gateway</html>', { headers: { 'content-type': 'text/html' } }));
+    await useAgentChatStore.getState().startStream({ message: '问题' });
+    expect(useAgentChatStore.getState().chatError?.message).toContain('有效的回答连接');
+    expect(useAgentChatStore.getState().messages).toHaveLength(1);
+  });
+
+  it('suppresses late failure from an aborted request after starting a new chat', async () => {
+    const pending = createDeferred<Response>();
+    vi.mocked(agentApi.chatStream).mockReturnValue(pending.promise);
+    const stream = useAgentChatStore.getState().startStream({ message: '旧问题' });
+    useAgentChatStore.getState().startNewChat();
+    pending.reject(new Error('late old error'));
+    await stream;
+    expect(useAgentChatStore.getState().chatError).toBeNull();
+    expect(useAgentChatStore.getState().messages).toEqual([]);
+    expect(agentApi.getChatSessions).not.toHaveBeenCalled();
+  });
+
+  it('stops waiting, retains the question, and never promises AI cancellation', async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    vi.mocked(agentApi.chatStream).mockResolvedValue(new Response(new ReadableStream({ start(c) { controller = c; } }),
+      { headers: { 'content-type': 'text/event-stream' } }));
+    const stream = useAgentChatStore.getState().startStream({ message: '问题' });
+    await Promise.resolve();
+    controller.enqueue(encoder.encode('data: {"type":"thinking","message":"处理中"}\n\n'));
+    await Promise.resolve();
+    useAgentChatStore.getState().stopStream();
+    await stream;
+    expect(useAgentChatStore.getState().messages[0].content).toBe('问题');
+    expect(useAgentChatStore.getState().chatError?.message).toContain('后台分析可能仍在继续');
+    expect(useAgentChatStore.getState().loading).toBe(false);
+  });
+
+  it('restores an old bookmarked session even if it is not in the first 50', async () => {
+    useAgentChatStore.setState({ hasInitialLoad: false });
+    vi.mocked(agentApi.getChatSessionMessages).mockResolvedValue([{ id: 'old', role: 'assistant', content: '历史', created_at: null }]);
+    await useAgentChatStore.getState().loadInitialSession('old-session');
+    expect(agentApi.getChatSessionMessages).toHaveBeenCalledWith('old-session');
+    expect(useAgentChatStore.getState().messages[0].content).toBe('历史');
+  });
+
+  it('does not let a late initial history overwrite a newly created chat', async () => {
+    const pending = createDeferred<[]>();
+    vi.mocked(agentApi.getChatSessionMessages).mockReturnValue(pending.promise);
+    useAgentChatStore.setState({ hasInitialLoad: false });
+    const initial = useAgentChatStore.getState().loadInitialSession('old');
+    useAgentChatStore.getState().startNewChat();
+    const newId = useAgentChatStore.getState().sessionId;
+    pending.resolve([]); await initial;
+    expect(useAgentChatStore.getState().sessionId).toBe(newId);
+    expect(useAgentChatStore.getState().messagesLoading).toBe(false);
+  });
+
+  it('retains old sessions after list failure and permits explicit retry', async () => {
+    useAgentChatStore.setState({ sessions: [{ session_id: 'old', title: '已有历史', message_count: 2, created_at: null, last_active: null }] });
+    vi.mocked(agentApi.getChatSessions).mockRejectedValueOnce(new Error('offline'));
+    await useAgentChatStore.getState().loadSessions();
+    expect(useAgentChatStore.getState().sessions[0].title).toBe('已有历史');
+    expect(useAgentChatStore.getState().sessionsError).not.toBeNull();
+    await useAgentChatStore.getState().loadSessions();
+    expect(useAgentChatStore.getState().sessionsError).toBeNull();
+  });
+
+  it('blocks sending while history is unresolved and permits readonly retry after failure', async () => {
+    const pending = createDeferred<[]>();
+    vi.mocked(agentApi.getChatSessionMessages).mockReturnValueOnce(pending.promise);
+    const switching = useAgentChatStore.getState().switchSession('saved');
+    await useAgentChatStore.getState().startStream({ message: 'must not send' });
+    expect(agentApi.chatStream).not.toHaveBeenCalled();
+    pending.reject(new Error('offline')); await switching;
+    expect(useAgentChatStore.getState().historyError).not.toBeNull();
+    await useAgentChatStore.getState().retrySession();
+    expect(useAgentChatStore.getState().historyError).toBeNull();
+    expect(useAgentChatStore.getState().messagesLoading).toBe(false);
+  });
+
+  it('invalidates old identity history even when the next user opens the same handle', async () => {
+    const pending = createDeferred<[{ id: string; role: 'assistant'; content: string; created_at: null }]>();
+    vi.mocked(agentApi.getChatSessionMessages).mockReturnValueOnce(pending.promise);
+    const oldRead = useAgentChatStore.getState().switchSession('shared-handle');
+    useAgentChatStore.getState().setOwnerScope('user:43');
+    await useAgentChatStore.getState().switchSession('shared-handle');
+    pending.resolve([{ id: 'old', role: 'assistant', content: 'other user private answer', created_at: null }]);
+    await oldRead;
+    expect(useAgentChatStore.getState().messages).toEqual([]);
+  });
+
+  it('does not crash when browser storage is unavailable', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota', 'QuotaExceededError'); });
+    expect(() => useAgentChatStore.getState().setOwnerScope('user:99')).not.toThrow();
+    expect(() => useAgentChatStore.getState().startNewChat()).not.toThrow();
+    expect(useAgentChatStore.getState().sessionId).toBeTruthy();
   });
 });

@@ -23,6 +23,7 @@ _STOCK_INDEX_CACHE: Dict[str, str] | None = None
 _STOCK_CODE_LOOKUP_CACHE: Dict[str, str] | None = None
 _STOCK_MENTION_CACHE: List[tuple[str, str, str, bool, float]] | None = None
 _REMOTE_INDEX_VALIDITY_CACHE: tuple[Path, float, int, bool] | None = None
+_REMOTE_DIRECTORY_OBSERVED_SIGNATURE: tuple[int, int] | None = None
 _STOCK_INDEX_CACHE_LOCK = RLock()
 
 
@@ -239,6 +240,7 @@ def find_existing_stock_index_path(
 
 def get_stock_name_index_map() -> Dict[str, str]:
     """Lazily load and cache the generated stock-name index."""
+    _observe_directory_sync_metadata()
     global _STOCK_INDEX_CACHE
 
     if _STOCK_INDEX_CACHE is not None:
@@ -297,6 +299,25 @@ def resolve_index_stock_code(query: str) -> str | None:
     return get_stock_code_index_map().get(code)
 
 
+def get_stock_entity_index_records() -> list:
+    """Read the existing autocomplete pool without discarding ambiguous aliases.
+
+    Entity preflight must see *all* matching listings; the chat mention helper
+    intentionally ranks and deduplicates them and is not suitable for this use.
+    Use the same source ordering and validation as the name/code index helpers.
+    """
+    remote_path = get_remote_stock_index_cache_path()
+    for index_path in _get_fresh_stock_index_candidates(get_stock_index_candidate_paths(), remote_path):
+        try:
+            raw_items = _load_stock_index_payload(index_path)
+            if _same_path(index_path, remote_path):
+                validate_stock_index_payload(raw_items)
+            return raw_items
+        except (OSError, TypeError, ValueError) as exc:
+            logger.debug("[股票名称] 读取实体目录失败 %s: %s", index_path, exc)
+    return []
+
+
 def resolve_stock_mentions(text: str, *, limit: int = 5) -> List[Dict[str, str]]:
     """Resolve exact stock-name/alias mentions embedded in free-form text.
 
@@ -309,6 +330,7 @@ def resolve_stock_mentions(text: str, *, limit: int = 5) -> List[Dict[str, str]]
     query = str(text or "").strip()
     if not query:
         return []
+    _observe_directory_sync_metadata()
 
     global _STOCK_MENTION_CACHE
     if _STOCK_MENTION_CACHE is None:
@@ -380,6 +402,7 @@ def resolve_stock_mentions(text: str, *, limit: int = 5) -> List[Dict[str, str]]
 
 def get_stock_code_index_map() -> Dict[str, str]:
     """Lazily load and cache generated stock-code lookup entries."""
+    _observe_directory_sync_metadata()
     global _STOCK_CODE_LOOKUP_CACHE
 
     if _STOCK_CODE_LOOKUP_CACHE is not None:
@@ -425,14 +448,38 @@ def _resolve_index_stock_code_uncached(query: str) -> str | None:
     return None
 
 
+def _observe_directory_sync_metadata() -> None:
+    """Invalidate process-local lookups after the shared worker publishes an update.
+
+    The web and collector containers share the cache volume, not Python memory.
+    A tiny metadata stat is enough; requests never trigger a fetch or JSON scan.
+    """
+    global _REMOTE_DIRECTORY_OBSERVED_SIGNATURE
+    cache = get_remote_stock_index_cache_path()
+    metadata = cache.with_name(f"{cache.stem}.meta.json")
+    try:
+        stat = metadata.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return
+    if signature == _REMOTE_DIRECTORY_OBSERVED_SIGNATURE:
+        return
+    with _STOCK_INDEX_CACHE_LOCK:
+        if signature != _REMOTE_DIRECTORY_OBSERVED_SIGNATURE:
+            clear_stock_index_cache()
+            _REMOTE_DIRECTORY_OBSERVED_SIGNATURE = signature
+
+
 def clear_stock_index_cache() -> None:
     """Clear the in-process stock index lookup cache."""
     global _REMOTE_INDEX_VALIDITY_CACHE, _STOCK_INDEX_CACHE, _STOCK_CODE_LOOKUP_CACHE, _STOCK_MENTION_CACHE
+    global _REMOTE_DIRECTORY_OBSERVED_SIGNATURE
     with _STOCK_INDEX_CACHE_LOCK:
         _STOCK_INDEX_CACHE = None
         _STOCK_CODE_LOOKUP_CACHE = None
         _STOCK_MENTION_CACHE = None
         _REMOTE_INDEX_VALIDITY_CACHE = None
+        _REMOTE_DIRECTORY_OBSERVED_SIGNATURE = None
 
 
 def _clear_stock_index_cache_for_tests() -> None:

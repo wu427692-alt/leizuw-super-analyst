@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 import json
 import math
+import threading
 
 from sqlalchemy import select
 
@@ -33,6 +34,7 @@ def _service(tmp_path) -> ConceptThemeService:
     DatabaseManager.reset_instance()
     ConceptThemeService._market_date_value = None
     ConceptThemeService._market_date_checked_at = None
+    ConceptThemeService._market_date_source = None
     ConceptThemeService._overview_cache = {}
     db = DatabaseManager(db_url=f"sqlite:///{tmp_path / 'concept-themes.db'}")
     return ConceptThemeService(db=db, gateway=SimpleNamespace(available=False))
@@ -40,6 +42,9 @@ def _service(tmp_path) -> ConceptThemeService:
 
 def teardown_function() -> None:
     DatabaseManager.reset_instance()
+    ConceptThemeService._market_date_value = None
+    ConceptThemeService._market_date_checked_at = None
+    ConceptThemeService._market_date_source = None
     ConceptThemeService._overview_cache = {}
 
 
@@ -141,6 +146,159 @@ def test_latest_market_date_never_uses_weekend_fact_row(tmp_path) -> None:
         session.add(StockDaily(code="000001", date=date(2026, 8, 23), close=11.0, data_source="bad-weekend"))
 
     assert service.latest_market_date() == date(2026, 8, 21)
+
+
+def test_detail_reads_never_call_provider_even_when_refresh_is_requested(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 9, 4), close=10.0, data_source="test"))
+        theme = ConceptThemeRecord(
+            source="ths", source_code="885001.TI", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=date(2026, 9, 4), first_seen_at=now, last_seen_at=now, updated_at=now,
+        )
+        session.add(theme)
+        session.flush()
+        theme_id = int(theme.id)
+
+    calls = []
+
+    def query(api_name, *, params):
+        calls.append((api_name, params))
+        raise AssertionError("a GET-style read must not contact the provider")
+
+    service.gateway = SimpleNamespace(available=True, query=query)
+    detail = service.theme_detail(theme_id, refresh_if_empty=True, horizon_days=60)
+    lens = service.stock_lens("300308.SZ", refresh_if_empty=True, horizon_days=60)
+
+    assert calls == []
+    assert detail["refresh_needed"] is True
+    assert detail["missing_source_nodes"] == [theme_id]
+    assert lens["refresh_needed"] is True
+
+
+def test_background_market_date_can_upgrade_a_local_read_cache(tmp_path) -> None:
+    service = _service(tmp_path)
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 9, 3), close=10.0, data_source="test"))
+
+    calls = []
+
+    def query(api_name, *, params):
+        calls.append(api_name)
+        return {"rows": [{"cal_date": "20260904"}]}
+
+    service.gateway = SimpleNamespace(available=True, query=query)
+    assert service.latest_market_date() == date(2026, 9, 3)
+    assert calls == []
+    assert service.latest_market_date(allow_upstream=True) == date(2026, 9, 4)
+    assert calls == ["trade_cal"]
+    assert service.latest_market_date(allow_upstream=True) == date(2026, 9, 4)
+    assert calls == ["trade_cal"]
+
+
+def test_foreground_market_date_does_not_wait_for_blocked_background_provider(tmp_path) -> None:
+    service = _service(tmp_path)
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 9, 4), close=10.0, data_source="test"))
+
+    provider_started = threading.Event()
+    release_provider = threading.Event()
+    background_result = []
+
+    def query(api_name, *, params):
+        assert api_name == "trade_cal"
+        provider_started.set()
+        assert release_provider.wait(2)
+        return {"rows": [{"cal_date": "20260904"}]}
+
+    service.gateway = SimpleNamespace(available=True, query=query)
+    background = threading.Thread(
+        target=lambda: background_result.append(service.latest_market_date(allow_upstream=True)),
+        daemon=True,
+    )
+    background.start()
+    assert provider_started.wait(1)
+    foreground_result = []
+    foreground_done = threading.Event()
+
+    def read_local() -> None:
+        foreground_result.append(service.latest_market_date())
+        foreground_done.set()
+
+    foreground = threading.Thread(target=read_local, daemon=True)
+    foreground.start()
+    try:
+        assert foreground_done.wait(0.5), "foreground read was blocked by the provider calendar lock"
+        assert foreground_result == [date(2026, 9, 4)]
+    finally:
+        release_provider.set()
+        foreground.join(1)
+        background.join(1)
+    assert background_result == [date(2026, 9, 4)]
+
+
+def test_stock_lens_requests_background_fill_when_selected_horizon_is_missing(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        session.add(StockDaily(code="000001", date=date(2026, 9, 4), close=10.0, data_source="test"))
+        theme = ConceptThemeRecord(
+            source="ths", source_code="885001.TI", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=date(2026, 9, 4), first_seen_at=now, last_seen_at=now, updated_at=now,
+        )
+        session.add(theme)
+        session.flush()
+        session.add(ConceptMembershipRecord(
+            theme_id=theme.id, source="ths", ts_code="300308.SZ", stock_name="中际旭创",
+            active=True, first_seen_at=now, last_seen_at=now, updated_at=now,
+        ))
+        session.add(ConceptExposureRecord(
+            ts_code="300308.SZ", stock_name="中际旭创", canonical_name="CPO/共封装光学",
+            as_of_date=date(2026, 9, 4), horizon_days=60, source_count=1,
+            consensus_score=40, relevance_score=40, market_score=40, specificity_score=40,
+            weight_score=40, components_json="{}", calculated_at=now,
+        ))
+
+    assert service.stock_lens("300308.SZ", refresh_if_empty=True, horizon_days=60)["refresh_needed"] is False
+    assert service.stock_lens("300308.SZ", refresh_if_empty=True, horizon_days=120)["refresh_needed"] is True
+
+
+def test_stock_bundle_calculates_requested_horizon_without_refetching_existing_memberships(tmp_path) -> None:
+    service = _service(tmp_path)
+    now = utc_naive_now()
+    with service.db.session_scope() as session:
+        theme = ConceptThemeRecord(
+            source="ths", source_code="885001.TI", name="CPO概念",
+            canonical_name="CPO/共封装光学", theme_type="theme", level=3,
+            market_date=date(2026, 9, 4), first_seen_at=now, last_seen_at=now, updated_at=now,
+        )
+        session.add(theme)
+        session.flush()
+        session.add(ConceptMembershipRecord(
+            theme_id=theme.id, source="ths", ts_code="300308.SZ", stock_name="中际旭创",
+            active=True, first_seen_at=now, last_seen_at=now, updated_at=now,
+        ))
+    provider_calls = []
+    service.gateway = SimpleNamespace(
+        available=True,
+        query=lambda api_name, **kwargs: provider_calls.append(api_name),
+    )
+    calculation_calls = []
+    service.calculate_canonical_exposures = lambda canonical, **kwargs: (  # type: ignore[method-assign]
+        calculation_calls.append((canonical, kwargs)), 1,
+    )[1]
+
+    result = service.refresh_stock_bundle("300308.SZ", horizon_days=120)
+
+    assert provider_calls == []
+    assert calculation_calls == [(
+        "CPO/共封装光学", {"horizon_days": 120, "only_stock": "300308.SZ"},
+    )]
+    assert result["horizon_days"] == 120
+    assert result["exposures"] == 1
 
 
 def test_rotation_history_backfill_uses_real_dates_without_rewinding_live_catalog(tmp_path) -> None:

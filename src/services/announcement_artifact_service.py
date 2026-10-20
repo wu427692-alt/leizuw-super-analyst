@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import json
 import os
@@ -159,14 +160,23 @@ class AnnouncementArtifactService:
     def excel_bytes(self, events: Iterable[Dict[str, Any]]) -> bytes:
         workbook = Workbook(write_only=True)
         sheet = workbook.create_sheet("上市公司公告")
-        sheet.append(["公告ID", "证券代码", "公司名称", "公告标题", "公告日期", "公告分类", "PDF原文", "文件大小KB"])
+        sheet.append(["公告ID", "证券代码", "公司名称", "公告标题", "公告日期", "公告分类", "PDF原文", "文件大小KB", "来源"])
         for event in events:
             metrics = event.get("metrics") or {}
+            disclosure_date = metrics.get("disclosure_date")
+            if not disclosure_date and event.get("event_at"):
+                try:
+                    stamp = datetime.fromisoformat(str(event["event_at"]).replace("Z", "+00:00"))
+                    disclosure_date = (stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp).astimezone(
+                        timezone(timedelta(hours=8)),
+                    ).date().isoformat()
+                except ValueError:
+                    disclosure_date = str(event["event_at"])[:10]
             sheet.append([
                 event.get("external_id"), (event.get("symbols") or [metrics.get("code") or ""])[0],
                 (event.get("actors") or [metrics.get("name") or ""])[0], event.get("title"),
-                str(event.get("event_at") or "")[:10], " / ".join(event.get("tags") or []),
-                event.get("url"), metrics.get("size_kb"),
+                disclosure_date, " / ".join(event.get("tags") or []),
+                event.get("url"), metrics.get("size_kb"), event.get("source_name"),
             ])
         output = BytesIO()
         workbook.save(output)
@@ -220,8 +230,15 @@ class AnnouncementArtifactService:
     def download_pdf(self, event: Dict[str, Any]) -> Tuple[Path, bool]:
         url = str(event.get("url") or "")
         parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.hostname != "static.cninfo.com.cn" or not parsed.path.lower().endswith(".pdf"):
-            raise AnnouncementArtifactError("公告 PDF 地址不在允许的巨潮 HTTPS 域名")
+        official_hosts = {
+            "static.cninfo.com.cn": "https://www.cninfo.com.cn/",
+            "static.sse.com.cn": "https://www.sse.com.cn/",
+            "disc.static.szse.cn": "https://www.szse.cn/",
+        }
+        if (parsed.scheme != "https" or parsed.hostname not in official_hosts
+                or parsed.username or parsed.password or parsed.port not in (None, 443)
+                or not parsed.path.lower().endswith(".pdf")):
+            raise AnnouncementArtifactError("公告 PDF 地址不在允许的官方 HTTPS 域名")
         metrics = event.get("metrics") or {}
         announcement_id = self._safe_name(str(event.get("external_id") or metrics.get("announcement_id") or "announcement"), 80)
         symbol = self._safe_name(str((event.get("symbols") or [metrics.get("code") or "unknown"])[0]), 20)
@@ -245,9 +262,11 @@ class AnnouncementArtifactService:
         temporary = Path(handle.name)
         handle.close()
         try:
-            with self.session.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.cninfo.com.cn/"},
-                                  timeout=(10, 60), stream=True) as response:
+            with self.session.get(url, headers={"User-Agent": "Mozilla/5.0", "Referer": official_hosts[parsed.hostname]},
+                                  timeout=(10, 60), stream=True, allow_redirects=False) as response:
                 response.raise_for_status()
+                if 300 <= getattr(response, "status_code", 200) < 400:
+                    raise AnnouncementArtifactError("官方 PDF 返回重定向，未自动跳转到其他地址")
                 declared = int(response.headers.get("Content-Length") or 0)
                 if declared > self.max_pdf_bytes:
                     raise AnnouncementArtifactError("公告 PDF 超过单文件大小上限")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from zipfile import ZipFile
@@ -12,7 +13,9 @@ from sqlalchemy import func, select
 from src.config import Config
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.repositories.research_note_repo import ResearchNoteRepository
+from src.research_note_fingerprint import research_note_information_hash
 from src.request_identity import reset_current_user_id, set_current_user_id
+from src.services.financial_data_service import ResearchNoteService
 from src.services.research_note_audio_analysis_service import (
     AliyunDashScopeAudioTranscriber,
     DeepSeekAudioMemoAnalyzer,
@@ -119,7 +122,7 @@ def test_audio_memo_is_unique_per_source_and_uses_source_timestamp(
         Config.reset_instance()
 
 
-def test_audio_memo_reuses_existing_note_when_recording_sets_overlap(
+def test_audio_memo_idempotency_requires_the_exact_recording_set(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,22 +156,34 @@ def test_audio_memo_reuses_existing_note_when_recording_sets_overlap(
 
         first_topic = service._index_completed_memo("task-1", first, "第一版正文")
         second_topic = service._index_completed_memo("task-2", second, "第二版正文")
+        reordered_topic = service._index_completed_memo(
+            "task-3",
+            {**second, "source_files": list(reversed(second["source_files"]))},
+            "第三版正文",
+        )
 
-        assert second_topic == first_topic
+        assert second_topic != first_topic
+        assert reordered_topic == second_topic
         notes, total = ResearchNoteRepository().list_notes(group_id="ai-audio-memo", page_size=100)
-        assert total == 1
-        assert notes[0].topic_id == first_topic
+        assert total == 2
+        assert {note.topic_id for note in notes} == {first_topic, second_topic}
         events, event_total = InvestmentMonitorRepository().list_events(
             days=3650, source_key="audio.memo.ai", page_size=100,
         )
-        assert event_total == 1
-        assert events[0]["external_id"] == first_topic
+        assert event_total == 2
+        assert {event["external_id"] for event in events} == {first_topic, second_topic}
     finally:
         DatabaseManager.reset_instance()
         Config.reset_instance()
 
 
-def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path) -> None:
+def test_selected_audio_generates_owner_scoped_memo_and_downloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "private-audio-memo.db"))
+    Config.reset_instance()
+    DatabaseManager.reset_instance()
     token = set_current_user_id(101)
     try:
         service = ResearchNoteAudioAnalysisTaskService(
@@ -180,6 +195,9 @@ def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path
             task_root=tmp_path,
             workers=1,
         )
+        # Exercise the production indexing branch while retaining the fully
+        # offline fake source service.
+        service._should_index = True
         submitted = service.submit([("topic-1", "audio-1")], title="低空经济录音纪要", focus="业绩与交付")
         assert submitted["status"] == "queued"
         assert "items" not in submitted
@@ -188,6 +206,8 @@ def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path
         completed = service.get(submitted["task_id"])
         assert completed["status"] == "completed"
         assert completed["progress"] == 100
+        assert completed["indexed"] is False
+        assert completed["library_topic_id"] is None
         assert completed["result"]["executive_summary"].startswith("公司给出")
         assert completed["download_urls"]["docx"].endswith("format=docx")
         assert completed["transcript_artifacts"][0]["file_id"] == "audio-1"
@@ -214,6 +234,11 @@ def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path
             assert "交付一百架" in archive.read(transcript_name).decode("utf-8")
             assert json.loads(archive.read("result.json"))["source_files"][0]["file_id"] == "audio-1"
 
+        assert ResearchNoteRepository().list_notes(group_id="ai-audio-memo")[1] == 0
+        assert InvestmentMonitorRepository().list_events(
+            days=3650, source_key="audio.memo.ai", page_size=100,
+        )[1] == 0
+
         other = set_current_user_id(202)
         try:
             with pytest.raises(ResearchNoteAudioAnalysisError, match="无权访问"):
@@ -222,6 +247,43 @@ def test_selected_audio_generates_owner_scoped_memo_and_downloads(tmp_path: Path
             reset_current_user_id(other)
     finally:
         reset_current_user_id(token)
+        DatabaseManager.reset_instance()
+        Config.reset_instance()
+
+
+def test_ownerless_background_audio_memo_still_indexes_shared_library(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "background-audio-memo.db"))
+    Config.reset_instance()
+    DatabaseManager.reset_instance()
+    try:
+        service = ResearchNoteAudioAnalysisTaskService(
+            service_factory=_FakeResearchNoteService,
+            resolver=lambda _topic, _file: "https://example.test/audio",
+            http_get=lambda *_args, **_kwargs: _FakeResponse(),
+            transcriber=lambda _path, _name: "公司预计明年交付一百架，毛利率仍需观察。",
+            analyzer=_fake_analyzer,
+            task_root=tmp_path,
+            workers=1,
+            owner_getter=lambda: None,
+        )
+        service._should_index = True
+        submitted = service.submit(
+            [("topic-1", "audio-1")],
+            title="系统录音纪要",
+            focus="业绩与交付",
+        )
+        service._executor.shutdown(wait=True)
+
+        completed = service.get(submitted["task_id"])
+        assert completed["indexed"] is True
+        assert completed["library_topic_id"].startswith("audio-memo-")
+        assert ResearchNoteRepository().list_notes(group_id="ai-audio-memo")[1] == 1
+    finally:
+        DatabaseManager.reset_instance()
+        Config.reset_instance()
 
 
 def test_selected_audio_can_transcribe_without_calling_ai(tmp_path: Path) -> None:
@@ -415,12 +477,18 @@ class _CacheTranscriber:
 
 class _TwoAudioResearchNoteService:
     def get_note(self, topic_id: str):
+        synthetic = topic_id == "topic-2"
         return {
             "topic_id": topic_id,
-            "title": "公司录音合集",
+            "title": "AI 合成纪要中的来源录音" if synthetic else "公司录音合集",
             "created_at": "2026-08-24T09:00:00+08:00",
             "files": [
-                {"file_id": "audio-1", "name": "公司交流一.mp3", "size": 5, "asset_kind": "audio"},
+                {
+                    "file_id": "audio-1",
+                    "name": "公司交流一.mp3",
+                    "size": None if synthetic else 5,
+                    "asset_kind": "audio",
+                },
                 {"file_id": "audio-2", "name": "公司交流二.mp3", "size": 5, "asset_kind": "audio"},
             ],
         }
@@ -476,7 +544,7 @@ def test_new_task_reuses_persistent_raw_transcript_cache(tmp_path: Path) -> None
     assert "缓存测试纪要" not in json.dumps(cache_payload, ensure_ascii=False)
 
 
-def test_transcript_cache_never_crosses_file_or_provider(tmp_path: Path) -> None:
+def test_transcript_cache_follows_stable_file_id_but_not_provider(tmp_path: Path) -> None:
     provider_a = _CacheTranscriber(provider="provider-a", model="model-1", text="提供方A逐字稿")
     service_a = ResearchNoteAudioAnalysisTaskService(
         service_factory=_TwoAudioResearchNoteService,
@@ -507,9 +575,9 @@ def test_transcript_cache_never_crosses_file_or_provider(tmp_path: Path) -> None
 
     assert first_file["transcript_artifacts"][0]["cache_hit"] is False
     assert second_file["transcript_artifacts"][0]["cache_hit"] is False
-    assert other_topic["transcript_artifacts"][0]["cache_hit"] is False
+    assert other_topic["transcript_artifacts"][0]["cache_hit"] is True
     assert other_provider["transcript_artifacts"][0]["cache_hit"] is False
-    assert provider_a.calls == 3
+    assert provider_a.calls == 2
     assert provider_b.calls == 1
     assert service_b.transcript(other_provider["task_id"], "audio-1")["text"] == "提供方B逐字稿"
 
@@ -572,6 +640,232 @@ def test_failed_transcription_is_never_cached(tmp_path: Path) -> None:
     assert recovered["transcript_artifacts"][0]["cache_hit"] is False
     assert failing.calls == working.calls == 1
     assert len(list((tmp_path / "transcript_cache").rglob("*.json"))) == 1
+
+
+def _stored_audio_note(
+    *,
+    topic_id: str,
+    group_id: str,
+    title: str,
+    filename: str,
+    file_id: str,
+    created_at: datetime,
+) -> dict:
+    files = [{"file_id": file_id, "name": filename, "size": 5, "asset_kind": "audio"}]
+    content = "录音附件"
+    return {
+        "topic_id": topic_id,
+        "group_id": group_id,
+        "group_name": "AI录音纪要" if group_id == "ai-audio-memo" else "调研纪要",
+        "title": title,
+        "content": content,
+        "author_id": "tester",
+        "author_name": "测试来源",
+        "topic_type": "audio_memo" if group_id == "ai-audio-memo" else "talk",
+        "text_type": "article",
+        "digested": False,
+        "sticky": False,
+        "symbol_codes": "",
+        "files_json": json.dumps(files, ensure_ascii=False),
+        "images_json": "[]",
+        "counts_json": "{}",
+        "raw_payload": "{}",
+        "content_hash": research_note_information_hash(
+            title=title, content=content, files=files, images=[],
+        ),
+        "created_at": created_at,
+        "modified_at": created_at,
+        "synced_at": created_at,
+    }
+
+
+def test_audio_file_index_excludes_memos_deduplicates_and_invalidates_on_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "audio-index.db"))
+    Config.reset_instance()
+    DatabaseManager.reset_instance()
+    try:
+        repository = ResearchNoteRepository()
+        repository.upsert_notes([
+            _stored_audio_note(
+                topic_id="source-old", group_id="source", title="旧来源",
+                filename="华懋科技交流.mp3", file_id="stable-file",
+                created_at=datetime(2026, 9, 1, 8),
+            ),
+            _stored_audio_note(
+                topic_id="source-new", group_id="source", title="新来源",
+                filename="华懋科技交流.mp3", file_id="stable-file",
+                created_at=datetime(2026, 9, 2, 8),
+            ),
+            _stored_audio_note(
+                topic_id="audio-memo-synthetic", group_id="ai-audio-memo", title="AI合成纪要",
+                filename="华懋科技交流.mp3", file_id="stable-file",
+                created_at=datetime(2026, 9, 3, 8),
+            ),
+            {
+                **_stored_audio_note(
+                    topic_id="audio-memo-legacy", group_id="source", title="旧版AI合成纪要",
+                    filename="不应展示的合成录音.mp3", file_id="synthetic-only-file",
+                    created_at=datetime(2026, 9, 3, 9),
+                ),
+                "topic_type": "audio_memo",
+            },
+        ])
+        service = ResearchNoteService(repository)
+        traversals = 0
+        original_iter = repository.iter_notes_with_files
+
+        def counted_iter(*args, **kwargs):
+            nonlocal traversals
+            traversals += 1
+            yield from original_iter(*args, **kwargs)
+
+        monkeypatch.setattr(repository, "iter_notes_with_files", counted_iter)
+
+        first = service.list_audio_files(query="华懋 科技", page=1, page_size=20)
+        second = service.list_audio_files(query="华懋 科技", page=1, page_size=20)
+
+        assert first["total"] == second["total"] == 1
+        assert first["items"][0]["topic_id"] == "source-new"
+        assert all(not key.startswith("_") for key in first["items"][0])
+        assert service.list_audio_files(query="华懋 无人机")["total"] == 0
+        assert traversals == 1
+
+        repository.upsert_notes([_stored_audio_note(
+            topic_id="source-added", group_id="source", title="增量来源",
+            filename="低空经济专家会.mp3", file_id="new-file",
+            created_at=datetime(2026, 9, 4, 8),
+        )])
+        refreshed = service.list_audio_files(query="低空 经济", page=1, page_size=20)
+
+        assert refreshed["total"] == 1
+        assert refreshed["items"][0]["file_id"] == "new-file"
+        assert traversals == 2
+    finally:
+        DatabaseManager.reset_instance()
+        Config.reset_instance()
+
+
+def test_audio_task_list_total_is_not_truncated_by_page_limit(tmp_path: Path) -> None:
+    service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        transcriber=lambda _path, _name: "unused",
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+        owner_getter=lambda: "user:counted",
+    )
+    service._executor.shutdown(wait=True)
+    now = datetime.now(timezone.utc).isoformat()
+    for index in range(21):
+        service._write_state({
+            "task_id": f"audio-analysis-count-{index:08d}",
+            "owner_id": "user:counted",
+            "status": "completed",
+            "phase": "completed",
+            "progress": 100,
+            "result": None,
+            "transcript_artifacts": [],
+            "created_at": now,
+            "updated_at": now,
+        })
+    service._write_state({
+        "task_id": "audio-analysis-count-other-user",
+        "owner_id": "user:other",
+        "status": "completed",
+        "phase": "completed",
+        "progress": 100,
+        "result": None,
+        "transcript_artifacts": [],
+        "created_at": now,
+        "updated_at": now,
+    })
+
+    listed = service.list_tasks(limit=20)
+
+    assert len(listed["items"]) == 20
+    assert listed["total"] == 21
+
+
+def test_audio_task_claim_is_exclusive_and_terminal_state_cannot_rerun(tmp_path: Path) -> None:
+    service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        transcriber=lambda _path, _name: "unused",
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+        owner_getter=lambda: None,
+    )
+    service._executor.shutdown(wait=True)
+    task_id = "audio-analysis-lease-12345678"
+    now = datetime.now(timezone.utc).isoformat()
+    service._write_state({
+        "task_id": task_id,
+        "owner_id": None,
+        "status": "queued",
+        "phase": "queued",
+        "progress": 0,
+        "items": [{"topic_id": "topic-1", "file_id": "audio-1"}],
+        "result": None,
+        "transcript_artifacts": [],
+        "created_at": now,
+        "updated_at": now,
+    })
+    first_lease = service._claim_task(task_id)
+    assert first_lease is not None
+    assert "lease_owner" not in service.get(task_id)
+
+    competing = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        transcriber=lambda _path, _name: "must not run",
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+        owner_getter=lambda: None,
+    )
+    competing._executor.shutdown(wait=True)
+    assert competing._claim_task(task_id) is None
+    assert competing.get(task_id)["status"] == "queued"
+
+    service._update(task_id, status="completed", phase="completed", progress=100)
+    service._release_task(task_id, first_lease)
+    assert competing._claim_task(task_id) is None
+
+
+def test_expired_task_keeps_owner_transcript_but_expires_memo_bundle(tmp_path: Path) -> None:
+    service = ResearchNoteAudioAnalysisTaskService(
+        service_factory=_FakeResearchNoteService,
+        resolver=lambda _topic, _file: "https://example.test/audio",
+        http_get=lambda *_args, **_kwargs: _FakeResponse(),
+        transcriber=lambda _path, _name: "[00:00:01] 说话人1：长期保留的逐字稿。",
+        analyzer=_cache_test_analyzer,
+        task_root=tmp_path,
+        workers=1,
+        owner_getter=lambda: "user:retained",
+    )
+    submitted = service.submit([("topic-1", "audio-1")], generate_memo=False)
+    service._executor.shutdown(wait=True)
+    task_id = submitted["task_id"]
+    state = service._read_state(task_id)
+    expired = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    state["updated_at"] = expired
+    state["expires_at"] = expired
+    service._write_state(state)
+
+    service._cleanup_expired_tasks()
+
+    availability = service.transcript_availability([("topic-1", "audio-1")])
+    assert availability[("topic-1", "audio-1")]["transcribed"] is True
+    transcript_path, _, _ = service.download_transcript(task_id, "audio-1")
+    assert "长期保留" in transcript_path.read_text(encoding="utf-8")
+    retained = service.get(task_id)
+    assert retained["memo_artifacts_expired"] is True
+    assert retained["download_urls"] == {}
+    assert service.list_tasks(limit=1)["total"] == 1
+    with pytest.raises(ResearchNoteAudioAnalysisError, match="不存在或已过期"):
+        service.download(task_id, "zip")
 
 
 class _JsonResponse:

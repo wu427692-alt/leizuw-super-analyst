@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import logging
 import os
@@ -19,6 +21,11 @@ from src.repositories.research_note_repo import ResearchNoteRepository
 from src.services.financial_data_service import ResearchNoteService, _parse_datetime
 from src.storage import utc_naive_now
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
+
 logger = logging.getLogger(__name__)
 # The configured MCP URL may carry a query credential. Transport-level INFO logs
 # include the full URL, so keep them above INFO and expose sanitized worker state instead.
@@ -31,6 +38,9 @@ class ZsxqMcpSyncError(RuntimeError):
 
 
 class ZsxqMcpSyncService:
+    # Serialize the short insert/checkpoint section, never a network call or retry.
+    _page_write_lock = threading.RLock()
+
     def __init__(self, repository: Optional[ResearchNoteRepository] = None):
         self.repo = repository or ResearchNoteRepository()
         self.notes = ResearchNoteService(self.repo)
@@ -68,6 +78,9 @@ class ZsxqMcpSyncService:
         self,
         *,
         days: int,
+        start_at: Optional[datetime] = None,
+        end_at: Optional[datetime] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Backfill raw notes for research without automatically spending AI tokens."""
@@ -85,6 +98,9 @@ class ZsxqMcpSyncService:
             return asyncio.run(self._sync_async(
                 url,
                 history_days=safe_days,
+                history_cutoff=start_at,
+                history_end=end_at,
+                should_stop=should_stop,
                 enqueue_analysis=False,
                 max_pages=max(1, min(history_max_pages, 50000)),
                 progress_callback=progress_callback,
@@ -99,6 +115,9 @@ class ZsxqMcpSyncService:
         url: str,
         *,
         history_days: Optional[int] = None,
+        history_cutoff: Optional[datetime] = None,
+        history_end: Optional[datetime] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
         enqueue_analysis: bool = True,
         max_pages: Optional[int] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -106,17 +125,28 @@ class ZsxqMcpSyncService:
         from mcp import Client
 
         latest = self.repo.latest_created_by_group()
-        oldest = self.repo.oldest_created_by_group() if history_days else {}
         totals = {"groups": 0, "received": 0, "created": 0, "updated": 0, "unchanged": 0,
                   "media_downloaded": 0, "failed_groups": 0, "incomplete_groups": 0}
-        history_cutoff = utc_naive_now() - timedelta(days=history_days) if history_days else None
+        if history_days:
+            history_end = history_end or utc_naive_now()
+            history_cutoff = history_cutoff or history_end - timedelta(days=history_days)
         self._emit_progress(progress_callback, phase="connecting", progress_percent=1.0,
                             message="正在连接知识星球 MCP")
         async with Client(url, read_timeout_seconds=self.timeout) as client:
             self._emit_progress(progress_callback, phase="discovering_groups", progress_percent=2.0,
                                 message="正在读取知识星球列表")
             groups = await self._configured_groups(client)
+            if not groups:
+                raise ZsxqMcpSyncError("没有可同步的知识星球，尚未完成范围覆盖")
+            if history_cutoff is not None:
+                # Record every group before fetching so restart also resumes groups
+                # which had not yet begun when the process stopped.
+                for group in groups:
+                    with self._group_execution_lock(group["group_id"], "history") as acquired:
+                        if acquired:
+                            self._prepare_checkpoint(group, "history", history_cutoff, history_end)
             group_total = len(groups)
+            coverages = [0.0 for _ in groups]
             completed_pages = 0
             completed_received = 0
             self._emit_progress(
@@ -129,14 +159,15 @@ class ZsxqMcpSyncService:
             )
             for group_index, group in enumerate(groups):
                 def relay_group_progress(update: Dict[str, Any]) -> None:
-                    local_progress = max(0.0, min(float(update.get("group_progress_percent") or 0), 100.0))
-                    overall = 3.0 + ((group_index + local_progress / 100.0) / max(group_total, 1)) * 94.0
+                    local_progress = max(0.0, min(float(update.get("group_progress_percent", coverages[group_index])), 100.0))
+                    coverages[group_index] = local_progress
+                    overall = 3.0 + sum(coverages) / max(group_total, 1) * 0.94
                     self._emit_progress(
                         progress_callback,
                         **update,
                         progress_percent=round(min(overall, 97.0), 1),
                         groups_total=group_total,
-                        groups_completed=group_index,
+                        groups_completed=sum(value == 100 for value in coverages),
                         pages_fetched=completed_pages + int(update.get("group_pages_fetched") or 0),
                         received=completed_received + int(update.get("group_received") or 0),
                     )
@@ -145,8 +176,9 @@ class ZsxqMcpSyncService:
                     client,
                     group,
                     latest.get(group["group_id"]),
-                    history_cursor=oldest.get(group["group_id"]),
                     history_cutoff=history_cutoff,
+                    history_end=history_end,
+                    should_stop=should_stop,
                     enqueue_analysis=enqueue_analysis,
                     max_pages=max_pages,
                     progress_callback=relay_group_progress,
@@ -160,12 +192,13 @@ class ZsxqMcpSyncService:
                     totals["failed_groups"] += 1
                 elif history_days and not result.get("history_complete"):
                     totals["incomplete_groups"] += 1
+                coverages[group_index] = 100.0 if result.get("history_complete") else float(result.get("coverage_percent") or coverages[group_index])
                 self._emit_progress(
                     progress_callback,
                     phase="fetching" if group_index + 1 < group_total else "finalizing",
-                    progress_percent=round(min(3.0 + ((group_index + 1) / max(group_total, 1)) * 94.0, 99.0), 1),
+                    progress_percent=round(min(3.0 + sum(coverages) / max(group_total, 1) * 0.94, 99.0), 1),
                     groups_total=group_total,
-                    groups_completed=group_index + 1,
+                    groups_completed=sum(value == 100 for value in coverages),
                     current_group_id=group["group_id"],
                     current_group_name=group["name"],
                     pages_fetched=completed_pages,
@@ -173,7 +206,7 @@ class ZsxqMcpSyncService:
                     created=totals["created"],
                     updated=totals["updated"],
                     unchanged=totals["unchanged"],
-                    message=f"{group['name']} 已完成，正在整理同步结果",
+                    message=f"{group['name']} 本批处理结束；未覆盖范围保留断点继续",
                 )
         return {
             "mode": "history_backfill" if history_days else "incremental",
@@ -192,7 +225,7 @@ class ZsxqMcpSyncService:
                 if group_id:
                     groups.append({"group_id": group_id, "name": name or group_id})
             return groups
-        existing = self.repo.source_summary()
+        existing = [row for row in self.repo.source_summary() if str(row["group_id"]).isdigit()]
         if existing:
             return [{"group_id": str(row["group_id"]), "name": str(row["group_name"])} for row in existing]
         profile = await self._call_json(client, "get_self_info", {})
@@ -211,171 +244,288 @@ class ZsxqMcpSyncService:
         client: Any,
         group: Dict[str, str],
         cursor: Optional[datetime],
+        **options: Any,
+    ) -> Dict[str, Any]:
+        channel = "history" if options.get("history_cutoff") is not None else "incremental"
+        # API and monitor-worker share this data volume, but not Python locks.
+        # The kernel releases the lease on exit/crash; history and live use
+        # different leases, so a slow archive request cannot pause live polling.
+        with self._group_execution_lock(group["group_id"], channel) as acquired:
+            if not acquired:
+                return {"group_id": group["group_id"], "status": "already_running",
+                        "received": 0, "created": 0, "updated": 0, "unchanged": 0,
+                        "pages_fetched": 0, "media_downloaded": 0, "history_complete": False}
+            return await self._sync_group_owned(client, group, cursor, **options)
+
+    @contextmanager
+    def _group_execution_lock(self, group_id: str, channel: str, *, blocking: bool = False):
+        database_path = self.repo.db._engine.url.database
+        if not database_path or database_path == ":memory:":
+            raise ZsxqMcpSyncError("持久同步需要文件数据库")
+        root = Path(database_path).resolve().parent / ".zsxq-sync-locks"
+        root.mkdir(parents=True, exist_ok=True)
+        # Include DB name for independent databases sharing one directory. Hash
+        # group IDs so no untrusted provider identifier becomes a file path.
+        identity = f"{Path(database_path).name}:{group_id}:{channel}"
+        path = root / (hashlib.sha256(identity.encode()).hexdigest() + ".lock")
+        with path.open("a+b") as handle:
+            acquired = False
+            try:
+                if fcntl is not None:
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+                        acquired = True
+                    except BlockingIOError:
+                        pass
+                else:  # pragma: no cover - Windows same-volume locking
+                    import msvcrt
+                    if path.stat().st_size == 0:
+                        handle.write(b"\0")
+                        handle.flush()
+                    handle.seek(0)
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
+                        acquired = True
+                    except OSError:
+                        pass
+                yield acquired
+            finally:
+                if acquired:
+                    if fcntl is not None:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    else:  # pragma: no cover
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+    @contextmanager
+    def _page_commit_lock(self, group_id: str):
+        with self._page_write_lock, self._group_execution_lock(group_id, "page", blocking=True) as acquired:
+            if not acquired:
+                raise ZsxqMcpSyncError("另一进程正在提交本页，保留断点重试")
+            yield
+
+    async def _sync_group_owned(
+        self,
+        client: Any,
+        group: Dict[str, str],
+        cursor: Optional[datetime],
         *,
         history_cursor: Optional[datetime] = None,
         history_cutoff: Optional[datetime] = None,
+        history_end: Optional[datetime] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
         enqueue_analysis: bool = True,
         max_pages: Optional[int] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
+        # history_cursor is intentionally ignored: an old row proves nothing about
+        # missing records BETWEEN it and today. Scan the fixed range, skip known IDs.
         group_id, group_name = group["group_id"], group["name"]
-        self.repo.update_sync_state(group_id, group_name, last_attempt_at=utc_naive_now(), last_status="running", last_error=None)
-        received: List[Dict[str, Any]] = []
-        seen_topic_ids: set[str] = set()
+        channel = "history" if history_cutoff is not None else "incremental"
         aggregate = {"created": 0, "updated": 0, "unchanged": 0}
-        received_count = 0
-        newest: Optional[Dict[str, Any]] = None
-        end_time: Optional[str] = (
-            history_cursor.isoformat(timespec="milliseconds") + "Z"
-            if history_cutoff is not None and history_cursor is not None and history_cursor > history_cutoff
-            else None
-        )
-        pages_fetched = 0
-        last_group_progress = 0.0
-        history_complete = history_cutoff is None
+        received_count = pages_fetched = 0
+        checkpoint: Dict[str, Any] = {}
         try:
-            page_limit = max_pages or self.max_pages
-            for _ in range(page_limit):
-                pages_fetched += 1
-                args: Dict[str, Any] = {"group_id": group_id, "limit": 30, "scope": "all"}
-                if end_time:
-                    args["end_time"] = end_time
-                page = await self._call_json_with_retry(
-                    client,
-                    "get_group_topics",
-                    args,
-                    progress_callback=progress_callback if history_cutoff is not None else None,
-                    progress_context={
-                        "current_group_id": group_id,
-                        "current_group_name": group_name,
-                        "group_pages_fetched": pages_fetched - 1,
-                        "group_received": received_count,
-                        "group_progress_percent": last_group_progress,
-                    },
+            state = self._group_state(group_id)
+            previous = state.get(channel + "_checkpoint") or {}
+            pending = bool(previous and previous.get("status") != "completed")
+            if channel == "history":
+                end = history_end or self._date(previous.get("end_at")) or utc_naive_now()
+                checkpoint = self._prepare_checkpoint(group, channel, history_cutoff, end)
+            elif pending:
+                checkpoint = dict(previous)
+            else:
+                # The committed watermark only advances after every page is covered.
+                start = self._date(state.get("last_topic_at")) or cursor or utc_naive_now() - timedelta(days=1)
+                checkpoint = self._prepare_checkpoint(group, channel, start, utc_naive_now())
+            if checkpoint.get("status") == "completed":
+                return {"group_id": group_id, "status": "success", "history_complete": True,
+                        "received": 0, "pages_fetched": 0, "media_downloaded": 0, **aggregate}
+            start, end = self._date(checkpoint["start_at"]), self._date(checkpoint["end_at"])
+            self.repo.update_sync_state(group_id, group_name, last_attempt_at=utc_naive_now())
+            if channel == "incremental" and pending:
+                # Large outages can need many cycles. Keep new arrivals visible while
+                # draining the old gap, without letting the head move its watermark.
+                head = await self._fetch_page(client, group_id, None)
+                with self._page_commit_lock(group_id):
+                    saved = self._insert_missing(head[0], group, enqueue_analysis=enqueue_analysis)
+                for key in aggregate:
+                    aggregate[key] += saved[key]
+                received_count += len(head[0])
+            for _ in range(max_pages or self.max_pages):
+                if should_stop and should_stop():
+                    checkpoint = {**checkpoint, "status": "paused"}
+                    self._save_checkpoint(group, channel, checkpoint)
+                    break
+                topics, oldest, next_cursor, exhausted = await self._fetch_page(
+                    client, group_id, checkpoint["next_end_time"], progress_callback,
                 )
-                if page.get("success") is False:
-                    raise ZsxqMcpSyncError(str(page.get("error") or "知识星球返回失败")[:300])
-                topics = page.get("topics_brief") or []
-                if not isinstance(topics, list):
-                    raise ZsxqMcpSyncError("知识星球主题页缺少 topics_brief")
-                valid_topics = [topic for topic in topics if isinstance(topic, dict)]
-                if history_cutoff is not None:
-                    valid_topics = [
-                        topic for topic in valid_topics
-                        if _parse_datetime(topic.get("create_time"), field_name="create_time") >= history_cutoff
-                    ]
-                    page_topics: List[Dict[str, Any]] = []
-                    for topic in valid_topics:
-                        topic_id = str(topic.get("topic_id") or "")
-                        if topic_id and topic_id not in seen_topic_ids:
-                            seen_topic_ids.add(topic_id)
-                            page_topics.append(topic)
-                    if page_topics:
-                        saved = self.notes.import_topics(
-                            page_topics,
-                            group_id=group_id,
-                            group_name=group_name,
-                            enqueue_analysis=enqueue_analysis,
-                        )
-                        for key in aggregate:
-                            aggregate[key] += int(saved.get(key) or 0)
-                        received_count += len(page_topics)
-                        page_newest = max(page_topics, key=lambda topic: str(topic.get("create_time") or ""))
-                        if newest is None or str(page_newest.get("create_time") or "") > str(newest.get("create_time") or ""):
-                            newest = page_newest
-                else:
-                    received.extend(valid_topics)
-                oldest = min((_parse_datetime(topic.get("create_time"), field_name="create_time") for topic in topics), default=None)
-                coverage = 0.0
-                if history_cutoff is not None and oldest is not None:
-                    total_seconds = max((utc_naive_now() - history_cutoff).total_seconds(), 1.0)
-                    coverage = min(max((utc_naive_now() - oldest).total_seconds() / total_seconds * 100.0, 0.0), 100.0)
-                    last_group_progress = round(min(coverage * 0.82, 82.0), 1)
-                self._emit_progress(
-                    progress_callback,
-                    phase="fetching",
-                    group_progress_percent=last_group_progress if history_cutoff else 40.0,
-                    current_group_id=group_id,
-                    current_group_name=group_name,
-                    group_pages_fetched=pages_fetched,
-                    group_received=received_count if history_cutoff is not None else len(received),
-                    oldest_at=oldest.isoformat() + "Z" if oldest else None,
-                    message=f"{group_name}：已获取 {pages_fetched} 页 / {received_count if history_cutoff is not None else len(received)} 条",
-                )
-                if history_cutoff is not None and page_topics:
-                    self._emit_progress(
-                        progress_callback,
-                        phase="saving",
-                        group_progress_percent=round(min(coverage * 0.82 + 0.5, 82.0), 1),
-                        current_group_id=group_id,
-                        current_group_name=group_name,
-                        group_pages_fetched=pages_fetched,
-                        group_received=received_count,
-                        group_saved=received_count,
-                        oldest_at=oldest.isoformat() + "Z" if oldest else None,
-                        created=aggregate["created"],
-                        updated=aggregate["updated"],
-                        unchanged=aggregate["unchanged"],
-                        message=f"{group_name}：{received_count} 条已写入本地库",
-                    )
-                if not topics or not page.get("has_more"):
-                    history_complete = True
-                    break
-                if history_cutoff is not None and oldest is not None and oldest <= history_cutoff:
-                    history_complete = True
-                    break
-                if history_cutoff is None and cursor is not None and oldest is not None and oldest <= cursor:
-                    break
-                end_time = str(page.get("next_end_time") or "") or None
-                if not end_time:
-                    history_complete = True
-                    break
-                if history_cutoff is not None:
-                    await asyncio.sleep(self.history_request_interval)
-            if history_cutoff is None:
-                deduped = {str(topic.get("topic_id")): topic for topic in received if topic.get("topic_id")}
-                topics = list(deduped.values())
-                received_count = len(topics)
-                for offset in range(0, len(topics), 200):
-                    saved = self.notes.import_topics(
-                        topics[offset:offset + 200],
-                        group_id=group_id,
-                        group_name=group_name,
-                        enqueue_analysis=enqueue_analysis,
-                    )
+                # Inclusive lower boundary: equal timestamps may occupy another page.
+                complete = exhausted or (oldest is not None and oldest < start)
+                eligible = [topic for topic in topics if start <= self._date(topic["create_time"]) < end]
+                with self._page_commit_lock(group_id):
+                    saved = self._insert_missing(eligible, group, enqueue_analysis=enqueue_analysis and channel != "history")
+                    candidate = dict(checkpoint)
                     for key in aggregate:
-                        aggregate[key] += int(saved.get(key) or 0)
-                newest = max(topics, key=lambda topic: str(topic.get("create_time") or ""), default=None)
-            newest_at = _parse_datetime(newest.get("create_time"), field_name="create_time") if newest else cursor
-            saved_count = aggregate["created"] + aggregate["updated"]
-            self.repo.update_sync_state(
-                group_id, group_name, last_status="success", last_success_at=utc_naive_now(),
-                last_topic_id=str(newest.get("topic_id")) if newest else None,
-                last_topic_at=newest_at,
-                last_received=received_count, last_saved=saved_count, last_media_downloaded=0,
-                total_saved=(next((row["total_saved"] for row in self.repo.list_sync_states()
-                                   if row["group_id"] == group_id), 0) + saved_count),
-            )
+                        candidate[key] = int(candidate.get(key) or 0) + saved[key]
+                    candidate.update({
+                        "pages_fetched": int(candidate.get("pages_fetched") or 0) + 1,
+                        "received": int(candidate.get("received") or 0) + len(eligible),
+                        "next_end_time": next_cursor or checkpoint["next_end_time"],
+                        "status": "completed" if complete else "incomplete", "error": None,
+                        "coverage_percent": 100.0 if complete else min(99.0, max(0.0,
+                            (end - (oldest or end)).total_seconds() / max((end - start).total_seconds(), 1) * 100)),
+                    })
+                    newest = max(eligible, key=lambda item: self._date(item["create_time"]), default=None)
+                    if newest and (not candidate.get("newest_at") or self._date(newest["create_time"]) > self._date(candidate["newest_at"])):
+                        candidate.update(newest_at=self._stamp(self._date(newest["create_time"])), newest_topic_id=str(newest["topic_id"]))
+                    # Publish the cursor ONLY after the page data has committed. A
+                    # failed checkpoint causes a harmless replay, never a skipped page.
+                    self._save_checkpoint(group, channel, candidate, saved_count=saved["created"], commit_watermark=complete)
+                    checkpoint = candidate
+                for key in aggregate:
+                    aggregate[key] += saved[key]
+                received_count += len(eligible)
+                pages_fetched += 1
+                coverage = min(99.0, max(0.0, (end - (oldest or end)).total_seconds() / max((end - start).total_seconds(), 1) * 100))
+                progress = dict(
+                    current_group_id=group_id, current_group_name=group_name,
+                    group_pages_fetched=checkpoint["pages_fetched"], group_received=checkpoint["received"],
+                    group_progress_percent=100.0 if complete else round(coverage, 1),
+                    oldest_at=self._stamp(oldest) if oldest else None,
+                    message=f"{group_name}：已扫描 {checkpoint['pages_fetched']} 页，确认 {checkpoint['received']} 条在库（含重复页与已存在）",
+                )
+                self._emit_progress(progress_callback, phase="fetching", **progress)
+                if eligible:
+                    self._emit_progress(progress_callback, phase="saving", group_saved=checkpoint["received"], **progress)
+                if complete:
+                    break
+                if channel == "history":
+                    await asyncio.sleep(self.history_request_interval)
             return {"group_id": group_id, "status": "success", "received": received_count,
                     "media_downloaded": 0, "media_storage": "remote_only",
-                    "analysis_enqueued": enqueue_analysis, "pages_fetched": pages_fetched,
-                    "history_complete": history_complete, **aggregate}
+                    "analysis_enqueued": enqueue_analysis and channel != "history", "pages_fetched": pages_fetched,
+                    "coverage_percent": checkpoint.get("coverage_percent", 0),
+                    "history_complete": checkpoint.get("status") == "completed", **aggregate}
         except Exception as exc:
-            safe = f"{type(exc).__name__}: {str(exc)[:400]}"
-            self.repo.update_sync_state(group_id, group_name, last_status="failed", last_error=safe)
-            logger.warning("[zsxq-mcp] group %s failed: %s", group_id, safe)
-            return {
-                "group_id": group_id,
-                "status": "failed",
-                "error": safe,
-                "received": received_count,
-                "created": aggregate["created"],
-                "updated": aggregate["updated"],
-                "unchanged": aggregate["unchanged"],
-                "media_downloaded": 0,
-                "pages_fetched": pages_fetched,
-                "history_complete": False,
-            }
+            # Do not expose raw MCP response bodies or credential-bearing URLs.
+            safe = f"知识星球同步失败（{type(exc).__name__}），保留原分页断点等待重试"
+            if checkpoint:
+                checkpoint = {**checkpoint, "status": "failed", "error": safe}
+                try:
+                    self._save_checkpoint(group, channel, checkpoint)
+                except Exception:
+                    logger.warning("[zsxq-mcp] group %s checkpoint write failed", group_id)
+            logger.warning("[zsxq-mcp] group %s failed: %s", group_id, type(exc).__name__)
+            return {"group_id": group_id, "status": "failed", "error": safe, "received": received_count,
+                    "media_downloaded": 0, "pages_fetched": pages_fetched, "history_complete": False, **aggregate}
+
+    @staticmethod
+    def _date(value: Any) -> Optional[datetime]:
+        return _parse_datetime(value, field_name="create_time")
+
+    @staticmethod
+    def _stamp(value: datetime) -> str:
+        return value.isoformat(timespec="microseconds") + "Z"
+
+    def _group_state(self, group_id: str) -> Dict[str, Any]:
+        return next((row for row in self.repo.list_sync_states() if row["group_id"] == group_id), {})
+
+    def _prepare_checkpoint(self, group: Dict[str, str], channel: str, start: datetime, end: datetime) -> Dict[str, Any]:
+        if start is None or end is None or start >= end:
+            raise ZsxqMcpSyncError("历史同步起止时间无效")
+        with self._page_write_lock:
+            old = self._group_state(group["group_id"]).get(channel + "_checkpoint") or {}
+            if old.get("start_at") == self._stamp(start) and old.get("end_at") == self._stamp(end):
+                return dict(old)
+            checkpoint = {"version": 1, "status": "incomplete", "start_at": self._stamp(start),
+                          "end_at": self._stamp(end), "next_end_time": self._stamp(end),
+                          "pages_fetched": 0, "received": 0, "created": 0, "updated": 0, "unchanged": 0}
+            self._save_checkpoint(group, channel, checkpoint)
+            return checkpoint
+
+    def _save_checkpoint(self, group: Dict[str, str], channel: str, checkpoint: Dict[str, Any],
+                         *, saved_count: int = 0, commit_watermark: bool = False) -> None:
+        checkpoint = {**checkpoint, "updated_at": self._stamp(utc_naive_now())}
+        fields: Dict[str, Any] = {channel + "_checkpoint_json": json.dumps(checkpoint)}
+        if saved_count:
+            fields["total_saved"] = int(self._group_state(group["group_id"]).get("total_saved") or 0) + saved_count
+        # History has its own status and must never regress live freshness/watermarks.
+        if channel == "incremental":
+            fields.update(last_status="failed" if checkpoint.get("status") == "failed" else "success",
+                          last_error=checkpoint.get("error"), last_media_downloaded=0)
+            if checkpoint.get("status") != "failed":
+                fields.update(last_success_at=utc_naive_now(), last_received=checkpoint.get("received", 0), last_saved=saved_count)
+            if commit_watermark and checkpoint.get("newest_at"):
+                fields.update(last_topic_at=self._date(checkpoint["newest_at"]), last_topic_id=checkpoint["newest_topic_id"])
+        self.repo.update_sync_state(group["group_id"], group["name"], **fields)
+
+    def _insert_missing(self, topics: List[Dict[str, Any]], group: Dict[str, str], *, enqueue_analysis: bool) -> Dict[str, int]:
+        deduped = {str(topic["topic_id"]): topic for topic in topics}
+        existing = self.repo.existing_topic_ids(deduped)
+        result = {"created": 0, "updated": 0, "unchanged": len(existing)}
+        recent_cutoff = utc_naive_now() - timedelta(days=1)
+        for analyze in (False, True):
+            batch = [topic for topic_id, topic in deduped.items() if topic_id not in existing
+                     and bool(enqueue_analysis and self._date(topic["create_time"]) >= recent_cutoff
+                              and self._has_analysis_text(topic)) == analyze]
+            if batch:
+                # Attachment-only posts remain searchable/downloadable, not queued.
+                saved = self.notes.import_topics(batch, group_id=group["group_id"], group_name=group["name"], enqueue_analysis=analyze)
+                for key in result:
+                    result[key] += int(saved.get(key) or 0)
+        return result
+
+    @staticmethod
+    def _has_analysis_text(topic: Dict[str, Any]) -> bool:
+        assets = [asset for asset in (topic.get("files") or []) + (topic.get("images") or []) if isinstance(asset, dict)]
+        if not assets:
+            return True
+        content = str(topic.get("content") or "").strip()
+        for asset in assets:
+            name = str(asset.get("name") or asset.get("filename") or "").strip()
+            if name:
+                content = content.replace(name, "").strip()
+        return content not in {"", "「文件」", "[文件]", "【文件】", "文件", "「图片」", "[图片]", "【图片】", "图片"}
+
+    async def _fetch_page(self, client: Any, group_id: str, end_time: Optional[str],
+                          progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
+        args = {"group_id": group_id, "limit": 30, "scope": "all"}
+        if end_time:
+            args["end_time"] = self._mcp_page_cursor(end_time)
+        page = await self._call_json_with_retry(client, "get_group_topics", args, progress_callback=progress_callback)
+        topics = page.get("topics_brief")
+        if page.get("success") is False or not isinstance(topics, list) or not isinstance(page.get("has_more"), bool):
+            raise ZsxqMcpSyncError("知识星球分页响应无效")
+        for topic in topics:
+            if not isinstance(topic, dict) or not topic.get("topic_id") or self._date(topic.get("create_time")) is None:
+                raise ZsxqMcpSyncError("知识星球主题缺少 ID 或日期")
+        oldest = min((self._date(topic["create_time"]) for topic in topics), default=None)
+        next_cursor = str(page.get("next_end_time") or "") or None
+        if page["has_more"]:
+            if not topics or not next_cursor or self._date(next_cursor) is None:
+                raise ZsxqMcpSyncError("知识星球分页缺少下一页断点")
+            if end_time and self._date(next_cursor) >= self._date(end_time):
+                raise ZsxqMcpSyncError("知识星球分页断点未向前推进")
+        return topics, oldest, next_cursor, not page["has_more"]
+
+    @classmethod
+    def _mcp_page_cursor(cls, value: str) -> str:
+        """ZSXQ accepts Shanghai milliseconds +0800, not our UTC Z checkpoint.
+
+        Round an exclusive upper bound UP to the provider's precision so its
+        final fractional millisecond is still recalled. Eligibility is checked
+        separately against the original UTC range before anything is inserted.
+        Already-millisecond provider cursors keep exactly the same instant.
+        """
+        parsed = cls._date(value)
+        if parsed is None:
+            raise ZsxqMcpSyncError("知识星球分页时间无效")
+        remainder = parsed.microsecond % 1000
+        if remainder:
+            parsed += timedelta(microseconds=1000 - remainder)
+        local = parsed.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8)))
+        return local.isoformat(timespec="milliseconds").replace("+08:00", "+0800")
 
     async def _call_json_with_retry(
         self,
@@ -514,6 +664,7 @@ class ZsxqMcpSyncWorker:
         self._last_result: Optional[Dict[str, Any]] = None
         self._last_error: Optional[str] = None
         self._history_thread: Optional[threading.Thread] = None
+        self._history_retry_after = 0.0
         self._history_state: Dict[str, Any] = {
             "running": False,
             "lookback_days": None,
@@ -580,20 +731,34 @@ class ZsxqMcpSyncWorker:
         finally:
             self._sync_lock.release()
 
-    def start_history_backfill(self, *, days: int) -> Dict[str, Any]:
+    def start_history_backfill(self, *, days: int, start_at: Optional[datetime] = None,
+                               end_at: Optional[datetime] = None) -> Dict[str, Any]:
         safe_days = 365 if int(days) <= 365 else 730
+        if (start_at is None) != (end_at is None):
+            raise ZsxqMcpSyncError("历史同步需要同时指定起止时间")
+        if start_at is None:
+            pending = self._pending_history()
+            if pending and abs((ZsxqMcpSyncService._date(pending["end_at"]) - ZsxqMcpSyncService._date(pending["start_at"])).days - safe_days) <= 2:
+                start_at, end_at = ZsxqMcpSyncService._date(pending["start_at"]), ZsxqMcpSyncService._date(pending["end_at"])
+            else:
+                end_at = utc_naive_now()
+                start_at = end_at - timedelta(days=safe_days)
+        if not start_at < end_at or end_at - start_at > timedelta(days=732):
+            raise ZsxqMcpSyncError("历史同步起止时间无效，最长支持两年")
         with self._state_lock:
             if self._history_thread is not None and self._history_thread.is_alive():
                 return {"status": "already_running", "history_backfill": dict(self._history_state)}
             self._history_state = {
                 "running": True,
                 "lookback_days": safe_days,
+                "start_at": ZsxqMcpSyncService._stamp(start_at),
+                "end_at": ZsxqMcpSyncService._stamp(end_at),
                 "analysis_enqueued": False,
                 "started_at": self._iso(time.time()),
                 "finished_at": None,
                 "result": None,
                 "error": None,
-                "phase": "waiting_for_incremental_sync",
+                "phase": "connecting",
                 "progress_percent": 0.0,
                 "groups_total": 0,
                 "groups_completed": 0,
@@ -602,12 +767,12 @@ class ZsxqMcpSyncWorker:
                 "created": 0,
                 "updated": 0,
                 "unchanged": 0,
-                "message": "正在等待当前增量同步结束",
+                "message": "从持久分页断点补齐固定日期范围，实时同步继续运行",
                 "last_progress_at": self._iso(time.time()),
             }
             self._history_thread = threading.Thread(
                 target=self._run_history_backfill,
-                args=(safe_days,),
+                args=(safe_days, start_at, end_at),
                 name="zsxq-history-backfill-worker",
                 daemon=True,
             )
@@ -615,17 +780,37 @@ class ZsxqMcpSyncWorker:
             return {"status": "started", "history_backfill": dict(self._history_state)}
 
     def status(self) -> Dict[str, Any]:
+        service_status = ZsxqMcpSyncService().status()
         with self._state_lock:
+            history = dict(self._history_state)
+            checkpoints = [row.get("history_checkpoint") or {} for row in service_status["groups"]]
+            latest = max((item for item in checkpoints if item.get("start_at") and item.get("end_at")),
+                         key=lambda item: item.get("updated_at") or "", default={})
+            if latest and history.get("phase") == "idle":
+                same_range = [item for item in checkpoints if item.get("start_at") == latest["start_at"] and item.get("end_at") == latest["end_at"]]
+                completed = sum(item.get("status") == "completed" for item in same_range)
+                history.update(start_at=latest["start_at"], end_at=latest["end_at"],
+                               phase="completed" if completed == len(same_range) else "incomplete",
+                               groups_total=len(same_range), groups_completed=completed,
+                               progress_percent=round(sum(float(item.get("coverage_percent") or 0) for item in same_range) / len(same_range), 1),
+                               message="已恢复磁盘保存的同步进度", last_progress_at=latest.get("updated_at"))
+                for key in ("pages_fetched", "received", "created", "updated", "unchanged"):
+                    history[key] = sum(int(item.get(key) or 0) for item in same_range)
             return {"running": bool(self._thread and self._thread.is_alive()), "poll_seconds": self.interval,
                     "syncing": self._sync_lock.locked(),
                     "last_sync_at": self._iso(self._last_sync_at), "last_result": self._last_result,
                     "last_sync_age_seconds": max(0, int(time.time() - self._last_sync_at)) if self._last_sync_at else None,
                     "last_error": self._last_error,
-                    "history_backfill": dict(self._history_state),
-                    **ZsxqMcpSyncService().status()}
+                    "history_backfill": history,
+                    **service_status}
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            try:
+                self._resume_history_if_needed()
+            except Exception as exc:
+                # A paused archive must not prevent the live poll from running.
+                logger.warning("[zsxq-mcp] history resume failed: %s", type(exc).__name__)
             try:
                 self.sync_now()
             except Exception as exc:
@@ -636,8 +821,25 @@ class ZsxqMcpSyncWorker:
             self._wake.wait(self.interval)
             self._wake.clear()
 
-    def _run_history_backfill(self, days: int) -> None:
-        self._sync_lock.acquire()
+    def _pending_history(self) -> Dict[str, Any]:
+        checkpoints = [row.get("history_checkpoint") or {} for row in ZsxqMcpSyncService().repo.list_sync_states()]
+        return max((item for item in checkpoints if item.get("status") != "completed" and item.get("start_at") and item.get("end_at")),
+                   key=lambda item: item.get("updated_at") or "", default={})
+
+    def _resume_history_if_needed(self) -> None:
+        if self._stop.is_set() or time.monotonic() < self._history_retry_after:
+            return
+        if self._history_thread is not None and self._history_thread.is_alive():
+            return
+        pending = self._pending_history()
+        if pending:
+            start, end = ZsxqMcpSyncService._date(pending["start_at"]), ZsxqMcpSyncService._date(pending["end_at"])
+            self.start_history_backfill(days=(end - start).days, start_at=start, end_at=end)
+
+    def _run_history_backfill(self, days: int, start_at: Optional[datetime] = None,
+                              end_at: Optional[datetime] = None) -> None:
+        # No realtime sync lock: pagination, rate-limit waits and network retries
+        # may take hours. Only each committed page's brief write is serialized.
         try:
             self._update_history_progress({
                 "phase": "connecting",
@@ -646,10 +848,13 @@ class ZsxqMcpSyncWorker:
             })
             result = ZsxqMcpSyncService().sync_history(
                 days=days,
+                start_at=start_at,
+                end_at=end_at,
+                should_stop=self._stop.is_set,
                 progress_callback=self._update_history_progress,
             )
             totals = result.get("totals") or {}
-            if int(totals.get("created") or 0) + int(totals.get("updated") or 0) > 0:
+            if int(totals.get("created") or 0) + int(totals.get("updated") or 0) > 0 and not self._stop.is_set():
                 from src.services.essay_quant_worker import EssayQuantWorker
 
                 EssayQuantWorker.get_instance().request_refresh("zsxq_history_backfill", force=True)
@@ -672,7 +877,7 @@ class ZsxqMcpSyncWorker:
                         "error": None,
                         "phase": "incomplete",
                         "progress_percent": min(float(self._history_state.get("progress_percent") or 0), 99.0),
-                        "message": "已达到分页安全上限，当前范围尚未完整覆盖",
+                        "message": "断点已保存，后台将继续补齐未覆盖范围",
                         "last_progress_at": self._iso(time.time()),
                     })
                 else:
@@ -699,7 +904,7 @@ class ZsxqMcpSyncWorker:
                     "last_progress_at": self._iso(time.time()),
                 })
         finally:
-            self._sync_lock.release()
+            self._history_retry_after = time.monotonic() + 60.0
 
     def _update_history_progress(self, update: Dict[str, Any]) -> None:
         allowed = {

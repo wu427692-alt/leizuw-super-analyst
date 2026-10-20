@@ -2,6 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { SidebarNav } from '../SidebarNav';
+import { UiLanguageProvider } from '../../../contexts/UiLanguageContext';
+import { UI_LANGUAGE_STORAGE_KEY } from '../../../utils/uiLanguage';
 
 const mockLogout = vi.fn().mockResolvedValue(undefined);
 const mockGetAlphaSiftStatus = vi.fn().mockResolvedValue({ enabled: false, available: false, installSpecIsDefault: false });
@@ -36,6 +38,41 @@ vi.mock('../../theme/ThemeToggle', () => ({
 }));
 
 describe('SidebarNav', () => {
+  it.each([
+    ['zh', ['市场总览', '题材图谱', '自选看板', '深度研究', '任务中心', 'AI 热点', '机构纪要与录音', '量化研究', '数据下载', 'AI 问股', '使用指南']],
+    ['en', ['Market Overview', 'Theme Map', 'Watchlist', 'Deep Research', 'Task Center', 'AI News', 'Institutional Notes & Audio', 'Quant Research', 'Data Downloads', 'AI Stock Q&A', 'User Guide']],
+  ] as const)('uses concise and complete %s workspace names in the expanded and collapsed sidebar', (language, labels) => {
+    const previousLanguage = localStorage.getItem(UI_LANGUAGE_STORAGE_KEY);
+    localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, language);
+    try {
+      const { rerender } = render(
+        <UiLanguageProvider><MemoryRouter><SidebarNav documentNavigation /></MemoryRouter></UiLanguageProvider>,
+      );
+      for (const label of labels) expect(screen.getByRole('link', { name: label })).toHaveTextContent(label);
+
+      rerender(<UiLanguageProvider><MemoryRouter><SidebarNav documentNavigation collapsed /></MemoryRouter></UiLanguageProvider>);
+      for (const label of labels) {
+        const link = screen.getByRole('link', { name: label });
+        expect(link.textContent).toBe('');
+      }
+      expect(screen.queryByRole('link', { name: /Jev/i })).not.toBeInTheDocument();
+    } finally {
+      if (previousLanguage === null) localStorage.removeItem(UI_LANGUAGE_STORAGE_KEY);
+      else localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, previousLanguage);
+    }
+  });
+
+  it('reuses the shared navigation with native document links and no unrelated status reads', () => {
+    mockGetAlphaSiftStatus.mockClear();
+    render(<MemoryRouter initialEntries={['/ai-news']}><SidebarNav documentNavigation /></MemoryRouter>);
+    expect(mockGetAlphaSiftStatus).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: 'AI 热点' })).toHaveAttribute('aria-current', 'page');
+    for (const label of ['市场总览', '自选看板', '管理员']) {
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+      screen.getByRole('link', { name: label }).dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(false);
+    }
+  });
   it('hides the screening navigation item while AlphaSift is disabled', () => {
     mockGetAlphaSiftStatus.mockResolvedValueOnce({ enabled: false, available: false, installSpecIsDefault: false });
 
@@ -45,7 +82,7 @@ describe('SidebarNav', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole('link', { name: '选股' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '智能选股' })).not.toBeInTheDocument();
   });
 
   it('shows the screening navigation item when AlphaSift is enabled', async () => {
@@ -57,7 +94,7 @@ describe('SidebarNav', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole('link', { name: '选股' })).toHaveAttribute('href', '/screening');
+    expect(await screen.findByRole('link', { name: '智能选股' })).toHaveAttribute('href', '/screening');
   });
 
   it('keeps five decision workspaces before research tools', async () => {
@@ -69,14 +106,15 @@ describe('SidebarNav', () => {
       </MemoryRouter>,
     );
 
-    await screen.findByRole('link', { name: '选股' });
+    await screen.findByRole('link', { name: '智能选股' });
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs.slice(0, 12)).toEqual([
+    expect(hrefs.slice(0, 13)).toEqual([
       '/app',
       '/concept-themes',
       '/super-watchlist',
       '/industry-research',
       '/tasks',
+      '/ai-news',
       '/essay-radar',
       '/essay-quant',
       '/data-acquisition',
@@ -98,10 +136,10 @@ describe('SidebarNav', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole('link', { name: '选股' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '智能选股' })).not.toBeInTheDocument();
     window.dispatchEvent(new Event('dsa-system-config-changed'));
 
-    expect(await screen.findByRole('link', { name: '选股' })).toHaveAttribute('href', '/screening');
+    expect(await screen.findByRole('link', { name: '智能选股' })).toHaveAttribute('href', '/screening');
     await waitFor(() => expect(mockGetAlphaSiftStatus.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
@@ -151,6 +189,8 @@ describe('SidebarNav', () => {
     expect(screen.queryByRole('link', { name: 'AI 建议' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '回测' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '告警' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Jev/i })).not.toBeInTheDocument();
+    expect(document.querySelector('a[href^="/jev-"]')).toBeNull();
   });
 
   it('keeps logout out of the public navigation and links administration', () => {

@@ -1,6 +1,7 @@
 import type React from 'react';
 import { Component, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ErrorInfo } from 'react';
+import { LoaderCircle } from 'lucide-react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { WEB_BUILD_INFO } from '../../utils/constants';
@@ -9,16 +10,14 @@ import { beginRouteLoad, finishRouteLoad, getRouteLoadSnapshot } from '../../uti
 
 type PageLoadingFallbackProps = {
   fullPage?: boolean;
-  progress?: number;
   status?: string;
   detail?: string;
 };
 
 export const PageLoadingFallback: React.FC<PageLoadingFallbackProps> = ({
   fullPage = true,
-  progress = 18,
-  status = '正在准备当前页面',
-  detail = '页面数据完整后会一次性显示，不会先露出半成品。',
+  status = '正在加载页面组件',
+  detail = '页面打开后，各模块会分别读取数据。',
 }) => (
   <div
     className={
@@ -27,33 +26,19 @@ export const PageLoadingFallback: React.FC<PageLoadingFallbackProps> = ({
         : 'flex min-h-[420px] items-center justify-center px-4'
     }
     role="status"
-    aria-label="页面正在准备"
+    aria-label={status}
   >
-    <div className="w-full max-w-xl border border-border/70 bg-card/85 p-5 shadow-soft-card backdrop-blur-sm">
-      <div className="flex items-center justify-between gap-4">
-        <div><p className="text-sm font-semibold text-foreground">{status}</p><p className="mt-1 text-xs leading-5 text-secondary-text">{detail}</p></div>
-        <span className="shrink-0 font-mono text-sm font-semibold text-cyan">{Math.round(progress)}%</span>
-      </div>
-      <div
-        className="mt-4 h-1.5 overflow-hidden bg-border/60"
-        role="progressbar"
-        aria-label="页面加载进度"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(progress)}
-      >
-        <div className="h-full bg-cyan transition-[width] duration-200 ease-out" style={{ width: `${Math.max(3, Math.min(100, progress))}%` }} />
-      </div>
+    <div className="flex w-full max-w-xl items-start gap-3 border border-border/70 bg-card/85 p-5 backdrop-blur-sm">
+      <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 text-[hsl(var(--primary))] motion-safe:animate-spin" aria-hidden="true" />
+      <div><p className="text-sm font-semibold text-foreground">{status}</p><p className="mt-1 text-xs leading-5 text-secondary-text">{detail}</p></div>
     </div>
   </div>
 );
 
 const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> = ({ children, routeKey }) => {
   const [preparing, setPreparing] = useState(true);
-  const [progress, setProgress] = useState(8);
-  const [showProgress, setShowProgress] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const sessionRef = useRef(0);
-  const finishingRef = useRef(false);
 
   useLayoutEffect(() => {
     const sessionId = beginRouteLoad(routeKey);
@@ -63,7 +48,6 @@ const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> 
 
   useEffect(() => {
     if (!preparing) return undefined;
-    let revealTimer: number | null = null;
     const tick = () => {
       const current = getRouteLoadSnapshot();
       if (!current.active || current.sessionId !== sessionRef.current) return;
@@ -72,49 +56,32 @@ const RouteLoadCycle: React.FC<{ children: React.ReactNode; routeKey: string }> 
       const quietFor = now - current.lastActivityAt;
       const noRequestPageReady = current.started === 0 && elapsed >= 180;
       const requestPageReady = current.started > 0 && current.pending === 0 && quietFor >= 100 && elapsed >= 180;
-      // Pages own their detailed skeletons and stale-data fallbacks. A slow
-      // ancillary endpoint may continue in the background, but it must not
-      // freeze navigation or hide already usable controls for many seconds.
-      const pageShellReady = elapsed >= 1_400;
-      if (noRequestPageReady || requestPageReady || pageShellReady) {
-        if (finishingRef.current) return;
-        finishingRef.current = true;
-        setProgress(100);
-        revealTimer = window.setTimeout(() => {
-          finishRouteLoad(current.sessionId);
-          setPreparing(false);
-        }, 60);
+      // This is a brief, indeterminate navigation hint, not total data progress.
+      // After the hint expires, pages retain their own pending/error states;
+      // no request is considered complete merely because 1.4 seconds passed.
+      const initialHintExpired = elapsed >= 1_400;
+      if (noRequestPageReady || requestPageReady || initialHintExpired) {
+        finishRouteLoad(current.sessionId);
+        setPreparing(false);
         return;
       }
-
-      if (current.started === 0) {
-        setProgress(Math.min(24, 8 + elapsed / 90));
-        return;
-      }
-      if (elapsed >= 180 && current.pending > 0) setShowProgress(true);
-      const completedRatio = current.completed / Math.max(1, current.started);
-      const nextProgress = Math.min(94, 24 + completedRatio * 62 + Math.min(8, elapsed / 1_500));
-      setProgress(nextProgress);
+      setShowActivity(elapsed >= 180 && current.pending > 0);
     };
     const interval = window.setInterval(tick, 100);
     const kickoff = window.setTimeout(tick, 0);
     return () => {
       window.clearInterval(interval);
       window.clearTimeout(kickoff);
-      if (revealTimer != null) window.clearTimeout(revealTimer);
     };
   }, [preparing, routeKey]);
 
   return <div className="relative min-h-[420px]">
     {children}
-    {preparing && showProgress ? <div
+    {preparing && showActivity ? <div
       className="pointer-events-none absolute inset-x-0 top-0 z-40 h-0.5 overflow-hidden bg-transparent"
       role="progressbar"
-      aria-label="后台加载进度"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(progress)}
-    ><div className="h-full bg-cyan transition-[width] duration-200 ease-out" style={{ width: `${Math.max(3, Math.min(100, progress))}%` }} /></div> : null}
+      aria-label="正在读取初始模块"
+    ><div className="h-full bg-[hsl(var(--primary))] motion-safe:animate-pulse" /></div> : null}
   </div>;
 };
 
@@ -174,7 +141,7 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
     }
 
     if (!this.state.automaticRecoveryUsed) {
-      return <PageLoadingFallback fullPage={this.props.fullPage} progress={64} status="当前模块正在自动恢复" detail="系统正在重新载入页面组件，不需要手动刷新。" />;
+      return <PageLoadingFallback fullPage={this.props.fullPage} status="正在重试页面组件" detail="系统正在尝试重新载入当前模块，其他页面仍可使用。" />;
     }
 
     return (

@@ -22,5 +22,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "vite.jev.config.ts", "vite.ai-news.config.ts", "vite.account-access.config.ts", "tests/accountAccessNavigation.test.ts"]
 }
