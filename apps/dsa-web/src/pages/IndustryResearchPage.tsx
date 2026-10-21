@@ -482,7 +482,7 @@ export default function IndustryResearchPage() {
   const projectsInFlightRef = useRef(false);
   const projectsAttemptRef = useRef<ProjectListSelection>({ page: 1, query: '', status: 'all' });
 
-  useEffect(() => { document.title = '行业与公司调研 - 乐子乌超级价值'; }, []);
+  useEffect(() => { document.title = '行业与公司调研 - 乐子乌智能投研平台'; }, []);
 
   const loadProjects = useCallback(async (selection?: ProjectListSelection, force = false) => {
     // Automatic refreshes must not supersede an explicit page/search request.

@@ -44,7 +44,7 @@ export const Shell: React.FC<ShellProps> = ({ children, documentNavigation = fal
       <header className="mobile-app-bar lg:hidden">
         <div className="mobile-app-bar__brand">
           <span><BarChart3 aria-hidden="true" /></span>
-          <div><strong>乐子乌超级价值</strong><small>证据驱动的投资研究</small></div>
+          <div><strong>乐子乌智能投研平台</strong><small>证据驱动的投资研究</small></div>
         </div>
         <div className="mobile-app-bar__actions">
           <button type="button" className="mobile-app-bar__menu" aria-label={t('layout.openNav')} onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></button>

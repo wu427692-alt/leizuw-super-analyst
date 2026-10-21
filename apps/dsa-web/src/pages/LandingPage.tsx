@@ -9,6 +9,13 @@ import './LandingPage.css';
 
 const productTours = [
   {
+    title: '智能投研团队', heading: '多角色协作，把研究拆成可执行的任务。', href: '/meeting', action: '进入智能投研团队',
+    description: '主席、选股、数据、研究员、组合、调度六个角色围绕同一块黑板协作；每个任务独立上下文与工作区，可切换、搜索、并行。',
+    data: '任务栏 · 黑板可视化 · 多源备源 · 文件交付 · 录音转写',
+    output: '行情曲线、选股表、评分条、研报/财报/录音 ZIP 与文字稿',
+    screenshot: '/landing/screens/meeting.jpg', alt: '智能投研团队实机界面',
+  },
+  {
     title: '市场总览', heading: '先看市场，再看机会。', href: '/app', action: '查看市场总览',
     description: '把核心指数、市场广度、行业分布和自选股放回同一幅画面，从重要新闻中找到值得继续研究的变化。',
     data: '指数行情 · 市场广度 · 行业分布 · 新闻',
@@ -62,12 +69,12 @@ const sources = [
 ];
 
 const LandingPage = () => {
-  const [activeProduct, setActiveProduct] = useState(2);
+  const [activeProduct, setActiveProduct] = useState(0);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const product = productTours[activeProduct];
 
   useEffect(() => {
-    document.title = '乐子乌超级价值 · 证据驱动的投资研究工作台';
+    document.title = '乐子乌智能投研平台 · 证据驱动的投资研究工作台';
   }, []);
 
   const handleTabKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -87,8 +94,8 @@ const LandingPage = () => {
     <main className="landing-page">
       <a className="landing-skip" href="#landing-content">跳至主要内容</a>
       <header className="landing-header landing-glass">
-        <Link className="landing-brand" to="/" aria-label="乐子乌超级价值首页">
-          <span><DatabaseZap aria-hidden="true" /></span><b>乐子乌超级价值</b>
+        <Link className="landing-brand" to="/" aria-label="乐子乌智能投研平台首页">
+          <span><DatabaseZap aria-hidden="true" /></span><b>乐子乌智能投研平台</b>
         </Link>
         <nav aria-label="介绍页导航">
           <a href="#real-product">产品体验</a>
@@ -114,7 +121,7 @@ const LandingPage = () => {
         <div className="landing-hero-visual">
           <figure className="landing-hero-screen landing-glass">
             <div className="landing-window-bar"><span aria-hidden="true"><i /><i /><i /></span><b>产品界面展示</b><span aria-hidden="true" /></div>
-            <img src="/landing/screens/market-overview.jpg" alt="乐子乌超级价值市场总览历史界面" width="1440" height="900" fetchPriority="high" />
+            <img src="/landing/screens/market-overview.jpg" alt="乐子乌智能投研平台市场总览历史界面" width="1440" height="900" fetchPriority="high" />
           </figure>
           <p className="landing-image-caption">历史界面示意 · 非实时行情</p>
         </div>
@@ -186,7 +193,7 @@ const LandingPage = () => {
       </section>
 
       <footer className="landing-footer landing-wrap">
-        <Link className="landing-footer-brand" to="/">乐子乌超级价值</Link>
+        <Link className="landing-footer-brand" to="/">乐子乌智能投研平台</Link>
         <p>AI 辅助研究，不替代原文核验。投资有风险，研究结论不构成收益承诺。</p>
         <a href="https://leowu.leziwu.com" target="_blank" rel="noopener noreferrer">作者介绍</a>
         <Link to="/admin">管理员</Link>

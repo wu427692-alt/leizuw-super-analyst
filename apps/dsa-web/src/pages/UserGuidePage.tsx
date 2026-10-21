@@ -25,6 +25,21 @@ type GuideChapter = {
 
 const legacyChapters: GuideChapter[] = [
   {
+    id: 'team', category: '每日使用', eyebrow: '多角色协作 · 独立任务工作区', title: '智能投研团队', icon: UserCheck,
+    summary: '把一次研究拆成可执行的任务：主席分派，选股、数据、研究、组合、调度协同，结果直接落到黑板和文件。',
+    href: '/meeting', action: '进入智能投研团队', screenshot: '/landing/screens/meeting.jpg', alt: '智能投研团队实机页面截图',
+    purpose: '用一个常驻任务栏管理多项研究，把行情、选股、研报、录音和文件交付放在同一个工作区里。',
+    data: ['自选与行情快照', '研报 / 财报 / 公告 / 小作文', '会议录音与逐字稿', '多源检索与备源', '任务上下文与工作区文件'],
+    outputs: ['行情曲线、选股表、评分条与筛选概况', '研报 / 财报 / 录音 ZIP 与文字稿', '可回看的任务记录与工作区文件'],
+    steps: ['新建任务，直接提问；每个任务独立上下文与工作区。', '主席拆解并分派给选股、数据、研究、组合角色。', '数据不足时自动走备源，并把缺口写入台账。', '结果上黑板；文件落到该任务的工作区。', '切换、搜索或按状态筛选任务，随时回看。'],
+    modules: [
+      { name: '任务栏', route: '/meeting', purpose: '管理多个并行研究任务。', data: '任务标题、状态、工作区', actions: ['新建任务', '切换 / 搜索 / 筛选', '改名 / 删除', '查看工作区文件'], output: '每个任务独立的上下文与文件目录。' },
+      { name: '黑板', purpose: '把关键结果可视化。', data: '行情、选股、评分、新闻、文件', actions: ['查看曲线', '查看表格', '查看评分条', '下载文件'], output: '不离开对话即可核对的图表与清单。' },
+      { name: '数据与备源', purpose: '主源为空时继续找。', data: '研报 / 财报 / 公告 / 录音 / 小作文 / 新闻 / 概念', actions: ['主源查询', '备源切换', '缺口记录', '每日巡检'], output: '带来源与尝试记录的结果。' },
+    ],
+    verify: ['每个任务的文件只出现在自己的工作区。', '黑板表格列与行完整，空值不留半截。', '主源为空时应看到备源结果或明确的缺口记录。'],
+  },
+  {
     id: 'market', category: '每日使用', eyebrow: '开盘前 / 盘中 / 收盘后', title: '市场总览', icon: BarChart3,
     summary: '用统一时间口径查看核心指数、分时与K线、市场广度、行业分布和个人自选股。',
     href: '/app', action: '进入市场总览', screenshot: '/landing/screens/market-overview.jpg', alt: '市场总览实机页面截图',
@@ -391,7 +406,7 @@ const UserGuidePage = () => {
   const [category, setCategory] = useState<Category>('全部');
   const pendingChapter = useRef(location.hash.slice(1));
   const lastJumpKey = useRef<string | null>(null);
-  useEffect(() => { document.title = '完整使用手册 - 乐子乌超级价值'; }, []);
+  useEffect(() => { document.title = '完整使用手册 - 乐子乌智能投研平台'; }, []);
   useEffect(() => {
     const revealHistoryChapter = () => {
       const id = window.location.hash.slice(1);
@@ -446,13 +461,13 @@ const UserGuidePage = () => {
 
   return <main className="guide-page">
     <header className="guide-header">
-      <Link className="guide-brand" to="/"><span><DatabaseZap /></span><b>乐子乌超级价值</b><small>USER MANUAL</small></Link>
+      <Link className="guide-brand" to="/"><span><DatabaseZap /></span><b>乐子乌智能投研平台</b><small>USER MANUAL</small></Link>
       <nav aria-label="手册顶部导航"><Link to="/"><ArrowLeft /> 产品介绍</Link><Link className="is-primary" to="/app">进入平台 <ArrowRight /></Link></nav>
     </header>
 
     <section className="guide-hero">
       <div className="guide-hero-copy">
-        <span className="guide-kicker"><BookOpen /> 操作手册 · 功能说明更新于 2026-09-06</span>
+        <span className="guide-kicker"><BookOpen /> 操作手册 · 功能说明更新于 2026-10-21</span>
         <h1><span>不是功能清单。</span><em>是一套能照着完成研究的操作系统。</em></h1>
         <p>覆盖普通用户全部入口、子页面、后台任务和管理员功能。每个模块都写清目的、使用数据、具体操作、输出结果与核验标准；核心页面使用真实截图和编号标注。</p>
         <div className="guide-hero-actions"><a href="#find"><Search /> 搜索功能</a><a href="#workspaces">阅读完整手册 <ArrowRight /></a></div>
@@ -567,7 +582,7 @@ const UserGuidePage = () => {
       </article>
     </div>
 
-    <footer className="guide-footer"><span>乐子乌超级价值 · 完整使用手册 · 功能说明更新于 2026-09-06</span><nav><Link to="/">产品介绍</Link><Link to="/app">研究平台</Link><a href="#find">搜索手册</a></nav></footer>
+    <footer className="guide-footer"><span>乐子乌智能投研平台 · 完整使用手册 · 功能说明更新于 2026-10-21</span><nav><Link to="/">产品介绍</Link><Link to="/app">研究平台</Link><a href="#find">搜索手册</a></nav></footer>
     {lightbox?.screenshot && lightbox.alt ? <dialog ref={lightboxRef} className="guide-lightbox" aria-label="页面截图预览" onCancel={() => setLightbox(null)} onClick={(event) => { if (event.target === event.currentTarget) setLightbox(null); }}>
       <button type="button" onClick={() => setLightbox(null)} aria-label="关闭截图预览" autoFocus><X /></button>
       <div className="guide-lightbox-shell" onClick={(event) => event.stopPropagation()}>

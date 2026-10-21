@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="apps/dsa-web/public/landing/intelligence-flow-v2.webp" alt="乐子乌超级价值 · 证据驱动的投资研究工作台" width="100%" />
+  <img src="apps/dsa-web/public/landing/intelligence-flow-v2.webp" alt="乐子乌智能投研平台 · 证据驱动的投资研究工作台" width="100%" />
 </p>
 
-<h1 align="center">乐子乌超级价值</h1>
+<h1 align="center">乐子乌智能投研平台</h1>
 
 <p align="center">
   <strong>从市场变化，到证据判断，再到研究、验证与行动。</strong><br />
@@ -52,7 +52,7 @@ python -m api.server
 
 ## 一条完整的投资研究闭环
 
-乐子乌超级价值不是把接口堆在同一个页面，而是围绕一次真实决策组织数据和工具：
+乐子乌智能投研平台不是把接口堆在同一个页面，而是围绕一次真实决策组织数据和工具：
 
 ```mermaid
 flowchart LR
@@ -78,7 +78,7 @@ flowchart LR
 ### 今日决策 · 先确定市场环境
 
 <p align="center">
-  <img src="apps/dsa-web/public/landing/screens/market-overview.jpg" alt="乐子乌超级价值市场总览实机界面" width="100%" />
+  <img src="apps/dsa-web/public/landing/screens/market-overview.jpg" alt="乐子乌智能投研平台市场总览实机界面" width="100%" />
 </p>
 
 指数、市场广度、行业涨跌、自选股行情和重要新闻使用各自明确的交易日、来源与更新时间，不用旧收盘数据冒充实时行情。

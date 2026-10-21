@@ -49,9 +49,9 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); });
 
   it('updates the browser title when returning from a stock page', async () => {
-    document.title = '自选股超级看板 - 乐子乌超级价值';
+    document.title = '自选股超级看板 - 乐子乌智能投研平台';
     render(fixture()); await flush();
-    expect(document.title).toBe('任务与验证 - 乐子乌超级价值');
+    expect(document.title).toBe('任务与验证 - 乐子乌智能投研平台');
   });
 
   it('单个渠道轮询失败保留其进度；只重试失败渠道后显示恢复结果', async () => {

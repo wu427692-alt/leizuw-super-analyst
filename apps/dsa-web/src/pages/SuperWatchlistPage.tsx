@@ -802,7 +802,7 @@ export default function SuperWatchlistPage() {
   const listMutationInFlight = useRef(false);
   const stockCacheRef = useRef(stockCache);
   useEffect(() => { stockCacheRef.current = stockCache; }, [stockCache]);
-  useEffect(() => { document.title = '自选股超级看板 - 乐子乌超级价值'; }, []);
+  useEffect(() => { document.title = '自选股超级看板 - 乐子乌智能投研平台'; }, []);
   const loadWatchlist = useCallback(async () => {
     const revision = listRevision.current;
     if (listInFlight.current === revision || listMutationInFlight.current) return;

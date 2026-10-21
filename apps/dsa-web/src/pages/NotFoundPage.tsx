@@ -7,7 +7,7 @@ const NotFoundPage: React.FC = () => {
 
   // Set page title
   useEffect(() => {
-    document.title = '页面未找到 - 乐子乌超级价值';
+    document.title = '页面未找到 - 乐子乌智能投研平台';
   }, []);
 
   return (

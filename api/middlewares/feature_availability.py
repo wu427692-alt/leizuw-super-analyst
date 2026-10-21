@@ -20,7 +20,7 @@ def unavailable_feature_response(path: str, feature: str):
     return HTMLResponse(
         "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<title>功能暂时下线 · 乐子乌超级价值</title>"
+        "<title>功能暂时下线 · 乐子乌智能投研平台</title>"
         "<body><main><h1>Jev 功能暂时下线</h1>"
         "<p>历史任务和记录已保留，不再接受新任务。</p>"
         "<a href='/app'>返回市场首页</a></main></body></html>",

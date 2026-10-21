@@ -16,7 +16,7 @@ export function JevStandaloneApp() {
     if (accessDocument && access.loggedIn && !access.isLoading) jevDocumentNavigation.replace(returnTarget);
   }, [accessDocument, access.loggedIn, access.isLoading, returnTarget]);
   return <div className="jev-standalone">
-    <header className="jev-standalone-nav"><a href="/app" className="jev-site-name">乐子乌超级价值</a><a href="/app"><ArrowLeft size={14} />返回首页</a></header>
+    <header className="jev-standalone-nav"><a href="/app" className="jev-site-name">乐子乌智能投研平台</a><a href="/app"><ArrowLeft size={14} />返回首页</a></header>
     {access.isLoading ? <main className="jev-standalone-gate" role="status"><h1>正在确认访问权限</h1><p>验证完成后读取当前账号的回测任务。</p></main>
       : access.loggedIn && accessDocument ? <main className="jev-standalone-gate" role="status"><h1>正在打开 Jev 交易回测</h1><p>正在载入独立回测页面。</p></main>
       : access.loggedIn ? <JevBacktestPage />

@@ -121,7 +121,7 @@ const TasksHubPage = () => {
 
 function TasksHubContent() {
   const navigate = useNavigate();
-  useEffect(() => { document.title = '任务与验证 - 乐子乌超级价值'; }, []);
+  useEffect(() => { document.title = '任务与验证 - 乐子乌智能投研平台'; }, []);
   const [channels, setChannels] = useState(initialChannels);
   const channelsRef = useRef(channels);
   useEffect(() => { channelsRef.current = channels; }, [channels]);

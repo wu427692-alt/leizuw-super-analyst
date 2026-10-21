@@ -208,7 +208,7 @@ function DataAcquisitionContent({ userId }: { userId: number }) {
   const downloadBusy = useRef(false);
   useEffect(() => {
     alive.current = true;
-    document.title = '数据一站式获取 - 乐子乌超级价值';
+    document.title = '数据一站式获取 - 乐子乌智能投研平台';
     return () => { alive.current = false; };
   }, []);
 

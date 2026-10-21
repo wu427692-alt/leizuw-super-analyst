@@ -82,7 +82,7 @@ function JevWorkbench({ allowed }: { allowed: boolean }) {
       const errors = [capabilityRead, historyRead].filter(item => item.status === 'rejected').map(item => toApiErrorMessage(item.reason));
       setError(errors.join('；')); setLoading(false);
     }).finally(() => controllers.current.delete(controller));
-    document.title = 'Jev 交易回测 - 乐子乌超级价值';
+    document.title = 'Jev 交易回测 - 乐子乌智能投研平台';
     return () => controller.abort();
   }, [allowed, makeController, loseAccess]);
 

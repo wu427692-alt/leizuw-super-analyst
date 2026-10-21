@@ -118,7 +118,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           <BarChart3 className={cn(isRail ? 'h-[19px] w-[19px]' : 'h-5 w-5')} />
         </div>
         {!collapsed ? (
-          <p className={cn('min-w-0 font-semibold leading-tight text-foreground', isRail ? 'max-w-[130px] text-[0.75rem]' : 'text-sm')}>乐子乌超级价值</p>
+          <p className={cn('min-w-0 font-semibold leading-tight text-foreground', isRail ? 'max-w-[130px] text-[0.75rem]' : 'text-sm')}>乐子乌智能投研平台</p>
         ) : null}
       </div>
 

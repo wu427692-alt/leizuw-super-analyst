@@ -122,7 +122,7 @@ export default function AiNewsPage() {
   const selectedFilters = !!(filters.q || filters.topic || filters.source);
   const windowLabel = filters.window === '24h' ? '近 24 小时' : filters.window === '30d' ? '近 30 天' : '近 7 天';
   const newCount = nextFeed?.items.filter(item => !data?.items.some(old => old.id === item.id)).length ?? 0;
-  useEffect(() => { document.title = 'AI 新闻热点 · 乐子乌超级价值'; }, []);
+  useEffect(() => { document.title = 'AI 新闻热点 · 乐子乌智能投研平台'; }, []);
   useEffect(() => {
     const params = new URLSearchParams(query); params.delete('page_size'); params.set('view', filters.view);
     for (const key of ['q', 'source', 'topic']) if (!params.get(key)) params.delete(key);

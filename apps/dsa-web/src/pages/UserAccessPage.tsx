@@ -38,7 +38,7 @@ const UserAccessPage: React.FC<{ documentNavigation?: boolean }> = ({ documentNa
   const phoneAlreadyBound = binding && (bound || access.user?.phoneBound);
   const smsEnabled = access.smsLoginEnabled === true;
 
-  useEffect(() => { document.title = `${binding ? '绑定手机号' : '登录'} · 乐子乌超级价值`; }, [binding]);
+  useEffect(() => { document.title = `${binding ? '绑定手机号' : '登录'} · 乐子乌智能投研平台`; }, [binding]);
   useEffect(() => {
     if (!retryAt && !challenge) return;
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
@@ -95,7 +95,7 @@ const UserAccessPage: React.FC<{ documentNavigation?: boolean }> = ({ documentNa
 
   return <main className="user-access-page">
     <section className="user-access-story">
-      <Link to="/" reloadDocument={documentNavigation} className="user-access-brand"><span><BarChart3 aria-hidden="true" /></span><strong>乐子乌超级价值</strong></Link>
+      <Link to="/" reloadDocument={documentNavigation} className="user-access-brand"><span><BarChart3 aria-hidden="true" /></span><strong>乐子乌智能投研平台</strong></Link>
       <div className="user-access-copy"><p className="user-access-kicker">证据驱动的投资研究</p><h1>共享同一套事实，<br /><em>保留自己的研究路径。</em></h1><p>行情、公告、研报与机构语料持续更新；自选股、问股会话、调研与量化任务，按你的账号独立保存。</p>
         <div className="user-access-features">{policyReady && <article>{selfService ? <Smartphone /> : <ShieldCheck />}<div><strong>{selfService ? '手机号验证，即刻使用' : '管理员审批'}</strong><span>{selfService ? '未注册的手机号验证成功后自动创建账号，无需等待审核' : '注册后先审核，再开放数据和 AI 能力'}</span></div></article>}<article><LockKeyhole /><div><strong>个人数据独立保存</strong><span>账号之间隔离，换设备仍可继续自己的研究</span></div></article><article><KeyRound /><div><strong>原有账号继续使用</strong><span>{selfService ? '先用原密码登录，再绑定手机，原有数据不会迁移或丢失' : '完成账号登录后访问，共享网络不会自动放行'}</span></div></article></div>
       </div><small>机会发现 · 个股研究 · 信息检索 · 量化验证</small>

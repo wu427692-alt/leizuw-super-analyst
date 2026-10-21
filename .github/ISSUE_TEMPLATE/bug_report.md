@@ -1,6 +1,6 @@
 ---
 name: 问题反馈
-about: 报告乐子乌超级价值中的功能、数据或部署问题
+about: 报告乐子乌智能投研平台中的功能、数据或部署问题
 title: '[Bug] '
 labels: bug
 assignees: ''

@@ -157,7 +157,7 @@ export default function EssayQuantPage() {
     if (historyJob.status === 'fulfilled' && historyJob.value) setHistory(historyJob.value);
   }, [active]);
   useEffect(() => {
-    void load(); document.title = '量化回测与数据利用 - 乐子乌超级价值';
+    void load(); document.title = '量化回测与数据利用 - 乐子乌智能投研平台';
   }, [load]);
   useEffect(() => {
     if (!viewingRun || requestedRunId == null) return undefined;

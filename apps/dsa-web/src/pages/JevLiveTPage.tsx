@@ -211,7 +211,7 @@ function LiveWorkbench() {
       } catch (failure) { if (!controller.signal.aborted && !invalidated.current) { if (denied(failure)) loseAccess(); else { setError(toApiErrorMessage(failure)); setLoading(false); if (!requestedRun) timer = setTimeout(() => void read(false), 30000); } } }
     };
     void read(true);
-    document.title = 'Jev 实时纸上做T - 乐子乌超级价值';
+    document.title = 'Jev 实时纸上做T - 乐子乌智能投研平台';
     return () => { invalidated.current = true; controller.abort(); if (timer) clearTimeout(timer); };
   }, [requestedRun, retry, accessLost]);
   const select = (runId?: string) => { setDetail(null); setLoading(true); setError(''); const next = new URLSearchParams(params); if (runId) next.set('run', runId); else next.delete('run'); setParams(next); if (requestedRun === (runId ?? null)) setRetry(value => value + 1); };

@@ -89,7 +89,7 @@ function ConvertibleWorkbench() {
       else setResearchError(toApiErrorMessage(researchRead.reason));
       setError([capabilityRead, historyRead].filter(item => item.status === 'rejected').map(item => toApiErrorMessage(item.reason)).join('；')); setLoading(false);
     }).finally(() => controllers.current.delete(request));
-    document.title = 'Jev 秒级交易研究 - 乐子乌超级价值';
+    document.title = 'Jev 秒级交易研究 - 乐子乌智能投研平台';
     return () => request.abort();
   }, [controller, loseAccess]);
   useEffect(() => {

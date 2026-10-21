@@ -742,7 +742,7 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
 
   useEffect(() => {
     const viewLabel = VIEW_META.find((item) => item.view === view)?.label ?? '机构段子与录音';
-    document.title = `${viewLabel} · 机构段子与录音 - 乐子乌超级价值`;
+    document.title = `${viewLabel} · 机构段子与录音 - 乐子乌智能投研平台`;
   }, [view]);
 
   useEffect(() => {

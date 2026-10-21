@@ -631,7 +631,7 @@ export default function ConceptThemesPage() {
   const { query: stockQuery, sort: stockSort, only: watchlistOnly } = currentStockFilters;
   const updateStockFilters = (patch: Partial<StockFilters>) => setStockFilters({ ...currentStockFilters, page: 1, ...patch });
 
-  useEffect(() => { document.title = '概念题材查看 - 乐子乌超级价值'; }, []);
+  useEffect(() => { document.title = '概念题材查看 - 乐子乌智能投研平台'; }, []);
   const refreshActivePage = () => Promise.allSettled([
     overviewState.reload(), detailState.reload(), stockState.reload(), compareState.reload(),
     rotationState.reload(), leadersState.reload(), institutionState.reload(), lifecycleState.reload(),

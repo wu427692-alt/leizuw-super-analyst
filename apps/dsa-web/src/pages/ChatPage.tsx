@@ -218,7 +218,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
 
   // Set page title
   useEffect(() => {
-    document.title = '问股 - 乐子乌超级价值';
+    document.title = '问股 - 乐子乌智能投研平台';
   }, []);
 
   useEffect(() => {
