@@ -14,7 +14,7 @@ show_error() {
 }
 
 service_ready() {
-  /usr/bin/curl --silent --fail --max-time 2 "${WEBUI_URL}/api/health" >/dev/null 2>&1
+  /usr/bin/curl --silent --fail --max-time 2 "${WEBUI_URL}/api/v1/health" >/dev/null 2>&1
 }
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then

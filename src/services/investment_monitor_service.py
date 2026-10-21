@@ -717,10 +717,15 @@ class InvestmentMonitorService:
             for symbol in watchlist
         ]
         latest = events
+        excluded_markers = ("金十", "快讯", "雪球", "热门股票")
         news_events = [
             event for event in latest
             if str((source_meta.get(event["source_key"]) or {}).get("category") or "") == "news"
             and event.get("event_type") in {"news", "long_news"}
+            and not any(
+                marker in f'{event.get("source") or ""} {event.get("source_name") or ""}'
+                for marker in excluded_markers
+            )
         ]
         watchlist_symbols = set(watchlist)
         pinned_news = sorted(

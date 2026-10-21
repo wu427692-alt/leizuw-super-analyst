@@ -247,7 +247,7 @@ services:
         - >-
           import http.client,json,os;
           c=http.client.HTTPConnection('127.0.0.1',int(os.environ['API_PORT']),timeout=5);
-          c.request('GET','/api/health');r=c.getresponse();
+          c.request('GET','/api/v1/health');r=c.getresponse();
           assert r.status == 200 and json.loads(r.read()).get('status') == 'ok'
       interval: 30s
       timeout: 10s

@@ -185,7 +185,7 @@ fi
 WEBUI_URL="http://127.0.0.1:${WEBUI_PORT}"
 READY=false
 for _ in {1..180}; do
-  if /usr/bin/curl --silent --fail --max-time 2 "${WEBUI_URL}/api/health" >/dev/null 2>&1; then
+  if /usr/bin/curl --silent --fail --max-time 2 "${WEBUI_URL}/api/v1/health" >/dev/null 2>&1; then
     READY=true
     break
   fi
@@ -201,5 +201,5 @@ echo "Installed LaunchAgent: ${PLIST_PATH}"
 echo "Installed application: ${APP_PATH}"
 echo "Dock application ready: 财经情报台"
 echo "Installed runtime: ${RUNTIME_ROOT}"
-echo "Health check passed: ${WEBUI_URL}/api/health"
+echo "Health check passed: ${WEBUI_URL}/api/v1/health"
 echo "Web interface: ${WEBUI_URL}"

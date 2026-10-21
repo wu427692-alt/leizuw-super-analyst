@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import re
+import requests
 import socket
 import ssl
 import tempfile
@@ -336,6 +337,61 @@ class AiNewsService:
         self._state: dict = {"version": 1, "items": [], "sources": {}, "updated_at": None}
         self._read_cache()
 
+    _translation_cache: dict[str, str] = {}
+
+    @staticmethod
+    def _is_english(text: str) -> bool:
+        letters = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+        return letters >= 6 and letters >= len(text) * 0.3
+
+    def _translate(self, text: str) -> str:
+        cached = self._translation_cache.get(text)
+        if cached:
+            return cached
+        key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY")
+        if not key:
+            try:
+                from src.config import get_config
+                keys = getattr(get_config(), "deepseek_api_keys", []) or []
+                key = keys[0] if keys else None
+            except Exception:
+                key = None
+        if not key:
+            return text
+        base = (os.getenv("DEEPSEEK_API_BASE") or "https://api.deepseek.com").rstrip("/")
+        try:
+            response = requests.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                    "messages": [
+                        {"role": "system", "content": "把英文财经/AI 新闻翻译成简洁、准确的中文，只输出译文，不要解释。"},
+                        {"role": "user", "content": text[:2000]},
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 500,
+                },
+                timeout=20,
+            )
+            if response.status_code == 200:
+                translated = response.json()["choices"][0]["message"]["content"].strip()
+                if translated:
+                    self._translation_cache[text] = translated
+                    return translated
+        except Exception:
+            pass
+        return text
+
+    def _localize(self, items: list[dict]) -> None:
+        for item in items:
+            title = str(item.get("title") or "")
+            if title and self._is_english(title):
+                item["title_zh"] = self._translate(title)
+            summary = str(item.get("summary") or "")
+            if summary and self._is_english(summary):
+                item["summary_zh"] = self._translate(summary)
+
     def _read_cache(self):
         try:
             with self._lock:
@@ -494,6 +550,7 @@ class AiNewsService:
         page = min(page, pages)
         items = [{k: v for k, v in r.items() if not k.startswith("_")}
                  for r in groups[(page - 1) * page_size:page * page_size]]
+        self._localize(items)
         sources = []
         for identifier, name, publisher, kind, url in SOURCES:
             state = statuses.get(identifier, {})
