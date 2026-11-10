@@ -118,7 +118,7 @@ describe('SMS self-service access', () => {
     open('/access?bind=phone&redirect=%2F%2Fevil.invalid');
     expect(screen.getByRole('heading', { name: '手机号已绑定' })).toBeInTheDocument();
     expect(screen.queryByLabelText('手机号')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '进入工作台' })).toHaveAttribute('href', '/app');
+    expect(screen.getByRole('link', { name: '进入工作台' })).toHaveAttribute('href', '/home');
   });
 
   it('keeps the same challenge when the original password needs correcting', async () => {

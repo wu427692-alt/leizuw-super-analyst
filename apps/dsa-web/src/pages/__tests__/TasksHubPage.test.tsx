@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dataAcquisitionApi } from '../../api/dataAcquisition';
 import { essayQuantApi } from '../../api/essayQuant';
 import { essayRadarApi } from '../../api/essayRadar';
+import { essayExportsApi } from '../../api/essayExports';
+import type { EssayExportTask } from '../../api/essayExports';
 import { industryResearchApi } from '../../api/industryResearch';
 import { useUserAccess } from '../../contexts/UserAccessContext';
 import type { EssayQuantTask } from '../../types/essayQuant';
@@ -13,12 +15,19 @@ import TasksHubPage from '../TasksHubPage';
 vi.mock('../../api/dataAcquisition', () => ({ dataAcquisitionApi: { tasks: vi.fn() } }));
 vi.mock('../../api/essayQuant', () => ({ essayQuantApi: { tasks: vi.fn() } }));
 vi.mock('../../api/essayRadar', () => ({ essayRadarApi: { audioAnalysisTasks: vi.fn(), audioBatchTasks: vi.fn() } }));
+vi.mock('../../api/essayExports', () => ({ essayExportsApi: { tasks: vi.fn() } }));
 vi.mock('../../api/industryResearch', () => ({ industryResearchApi: { projects: vi.fn() } }));
 vi.mock('../../contexts/UserAccessContext', () => ({ useUserAccess: vi.fn() }));
 
 const running: EssayQuantTask = {
   taskId: 'quant/旧任务', name: '账号 A 的量化任务', status: 'running', progress: 45,
   message: '量化计算中', strategyType: 'essay_event', createdAt: '2026-09-04T01:00:00Z',
+};
+const exporting: EssayExportTask = {
+  taskId: 'essay/export-1', workspaceId: 'meeting-another-workspace', title: '宁德时代全部提及小作文',
+  status: 'collecting', progress: 24, matchedTotal: 12_400, targetTotal: 12_400,
+  retrievedCount: 3_000, packagedCount: 0, bytesWritten: 3072, bytesTotal: null,
+  requestedLimit: null, updatedAt: '2026-10-22T00:00:00Z',
 };
 const auth = () => ({
   user: { id: 1, name: '用户 A', status: 'approved' }, loggedIn: true, isLoading: false,
@@ -45,6 +54,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     vi.mocked(essayRadarApi.audioAnalysisTasks).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(essayRadarApi.audioBatchTasks).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(dataAcquisitionApi.tasks).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(essayExportsApi.tasks).mockResolvedValue({ items: [], total: 0 });
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -293,5 +303,98 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
     fireEvent.click(screen.getByRole('button', { name: /公司调研 30/ }));
     expect(screen.getByLabelText('当前路由')).toHaveTextContent('/industry-research?project=research-30');
+  });
+
+  it('小作文全量导出作为第六类任务显示真实范围和计数，不把20条预览当作上限', async () => {
+    vi.mocked(essayExportsApi.tasks).mockResolvedValue({ items: [exporting], total: 1 });
+    render(fixture()); await flush();
+    fireEvent.change(screen.getByRole('combobox', { name: '任务类型' }), { target: { value: 'essay-export' } });
+    const row = screen.getByRole('button', { name: /宁德时代全部提及小作文/ });
+    expect(within(row).getByText(/全量导出，不设篇数上限/)).toBeVisible();
+    expect(within(row).getByText(/匹配 12,400 篇.*已收集 3,000 \/ 12,400 篇.*已打包 0 篇.*已处理原始字节 3 KB \/ 待确认/)).toBeVisible();
+    expect(within(row).getByText('收集原文')).toBeVisible();
+    expect(within(row).getByLabelText('进度 24%')).toBeVisible();
+    expect(screen.queryByText(running.name)).not.toBeInTheDocument();
+    fireEvent.click(row);
+    expect(screen.getByLabelText('当前路由')).toHaveTextContent('/meeting?export_task=essay%2Fexport-1');
+    expect(essayExportsApi.tasks).toHaveBeenCalledWith();
+  });
+
+  it('只有任务明确的用户篇数才显示篇数限制；未知进度不伪造0%或100%', async () => {
+    vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(essayExportsApi.tasks).mockResolvedValue({ items: [{ ...exporting, requestedLimit: 37, status: 'indexing', progress: null, matchedTotal: null, targetTotal: null, retrievedCount: 0, bytesWritten: 0 }], total: 1 });
+    render(fixture()); await flush();
+    const row = screen.getByRole('button', { name: /宁德时代全部提及小作文/ });
+    expect(within(row).getByText(/用户指定最多 37 篇/)).toBeVisible();
+    expect(within(row).getByText(/匹配 待确认 篇.*已收集 0 \/ 待确认 篇/)).toBeVisible();
+    expect(within(row).getByLabelText('进度尚未确认')).toHaveTextContent('总量确认中');
+    expect(within(row).queryByText(/\d+%/)).not.toBeInTheDocument();
+    expect(within(row).queryByText(/不设篇数上限/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['queued', '排队中', true], ['indexing', '统计总量', true], ['collecting', '收集原文', true],
+    ['packaging', '生成数据包', true], ['retrying', '等待续跑', true],
+    ['completed', '已完成', false], ['failed', '需要重试', false], ['no_results', '无匹配结果', false],
+  ] as const)('小作文阶段 %s 显示真实含义并正确控制活动轮询', async (status, label, active) => {
+    vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(essayExportsApi.tasks).mockResolvedValue({ items: [{ ...exporting, status }], total: 1 });
+    render(fixture()); await flush();
+    expect(within(screen.getByRole('button', { name: /宁德时代全部提及小作文/ })).getByText(label)).toBeVisible();
+    expect(screen.getByRole('button', { name: new RegExp(`^正在处理\\s*${active ? 1 : 0}$`) })).toBeVisible();
+    await advance(10_000);
+    expect(essayExportsApi.tasks).toHaveBeenCalledTimes(active ? 2 : 1);
+  });
+
+  it('导出任务重试失败保留最后成功计数，恢复后替换快照且不影响其他渠道', async () => {
+    vi.mocked(essayExportsApi.tasks).mockResolvedValueOnce({ items: [exporting], total: 1 })
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ items: [{ ...exporting, status: 'completed', progress: 100, retrievedCount: 12_400, packagedCount: 12_400 }], total: 1 });
+    render(fixture()); await flush(); await advance(10_000);
+    const row = screen.getByRole('button', { name: /宁德时代全部提及小作文/ });
+    expect(within(row).getByText(/已收集 3,000 \/ 12,400/)).toBeVisible();
+    expect(within(row).getByText(/上次读取状态/)).toBeVisible();
+    expect(screen.getByText(running.name)).toBeVisible();
+    expandFailures();
+    fireEvent.click(screen.getByRole('button', { name: '重试小作文导出' })); await flush();
+    expect(within(screen.getByRole('button', { name: /宁德时代全部提及小作文/ })).getByText(/已打包 12,400 篇/)).toBeVisible();
+    expect(screen.queryByText(/上次读取状态/)).not.toBeInTheDocument();
+  });
+
+  it('导出无结果单独显示，不冒充成功导出；已结束筛选仍可打开查看原因', async () => {
+    vi.mocked(essayExportsApi.tasks).mockResolvedValue({ items: [{ ...exporting, status: 'no_results', progress: null, matchedTotal: 0, targetTotal: 0, retrievedCount: 0, packagedCount: 0, message: '当前条件未匹配原文' }], total: 1 });
+    render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('button', { name: /^已结束\s*1$/ }));
+    const row = screen.getByRole('button', { name: /宁德时代全部提及小作文/ });
+    expect(within(row).getByText('无匹配结果')).toBeVisible();
+    expect(within(row).getByText(/匹配 0 篇.*已收集 0 \/ 0 篇/)).toBeVisible();
+    expect(within(row).getByLabelText('进度尚未确认')).toHaveTextContent('未计算');
+    expect(within(row).queryByText('已完成')).not.toBeInTheDocument();
+  });
+
+  it('切换账号后隔离其他workspace的导出任务，旧请求不能回填', async () => {
+    let finishOld!: (value: { items: EssayExportTask[]; total: number }) => void;
+    vi.mocked(essayExportsApi.tasks).mockResolvedValueOnce({ items: [exporting], total: 1 })
+      .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }))
+      .mockResolvedValue({ items: [{ ...exporting, taskId: 'owner-b-export', title: '用户B导出' }], total: 1 });
+    const view = render(fixture()); await flush(); await advance(10_000);
+    vi.mocked(useUserAccess).mockReturnValue({ ...auth(), user: { id: 2, name: '用户 B', status: 'approved' } });
+    view.rerender(fixture());
+    expect(screen.queryByText(exporting.title!)).not.toBeInTheDocument();
+    await flush();
+    expect(screen.getByText('用户B导出')).toBeVisible();
+    await act(async () => { finishOld({ items: [{ ...exporting, title: '用户A迟到导出' }], total: 1 }); });
+    expect(screen.queryByText('用户A迟到导出')).not.toBeInTheDocument();
+    expect(screen.getByText('用户B导出')).toBeVisible();
+  });
+
+  it.each([401, 403])('小作文导出权限错误 %s 隐藏旧记录并停止轮询', async status => {
+    vi.mocked(essayExportsApi.tasks).mockResolvedValueOnce({ items: [exporting], total: 1 })
+      .mockRejectedValue({ isAxiosError: true, response: { status } });
+    render(fixture()); await flush(); await advance(10_000);
+    expect(screen.queryByText(exporting.title!)).not.toBeInTheDocument();
+    expect(screen.getByText(running.name)).toBeVisible();
+    await advance(60_000);
+    expect(essayExportsApi.tasks).toHaveBeenCalledTimes(2);
   });
 });

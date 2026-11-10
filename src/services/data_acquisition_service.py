@@ -6,6 +6,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 import csv
+import fcntl
 import hashlib
 import json
 import logging
@@ -13,13 +14,14 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 import unicodedata
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 import zipfile
 
 from json_repair import repair_json
@@ -40,7 +42,7 @@ from src.services.essay_analysis_service import (
     DeepSeekEssayAnalyzer,
     EssayDailyReportService,
 )
-from src.services.cninfo_announcement_service import CninfoAnnouncementService
+from src.services.cninfo_announcement_service import CninfoAnnouncementService, CninfoAnnouncementError, CNINFO_QUERY_URL, ANNOUNCEMENT_CATEGORIES
 from src.services.acquisition_entity_resolver import resolve_acquisition_entities
 from src.services.financial_data_service import FinancialDataService, FinancialDataValidationError
 from src.services.investment_monitor_service import InvestmentMonitorService
@@ -178,6 +180,10 @@ class DataAcquisitionError(RuntimeError):
     """Safe error surfaced by the acquisition workbench."""
 
 
+class DocumentAcquisitionPaused(DataAcquisitionError):
+    """A durable document job retained its checkpoints and can be resumed."""
+
+
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -277,6 +283,13 @@ def _extract_requested_date_range(request_text: str) -> Optional[tuple[str, str]
     if len(compact) >= 2:
         dates = sorted(datetime.strptime(value, "%Y%m%d").date() for value in compact[:2])
         return dates[0].isoformat(), dates[-1].isoformat()
+    if re.search(r"(?:最近|近|过去)\s*半\s*年", text):
+        month = today.year * 12 + today.month - 1 - 6
+        import calendar
+
+        year, zero_month = divmod(month, 12)
+        start = date(year, zero_month + 1, min(today.day, calendar.monthrange(year, zero_month + 1)[1]))
+        return start.isoformat(), today.isoformat()
     for unit, multiplier in (("年", 1), ("个月", 30), ("月", 30), ("天", 1)):
         match = re.search(rf"(?:最近|近|过去)\s*([\d零一二两三四五六七八九十]+)\s*{unit}", text)
         if not match:
@@ -529,6 +542,12 @@ class DataAcquisitionService:
         normalized = self._validate_plan(plan, str(request_text or "").strip())
         if require_ready and not normalized["preflight"]["can_execute"]:
             raise DataAcquisitionError("取数计划待确认：" + "；".join(normalized["preflight"]["blockers"])[:400])
+        if require_ready and not normalized.get("document_export"):
+            authorized = self._requested_document_kinds(request_text)
+            for task in normalized["tasks"]:
+                kind = {("cninfo", "announcements"): "announcements", ("tushare", "research_report"): "research_reports"}.get((task["source"], task["resource"]))
+                if kind and authorized and kind not in authorized:
+                    raise DataAcquisitionError("用户未要求研究报告，不得混入研报下载" if kind == "research_reports" else "用户未确认下载公司公告，不得混入公告")
         return normalized
 
     def run(
@@ -537,8 +556,27 @@ class DataAcquisitionService:
         plan: Optional[Dict[str, Any]] = None,
         *,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        job_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        normalized_plan = self.validate_plan(request_text, plan or self.plan(request_text), require_ready=True)
+        saved_document_plan = None
+        if job_id and (plan or {}).get("document_export"):
+            self._job_path(job_id)
+            checkpoint = self.output_root / ".document-work" / job_id / "checkpoint.sqlite3"
+            if checkpoint.is_file() and not checkpoint.is_symlink():
+                connection = sqlite3.connect(checkpoint.resolve().as_uri() + "?mode=ro", uri=True)
+                try:
+                    connection.execute("PRAGMA query_only=ON")
+                    row = connection.execute("SELECT value FROM metadata WHERE id=1").fetchone()
+                    meta = json.loads(row[0]) if row else {}
+                    if meta.get("owner_id") != current_owner_id() or meta.get("request") != request_text:
+                        raise DataAcquisitionError("文档任务不存在或无权继续")
+                    saved_document_plan = meta.get("plan")
+                finally:
+                    connection.close()
+        normalized_plan = saved_document_plan or self.validate_plan(request_text, plan or self.plan(request_text), require_ready=True)
+        if normalized_plan.get("document_export"):
+            return self._run_documents(request_text, normalized_plan, job_id=job_id,
+                                       progress_callback=progress_callback)
         self._emit_progress(
             progress_callback,
             progress=3,
@@ -637,6 +675,405 @@ class DataAcquisitionService:
         except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise
+
+    @staticmethod
+    def _document_space(path: Path, required: int = 0) -> None:
+        if shutil.disk_usage(path).free < required + 64 * 1024 * 1024:
+            raise DocumentAcquisitionPaused("可用磁盘空间不足，已保留资料断点；释放空间后可继续同一任务")
+
+    @staticmethod
+    def _document_hash(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def _document_page(self, task: Dict[str, Any], cursor: Dict[str, Any]) -> tuple[List[Dict[str, Any]], Dict[str, Any], bool]:
+        """One bounded upstream page; callers commit rows and next cursor together."""
+        scope, params = task["resolved_scope"], task["params"]
+        symbols = list(scope.get("symbols") or [])
+        if not symbols:
+            raise DataAcquisitionError("完整文档导出必须指定已核验公司，禁止全市场请求")
+        index = int(cursor.get("selector", 0))
+        symbol = symbols[index]
+        start, end = self._as_date(scope["start_date"], default_days=0), self._as_date(scope["end_date"], default_days=0)
+        window_start = date.fromisoformat(cursor.get("window_start") or start.isoformat())
+        window_end = min(window_start + timedelta(days=3650 if task["source"] == "cninfo" else 13), end)
+        page = int(cursor.get("page", 1))
+        if task["source"] == "cninfo":
+            categories = params.get("categories") or params.get("category") or []
+            categories = categories if isinstance(categories, list) else str(categories).split(";")
+            if any(value not in ANNOUNCEMENT_CATEGORIES for value in categories):
+                raise DataAcquisitionError("无效公告分类")
+            security = self.cninfo.resolve_security(symbol)
+            try:
+                data = self.cninfo._post_json(CNINFO_QUERY_URL, {
+                "pageNum": page, "pageSize": 100, "column": "szse", "tabName": "fulltext", "plate": "",
+                "stock": f"{security['code']},{security['org_id']}", "searchkey": str(params.get("keyword") or "")[:100],
+                "secid": "", "category": ";".join(categories), "trade": "",
+                "seDate": f"{window_start.isoformat()}~{window_end.isoformat()}",
+                "sortName": "", "sortType": "", "isHLtitle": "true",
+                })
+            except CninfoAnnouncementError as exc:
+                raise DataAcquisitionError(str(exc)) from exc
+            if not isinstance(data, dict) or "announcements" not in data or not isinstance(data.get("announcements") or [], list):
+                raise DataAcquisitionError("公告接口未返回有效分页，保留断点等待重试")
+            raw = data.get("announcements") or []
+            try:
+                total_pages = int(data.get("totalpages") or 0)
+                advertised_total = int(data.get("totalAnnouncement") or 0)
+            except (TypeError, ValueError) as exc:
+                raise DataAcquisitionError("公告分页总数无效") from exc
+            has_more = data.get("hasMore") is True
+            page_size = 100
+            prior = int(cursor.get("seen_count") or 0)
+            continued = bool(cursor.get("read_past_declared_pages"))
+            # Cninfo sometimes omits totalpages on the only page. A short page
+            # cannot be followed by another page, so those rows are complete.
+            if (raw and page == 1 and len(raw) < page_size and not has_more and total_pages == 0
+                    and ("totalAnnouncement" not in data or advertised_total == len(raw))):
+                total_pages = 1
+            # totalpages=1 together with hasMore and a short page means the
+            # declared page count is wrong. Keep the returned rows and read on.
+            source_says_more = bool(raw) and has_more and len(raw) < page_size and page < 20 and (total_pages == 0 or page >= max(total_pages, 1))
+            declared_pages = total_pages
+            if source_says_more:
+                total_pages = page + 1
+            if not raw and prior > 0:
+                finished = True
+            elif (total_pages < 0 or len(raw) > page_size
+                    or (raw and declared_pages > 0 and declared_pages < page and not continued and not source_says_more)
+                    or (not raw and declared_pages > 0 and page <= declared_pages)
+                    or (not raw and prior == 0 and (has_more or advertised_total > 0))):
+                raise DataAcquisitionError(
+                    "公告分页不完整，不能当作获取完成"
+                    f"（{window_start.isoformat()}至{window_end.isoformat()}第{page}页返回{len(raw)}条，"
+                    f"totalpages={data.get('totalpages')!s}，totalAnnouncement={data.get('totalAnnouncement')!s}，"
+                    f"hasMore={data.get('hasMore')!s}，已入库{prior}条，本页未入库）"
+                )
+            else:
+                if "totalAnnouncement" in data:
+                    seen_count = prior + len(raw)
+                    short_middle = page < total_pages and len(raw) != page_size and not source_says_more
+                    declared_mismatch = declared_pages != (advertised_total + page_size - 1) // page_size and not source_says_more and declared_pages > 0
+                    closed_short = (not has_more and not source_says_more and declared_pages > 0
+                                    and page >= declared_pages and seen_count != advertised_total)
+                    if (advertised_total < 0 or len(raw) > page_size
+                            or cursor.get("advertised_total", advertised_total) != advertised_total
+                            or declared_mismatch or short_middle or closed_short):
+                        raise DataAcquisitionError("公告数量与分页覆盖不一致或检索期间发生变化，不能声称全部取得")
+                finished = not has_more and page >= total_pages
+            if any(not isinstance(row, dict) or not row.get("secCode") or not row.get("announcementTime") for row in raw):
+                raise DataAcquisitionError("公告存在缺少证券代码或发布日期的记录，无法证明覆盖完整")
+            try:
+                for record in raw:
+                    if float(record["announcementTime"]) <= 0:
+                        raise ValueError("nonpositive timestamp")
+                    datetime.fromtimestamp(float(record["announcementTime"]) / 1000, timezone.utc)
+            except (ValueError, TypeError, OSError, OverflowError) as exc:
+                raise DataAcquisitionError("公告发布日期无效，不能以当前日期代替后导出") from exc
+            rows = [_json_safe(self.cninfo._normalize(row, categories)) for row in raw if isinstance(row, dict)]
+            if len(rows) != len(raw):
+                raise DataAcquisitionError("公告分页存在无效记录")
+        else:
+            fields = ["trade_date", "abstr", "title", "report_type", "author", "name", "ts_code", "inst_csname", "ind_name", "url"]
+            result = self.financial.query(source="tushare", resource="research_report", params={
+                **{key: params[key] for key in ("inst_csname", "report_type", "ind_name") if params.get(key)},
+                "ts_code": symbol, "start_date": window_start.strftime("%Y%m%d"),
+                "end_date": window_end.strftime("%Y%m%d"), "limit": 1000, "offset": (page - 1) * 1000,
+            }, fields=fields)
+            if not isinstance(result, dict) or result.get("error") or not isinstance(result.get("rows"), list):
+                raise DataAcquisitionError("研报接口未返回有效分页")
+            raw = result["rows"]
+            if any(not isinstance(row, dict) for row in raw):
+                raise DataAcquisitionError("研报分页存在无效记录")
+            rows = [_json_safe(row) for row in raw]
+            finished = len(raw) < 1000
+        fingerprint = hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
+        if raw and cursor.get("previous_fingerprint") == fingerprint:
+            if task["source"] == "cninfo" and int(cursor.get("seen_count") or 0) > 0:
+                rows = []
+                finished = True
+            else:
+                raise DataAcquisitionError("文档接口重复返回上一页，不能声称已遍历全部资料")
+        filtered = []
+        for row in rows:
+            code = str(row.get("code") or row.get("ts_code") or "").upper()
+            if not code:
+                raise DataAcquisitionError("文档记录缺少公司证券代码，无法核验检索覆盖")
+            if code not in {symbol.upper(), symbol.split(".")[0]}:
+                raise DataAcquisitionError("文档接口返回非目标公司记录，未将错误结果混入数据包")
+            stamp = str(row.get("announcement_at") or row.get("trade_date") or "")[:10].replace("-", "")[:8]
+            if not re.fullmatch(r"\d{8}", stamp):
+                raise DataAcquisitionError("文档记录缺少有效发布日期，无法核验检索覆盖")
+            if not start.strftime("%Y%m%d") <= stamp <= end.strftime("%Y%m%d"):
+                continue
+            selected = params.get("selected_announcement_ids")
+            if selected and str(row.get("announcement_id") or "") not in selected:
+                continue
+            if task["source"] == "cninfo" and params.get("keyword") and str(params["keyword"]) not in str(row.get("title") or ""):
+                continue
+            if task["source"] == "tushare":
+                topics = list(scope.get("keywords") or [])
+                scored = self._score_research_report(row, topics, str(params.get("keyword_mode") or "any"))
+                if (scored is None or not self._report_matches_explicit_filters(row, params)
+                        or params.get("depth_preference") == "strict" and int(scored.get("深度评分") or 0) < 45):
+                    continue
+                row = scored
+            filtered.append(row)
+        next_cursor = {"selector": index, "window_start": window_start.isoformat(), "page": page + 1,
+                       "previous_fingerprint": fingerprint, "pages_fetched": int(cursor.get("pages_fetched") or 0) + 1}
+        if task["source"] == "cninfo" and "totalAnnouncement" in data:
+            next_cursor.update(seen_count=int(cursor.get("seen_count") or 0) + len(raw), advertised_total=advertised_total)
+            if not finished and has_more and len(raw) < 100:
+                next_cursor["read_past_declared_pages"] = True
+        complete = False
+        if finished:
+            next_cursor.pop("previous_fingerprint", None)
+            next_cursor.pop("seen_count", None)
+            next_cursor.pop("advertised_total", None)
+            next_cursor.pop("read_past_declared_pages", None)
+            next_cursor["page"] = 1
+            if window_end < end:
+                next_cursor["window_start"] = (window_end + timedelta(days=1)).isoformat()
+            elif index + 1 < len(symbols):
+                next_cursor.update(selector=index + 1, window_start=start.isoformat())
+            else:
+                complete = True
+        return filtered, next_cursor, complete
+
+    def _run_documents(self, request_text: str, plan: Dict[str, Any], *, job_id: Optional[str],
+                       progress_callback: Optional[Callable[[Dict[str, Any]], None]]) -> Dict[str, Any]:
+        """The existing acquisition package, with a durable document-only checkpoint.
+
+        Batch/page sizes never cap total results. Only explicit human limits do.
+        Source pages, successes and their hashes commit before the next stage.
+        """
+        job_id = job_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + hashlib.sha256(os.urandom(16)).hexdigest()[:10]
+        final = self._job_path(job_id)
+        work_root = self.output_root / ".document-work"
+        if work_root.is_symlink():
+            raise DataAcquisitionError("无效的文档任务目录")
+        work_root.mkdir(mode=0o700, exist_ok=True)
+        work = work_root / job_id
+        if work.is_symlink():
+            raise DataAcquisitionError("无效的文档任务路径")
+        work.mkdir(mode=0o700, exist_ok=True)
+        lock_path = work / "runner.lock"
+        if lock_path.is_symlink() or (work / "checkpoint.sqlite3").is_symlink():
+            raise DataAcquisitionError("文档断点不得使用符号链接")
+        with lock_path.open("a+b") as lease:
+            try:
+                fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise DocumentAcquisitionPaused("同一文档任务正在后台执行，请勿重复提交") from exc
+            database = sqlite3.connect(work / "checkpoint.sqlite3", timeout=15)
+            database.row_factory = sqlite3.Row
+            try:
+                with database:
+                    database.execute("CREATE TABLE IF NOT EXISTS metadata(id INTEGER PRIMARY KEY,value TEXT NOT NULL)")
+                    database.execute("CREATE TABLE IF NOT EXISTS datasets(id TEXT PRIMARY KEY,task TEXT NOT NULL,cursor TEXT NOT NULL,complete INTEGER NOT NULL DEFAULT 0)")
+                    database.execute("CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY,dataset TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',path TEXT,sha256 TEXT,bytes INTEGER NOT NULL DEFAULT 0)")
+                    saved = database.execute("SELECT value FROM metadata WHERE id=1").fetchone()
+                    if saved:
+                        meta = json.loads(saved[0])
+                        if meta.get("owner_id") != current_owner_id() or meta.get("request") != request_text:
+                            raise DataAcquisitionError("文档任务不存在或无权继续")
+                        plan = meta["plan"]  # relative dates never move during a resumed job
+                    else:
+                        meta = {"owner_id": current_owner_id(), "request": request_text, "plan": plan, "job_id": job_id}
+                        database.execute("INSERT INTO metadata VALUES(1,?)", (json.dumps(meta, ensure_ascii=False),))
+                        for task in plan["tasks"]:
+                            database.execute("INSERT INTO datasets(id,task,cursor) VALUES(?,?,?)",
+                                             (task["id"], json.dumps(task, ensure_ascii=False), "{}"))
+                if final.exists():
+                    return self.get_job(job_id)
+                self._document_space(work)
+                for row in database.execute("SELECT * FROM datasets ORDER BY rowid").fetchall():
+                    task, cursor, complete = json.loads(row["task"]), json.loads(row["cursor"]), bool(row["complete"])
+                    wanted = task["params"].get("requested_limit")
+                    global_limit = plan["document_export"].get("requested_limit")
+                    while not complete:
+                        self._document_space(work)
+                        global_count = database.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+                        if global_limit is not None and global_count >= global_limit:
+                            cursor["intentional_limit"] = True
+                            with database:
+                                database.execute("UPDATE datasets SET cursor=?,complete=1 WHERE id=?", (json.dumps(cursor), task["id"]))
+                            complete = True
+                            break
+                        page, next_cursor, complete = self._document_page(task, cursor)
+                        with database:
+                            existing = database.execute("SELECT COUNT(*) FROM documents WHERE dataset=?", (task["id"],)).fetchone()[0]
+                            for item in page:
+                                if (wanted is not None and existing >= wanted) or (global_limit is not None and global_count >= global_limit):
+                                    complete = True
+                                    next_cursor["intentional_limit"] = True
+                                    break
+                                identity = str(item.get("announcement_id") or item.get("url") or item.get("pdf_url") or "")
+                                if not identity:
+                                    raise DataAcquisitionError("文档缺少稳定来源编号，不能安全续跑")
+                                key = hashlib.sha256((task["id"] + ":" + identity).encode()).hexdigest()
+                                inserted = database.execute("INSERT OR IGNORE INTO documents(id,dataset,payload) VALUES(?,?,?)",
+                                    (key, task["id"], json.dumps(item, ensure_ascii=False))).rowcount
+                                existing += inserted
+                                global_count += inserted
+                            if wanted is not None and existing >= wanted:
+                                complete = True
+                                next_cursor["intentional_limit"] = True
+                            if global_limit is not None and global_count >= global_limit:
+                                complete = True
+                                next_cursor["intentional_limit"] = True
+                            database.execute("UPDATE datasets SET cursor=?,complete=? WHERE id=?",
+                                             (json.dumps(next_cursor), int(complete), task["id"]))
+                        cursor = next_cursor
+                        total = database.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+                        self._emit_progress(progress_callback, phase="fetching", progress=10, job_id=job_id,
+                            matched_total=total, total_files=total, checkpoint=True,
+                            message=f"正在完整检索资料：已记录 {total} 份，分页断点已保存")
+                    selected = task["params"].get("selected_announcement_ids")
+                    if selected:
+                        obtained = {str(json.loads(row[0]).get("announcement_id")) for row in database.execute("SELECT payload FROM documents WHERE dataset=?", (task["id"],))}
+                        if set(selected) - obtained:
+                            raise DataAcquisitionError("精选公告未全部由官方接口核验取得，保留断点但不能发布成功包")
+                total = database.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+                if not total:
+                    raise DataAcquisitionError("请求范围没有可下载文档，未生成空的成功数据包")
+                # SQLite stays on this thread. Only a bounded eight-record
+                # batch enters the pool; no unbounded list of network futures.
+                hosts = {name: threading.BoundedSemaphore(4) for name in ("static.cninfo.com.cn", "pdf.dfcfw.com")}
+                last_rowid = 0
+                with ThreadPoolExecutor(max_workers=8, thread_name_prefix="document-pdf") as pool:
+                    while batch := database.execute("SELECT rowid AS _rownum,* FROM documents WHERE rowid>? ORDER BY rowid LIMIT 8", (last_rowid,)).fetchall():
+                        last_rowid = batch[-1]["_rownum"]
+                        failures, futures = [], {}
+                        for record in batch:
+                            task = json.loads(database.execute("SELECT task FROM datasets WHERE id=?", (record["dataset"],)).fetchone()[0])
+                            if record["status"] == "success":
+                                target = work / record["path"]
+                                if target.is_symlink() or not target.is_file() or target.stat().st_size != record["bytes"] or self._document_hash(target) != record["sha256"]:
+                                    raise DataAcquisitionError("已保存文档与断点校验不一致，保留现场等待检查")
+                                continue
+                            futures[pool.submit(self._document_download_file, work, task, dict(record), hosts)] = record["id"]
+                        for future in as_completed(futures):
+                            try:
+                                relative, digest, size = future.result()
+                                with database:
+                                    database.execute("UPDATE documents SET status='success',path=?,sha256=?,bytes=? WHERE id=?",
+                                                     (relative, digest, size, futures[future]))
+                            except Exception as exc:
+                                failures.append(self._safe_error(exc))
+                            done, downloaded = database.execute("SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM documents WHERE status='success'").fetchone()
+                            self._emit_progress(progress_callback, phase="downloading", progress=20 + round(done / total * 65),
+                                job_id=job_id, matched_total=total, total_files=total, completed_files=done,
+                                downloaded_bytes=downloaded, message=f"原始PDF已获取 {done}/{total} 份；后台有界并发下载")
+                        if failures:
+                            raise DocumentAcquisitionPaused("原始文件尚未完整取得，本批成功文件与分页断点已保留，可继续：" + "; ".join(failures[:3]))
+                return self._package_documents(database, work, final, request_text, plan, job_id, progress_callback)
+            finally:
+                database.close()
+
+    def _document_download_file(self, work: Path, task: Dict[str, Any], record: Dict[str, Any],
+                                hosts: Dict[str, threading.BoundedSemaphore]) -> tuple[str, str, int]:
+        item = json.loads(record["payload"])
+        source = task["source"]
+        stamp = str(item.get("announcement_at") or item.get("trade_date") or "")[:10].replace("-", "")[:8]
+        title = self._safe_filename(re.sub(r"<[^>]*>", "", str(item.get("title") or "公告"))).encode("utf-8")[:150].decode("utf-8", "ignore")
+        company = self._safe_filename(str(item.get("name") or (task["resolved_scope"].get("company_names") or [""])[0] or "公司")).encode("utf-8")[:36].decode("utf-8", "ignore")
+        filename = f"{stamp}_{company}_{title}__{record['id'][:24]}.pdf"
+        relative = f"attachments/{source}/{filename}"
+        target = work / relative
+        if target.is_symlink():
+            raise DataAcquisitionError("原始文件路径不安全")
+        url = str(item.get("pdf_url") or item.get("url") or "")
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.hostname not in (
+            {"static.cninfo.com.cn"} if source == "cninfo" else {"pdf.dfcfw.com", "static.cninfo.com.cn"}
+        ):
+            raise DocumentAcquisitionPaused("原始PDF地址不在已核验数据源内，已保留任务等待检查")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with hosts[parsed.hostname]:
+            self._document_space(work)
+            size = self._download_one(url, target, remaining=shutil.disk_usage(work).free - 64 * 1024 * 1024,
+                                      document_mode=True)
+            with target.open("rb") as handle:
+                if handle.read(5) != b"%PDF-":
+                    raise DataAcquisitionError("原始资料不是有效PDF")
+            return relative, self._document_hash(target), size
+
+    def _package_documents(self, database: sqlite3.Connection, work: Path, final: Path, request_text: str,
+                           plan: Dict[str, Any], job_id: str, callback: Any) -> Dict[str, Any]:
+        """Stream all frozen records into one ZIP64 and verify its full contents."""
+        total, size = database.execute("SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM documents").fetchone()
+        if database.execute("SELECT COUNT(*) FROM documents WHERE status!='success'").fetchone()[0]:
+            raise DocumentAcquisitionPaused("文档尚未全部下载完成，不能发布不完整压缩包")
+        self._document_space(work, int(size))
+        datasets = []
+        for dataset in database.execute("SELECT * FROM datasets ORDER BY rowid").fetchall():
+            task = json.loads(dataset["task"])
+            folder = work / task["source"]
+            folder.mkdir(exist_ok=True)
+            stem = self._safe_filename(task["id"])
+            json_path, csv_path = folder / (stem + ".json"), folder / (stem + ".csv")
+            workbook = Workbook(write_only=True)
+            sheet = workbook.create_sheet("资料清单")
+            columns = ["title", "code", "ts_code", "name", "announcement_at", "trade_date", "pdf_url", "url", "file_path", "sha256", "bytes"]
+            sheet.append(columns)
+            attachments, count = [], 0
+            with json_path.open("w", encoding="utf-8") as json_file, csv_path.open("w", encoding="utf-8-sig", newline="") as csv_file:
+                json_file.write("[\n")
+                writer = csv.writer(csv_file); writer.writerow(columns)
+                for record in database.execute("SELECT * FROM documents WHERE dataset=? ORDER BY rowid", (task["id"],)):
+                    item = json.loads(record["payload"])
+                    item.update(file_path=record["path"], sha256=record["sha256"], bytes=record["bytes"])
+                    if count: json_file.write(",\n")
+                    json.dump(item, json_file, ensure_ascii=False)
+                    values = [self._csv_cell(item.get(key)) for key in columns]
+                    writer.writerow(values)
+                    cells = []
+                    from openpyxl.cell import WriteOnlyCell
+                    for value in values:
+                        cell = WriteOnlyCell(sheet, value=value)
+                        if isinstance(value, str): cell.data_type = "s"
+                        cells.append(cell)
+                    sheet.append(cells)
+                    attachments.append({"name": item.get("title"), "path": record["path"], "status": "success", "size_bytes": record["bytes"]})
+                    count += 1
+                json_file.write("\n]\n")
+            xlsx_path = folder / (stem + ".xlsx"); workbook.save(xlsx_path)
+            datasets.append({"task_id": task["id"], "label": task["label"], "source": task["source"], "resource": task["resource"],
+                "status": "success", "row_count": count, "outcome": "data", "error": None,
+                "files": [str(path.relative_to(work)) for path in (json_path, csv_path, xlsx_path)],
+                "attachments": attachments, "applied_scope": task["resolved_scope"],
+                "retrieval": {"truncated": False, "complete": True, **json.loads(dataset["cursor"])}})
+        manifest = {"job_id": job_id, "owner_id": current_owner_id(), "document_export": True, "complete": True,
+            "title": plan["title"], "request": request_text, "plan": plan, "status": "success", "datasets": datasets,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filename": f"{self._safe_filename('_'.join(plan['scope'].get('company_names') or plan['scope'].get('symbols') or ['资料']))}_{'公告研报' if len(plan['document_export']['kinds']) > 1 else '公告' if plan['document_export']['kinds'] == ['announcements'] else '研报'}_{plan['scope']['start_date']}至{plan['scope']['end_date']}_{total}份.zip",
+            "download_url": f"/api/v1/data-acquisition/jobs/{job_id}/download",
+            "formats": ["json", "csv", "xlsx", "zip"], "summary": {"task_count": len(datasets), "success_count": len(datasets),
+                "failed_count": 0, "row_count": total, "include_files": True, "downloaded_file_count": total,
+                "failed_file_count": 0, "downloaded_bytes": int(size)}}
+        (work / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary = work / "package.zip.partial"
+        archive_paths = [path for group in datasets for path in [*group["files"], *(item["path"] for item in group["attachments"])]]
+        self._emit_progress(callback, phase="packaging", progress=92, message="所有PDF已取得，正在生成并校验一个完整ZIP64")
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            archive.writestr("manifest.json", json.dumps(self._public_manifest(manifest), ensure_ascii=False))
+            for relative in archive_paths:
+                with (work / relative).open("rb") as source, archive.open(relative, "w", force_zip64=True) as target:
+                    shutil.copyfileobj(source, target, 1024 * 1024)
+        with zipfile.ZipFile(temporary) as archive:
+            if archive.testzip() is not None or set(archive.namelist()) != {"manifest.json", *archive_paths}:
+                raise DocumentAcquisitionPaused("压缩包完整性校验未通过，保留原文件可继续")
+        publication = work / "publication"
+        publication.mkdir(mode=0o700, exist_ok=True)
+        temporary.replace(publication / f"{job_id}.zip")
+        manifest["size"] = (publication / f"{job_id}.zip").stat().st_size
+        (publication / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        publication.rename(final)  # publish manifest+one complete ZIP atomically
+        return self._public_manifest(manifest)
 
     def list_jobs(self, limit: int = 20) -> Dict[str, Any]:
         jobs = []
@@ -765,9 +1202,14 @@ class DataAcquisitionService:
         if not tasks:
             raise DataAcquisitionError("取数计划没有可执行任务")
         scope = self.normalize_scope(plan.get("scope"), tasks, request_text)
-        self._enforce_document_time_range(tasks, scope, request_text)
-        self._enforce_research_report_constraints(tasks, scope, request_text)
+        self._enforce_document_time_range(tasks, scope, request_text, typed=bool(plan.get("document_export")))
+        self._enforce_research_report_constraints(tasks, scope, request_text, preserve_dates=bool(plan.get("document_export")))
         preflight = self._preflight_entities(tasks, scope, plan.get("scope"), request_text)
+        if plan.get("document_export"):
+            for task in tasks:
+                for key in ("start_date", "end_date"):
+                    if task["params"].get(key):
+                        task["resolved_scope"][key] = datetime.strptime(str(task["params"][key]), "%Y%m%d").date().isoformat()
         caveats = [str(value)[:300] for value in (plan.get("caveats") or [])[:10]]
         if preflight["can_execute"] and scope["symbols"]:
             caveats = [value for value in caveats if not re.search(r"(?:未提供|缺少|没有).{0,8}(?:股票|证券)代码", value)]
@@ -783,6 +1225,7 @@ class DataAcquisitionService:
                 "objective": str(plan.get("objective") or request_text)[:1000], "tasks": tasks,
                 "scope": scope,
                 "preflight": preflight,
+                "document_export": self._validate_document_export(plan.get("document_export"), tasks, scope, request_text),
                 "include_files": bool(plan.get("include_files")) or bool(_FILE_REQUEST_RE.search(request_text)),
                 "output_formats": ["json", "csv", "xlsx", "zip"],
                 "caveats": caveats,
@@ -790,11 +1233,90 @@ class DataAcquisitionService:
                 "generated_at": str(plan.get("generated_at") or datetime.now(timezone.utc).isoformat())}
 
     @staticmethod
-    def _enforce_document_time_range(tasks: List[Dict[str, Any]], scope: Dict[str, Any], request_text: str) -> None:
+    def _validate_document_export(raw: Any, tasks: List[Dict[str, Any]], scope: Dict[str, Any], request_text: str) -> Optional[Dict[str, Any]]:
+        authorized = DataAcquisitionService._requested_document_kinds(request_text)
+        if raw is None:
+            return None
+        if not isinstance(raw, dict) or raw.get("version") != 1 or raw.get("confirmed") is not True:
+            raise DataAcquisitionError("请先确认资料类型、公司及日期范围，再开始下载")
+        kinds = {("cninfo", "announcements"): "announcements", ("tushare", "research_report"): "research_reports"}
+        actual = {kinds.get((task["source"], task["resource"])) for task in tasks}
+        declared = raw.get("kinds")
+        if None in actual or not isinstance(declared, list) or actual != set(declared):
+            raise DataAcquisitionError("文档导出只能包含明确确认的公告或研报，不得夹带其他渠道")
+        if "announcements" in actual and "announcements" not in authorized:
+            raise DataAcquisitionError("未确认下载公司公告")
+        if "research_reports" in actual and "research_reports" not in authorized:
+            raise DataAcquisitionError("用户未要求研究报告，不得混入研报下载")
+        if not scope.get("start_date") or not scope.get("end_date"):
+            raise DataAcquisitionError("请先明确文档日期范围")
+        if not _extract_requested_date_range(request_text) and not re.search(r"全部|所有|完整历史|上市以来", request_text) and not all(task["params"].get("selected_announcement_ids") for task in tasks):
+            raise DataAcquisitionError("文档日期尚未确认，请说明时间范围后再下载")
+        limit = raw.get("requested_limit")
+        if limit is not None and not DataAcquisitionService._document_explicit_count(request_text, limit):
+            raise DataAcquisitionError("导出数量只能使用用户明确指定的正整数；分页大小不是导出上限")
+        mode = "explicit_limit" if limit is not None or any(task["params"].get("requested_limit") is not None for task in tasks) else "all_matching"
+        if raw.get("selection_mode") != mode:
+            raise DataAcquisitionError("文档数量范围与确认模式不一致")
+        for task in tasks:
+            count = task["params"].get("requested_limit")
+            if count is not None and not DataAcquisitionService._document_explicit_count(request_text, count):
+                raise DataAcquisitionError("渠道资料数量没有用户明确依据")
+            selected = task["params"].get("selected_announcement_ids")
+            if selected is not None and (task["source"] != "cninfo" or not isinstance(selected, list) or not selected or any(not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value) for value in selected)):
+                raise DataAcquisitionError("精选公告编号无效，必须来自已核验的巨潮公告结果")
+        return {"version": 1, "kinds": sorted(actual), "confirmed": True,
+                "selection_mode": mode, "requested_limit": limit}
+
+    @staticmethod
+    def _requested_document_kinds(text: str) -> set[str]:
+        kinds = set()
+        patterns = {"announcements": r"公告|财报|年报|半年报|季报|季度报告|年度报告", "research_reports": r"研报|研究报告|券商报告|卖方报告"}
+        for clause in re.split(r"[，,。；;\n]|(?:只要|仅要|而是|但是)", text):
+            for kind, pattern in patterns.items():
+                for match in re.finditer(pattern, clause):
+                    prefix, suffix = clause[:match.start()], clause[match.end():]
+                    if re.search(r"不要|不用|不需要|不含|不包括|排除|不是|而非|无需", prefix) or re.match(r"\s*(?:都)?(?:不要|不用|不需要|排除)", suffix):
+                        continue
+                    kinds.add(kind)
+        return kinds
+
+    @staticmethod
+    def _document_explicit_count(text: str, count: Any) -> bool:
+        if type(count) is not int or count <= 0:
+            return False
+        if re.search(r"不限制|不限量|无上限|不设上限", text):
+            return False
+        matches = [match for match in re.finditer(r"(?<!\d)([\d零一二两三四五六七八九十]+)\s*(?:份|篇|条|个|项)", text)
+                   if _chinese_number(match.group(1)) == count]
+        return bool(matches) and not any(re.search(r"不止\s*$", text[:match.start()]) or
+            re.match(r".{0,12}(?:预览|不是上限|不是限制|不作限制)", text[match.end():]) for match in matches)
+
+    @staticmethod
+    def _enforce_document_time_range(tasks: List[Dict[str, Any]], scope: Dict[str, Any], request_text: str, *, typed: bool = False) -> None:
         """A model's incidental today/today is not a user-selected date filter."""
         documents = [task for task in tasks if task["source"] == "cninfo" or
                      task["source"] == "tushare" and task["resource"] == "research_report"]
         if not documents:
+            return
+        # Each typed document selector can bind an independent user-evidenced
+        # range. Never flatten company A's range onto company B's documents.
+        if typed and all(task["params"].get("start_date") and task["params"].get("end_date") for task in documents):
+            ranges = []
+            for task in documents:
+                params = task["params"]
+                start = date.fromisoformat(str(params["start_date"])[:10]) if "-" in str(params["start_date"]) else datetime.strptime(str(params["start_date"]), "%Y%m%d").date()
+                end = date.fromisoformat(str(params["end_date"])[:10]) if "-" in str(params["end_date"]) else datetime.strptime(str(params["end_date"]), "%Y%m%d").date()
+                evidence = str(params.get("date_evidence") or request_text)
+                proven = _extract_requested_date_range(evidence) if evidence and evidence in request_text else None
+                source_selected = bool(params.get("selected_announcement_ids")) and start == end
+                all_history = bool(evidence and evidence in request_text and re.search(r"全部|所有|完整历史|上市以来", evidence) and start == date(1990, 1, 1) and end == datetime.now(timezone(timedelta(hours=8))).date())
+                if start > end or not (proven == (start.isoformat(), end.isoformat()) or source_selected or all_history):
+                    raise DataAcquisitionError("渠道文档日期缺少与用户原文绑定的范围依据")
+                params.update(start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"), time_range_mode="explicit")
+                params.pop("trade_date", None)
+                ranges.append((start, end))
+            scope.update(start_date=min(item[0] for item in ranges).isoformat(), end_date=max(item[1] for item in ranges).isoformat(), time_range_mode="explicit")
             return
         today = datetime.now(timezone(timedelta(hours=8))).date()
         explicit = _extract_requested_date_range(request_text)
@@ -1008,7 +1530,7 @@ class DataAcquisitionService:
 
     @staticmethod
     def _enforce_research_report_constraints(
-        tasks: List[Dict[str, Any]], scope: Dict[str, Any], request_text: str,
+        tasks: List[Dict[str, Any]], scope: Dict[str, Any], request_text: str, *, preserve_dates: bool = False,
     ) -> None:
         """Make report selection deterministic even when the LLM plan is incomplete."""
         report_tasks = [
@@ -1019,7 +1541,7 @@ class DataAcquisitionService:
             return
 
         requested_range = _extract_requested_date_range(request_text)
-        if requested_range:
+        if requested_range and not preserve_dates:
             scope["start_date"], scope["end_date"] = requested_range
         if not scope.get("start_date") or not scope.get("end_date"):
             today = datetime.now(timezone(timedelta(hours=8))).date()
@@ -1062,8 +1584,8 @@ class DataAcquisitionService:
                 prefer_depth = True
                 params.pop("report_type", None)
             params.update({
-                "start_date": str(scope["start_date"]).replace("-", ""),
-                "end_date": str(scope["end_date"]).replace("-", ""),
+                "start_date": str(params.get("start_date") if preserve_dates else scope["start_date"]).replace("-", ""),
+                "end_date": str(params.get("end_date") if preserve_dates else scope["end_date"]).replace("-", ""),
                 "topics": topics,
                 "keyword_mode": mode,
                 "depth_preference": "strict" if strict_depth else "prefer" if prefer_depth else "none",
@@ -1864,12 +2386,14 @@ class DataAcquisitionService:
                 DataAcquisitionService._collect_pdf_urls(item, candidates)
 
     @staticmethod
-    def _download_one(url: str, target: Path, *, remaining: int) -> int:
+    def _download_one(url: str, target: Path, *, remaining: int, document_mode: bool = False) -> int:
         if remaining <= 0:
+            if document_mode:
+                raise DocumentAcquisitionPaused("可用磁盘空间不足，已保留文件任务断点")
             raise DataAcquisitionError("原始文件达到单包 500MB 上限")
         if urlparse(url).scheme != "https":
             raise DataAcquisitionError("只允许下载 HTTPS 原始文件")
-        limit = min(MAX_FILE_BYTES, remaining)
+        limit = remaining if document_mode else min(MAX_FILE_BYTES, remaining)
         temporary = target.with_suffix(target.suffix + ".part")
         session = requests.Session()
         response: Optional[requests.Response] = None
@@ -1907,7 +2431,15 @@ class DataAcquisitionService:
                 if offset:
                     headers.update({"Range": f"bytes={offset}-", "If-Range": validator[1]})
                 try:
-                    response = session.get(url, headers=headers, timeout=(10, 90), stream=True)
+                    response = session.get(url, headers=headers, timeout=(10, 90), stream=True,
+                                           **({"allow_redirects": False} if document_mode else {}))
+                    if document_mode and response.status_code in {301, 302, 303, 307, 308}:
+                        destination = urljoin(url, str(response.headers.get("Location") or ""))
+                        redirect = urlparse(destination)
+                        if redirect.scheme != "https" or redirect.hostname != hostname or redirect.username or redirect.password:
+                            raise DataAcquisitionError("PDF跳转离开已核验来源，未跟随未知下载地址")
+                        url = destination
+                        continue
                     response.raise_for_status()
                     declared = content_length(response.headers)
                     if offset and response.status_code == 206:
@@ -1979,6 +2511,8 @@ class DataAcquisitionService:
                             if chunk:
                                 if size + len(chunk) > limit:
                                     raise DataAcquisitionError("原始文件超过大小上限")
+                                if document_mode:
+                                    DataAcquisitionService._document_space(target.parent, len(chunk))
                                 output.write(chunk)
                                 size += len(chunk)
                                 received += len(chunk)
@@ -2007,7 +2541,8 @@ class DataAcquisitionService:
             if response is not None:
                 response.close()
             session.close()
-            temporary.unlink(missing_ok=True)
+            if not document_mode:
+                temporary.unlink(missing_ok=True)
 
     @staticmethod
     def _solve_eastmoney_pdf_challenge(script: str) -> Dict[str, str]:

@@ -8,14 +8,14 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 import zipfile
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from api.v1.schemas.common import ErrorResponse
@@ -51,6 +51,107 @@ from src.services.research_note_audio_analysis_service import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class EssayExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    workspace_id: Optional[str] = Field(None, min_length=1, max_length=80)
+    requested_limit: Optional[StrictInt] = Field(None, gt=0)
+
+
+_EXPORT_NO_STORE = {"Cache-Control": "private, no-store", "CDN-Cache-Control": "no-store"}
+
+
+def _essay_exports():
+    from src.services.essay_export_service import get_essay_export_service
+    return get_essay_export_service()
+
+
+def _export_response(value, status_code=200):
+    return JSONResponse(value, status_code=status_code, headers=_EXPORT_NO_STORE)
+
+
+@router.post("/essays/package/tasks", summary="后台导出全部匹配小作文，持久保存进度")
+def create_essay_export(request: EssayExportRequest):
+    try:
+        service = _essay_exports()
+        task = service.create(request.filters, workspace=request.workspace_id,
+                              requested_limit=request.requested_limit)
+        service.start_worker()
+        return _export_response(task, status_code=202)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail="请先登录") from exc
+    except (ValueError, TypeError) as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.get("/essays/package/tasks", summary="当前账号的持久小作文导出任务")
+def list_essay_exports(workspace_id: Optional[str] = Query(None, max_length=80)):
+    try:
+        items = _essay_exports().list_tasks(workspace=workspace_id)
+        return _export_response({"items": items, "total": len(items)})
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail="请先登录") from exc
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.get("/essays/package/tasks/{task_id}", summary="真实导出进度、数量、字节与断点")
+def get_essay_export(task_id: str, workspace_id: Optional[str] = Query(None, max_length=80)):
+    try:
+        task = _essay_exports().get(task_id, workspace=workspace_id)
+        if task is None:
+            raise _not_found(FileNotFoundError("任务不存在或不属于当前账号"))
+        return _export_response(task)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail="请先登录") from exc
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post("/essays/package/tasks/{task_id}/resume", summary="从已保存的断点继续同一导出任务")
+def resume_essay_export(task_id: str, workspace_id: Optional[str] = Query(None, max_length=80)):
+    try:
+        service = _essay_exports()
+        task = service.resume(task_id, workspace=workspace_id)
+        if task is None:
+            raise _not_found(FileNotFoundError("任务不存在或不属于当前账号"))
+        service.start_worker()
+        return _export_response(task)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail="请先登录") from exc
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.get("/essays/package/tasks/{task_id}/focus-review", summary="查看逐篇全文主旨判断与原文证据")
+def essay_focus_reviews(task_id: str, workspace_id: Optional[str] = Query(None, max_length=80),
+                       page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100)):
+    try:
+        result = _essay_exports().focus_reviews(task_id, workspace=workspace_id,
+                                               page=page, page_size=page_size)
+        if result is None:
+            raise _not_found(FileNotFoundError("主旨审阅任务不存在或不属于当前账号"))
+        return _export_response(result)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail="请先登录") from exc
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.get("/essays/package/tasks/{task_id}/download", summary="下载已完成校验的小作文 ZIP")
+def download_essay_export(task_id: str, workspace_id: Optional[str] = Query(None, max_length=80)):
+    try:
+        path = _essay_exports().download_file(task_id, workspace=workspace_id)
+        return FileResponse(path, filename=path.name, media_type="application/zip",
+                            headers={**_EXPORT_NO_STORE, "X-Content-Type-Options": "nosniff"})
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail="请先登录") from exc
+    except FileNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except ValueError as exc:
+        raise _bad_request(exc) from exc
 
 
 def _bad_request(exc: Exception) -> HTTPException:
@@ -682,53 +783,62 @@ def package_research_reports(request: ReportPackageRequest):
 
 @router.get("/downloads/{filename}", summary="下载已打包的研报 ZIP")
 def download_report_package(filename: str):
-    safe_name = Path(filename).name
-    path = Path("/app/data/downloads") / safe_name
-    if not path.is_file():
+    from src.services.report_pack_service import DOWNLOAD_DIR
+    from src.services.workspace import workspace_file
+    try:
+        path = workspace_file(DOWNLOAD_DIR, "default", filename)
+    except (ValueError, PermissionError, FileNotFoundError):
         raise HTTPException(status_code=404, detail={"error": "not_found", "message": "文件不存在"})
     return FileResponse(
         path,
         media_type="application/zip",
-        filename=safe_name,
+        filename=filename,
         headers={
-            "Cache-Control": "public, max-age=86400, immutable",
-            "CDN-Cache-Control": "public, max-age=86400",
+            "Cache-Control": "private, no-store",
+            "CDN-Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
 
 @router.get("/workspace-files", summary="按工作区列出已生成文件")
 def list_workspace_files(workspace: str = Query(..., min_length=1, max_length=80)):
-    from urllib.parse import quote
-    safe_ws = Path(workspace).name
-    base = Path("/app/data/downloads") / safe_ws
+    from src.services.report_pack_service import DOWNLOAD_DIR
+    from src.services.workspace import workspace_directory, workspace_id
+    try:
+        safe_ws = workspace_id(workspace)
+        base = workspace_directory(DOWNLOAD_DIR, safe_ws)
+    except (ValueError, PermissionError):
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": "工作区不存在"})
     items = []
     if base.is_dir():
-        files = [p for p in base.iterdir() if p.is_file()]
+        files = [p for p in base.iterdir() if p.is_file() and not p.is_symlink()]
         files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         for path in files[:100]:
             items.append({
                 "filename": path.name,
                 "size": path.stat().st_size,
-                "url": f"/api/v1/financial-data/downloads/{safe_ws}/{quote(path.name)}",
+                "url": f"/api/v1/financial-data/downloads/{safe_ws}/{quote(path.name, safe='')}",
             })
     return {"workspace": safe_ws, "items": items}
 
 
 @router.get("/downloads/{workspace}/{filename}", summary="下载工作区文件")
 def download_workspace_file(workspace: str, filename: str):
-    safe_ws = Path(workspace).name
-    safe_name = Path(filename).name
-    path = Path("/app/data/downloads") / safe_ws / safe_name
-    if not path.is_file():
+    from src.services.report_pack_service import DOWNLOAD_DIR
+    from src.services.workspace import workspace_file
+    try:
+        path = workspace_file(DOWNLOAD_DIR, workspace, filename)
+    except (ValueError, PermissionError, FileNotFoundError):
         raise HTTPException(status_code=404, detail={"error": "not_found", "message": "文件不存在"})
     return FileResponse(
         path,
         media_type="application/octet-stream",
-        filename=safe_name,
+        filename=filename,
         headers={
-            "Cache-Control": "public, max-age=86400, immutable",
-            "CDN-Cache-Control": "public, max-age=86400",
+            "Cache-Control": "private, no-store",
+            "CDN-Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

@@ -315,7 +315,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                   </svg>
                 </div>
                 <div className="space-y-1.5">
-                  <h4 className="home-insight-title text-[11px] font-medium uppercase tracking-[0.16em]">{text.actionAdvice}</h4>
+                  <h4 className="home-insight-title text-[12px] font-medium uppercase tracking-normal">{text.actionAdvice}</h4>
                   <p className="home-insight-body text-sm leading-6">
                     {summary.operationAdvice || text.noAdvice}
                   </p>
@@ -338,7 +338,7 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                   </svg>
                 </div>
                 <div className="space-y-1.5">
-                  <h4 className="home-insight-title text-[11px] font-medium uppercase tracking-[0.16em]">{text.trendPrediction}</h4>
+                  <h4 className="home-insight-title text-[12px] font-medium uppercase tracking-normal">{text.trendPrediction}</h4>
                   <p className="home-insight-body text-sm leading-6">
                     {summary.trendPrediction || text.noPrediction}
                   </p>
@@ -380,14 +380,14 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
                   {watchlist.isInWatchlist(meta.stockCode) ? t('report.removeFromWatchlist') : t('report.addToWatchlist')}
                 </Button>
                 {watchlist.actionMessage && (
-                  <p className="text-[11px] text-secondary-text animate-in fade-in">{watchlist.actionMessage}</p>
+                  <p className="text-[12px] text-secondary-text animate-in fade-in">{watchlist.actionMessage}</p>
                 )}
               </div>
             </Card>
           )}
           <Card variant="bordered" padding="md" className="home-panel-card home-rail-card !overflow-visible">
             <div className="text-center">
-              <h3 className="mb-5 text-sm font-medium tracking-wide text-foreground">{text.marketSentiment}</h3>
+              <h3 className="mb-5 text-sm font-medium tracking-normal text-foreground">{text.marketSentiment}</h3>
               <ScoreGauge score={summary.sentimentScore} size="lg" language={reportLanguage} />
             </div>
           </Card>

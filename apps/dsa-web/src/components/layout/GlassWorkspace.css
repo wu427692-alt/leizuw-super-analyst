@@ -1,56 +1,40 @@
 /* Shared workspace material, extending the approved public landing page.
    Keep market/status colors, layout, sticky offsets and data interactions intact.
    Only navigation and a few top-level headers blur; reading/chart surfaces do not. */
+/* Workspace surfaces. Every value comes from styles/design-tokens.css.
+   Flat, calm surfaces: no haze, no blur, no glow; one card radius, one shadow.
+   Selectors are kept so existing pages pick up the shared material. */
 :root {
-  --workspace-backdrop: #edf2f8;
-  --workspace-haze: radial-gradient(ellipse 72% 700px at 0 0, rgb(248 209 178 / .43), transparent 75%), radial-gradient(ellipse 70% 900px at 100% 0, rgb(174 208 246 / .62), transparent 78%);
-  --workspace-panel: #f5f8fc;
-  --workspace-material: var(--workspace-panel);
-  --workspace-sheet: #fbfdff;
-  --workspace-soft: #edf3fa;
-  --workspace-line: rgb(79 104 139 / .17);
-  --workspace-rim: rgb(255 255 255 / .92);
-  --workspace-shadow: inset 0 1px 0 rgb(255 255 255 / .94), 0 12px 30px -19px rgb(50 74 110 / .3), 0 2px 8px rgb(55 75 110 / .035);
-  --workspace-accent: #cd4919;
-  --workspace-accent-soft: rgb(205 73 25 / .09);
-  --workspace-radius: 20px;
-  --workspace-control-radius: 10px;
-}
-
-:root.dark {
-  --workspace-backdrop: #101a2b;
-  --workspace-haze: radial-gradient(ellipse 68% 720px at 4% 0, rgb(87 72 91 / .28), transparent 74%), radial-gradient(ellipse 80% 1100px at 100% 0, rgb(47 86 140 / .43), transparent 77%);
-  --workspace-panel: #19263b;
-  --workspace-sheet: #162237;
-  --workspace-soft: #1d2d44;
-  --workspace-line: rgb(162 188 226 / .17);
-  --workspace-rim: rgb(198 218 250 / .18);
-  --workspace-shadow: inset 0 1px 0 rgb(222 235 255 / .09), 0 16px 38px -22px rgb(0 8 22 / .6), 0 2px 9px rgb(0 7 21 / .1);
-  --workspace-accent: #ffac86;
-  --workspace-accent-soft: rgb(236 118 63 / .13);
-}
-
-@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root { --workspace-material: linear-gradient(132deg, rgb(255 255 255 / .76), rgb(242 248 255 / .54)); }
-  :root.dark { --workspace-material: linear-gradient(132deg, rgb(37 53 77 / .84), rgb(21 36 58 / .7)); }
+  /* 兼容桥（阶段一）：旧 --workspace-* 名指向新令牌，阶段二删除 */
+  --workspace-backdrop: var(--bg-0);
+  --workspace-haze: none;
+  --workspace-panel: var(--bg-1);
+  --workspace-material: var(--bg-1);
+  --workspace-sheet: var(--bg-1);
+  --workspace-soft: var(--bg-2);
+  --workspace-line: var(--line-1);
+  --workspace-rim: var(--line-1);
+  --workspace-shadow: var(--shadow-card);
+  --workspace-accent: var(--brand-text);
+  --workspace-accent-soft: var(--brand-tint-08);
+  --workspace-radius: var(--radius-card);
+  --workspace-control-radius: var(--radius-control);
 }
 
 /* Shell is an eager App import, so these rules also reach standalone AdminShell. */
 :root :is(.glass-workspace, .admin-shell) {
   --research-blue: var(--workspace-accent);
-  --research-blue-rgb: 205 73 25;
   --research-rule: var(--workspace-line);
   --research-surface: var(--workspace-panel);
   --research-surface-muted: var(--workspace-soft);
   --research-shadow: var(--workspace-shadow);
   --shell-sidebar-border: var(--workspace-rim);
-  --nav-active-bg: var(--workspace-accent-soft);
-  --nav-active-border: rgb(205 73 25 / .22);
-  --nav-hover-bg: rgb(132 166 206 / .12);
-  --nav-icon-active: var(--workspace-accent);
+  --nav-active-bg: var(--bg-3);
+  --nav-active-border: transparent;
+  --nav-hover-bg: var(--bg-3);
+  --nav-icon-active: var(--brand);
   color: hsl(var(--foreground));
-  background: var(--workspace-haze), var(--workspace-backdrop);
-  background-repeat: no-repeat;
+  background: var(--bg-0);
 }
 
 :root .glass-workspace :is(.app-page, .market-command-center, .super-watchlist-page, .essay-terminal, .essay-quant-terminal, .tasks-hub, .aurora-workbench) {
@@ -104,20 +88,15 @@
 }
 
 :root .glass-workspace .research-sidebar {
-  padding: 13px 10px;
+  padding: 12px 8px;
 }
 
 :root .glass-workspace .research-sidebar nav > a {
-  border-radius: 11px;
-}
-
-:root .glass-workspace .research-sidebar nav > a[aria-current="page"] {
-  color: var(--workspace-accent);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / .25);
+  border-radius: var(--radius-control);
 }
 
 :root .glass-workspace .research-sidebar nav > a[aria-current="page"]::before {
-  border-radius: 2px;
+  border-radius: 0px;
 }
 
 :root .glass-workspace :is(.mobile-app-bar, .mobile-bottom-nav, .essay-tabs, .essay-pagination, .quant-tabs, .concept-page-nav, .concept-section-nav, .ir-command) {
@@ -129,16 +108,9 @@
 }
 
 :root .glass-workspace :is(.essay-tabs, .quant-tabs, .concept-page-nav, .concept-section-nav, .ir-command) {
-  border-radius: 14px;
+  border-radius: var(--radius-control);
 }
 
-@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root .glass-workspace :is(.research-sidebar, .mobile-app-bar, .mobile-bottom-nav, .research-page-header, .essay-tabs, .quant-tabs, .concept-page-nav, .ir-command),
-  :root .admin-shell .admin-sidebar {
-    -webkit-backdrop-filter: blur(18px) saturate(120%);
-    backdrop-filter: blur(18px) saturate(120%);
-  }
-}
 
 /* Reading and chart panels are tinted solid sheets, without nested blur. */
 :root .glass-workspace :is(
@@ -150,10 +122,10 @@
   .ir-data-ledger, .ir-ai-flow, .ir-method-matrix, .ir-quality,
   .ir-task-center, .ir-answer-brief, .ir-answer-loading, .ir-live
 ) {
-  border-color: var(--workspace-line);
-  border-radius: 14px;
-  background: var(--workspace-sheet);
-  box-shadow: inset 0 1px 0 var(--workspace-rim);
+  border-color: var(--line-1);
+  border-radius: var(--radius-card);
+  background: var(--bg-1);
+  box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
@@ -163,7 +135,7 @@
 }
 
 :root .glass-workspace :is(.super-watchlist-header, .super-market-band, .super-detail-nav, .market-overview-header) {
-  background: linear-gradient(105deg, rgb(128 175 225 / .075), transparent 72%);
+  background: transparent;
 }
 
 :root .glass-workspace .market-overview-header h1 {
@@ -182,7 +154,7 @@
   --essay-bg: transparent;
   --essay-panel: var(--workspace-sheet);
   --essay-line: var(--workspace-line);
-  --essay-border: rgb(205 73 25 / .25);
+  --essay-border: var(--line-2);
   --essay-signal: var(--workspace-accent);
   font-family: inherit;
 }
@@ -205,15 +177,15 @@
 }
 
 :root .glass-workspace .essay-content-switch button {
-  border-color: var(--workspace-line);
-  border-radius: 12px;
-  background: var(--workspace-panel);
+  border-color: var(--line-1);
+  border-radius: var(--radius-control);
+  background: var(--bg-1);
 }
 
 :root .glass-workspace .essay-content-switch button.is-active {
-  border-color: rgb(205 73 25 / .36);
-  background: var(--workspace-accent-soft);
-  box-shadow: inset 3px 0 var(--workspace-accent);
+  border-color: var(--brand-tint-16);
+  background: var(--brand-tint-08);
+  box-shadow: inset 2px 0 var(--brand);
 }
 
 :root .glass-workspace :is(.essay-content-switch button svg, .essay-batch-bar > span strong, .essay-tabs a.is-active) {
@@ -231,7 +203,7 @@
 
 :root .glass-workspace :is(.essay-metric-grid, .essay-atlas-summary, .decision-workspace-rail, .tasks-hub__summary) {
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: var(--radius-card);
 }
 
 :root .glass-workspace :is(.decision-workspace-rail, .tasks-hub__summary) > button {
@@ -270,10 +242,10 @@
   .concept-candidate-panel, .concept-cluster-aggregate, .concept-corpus-proof,
   .concept-beta-audit, .concept-alpha-evidence, .concept-overlap-audit, .concept-theme-history
 ) {
-  border-color: var(--workspace-line);
-  border-radius: 12px;
-  background: var(--workspace-sheet);
-  box-shadow: inset 0 1px 0 var(--workspace-rim);
+  border-color: var(--line-1);
+  border-radius: var(--radius-control);
+  background: var(--bg-2);
+  box-shadow: none;
 }
 
 :root .glass-workspace .concept-page :is(.concept-page-nav button, .concept-section-nav > a) {
@@ -295,41 +267,47 @@
 }
 
 :root .glass-workspace .ir-shell :is(.ir-stat, .ir-chain-track article, .ir-projects article) {
-  border-color: var(--workspace-line);
-  background: var(--workspace-sheet);
-  box-shadow: inset 0 1px 0 var(--workspace-rim);
+  border-color: var(--line-1);
+  background: var(--bg-2);
+  box-shadow: none;
 }
 
 :root .glass-workspace :is(.btn-primary, .ir-command .ir-primary),
 :root .glass-workspace .market-command-center .btn-primary {
-  border-radius: var(--workspace-control-radius) !important;
-  border-color: rgb(185 61 14 / .35);
-  color: #fff;
-  background: linear-gradient(135deg, #da541d, #c34316);
-  box-shadow: 0 6px 15px -8px rgb(181 67 21 / .4);
+  border-radius: var(--radius-control) !important;
+  border-color: var(--brand);
+  color: var(--brand-on);
+  background: var(--brand);
+  box-shadow: none;
+}
+
+:root .glass-workspace :is(.btn-primary, .ir-command .ir-primary):hover:not(:disabled) {
+  border-color: var(--brand-hover);
+  background: var(--brand-hover);
 }
 
 /* The watchlist's older action rules use !important; keep white action text
    on a dark orange fill, not the lighter accent used for dark-mode links. */
 :root .glass-workspace .super-market-band > button,
 :root .glass-workspace .super-watchlist-sidebar form button[type="submit"] {
-  background: linear-gradient(135deg, #da541d, #c34316) !important;
+  background: var(--brand) !important;
+  color: var(--brand-on) !important;
 }
 
 :root .glass-workspace .research-sidebar [class~="bg-[var(--research-blue)]"] {
-  background: linear-gradient(135deg, #da541d, #c34316);
+  background: var(--brand);
 }
 
 :root .glass-workspace .ir-command .ir-type-switch button.is-active {
-  color: #fff;
-  background: #c8491c;
+  color: var(--brand-on);
+  background: var(--brand);
 }
 
 :root .glass-workspace :is(.btn-secondary, .input-surface),
 :root .glass-workspace .market-command-center .btn-secondary {
-  border-radius: var(--workspace-control-radius) !important;
-  border-color: var(--workspace-line);
-  background-color: var(--workspace-sheet);
+  border-radius: var(--radius-control) !important;
+  border-color: var(--line-2);
+  background-color: var(--bg-2);
 }
 
 :root .admin-shell {
@@ -340,45 +318,22 @@
   --admin-cyan: var(--workspace-accent);
 }
 
-:root .admin-shell .admin-nav-item { border-radius: 10px; }
+:root .admin-shell .admin-nav-item { border-radius: var(--radius-control); }
 :root .admin-shell .admin-nav-item.is-active { background: var(--workspace-accent-soft); }
 
 /* Portaled detail drawers escape Shell, so scope them by its presence. No
    positioning/overflow changes: long originals and mobile menus stay usable. */
 :root body:has(.glass-workspace) [role="dialog"][aria-modal="true"] {
-  border-color: var(--workspace-rim);
-  background: var(--workspace-material);
-  box-shadow: var(--workspace-shadow);
+  border-color: var(--line-1);
+  background: var(--bg-1);
+  box-shadow: var(--shadow-pop);
 }
 
 :root body:has(.glass-workspace) [role="dialog"][aria-modal="true"] > .overflow-y-auto {
   background: var(--workspace-sheet);
 }
 
-@media (max-width: 1023px) {
-  :root .glass-workspace { --workspace-radius: 16px; }
-  :root .glass-workspace .mobile-bottom-nav { border-radius: 18px 18px 0 0; }
-  :root .glass-workspace .mobile-bottom-nav__item { border-radius: 11px; }
-  :root .glass-workspace .mobile-bottom-nav__item.is-active { color: var(--workspace-accent); background: var(--workspace-accent-soft); }
-  :root .glass-workspace .mobile-app-bar__brand > span { border-radius: 10px; color: #fff; background: linear-gradient(135deg, #da541d, #c34316); }
-  :root .glass-workspace :is(.research-page-header, .essay-tabs, .quant-tabs, .concept-page-nav, .ir-command) {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    background: var(--workspace-sheet);
-  }
-}
-
-@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
-  :root { --workspace-material: var(--workspace-sheet); --workspace-haze: none; }
-  :root.dark { --workspace-material: var(--workspace-sheet); --workspace-haze: none; }
-  :root .glass-workspace :is(.research-sidebar, .mobile-app-bar, .mobile-bottom-nav, .research-page-header, .essay-tabs, .quant-tabs, .concept-page-nav, .ir-command),
-  :root .admin-shell .admin-sidebar {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-}
-
 @media print {
-  :root :is(.glass-workspace, .admin-shell) { --workspace-haze: none; --workspace-backdrop: #fff; --workspace-panel: #fff; --workspace-material: #fff; --workspace-sheet: #fff; --workspace-shadow: none; }
+  :root :is(.glass-workspace, .admin-shell) { background: Canvas; }
   :root .glass-workspace :is(.research-sidebar, .mobile-app-bar, .mobile-bottom-nav) { display: none; }
 }

@@ -50,10 +50,13 @@ const validPage = (value: number) => Number.isSafeInteger(value) && value > 0 ? 
 const readPage = (value: string | null) => value && /^[1-9]\d*$/.test(value) ? validPage(Number(value)) : 1;
 
 /** URL owns the visible position; memory only remembers other tabs of this stock. */
-export function useWatchlistNavigation(symbols: readonly string[]) {
+export function useWatchlistNavigation(symbols: readonly string[], options: { autoSelect?: boolean } = {}) {
+  const { autoSelect = true } = options;
   const [params, setParams] = useSearchParams();
   const requestedSymbol = params.get('symbol');
-  const activeSymbol = symbols.find(symbol => symbol === requestedSymbol) ?? symbols[0] ?? '';
+  // 手机端是「列表 → 详情」两级页面：没有指定股票时停在列表，不自动选第一只。
+  const activeSymbol = symbols.find(symbol => symbol === requestedSymbol)
+    ?? (autoSelect || requestedSymbol ? symbols[0] : undefined) ?? '';
   const section = SECTIONS.find(item => item.key === params.get('section'))?.key ?? 'overview';
   const primarySection = PRIMARY_SECTIONS.find(item => item.members.includes(section))!;
   const materialFilter = MATERIAL_FILTERS.find(item => item.value === params.get('material'))?.value ?? 'all';

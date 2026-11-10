@@ -394,7 +394,7 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-sm font-semibold text-foreground">{check.title}</p>
-                      <span className="rounded-full border settings-border bg-background/60 px-2 py-0.5 text-[11px] font-medium text-muted-text">
+                      <span className="rounded-full border settings-border bg-background/60 px-2 py-0.5 text-[12px] font-medium text-muted-text">
                         {getSetupCheckStatusLabel(check, t)}
                       </span>
                     </div>
@@ -1432,7 +1432,7 @@ const SettingsPage: React.FC = () => {
                     <p className="mt-1 text-xs leading-6 text-muted-text">
                       {t('settings.alphaSiftSummary')}
                     </p>
-                    <p className="mt-2 text-xs leading-6 text-amber-700 dark:text-amber-300">
+                    <p className="mt-2 text-xs leading-6 text-[var(--warning)] dark:text-[var(--warning)]">
                       {t('settings.alphaSiftRisk')}
                     </p>
                   </div>
@@ -1490,7 +1490,7 @@ const SettingsPage: React.FC = () => {
                   className={`grid grid-cols-1 gap-3 ${shouldShowDesktopVersionCard ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}
                 >
                   <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
+                    <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
                       {t('settings.versionWebui')}
                     </p>
                     <p className="mt-2 break-all font-mono text-sm text-foreground">
@@ -1498,7 +1498,7 @@ const SettingsPage: React.FC = () => {
                     </p>
                   </div>
                   <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
+                    <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
                       {t('settings.versionBuildId')}
                     </p>
                     <p className="mt-2 break-all font-mono text-sm text-foreground">
@@ -1506,7 +1506,7 @@ const SettingsPage: React.FC = () => {
                     </p>
                   </div>
                   <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
+                    <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
                       {t('settings.versionBuildTime')}
                     </p>
                     <p className="mt-2 break-all font-mono text-sm text-foreground">
@@ -1515,7 +1515,7 @@ const SettingsPage: React.FC = () => {
                   </div>
                   {shouldShowDesktopVersionCard ? (
                     <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-text">
+                      <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
                         {t('settings.versionDesktop')}
                       </p>
                       <p className="mt-2 break-all font-mono text-sm text-foreground">
@@ -1569,7 +1569,7 @@ const SettingsPage: React.FC = () => {
                   </div>
                 ) : null}
                 {WEB_BUILD_INFO.isFallbackVersion ? (
-                  <p className="text-xs leading-6 text-amber-700 dark:text-amber-300">
+                  <p className="text-xs leading-6 text-[var(--warning)] dark:text-[var(--warning)]">
                     {t('settings.fallbackVersionWarning')}
                   </p>
                 ) : null}
@@ -1582,7 +1582,7 @@ const SettingsPage: React.FC = () => {
               >
                 <div className="space-y-4">
                   {!isEnvBackupAllowed ? (
-                    <p className="text-xs leading-6 text-amber-700 dark:text-amber-300">
+                    <p className="text-xs leading-6 text-[var(--warning)] dark:text-[var(--warning)]">
                       {t('settings.disabledAuthBackupWarning')}
                     </p>
                   ) : null}

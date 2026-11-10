@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, BookOpen, ClipboardCheck, DatabaseZap, FlaskConical, Home, LockKeyhole, MessageSquareQuote, MessagesSquare, Network, Newspaper, Orbit, Radar, Search, Star } from 'lucide-react';
+import { BarChart3, LockKeyhole } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { ALPHASIFT_CONFIG_CHANGED_EVENT, SYSTEM_CONFIG_CHANGED_EVENT, alphasiftApi } from '../../api/alphasift';
 import { useAgentChatStore } from '../../stores/agentChatStore';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
-import type { UiTextKey } from '../../i18n/uiText';
 import { cn } from '../../utils/cn';
 import { preloadRoute } from '../../utils/routePreload';
 import { preloadRouteData } from '../../utils/routeDataPreload';
@@ -19,31 +18,7 @@ type SidebarNavProps = {
   documentNavigation?: boolean;
 };
 
-type NavItem = {
-  key: string;
-  labelKey: UiTextKey;
-  to: string;
-  icon: React.ComponentType<{ className?: string }>;
-  exact?: boolean;
-  badge?: 'completion';
-  group: 'primary' | 'tools';
-};
-
-const NAV_ITEMS: NavItem[] = [
-  { key: 'meeting', labelKey: 'layout.nav.meeting', to: '/meeting', icon: MessagesSquare, exact: true, group: 'primary' },
-  { key: 'home', labelKey: 'layout.nav.home', to: '/app', icon: Home, exact: true, group: 'primary' },
-  { key: 'concept-themes', labelKey: 'layout.nav.conceptThemes', to: '/concept-themes', icon: Orbit, group: 'primary' },
-  { key: 'super-watchlist', labelKey: 'layout.nav.superWatchlist', to: '/super-watchlist', icon: Star, group: 'primary' },
-  { key: 'industry-research', labelKey: 'layout.nav.industryResearch', to: '/industry-research', icon: Network, group: 'primary' },
-  { key: 'tasks', labelKey: 'layout.nav.tasks', to: '/tasks', icon: ClipboardCheck, group: 'primary' },
-  { key: 'ai-news', labelKey: 'layout.nav.aiNews', to: '/ai-news', icon: Newspaper, group: 'tools' },
-  { key: 'essay-radar', labelKey: 'layout.nav.essayRadar', to: '/essay-radar', icon: Radar, group: 'tools' },
-  { key: 'essay-quant', labelKey: 'layout.nav.essayQuant', to: '/essay-quant', icon: FlaskConical, group: 'tools' },
-  { key: 'data-acquisition', labelKey: 'layout.nav.dataAcquisition', to: '/data-acquisition', icon: DatabaseZap, group: 'tools' },
-  { key: 'chat', labelKey: 'layout.nav.chat', to: '/chat', icon: MessageSquareQuote, badge: 'completion', group: 'tools' },
-  { key: 'screening', labelKey: 'layout.nav.screening', to: '/screening', icon: Search, group: 'tools' },
-  { key: 'guide', labelKey: 'layout.nav.guide', to: '/guide', icon: BookOpen, group: 'tools' },
-];
+import { NAV_ITEMS } from './navItems';
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNavigate, variant = 'default', documentNavigation = false }) => {
   const { t } = useUiLanguage();
@@ -80,21 +55,15 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
 
   const navItems = showAlphaSiftNav ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.key !== 'screening');
   const isRail = variant === 'rail';
+  // 唯一的导航项样式：左对齐、固定 18px 图标列、40px 行高；选中态只有一种（底色 + 左侧品牌竖条）。
   const itemBaseClass = cn(
-    'group relative box-border flex h-[var(--nav-item-height)] w-full min-w-0 max-w-full items-center overflow-hidden rounded-md border border-transparent text-sm leading-none text-secondary-text transition-all',
-    isRail
-      ? 'justify-center gap-2.5 px-1.5'
-      : collapsed
-        ? 'justify-center px-0'
-        : 'gap-3 px-[var(--nav-item-padding-x)]'
+    'nav-item group relative box-border flex h-10 w-full min-w-0 max-w-full items-center justify-start rounded-[var(--radius-control)] text-[length:var(--fs-body)] leading-[var(--lh-body)] font-normal text-text-2 transition-colors duration-[var(--dur-fast)]',
+    collapsed ? 'justify-center px-0' : 'gap-2 px-3'
   );
-  const itemInteractiveClass = cn(
-    itemBaseClass,
-    'hover:bg-[var(--nav-hover-bg)] hover:text-foreground'
-  );
-  const itemActiveClass = 'border-[var(--nav-active-border)] bg-[var(--nav-active-bg)] font-medium text-[hsl(var(--primary))]';
-  const itemIconClass = cn(isRail ? 'h-[18px] w-[18px]' : 'h-5 w-5', 'shrink-0');
-  const itemLabelClass = cn('truncate', isRail ? 'text-center' : '');
+  const itemInteractiveClass = cn(itemBaseClass, 'hover:bg-bg-3 hover:text-text-1');
+  const itemActiveClass = 'is-active bg-bg-3 font-medium text-text-1';
+  const itemIconClass = 'h-[18px] w-[18px] shrink-0';
+  const itemLabelClass = 'min-w-0 truncate text-left';
   const warmNavigation = (to: string) => {
     if (documentNavigation) return;
     void Promise.allSettled([preloadRoute(to), preloadRouteData(to)]);
@@ -103,34 +72,25 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <div
-        className={cn(
-          'flex items-center',
-          isRail ? 'mb-5 justify-center gap-2 pt-1' : 'mb-4 gap-2 px-1',
-          collapsed || isRail ? 'justify-center' : ''
-        )}
+        className={cn('mb-4 flex items-center gap-2 px-3 pt-1', collapsed ? 'justify-center px-0' : '')}
       >
-        <div
-          className={cn(
-            'flex items-center justify-center bg-[var(--research-blue)] text-white',
-            isRail ? 'h-9 w-9 rounded-md' : 'h-10 w-10 rounded-md'
-          )}
-        >
-          <BarChart3 className={cn(isRail ? 'h-[19px] w-[19px]' : 'h-5 w-5')} />
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-control)] bg-brand text-[color:var(--brand-on)]">
+          <BarChart3 className="h-4 w-4" aria-hidden="true" />
         </div>
         {!collapsed ? (
-          <p className={cn('min-w-0 font-semibold leading-tight text-foreground', isRail ? 'max-w-[130px] text-[0.75rem]' : 'text-sm')}>乐子乌智能投研平台</p>
+          <p className="min-w-0 truncate text-[length:var(--fs-body)] font-semibold leading-[var(--lh-body)] text-text-1">乐子乌智能投研</p>
         ) : null}
       </div>
 
       <nav
-        className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-1 overflow-y-auto"
         aria-label={t('layout.mainNav')}
       >
         {navItems.map(({ key, labelKey, to, icon: Icon, exact, badge, group }, index) => {
           const label = t(labelKey);
           return (
           <React.Fragment key={key}>
-          {index === 0 || navItems[index - 1]?.group !== group ? <div className={cn('px-2 pb-1 pt-2 text-[8px] font-semibold uppercase tracking-[.16em] text-secondary-text', (collapsed || isRail) && 'sr-only')}>{t(group === 'primary' ? 'layout.nav.primaryGroup' : 'layout.nav.toolsGroup')}</div> : null}
+          {index === 0 || navItems[index - 1]?.group !== group ? <div className={cn('nav-group-title px-3 pb-2 text-[length:var(--fs-caption)] font-medium leading-[var(--lh-caption)] text-text-3', index === 0 ? 'pt-0' : 'pt-6', collapsed && 'sr-only')}>{t(group === 'primary' ? 'layout.nav.primaryGroup' : 'layout.nav.toolsGroup')}</div> : null}
           <NavLink
             to={to}
             reloadDocument={documentNavigation || to === '/ai-news'}
@@ -149,7 +109,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           >
             {({ isActive }) => (
               <>
-                <Icon className={cn(itemIconClass, isActive ? 'text-[var(--nav-icon-active)]' : 'text-current')} />
+                <Icon aria-hidden="true" className={cn(itemIconClass, isActive ? 'text-brand' : 'text-current')} />
                 {!collapsed ? <span className={itemLabelClass}>{label}</span> : null}
                 {badge === 'completion' && completionBadge ? (
                   <StatusDot
@@ -169,6 +129,9 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
         );
         })}
 
+      </nav>
+
+      <div className="mt-2 flex shrink-0 flex-col gap-1 border-t border-line-1 pt-2">
         <ThemeToggle
           variant={isRail ? 'rail' : 'nav'}
           collapsed={collapsed}
@@ -187,7 +150,6 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           iconClassName={itemIconClass}
           labelClassName={itemLabelClass}
         />
-      </nav>
 
       <NavLink
           to="/admin"
@@ -198,13 +160,13 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           onTouchStart={() => warmNavigation('/admin')}
           className={cn(
             itemInteractiveClass,
-            'shrink-0',
-            isRail ? 'mt-1.5' : 'mt-5'
+            'shrink-0'
           )}
         >
-          <LockKeyhole className={itemIconClass} />
+          <LockKeyhole aria-hidden="true" className={itemIconClass} />
           {!collapsed ? <span className={itemLabelClass}>管理员</span> : null}
       </NavLink>
+      </div>
     </div>
   );
 };

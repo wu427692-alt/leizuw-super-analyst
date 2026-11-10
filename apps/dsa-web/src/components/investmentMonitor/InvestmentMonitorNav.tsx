@@ -10,9 +10,9 @@ const items = [
 
 export function InvestmentMonitorNav() {
   return (
-    <nav aria-label="投资情报台栏目" className="flex gap-1 overflow-x-auto border-y border-[#242A31] bg-[#0B0C0A] px-2 py-1.5 font-mono text-[#A7AFB8]">
+    <nav aria-label="投资情报台栏目" className="flex gap-1 overflow-x-auto border-y border-[var(--line-1)] bg-[var(--bg-1)] px-2 py-1.5 font-mono text-[var(--text-3)]">
       {items.map(({ to, label, icon: Icon, end }) => (
-        <NavLink key={to} to={to} end={end} className={({ isActive }) => `inline-flex shrink-0 items-center gap-1.5 border px-2.5 py-1.5 text-[10px] font-semibold transition-colors ${isActive ? 'border-[#00E676] text-[#00E676]' : 'border-transparent hover:border-[#303740] hover:text-white'}`}>
+        <NavLink key={to} to={to} end={end} className={({ isActive }) => `inline-flex shrink-0 items-center gap-1.5 border px-2.5 py-1.5 text-[12px] font-semibold transition-colors ${isActive ? 'border-[var(--success)] text-[var(--success)]' : 'border-transparent hover:border-[var(--line-2)] hover:text-white'}`}>
           <Icon className="h-3.5 w-3.5" />{label}
         </NavLink>
       ))}

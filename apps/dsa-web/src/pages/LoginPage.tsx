@@ -72,7 +72,7 @@ const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col justify-center overflow-hidden bg-[var(--login-bg-main)] py-12 font-sans selection:bg-[var(--login-accent-soft)] sm:px-6 lg:px-8 [perspective:1500px]">
+    <div className="relative flex min-h-[100svh] flex-col justify-center overflow-hidden bg-[var(--login-bg-main)] py-12 font-sans selection:bg-[var(--login-accent-soft)] sm:px-6 lg:px-8 [perspective:1500px]">
       {/* Dynamic Background */}
       <ParticleBackground />
 
@@ -96,7 +96,7 @@ const LoginPage: React.FC = () => {
           x: useTransform(smoothX, [-0.5, 0.5], [60, -60]),
           y: useTransform(smoothY, [-0.5, 0.5], [60, -60]),
         }}
-        className="absolute right-[20%] bottom-[10%] -z-10 h-[400px] w-[400px] translate-x-1/2 translate-y-1/2 rounded-full bg-emerald-600/10 blur-[120px]"
+        className="absolute right-[20%] bottom-[10%] -z-10 h-[400px] w-[400px] translate-x-1/2 translate-y-1/2 rounded-full bg-[var(--success-bg)] blur-[120px]"
       />
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
@@ -117,16 +117,16 @@ const LoginPage: React.FC = () => {
           >
             <div className="relative flex h-[120vh] w-[120vh] items-center justify-center rounded-full border border-[var(--login-accent-soft)] bg-gradient-to-br from-[var(--login-accent-soft)] to-[hsl(214_100%_20%_/_0.18)] shadow-[inset_0_0_200px_var(--login-accent-glow)] blur-[4px]">
               <Cpu className="h-[70vh] w-[70vh] text-[hsl(200_80%_22%_/_0.4)] brightness-50" />
-              <TrendingUp className="absolute h-[25vh] w-[25vh] translate-x-[15vh] translate-y-[15vh] text-emerald-900/30 brightness-50" />
+              <TrendingUp className="absolute h-[25vh] w-[25vh] translate-x-[15vh] translate-y-[15vh] text-[color-mix(in_srgb,var(--success)_30%,transparent)] brightness-50" />
             </div>
           </motion.div>
 
           <div className="mt-8 flex flex-col items-center">
-            <h2 className="text-4xl font-extrabold tracking-tighter text-[var(--login-text-primary)] sm:text-6xl">
+            <h2 className="text-4xl font-bold tracking-tighter text-[var(--login-text-primary)] sm:text-6xl">
               <span className="bg-gradient-to-r from-[var(--login-text-primary)] via-[var(--login-text-primary)] to-[var(--login-text-secondary)] bg-clip-text text-transparent">乐子乌智能投研平台 </span>
               <span className="bg-gradient-to-r from-[var(--login-brand-start)] to-[var(--login-brand-end)] bg-clip-text text-transparent drop-shadow-[0_0_20px_var(--login-accent-glow)]">ADMIN</span>
             </h2>
-            <h3 className="mt-1 text-xl font-bold uppercase tracking-[0.5em] text-[var(--login-text-muted)]">
+            <h3 className="mt-1 text-xl font-bold uppercase tracking-normal text-[var(--login-text-muted)]">
               Private Control Plane
             </h3>
           </div>
@@ -135,7 +135,7 @@ const LoginPage: React.FC = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3 }}
-            className="mt-6 flex items-center gap-2 rounded-full border border-[var(--login-accent-border)] bg-[var(--login-accent-soft)] px-3 py-1 text-[10px] font-medium text-[var(--login-accent-text)] backdrop-blur-sm"
+            className="mt-6 flex items-center gap-2 rounded-full border border-[var(--login-accent-border)] bg-[var(--login-accent-soft)] px-3 py-1 text-[12px] font-medium text-[var(--login-accent-text)] backdrop-blur-sm"
           >
             <Network className="h-3 w-3" />
             <span>PUBLIC SITE · PROTECTED OPERATIONS</span>
@@ -154,13 +154,13 @@ const LoginPage: React.FC = () => {
           <div className="pointer-events-auto relative flex flex-col overflow-hidden rounded-3xl border border-[var(--login-border-card)] bg-[var(--login-bg-card)]/80 p-8 shadow-2xl backdrop-blur-xl">
             {/* Inner corner glow */}
             <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-[var(--login-accent-soft)] blur-[50px]" />
-            <div className="absolute -bottom-20 -left-20 h-40 w-40 rounded-full bg-blue-600/10 blur-[50px]" />
+            <div className="absolute -bottom-20 -left-20 h-40 w-40 rounded-full bg-[var(--bg-3)] blur-[50px]" />
 
             <div className="mb-8">
               <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-[var(--login-text-primary)]">
                 {isFirstTime ? (
                   <>
-                    <ShieldCheck className="h-6 w-6 text-emerald-400" />
+                    <ShieldCheck className="h-6 w-6 text-[var(--success)]" />
                     <span>{t('login.setupTitle')}</span>
                   </>
                 ) : (
@@ -254,7 +254,7 @@ const LoginPage: React.FC = () => {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.6 }}
-          className="mt-8 text-center font-mono text-xs uppercase tracking-wider text-[var(--login-text-muted)]"
+          className="mt-8 text-center font-mono text-xs uppercase tracking-normal text-[var(--login-text-muted)]"
         >
           Secure Connection Established · 乐子乌智能投研平台
         </motion.p>

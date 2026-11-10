@@ -20,6 +20,8 @@ function Probe() {
     <button onClick={() => void access.smsLogin({ phone: '13900000000', code: '123456', challengeId: 'challenge' })}>smsLogin</button>
     <button onClick={() => void access.bindPhone({ phone: '13900000000', code: '123456', challengeId: 'challenge', currentPassword: 'test-password' })}>bindPhone</button>
     <span>{access.registrationMode}:{String(access.smsLoginEnabled)}</span>
+    <span aria-label="人机验证策略">{String(access.captcha?.required)}:{access.captcha?.siteKey ?? ''}</span>
+    <button onClick={() => void access.sendSms('13900000000', 'login', 'test-once-token')}>sendSmsVerified</button>
     <span aria-label="登录方式读取状态">{access.isLoading ? 'loading' : access.statusUnavailable ? 'unavailable' : 'ready'}</span>
     <button onClick={() => void access.logout()}>logout</button></>;
 }
@@ -105,5 +107,13 @@ describe('UserAccessProvider chat identity integration', () => {
     expect(useAgentChatStore.getState().ownerScope).toBe('user:1');
     expect(screen.getByText('用户1:keep-own-notes')).toBeInTheDocument();
     expect(clearRequestCache).not.toHaveBeenCalled();
+  });
+  it('publishes only public captcha policy and carries a verified send token to the API', async () => {
+    status.mockResolvedValue({ ...approved(1), captcha: { provider: 'turnstile', required: true, siteKey: 'public-test-key' } });
+    sendSms.mockResolvedValue({ challengeId: 'challenge', retryAfter: 60, expiresIn: 300 });
+    render(<UserAccessProvider><Probe /></UserAccessProvider>);
+    await waitFor(() => expect(screen.getByLabelText('人机验证策略')).toHaveTextContent('true:public-test-key'));
+    fireEvent.click(screen.getByText('sendSmsVerified'));
+    await waitFor(() => expect(sendSms).toHaveBeenCalledExactlyOnceWith('13900000000', 'login', 'test-once-token'));
   });
 });

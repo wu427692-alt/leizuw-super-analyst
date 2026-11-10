@@ -195,7 +195,7 @@ describe('NotificationTestPanel', () => {
     expect(screen.getByText(/部分成功/)).toBeInTheDocument();
     expect(screen.getAllByText('HTTP 500').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('HTTP 200')).toBeInTheDocument();
-    expect(screen.getByText('http_500')).toHaveClass('text-warning');
+    expect(screen.getByText('http_500')).toHaveClass('text-[var(--warning)]');
     expect(screen.getByText('https://example.com/hook?token=***')).toBeInTheDocument();
   });
 
@@ -235,6 +235,6 @@ describe('NotificationTestPanel', () => {
     const timeoutEntries = screen.getAllByText('timeout');
     expect(timeoutEntries[0]).toBeInTheDocument();
     expect(screen.getByText('https://qyapi.example.com/cgi-bin/webhook/send?key=***')).toBeInTheDocument();
-    expect(timeoutEntries[0]).toHaveClass('text-warning');
+    expect(timeoutEntries[0]).toHaveClass('text-[var(--warning)]');
   });
 });

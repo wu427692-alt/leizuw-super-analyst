@@ -229,8 +229,8 @@ describe('HomePage', () => {
 
     const dashboard = await screen.findByTestId('home-dashboard');
     expect(dashboard).toBeInTheDocument();
-    expect(dashboard.className).toContain('h-[calc(100vh-5rem)]');
-    expect(dashboard.className).toContain('lg:h-[calc(100vh-2rem)]');
+    expect(dashboard.className).toContain('h-[calc(100dvh-5rem)]');
+    expect(dashboard.className).toContain('lg:h-[calc(100dvh-2rem)]');
     expect(dashboard.firstElementChild?.className).toContain('min-h-0');
     expect(dashboard.querySelector('.flex-1.flex.min-h-0.overflow-hidden')).toBeTruthy();
     expect(screen.getByTestId('home-dashboard-scroll')).toBeInTheDocument();

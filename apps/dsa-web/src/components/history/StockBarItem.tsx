@@ -53,7 +53,7 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
     >
       <div className="relative z-10 flex items-center gap-2.5">
         {isMarketReview ? (
-          <div className="w-1 h-8 rounded-full flex-shrink-0 bg-amber-400" style={{ boxShadow: '0 0 10px rgba(251,191,36,0.4)' }} />
+          <div className="w-1 h-8 rounded-full flex-shrink-0 bg-[var(--warning)]" style={{ boxShadow: '0 0 10px rgba(251,191,36,0.4)' }} />
         ) : sentimentColor ? (
           <div
             className="w-1 h-8 rounded-full flex-shrink-0"
@@ -77,9 +77,9 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
                 <Badge
                   variant="default"
                   size="sm"
-                  className="shrink-0 shadow-none text-[10px] font-semibold leading-none"
+                  className="shrink-0 shadow-none text-[12px] font-semibold leading-none"
                   style={{
-                    color: '#f59e0b',
+                    color: 'var(--brand-text)',
                     borderColor: 'rgba(245,158,11,0.3)',
                     backgroundColor: 'rgba(245,158,11,0.1)',
                   }}
@@ -90,7 +90,7 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
                 <Badge
                   variant="default"
                   size="sm"
-                  className="home-history-sentiment-badge shrink-0 shadow-none text-[11px] font-semibold leading-none transition-opacity duration-200"
+                  className="home-history-sentiment-badge shrink-0 shadow-none text-[12px] font-semibold leading-none transition-opacity duration-200"
                   style={{
                     color: sentimentColor,
                     borderColor: `${sentimentColor}30`,
@@ -120,13 +120,13 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
             </div>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2" data-testid="history-card-meta">
-            <span className="text-[11px] text-secondary-text font-mono">
+            <span className="text-[12px] text-secondary-text font-mono">
               {item.stockCode}
             </span>
             {item.lastAnalysisTime && (
               <>
                 <span className="w-1 h-1 rounded-full bg-subtle-hover" />
-                <span className="text-[11px] text-muted-text">
+                <span className="text-[12px] text-muted-text">
                   {formatDateTime(item.lastAnalysisTime)}
                 </span>
               </>
@@ -134,7 +134,7 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
             {item.analysisCount > 1 && (
               <>
                 <span className="w-1 h-1 rounded-full bg-subtle-hover" />
-                <span className="text-[10px] text-muted-text">
+                <span className="text-[12px] text-muted-text">
                   {t('history.analysisCount', { count: item.analysisCount })}
                 </span>
               </>
@@ -142,7 +142,7 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
             {phaseLabel ? (
               <>
                 <span className="w-1 h-1 rounded-full bg-subtle-hover" />
-                <Badge variant="default" size="sm" className="shrink-0 shadow-none text-[10px] leading-none">
+                <Badge variant="default" size="sm" className="shrink-0 shadow-none text-[12px] leading-none">
                   {phaseLabel}
                 </Badge>
               </>

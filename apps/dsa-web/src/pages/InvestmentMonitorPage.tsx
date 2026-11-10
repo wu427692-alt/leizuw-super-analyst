@@ -1,3 +1,4 @@
+import { stripHtmlText } from '../utils/plainText';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DatabaseZap, FileCheck2, FileText, Play, RefreshCw, Search, Square } from 'lucide-react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
@@ -142,40 +143,40 @@ export default function InvestmentMonitorPage() {
 
   return <AppPage className="intelligence-feed-page max-w-[1760px]">
     {fromHome ? <Link to="/app" className="btn-secondary mb-3 inline-flex">返回首页</Link> : null}
-    <main className="intelligence-terminal overflow-hidden border border-[#242A31] bg-[#050605] text-[#D7DCE2]">
-      <header className="flex flex-col gap-4 border-b border-[#242A31] bg-[#090B09] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
-        <div><p className="text-[9px] uppercase tracking-[0.22em] text-[#00E676]">本地统一事件库 · 10 秒刷新</p><h1 className="mt-2 text-2xl font-black tracking-[-0.05em] text-white">实时流水</h1><p className="mt-1 text-[10px] text-[#717A84]">只展示按时间进入本地库的原始消息；渠道全景与同步状态已拆到“全渠道情报”。</p></div>
+    <main className="intelligence-terminal overflow-hidden border border-[var(--line-1)] bg-[var(--bg-1)] text-[var(--text-2)]">
+      <header className="flex flex-col gap-4 border-b border-[var(--line-1)] bg-[var(--bg-1)] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
+        <div><p className="text-[12px] uppercase tracking-normal text-[var(--success)]">本地统一事件库 · 10 秒刷新</p><h1 className="mt-2 text-2xl font-bold tracking-[-0.05em] text-white">实时流水</h1><p className="mt-1 text-[12px] text-[var(--text-3)]">只展示按时间进入本地库的原始消息；渠道全景与同步状态已拆到“全渠道情报”。</p></div>
         <div className="flex flex-wrap gap-2">
-          <button className="inline-flex h-8 items-center gap-1.5 border border-[#303740] px-3 text-[9px] hover:border-[#00E676]" disabled={actionLoading} onClick={() => void act(() => status?.worker.running ? investmentMonitorApi.stopWorker() : investmentMonitorApi.startWorker())}>{status?.worker.running ? <Square className="h-3.5 w-3.5"/> : <Play className="h-3.5 w-3.5"/>}{status?.worker.running ? '停止监控' : '启动监控'}</button>
-          <button className="inline-flex h-8 items-center gap-1.5 border border-[#303740] px-3 text-[9px] hover:border-[#00E676]" disabled={actionLoading} onClick={() => void act(() => investmentMonitorApi.sync())}><DatabaseZap className="h-3.5 w-3.5"/>同步全部渠道</button>
-          <button className="inline-flex h-8 items-center gap-1.5 border border-[#00E676] px-3 text-[9px] font-bold text-[#00E676]" disabled={loading} onClick={() => void loadEvents()}><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}/>刷新流水</button>
+          <button className="inline-flex h-8 items-center gap-1.5 border border-[var(--line-2)] px-3 text-[12px] hover:border-[var(--success)]" disabled={actionLoading} onClick={() => void act(() => status?.worker.running ? investmentMonitorApi.stopWorker() : investmentMonitorApi.startWorker())}>{status?.worker.running ? <Square className="h-3.5 w-3.5"/> : <Play className="h-3.5 w-3.5"/>}{status?.worker.running ? '停止监控' : '启动监控'}</button>
+          <button className="inline-flex h-8 items-center gap-1.5 border border-[var(--line-2)] px-3 text-[12px] hover:border-[var(--success)]" disabled={actionLoading} onClick={() => void act(() => investmentMonitorApi.sync())}><DatabaseZap className="h-3.5 w-3.5"/>同步全部渠道</button>
+          <button className="inline-flex h-8 items-center gap-1.5 border border-[var(--success)] px-3 text-[12px] font-bold text-[var(--success)]" disabled={loading} onClick={() => void loadEvents()}><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}/>刷新流水</button>
         </div>
       </header>
 
       <InvestmentMonitorNav />
-      {error ? <div role="alert" className="border-b border-[#6B4423] bg-[#19130A] px-4 py-2 text-[10px] text-[#FFB800]">{error}</div> : null}
+      {error ? <div role="alert" className="border-b border-[var(--line-2)] bg-[var(--bg-1)] px-4 py-2 text-[12px] text-[var(--warning)]">{error}</div> : null}
 
-      <nav aria-label="情报渠道" className="flex overflow-x-auto border-b border-[#242A31] bg-[#090B09]">
-        {CHANNELS.map(item => <button key={item.key} onClick={() => setFilter('channel', item.key)} className={`shrink-0 border-b-2 px-4 py-2.5 text-[10px] transition ${activeChannel === item.key && !sourceKey ? 'border-[#00E676] bg-[#0C1710] text-[#00E676]' : 'border-transparent text-[#717A84] hover:text-white'}`}>{item.label}</button>)}
+      <nav aria-label="情报渠道" className="flex overflow-x-auto border-b border-[var(--line-1)] bg-[var(--bg-1)]">
+        {CHANNELS.map(item => <button key={item.key} onClick={() => setFilter('channel', item.key)} className={`shrink-0 border-b-2 px-4 py-2.5 text-[12px] transition ${activeChannel === item.key && !sourceKey ? 'border-[var(--success)] bg-[var(--bg-1)] text-[var(--success)]' : 'border-transparent text-[var(--text-3)] hover:text-white'}`}>{item.label}</button>)}
       </nav>
 
-      <section className="grid gap-2 border-b border-[#242A31] p-3 md:grid-cols-[210px_150px_minmax(240px,1fr)]">
-        <select aria-label="筛选来源" value={sourceKey} onChange={event => setFilter('source', event.target.value)} className="h-9 border border-[#303740] bg-[#050605] px-3 text-[10px] text-white outline-none focus:border-[#00E676]"><option value="">来源：全部</option>{status?.sources.items.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.name}</option>)}</select>
-        <input aria-label="筛选股票" value={symbol} onChange={event => setFilter('symbol', event.target.value)} placeholder="股票代码：全部" className="h-9 border border-[#303740] bg-[#050605] px-3 text-[10px] text-white outline-none focus:border-[#00E676]"/>
-        <label className="relative"><Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-[#59616A]"/><input aria-label="搜索流水" value={query} onChange={event => setQuery(event.target.value)} placeholder="关键词 / 标题 / 摘要" className="h-9 w-full border border-[#303740] bg-[#050605] pl-9 pr-3 text-[10px] text-white outline-none focus:border-[#00E676]"/></label>
+      <section className="grid gap-2 border-b border-[var(--line-1)] p-3 md:grid-cols-[210px_150px_minmax(240px,1fr)]">
+        <select aria-label="筛选来源" value={sourceKey} onChange={event => setFilter('source', event.target.value)} className="h-9 border border-[var(--line-2)] bg-[var(--bg-1)] px-3 text-[12px] text-white outline-none focus:border-[var(--success)]"><option value="">来源：全部</option>{status?.sources.items.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.name}</option>)}</select>
+        <input aria-label="筛选股票" value={symbol} onChange={event => setFilter('symbol', event.target.value)} placeholder="股票代码：全部" className="h-9 border border-[var(--line-2)] bg-[var(--bg-1)] px-3 text-[12px] text-white outline-none focus:border-[var(--success)]"/>
+        <label className="relative"><Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-[var(--text-3)]"/><input aria-label="搜索流水" value={query} onChange={event => setQuery(event.target.value)} placeholder="关键词 / 标题 / 摘要" className="h-9 w-full border border-[var(--line-2)] bg-[var(--bg-1)] pl-9 pr-3 text-[12px] text-white outline-none focus:border-[var(--success)]"/></label>
       </section>
 
-      <div className="hidden grid-cols-[128px_80px_90px_minmax(180px,1fr)_minmax(220px,1.2fr)_58px] gap-3 border-b border-[#242A31] px-4 py-2 text-[9px] text-[#59616A] xl:grid"><span>来源</span><span>证据</span><span>数据时间</span><span>股票 / 标题</span><span>原始摘要</span><span>原文</span></div>
+      <div className="hidden grid-cols-[128px_80px_90px_minmax(180px,1fr)_minmax(220px,1.2fr)_58px] gap-3 border-b border-[var(--line-1)] px-4 py-2 text-[12px] text-[var(--text-3)] xl:grid"><span>来源</span><span>证据</span><span>数据时间</span><span>股票 / 标题</span><span>原始摘要</span><span>原文</span></div>
       {!loading && !events?.items.length ? <EmptyState title="暂无匹配消息" description="调整渠道、来源、股票或关键词后再查看。" icon={<FileCheck2 className="h-7 w-7"/>}/> : null}
-      <div>{events?.items.map(event => { const evidence = evidenceOf(event); const label = EVIDENCE_LABELS[evidence.evidenceLevel] ?? EVIDENCE_LABELS.licensed; return <button key={event.id} onClick={() => openEvent(event)} aria-label={`查看资料：${event.title}`} className="grid w-full gap-2 border-b border-[#1C211E] px-4 py-3 text-left hover:bg-[#0D100E] xl:grid-cols-[128px_80px_90px_minmax(180px,1fr)_minmax(220px,1.2fr)_58px] xl:items-center xl:gap-3">
-        <div className="min-w-0"><p className="truncate text-[10px] font-semibold text-[#D7DCE2]">{event.sourceName}</p><p className="mt-1 truncate text-[8px] text-[#59616A]">{evidence.provider || event.sourceType}</p></div>
+      <div>{events?.items.map(event => { const evidence = evidenceOf(event); const label = EVIDENCE_LABELS[evidence.evidenceLevel] ?? EVIDENCE_LABELS.licensed; return <button key={event.id} onClick={() => openEvent(event)} aria-label={`查看资料：${event.title}`} className="grid w-full gap-2 border-b border-[var(--line-1)] px-4 py-3 text-left hover:bg-[var(--bg-1)] xl:grid-cols-[128px_80px_90px_minmax(180px,1fr)_minmax(220px,1.2fr)_58px] xl:items-center xl:gap-3">
+        <div className="min-w-0"><p className="truncate text-[12px] font-semibold text-[var(--text-2)]">{event.sourceName}</p><p className="mt-1 truncate text-[12px] text-[var(--text-3)]">{evidence.provider || event.sourceType}</p></div>
         <div><Badge variant={label.tone}>{label.label}</Badge></div>
-        <p className="text-[9px] text-[#717A84]">{time(evidence.dataTimestamp || event.eventAt)}</p>
-        <div className="min-w-0"><div className="flex flex-wrap gap-1">{event.symbols.map(item => <span key={item} className="text-[8px] text-[#00E676]">{item}</span>)}</div><p className="mt-1 line-clamp-2 text-[11px] font-semibold leading-4 text-white">{event.title}</p></div>
-        <p className="line-clamp-2 text-[10px] leading-4 text-[#8B949E]">{event.summary || '此条暂无正文摘录，可查看已保存的资料信息。'}</p>
-        <span className="text-[#717A84]"><FileText className="h-3.5 w-3.5"/></span>
+        <p className="text-[12px] text-[var(--text-3)]">{time(evidence.dataTimestamp || event.eventAt)}</p>
+        <div className="min-w-0"><div className="flex flex-wrap gap-1">{event.symbols.map(item => <span key={item} className="text-[12px] text-[var(--success)]">{item}</span>)}</div><p className="mt-1 line-clamp-2 text-[12px] font-semibold leading-4 text-white">{event.title}</p></div>
+        <p className="line-clamp-2 text-[12px] leading-4 text-[var(--text-3)]">{stripHtmlText(event.summary) || '此条暂无正文摘录，可查看已保存的资料信息。'}</p>
+        <span className="text-[var(--text-3)]"><FileText className="h-3.5 w-3.5"/></span>
       </button>; })}</div>
-      <div className="flex items-center justify-between px-4 py-2 text-[9px] text-[#59616A]" aria-live="polite"><span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在读取本地索引，保留当前结果…' : notice || `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><span>每 10 秒刷新本地索引</span></div>
+      <div className="flex items-center justify-between px-4 py-2 text-[12px] text-[var(--text-3)]" aria-live="polite"><span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在读取本地索引，保留当前结果…' : notice || `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><span>每 10 秒刷新本地索引</span></div>
     </main>
 
     {selectedId ? <SourceRecordDrawer eventId={selectedId} event={selected?.id === selectedId ? selected : undefined} onClose={closeEvent} /> : null}

@@ -20,6 +20,7 @@ import type {
   IndustryEvidence, IndustryResearchBlueprint, IndustryResearchProject, IndustryResearchProjectFilter, IndustryResearchReport, IndustryResearchSnapshot,
 } from '../types/industryResearch';
 import './IndustryResearchPage.css';
+import { CHART_SERIES, CHART_TOOLTIP_LABEL_STYLE, CHART_TOOLTIP_STYLE } from '../utils/chartTheme';
 
 type WorkspaceTab = 'map' | 'companies' | 'evidence' | 'questions' | 'report';
 type ProjectFilter = IndustryResearchProjectFilter;
@@ -213,23 +214,23 @@ function ResearchQualityPanel({ snapshot, report, compact = false }: {
 }
 
 function ResearchFigure({ figure }: { figure: NonNullable<IndustryResearchReport['visualizations']>[number] }) {
-  const colors = ['#b9581e', '#d2a24f', '#5a8695', '#8667a8'];
+  const colors = CHART_SERIES;
   const common = <>
-    <CartesianGrid vertical={false} stroke="rgba(91,119,160,.14)" />
-    <XAxis dataKey={figure.xKey} tick={{ fill: '#72839a', fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={18} />
-    <YAxis tick={{ fill: '#72839a', fontSize: 10 }} tickLine={false} axisLine={false} width={58} />
-    <Tooltip contentStyle={{ background: '#fff', border: '1px solid #cdd8e7', borderRadius: 4, color: '#14243b' }} />
-    {figure.yKeys.length > 1 ? <Legend wrapperStyle={{ fontSize: 10 }} /> : null}
+    <CartesianGrid vertical={false} stroke="var(--line-1)" />
+    <XAxis dataKey={figure.xKey} tick={{ fill: 'var(--text-3)', fontSize: 12 }} tickLine={false} axisLine={false} minTickGap={18} />
+    <YAxis tick={{ fill: 'var(--text-3)', fontSize: 12 }} tickLine={false} axisLine={false} width={58} />
+    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+    {figure.yKeys.length > 1 ? <Legend wrapperStyle={{ fontSize: 12 }} /> : null}
   </>;
   return <article className="ir-figure" id={`ir-figure-${figure.id}`}>
     <header><div><span>图表【{figure.id}】</span><h3>{figure.title}</h3></div><small>{figure.subtitle}</small></header>
     <div className="ir-figure-canvas">
       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260} initialDimension={{ width: 640, height: 260 }}>
         {figure.type === 'scatter' ? <ScatterChart data={figure.data} margin={{ top: 12, right: 14, left: 2, bottom: 8 }}>
-          <CartesianGrid stroke="rgba(91,119,160,.14)" />
-          <XAxis type="number" dataKey={figure.xKey} name={figure.xKey} tick={{ fill: '#72839a', fontSize: 10 }} tickLine={false} axisLine={false} />
-          <YAxis type="number" dataKey={figure.yKeys[0]} name={figure.yKeys[0]} tick={{ fill: '#72839a', fontSize: 10 }} tickLine={false} axisLine={false} width={58} />
-          <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ background: '#fff', border: '1px solid #cdd8e7', borderRadius: 4, color: '#14243b' }} />
+          <CartesianGrid stroke="var(--line-1)" />
+          <XAxis type="number" dataKey={figure.xKey} name={figure.xKey} tick={{ fill: 'var(--text-3)', fontSize: 12 }} tickLine={false} axisLine={false} />
+          <YAxis type="number" dataKey={figure.yKeys[0]} name={figure.yKeys[0]} tick={{ fill: 'var(--text-3)', fontSize: 12 }} tickLine={false} axisLine={false} width={58} />
+          <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={CHART_TOOLTIP_STYLE} />
           <Scatter data={figure.data} fill={colors[0]} name={figure.labelKey || figure.title} />
         </ScatterChart> : figure.type === 'line' ? <LineChart data={figure.data} margin={{ top: 12, right: 14, left: 0, bottom: 8 }}>
           {common}{figure.yKeys.map((key, index) => <Line key={key} type="monotone" dataKey={key} stroke={colors[index % colors.length]} dot={false} strokeWidth={2} connectNulls />)}
@@ -275,11 +276,11 @@ function ResearchMap({ blueprint }: { blueprint: IndustryResearchBlueprint }) {
       <div className="ir-chart">
         {snapshot.timeline.length ? <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={250} initialDimension={{ width: 520, height: 250 }}>
           <AreaChart data={snapshot.timeline} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
-            <CartesianGrid vertical={false} stroke="rgba(128,160,214,.14)" />
-            <XAxis dataKey="month" tick={{ fill: '#8799b8', fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={28} />
-            <YAxis tick={{ fill: '#8799b8', fontSize: 11 }} tickLine={false} axisLine={false} />
-            <Tooltip contentStyle={{ background: '#0b1930', border: '1px solid #294d7e', borderRadius: 10 }} labelStyle={{ color: '#fff' }} />
-            <Area type="monotone" dataKey="count" stroke="#49b5ff" fill="#163d68" strokeWidth={2.2} />
+            <CartesianGrid vertical={false} stroke="var(--line-1)" />
+            <XAxis dataKey="month" tick={{ fill: 'var(--text-3)', fontSize: 12 }} tickLine={false} axisLine={false} minTickGap={28} />
+            <YAxis tick={{ fill: 'var(--text-3)', fontSize: 12 }} tickLine={false} axisLine={false} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} />
+            <Area type="monotone" dataKey="count" stroke="var(--line-2)" fill="var(--bg-3)" strokeWidth={2.2} />
           </AreaChart>
         </ResponsiveContainer> : <div className="ir-empty">当前范围尚无可画出的时间序列</div>}
       </div>
@@ -708,9 +709,9 @@ export default function IndustryResearchPage() {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <p className="ir-kicker"><Sparkles /> 全渠道证据驱动研究</p>
           <h1>行业与公司调研</h1>
-          <p>输入行业或上市公司，系统自动汇集研报、机构段子、相关录音转写、互联网信息、财务报表、公告和行情，由 Kimi 形成标准 2 万字深度报告。</p>
+          <p>输入行业或上市公司，系统自动汇集研报、机构段子、相关录音转写、互联网信息、财务报表、公告和行情，自动生成结构化的 2 万字深度报告。</p>
         </motion.div>
-        <div className="ir-live"><i /><span>多层证据统一固化</span><strong>Kimi 后台分章研究</strong></div>
+        <div className="ir-live"><i /><span>多层证据统一固化</span><strong>后台分章研究</strong></div>
       </header>
 
       <section className="ir-command">
@@ -762,7 +763,7 @@ export default function IndustryResearchPage() {
             <span className="ir-task-meter"><i><b style={{ width: `${Math.max(0, Math.min(100, project.progress))}%` }} /></i><strong>{project.progress}%</strong></span>
             <span className="ir-task-action">{project.status === 'completed' ? '打开报告' : project.status === 'limited' ? '打开有限报告' : project.status === 'failed' ? '查看原因' : statusLabel[project.status]}<ChevronRight /></span>
           </button>)}
-        </div> : projectsLoaded ? <div className="ir-task-empty"><Clock3 /><strong>{projectQuery || projectFilter !== 'all' ? '当前筛选没有任务' : '还没有调研任务'}</strong><span>{projectQuery || projectFilter !== 'all' ? '尝试其他标题或切换任务状态。' : '输入行业或公司后可直接启动 Kimi 深度报告。'}</span></div> : null}
+        </div> : projectsLoaded ? <div className="ir-task-empty"><Clock3 /><strong>{projectQuery || projectFilter !== 'all' ? '当前筛选没有任务' : '还没有调研任务'}</strong><span>{projectQuery || projectFilter !== 'all' ? '尝试其他标题或切换任务状态。' : '输入行业或公司后可直接启动深度研究。'}</span></div> : null}
         {projectsLoaded ? <nav aria-label="历史报告分页" className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
           <span>{projectQuery ? `标题“${projectQuery}” · ` : ''}共 {projectTotal} 个任务 · 第 {projectPage} / {projectPages} 页</span>
           <div className="flex gap-2">

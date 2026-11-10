@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { AppPage } from '../components/common';
+import { BottomSheet } from '../components/mobile/BottomSheet';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { EmptyState } from '../components/common/EmptyState';
 import { conceptThemesApi, type ConceptClusterDetail, type ConceptLeaders, type ConceptLifecycle, type ConceptMembershipChanges, type ConceptOverview, type ConceptRefreshState, type ConceptRotation, type ConceptStock, type ConceptTheme, type InstitutionThemeRadar, type StockThemeLens, type ThemeDetail, type WatchlistThemeMap } from '../api/conceptThemes';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -15,12 +17,13 @@ import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import { useConceptSnapshot } from '../hooks/useConceptSnapshot';
 import './ConceptThemesPage.css';
 import './ConceptThemesCompare.css';
+import { CHART_FLAT, CHART_SERIES, CHART_TOOLTIP_STYLE } from '../utils/chartTheme';
 
 const SOURCE_COLOR: Record<string, string> = {
-  ths: '#5AA7FF', dc_board: '#7C5CFC', dc_theme: '#00D4B8', kpl: '#FFB547', tdx: '#F06C9B', sw: '#98A2B3',
+  ths: CHART_SERIES[0], dc_board: CHART_SERIES[3], dc_theme: CHART_SERIES[1], kpl: CHART_SERIES[2], tdx: CHART_SERIES[4], sw: CHART_FLAT,
 };
 const SOURCE_LABEL: Record<string, string> = {
-  ths: '同花顺', dc_board: '东财板块', dc_theme: '东财题材', kpl: '开盘啦', tdx: '通达信', sw: '申万',
+  ths: CHART_SERIES[0], dc_board: CHART_SERIES[3], dc_theme: CHART_SERIES[1], kpl: CHART_SERIES[2], tdx: CHART_SERIES[4], sw: CHART_FLAT,
 };
 const TYPE_LABEL: Record<string, string> = {
   concept: '概念', theme: '题材', industry: '行业', region: '地域', style: '风格', feature: '特色', broad: '宽基',
@@ -71,7 +74,7 @@ const CONCEPT_SECTIONS: Array<{ key: ConceptSection; index: string; label: strin
 function ConceptOverviewStart({ overview, onSelect }: { overview: ConceptOverview | null; onSelect: (section: ConceptSection) => void }) {
   const warnings = overview?.summary.quality.warnings ?? [];
   return <section className="concept-start-grid" aria-label="概念题材研究入口">
-    <header><div><span>START WITH A QUESTION</span><h2>先确定研究问题，再进入对应工作台</h2></div><p>每页只加载当前任务需要的数据。结论必须能回到供应商目录、成分关系和同一截止日归因。</p></header>
+    <header><div><h2>先确定研究问题，再进入对应工作台</h2></div><p>每页只加载当前任务需要的数据。结论必须能回到供应商目录、成分关系和同一截止日归因。</p></header>
     <div>
       <button type="button" onClick={() => onSelect('market')}><Activity /><span><strong>今天哪些题材正在扩张？</strong><small>比较多源价格、机构语料和成分变化</small></span><ArrowRight /></button>
       <button type="button" onClick={() => onSelect('catalog')}><Layers3 /><span><strong>一个题材到底包含谁？</strong><small>进入分层题材库，核验来源、成分与权重</small></span><ArrowRight /></button>
@@ -165,7 +168,7 @@ function RotationSparkline({ points }: { points: ConceptRotation['items'][number
 function ThemeCard({ item, active, onClick }: { item: ConceptTheme; active: boolean; onClick: () => void }) {
   return <button type="button" className={`concept-theme-card ${active ? 'is-active' : ''}`} onClick={onClick}>
     <div className="concept-theme-card__top">
-      <span className="concept-source-dot" style={{ background: SOURCE_COLOR[item.source] ?? '#98A2B3' }} />
+      <span className="concept-source-dot" style={{ background: SOURCE_COLOR[item.source] ?? CHART_FLAT }} />
       <span>{item.sourceLabel}</span><code>{item.sourceCode}</code>
     </div>
     <h3>{item.canonicalName}</h3>
@@ -182,7 +185,7 @@ function ThemeCard({ item, active, onClick }: { item: ConceptTheme; active: bool
 function SourceRail({ themes }: { themes: ConceptTheme[] }) {
   return <div className="concept-source-rail">
     {themes.map((item, index) => <div className="concept-source-node" key={`${item.source}-${item.sourceCode}`}>
-      <span style={{ background: SOURCE_COLOR[item.source] ?? '#98A2B3' }}>{index + 1}</span>
+      <span style={{ background: SOURCE_COLOR[item.source] ?? CHART_FLAT }}>{index + 1}</span>
       <div><strong>{item.sourceLabel}</strong><small>{item.name} · {item.sourceCode}</small></div>
       <em>{number(item.constituentCount)}股</em>
     </div>)}
@@ -238,14 +241,14 @@ function BetaAlphaMap({ stocks, horizonDays }: { stocks: ConceptStock[]; horizon
     <div className="concept-quadrant-labels"><i>独立强势</i><i>高弹性领涨</i><i>低相关/弱势</i><i>高弹性落后</i></div>
     <ResponsiveContainer width="100%" height={245}>
       <ScatterChart margin={{ top: 12, right: 16, bottom: 8, left: 4 }}>
-        <CartesianGrid stroke="rgba(90,135,190,.12)" />
-        <XAxis type="number" dataKey="beta" name="题材 Beta" tick={{ fill: '#607a9a', fontSize: 8 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
-        <YAxis type="number" dataKey="alpha" name={`${horizonDays}日 Alpha`} unit="%" tick={{ fill: '#607a9a', fontSize: 8 }} axisLine={false} tickLine={false} width={36} domain={['auto', 'auto']} />
+        <CartesianGrid stroke="var(--line-1)" />
+        <XAxis type="number" dataKey="beta" name="题材 Beta" tick={{ fill: 'var(--text-3)', fontSize: 12 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
+        <YAxis type="number" dataKey="alpha" name={`${horizonDays}日 Alpha`} unit="%" tick={{ fill: 'var(--text-3)', fontSize: 12 }} axisLine={false} tickLine={false} width={36} domain={['auto', 'auto']} />
         <ZAxis type="number" dataKey="weight" range={[24, 150]} />
         <ReferenceLine x={1} stroke="rgba(90,167,255,.55)" strokeDasharray="4 4" />
         <ReferenceLine y={0} stroke="rgba(49,215,197,.45)" strokeDasharray="4 4" />
-        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ background: '#071326', border: '1px solid #29476c', fontSize: 10 }} formatter={(value, name) => [typeof value === 'number' ? value.toFixed(2) : value, name]} />
-        <Scatter name="成分股" data={points} fill="#4e8cff" fillOpacity={0.66} stroke="#83bdff" />
+        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={CHART_TOOLTIP_STYLE} formatter={(value, name) => [typeof value === 'number' ? value.toFixed(2) : value, name]} />
+        <Scatter name="成分股" data={points} fill="var(--bg-3)" fillOpacity={0.66} stroke="var(--line-2)" />
       </ScatterChart>
     </ResponsiveContainer>
   </section>;
@@ -257,13 +260,13 @@ function ThemeHistoryPulse({ value }: { value: ThemeDetail['history'] }) {
     <header><div><span><TrendingUp /> 20D CONSENSUS TAPE</span><strong>多源题材走势</strong><small>{value.availableDates} 个真实交易日 · 截止 {value.latestDate}</small></div><b data-tone={(value.cumulativeReturn ?? 0) >= 0 ? 'up' : 'down'}>{signed(value.cumulativeReturn)}</b></header>
     <ResponsiveContainer width="100%" height={175}>
       <AreaChart data={value.points} margin={{ top: 8, right: 10, bottom: 0, left: -18 }}>
-        <defs><linearGradient id="concept-history-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4e8cff" stopOpacity={0.36} /><stop offset="100%" stopColor="#4e8cff" stopOpacity={0.02} /></linearGradient></defs>
-        <CartesianGrid stroke="rgba(90,135,190,.10)" vertical={false} />
-        <XAxis dataKey="date" tickFormatter={date => String(date).slice(5)} interval="preserveStartEnd" tick={{ fill: '#6f86a5', fontSize: 9 }} axisLine={false} tickLine={false} />
-        <YAxis tickFormatter={value => `${value}%`} tick={{ fill: '#6f86a5', fontSize: 8 }} axisLine={false} tickLine={false} width={42} domain={['auto', 'auto']} />
-        <Tooltip contentStyle={{ background: '#071326', border: '1px solid #29476c', fontSize: 10 }} labelFormatter={date => `${date} · 多源中位`} formatter={(metricValue, name) => [typeof metricValue === 'number' ? `${metricValue.toFixed(2)}%` : metricValue, name]} />
+        <defs><linearGradient id="concept-history-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--bg-3)" stopOpacity={0.36} /><stop offset="100%" stopColor="var(--bg-3)" stopOpacity={0.02} /></linearGradient></defs>
+        <CartesianGrid stroke="var(--line-1)" vertical={false} />
+        <XAxis dataKey="date" tickFormatter={date => String(date).slice(5)} interval="preserveStartEnd" tick={{ fill: 'var(--text-3)', fontSize: 12 }} axisLine={false} tickLine={false} />
+        <YAxis tickFormatter={value => `${value}%`} tick={{ fill: 'var(--text-3)', fontSize: 12 }} axisLine={false} tickLine={false} width={42} domain={['auto', 'auto']} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelFormatter={date => `${date} · 多源中位`} formatter={(metricValue, name) => [typeof metricValue === 'number' ? `${metricValue.toFixed(2)}%` : metricValue, name]} />
         <ReferenceLine y={0} stroke="rgba(130,170,220,.42)" strokeDasharray="4 4" />
-        <Area type="monotone" dataKey="cumulativeReturn" name="复合累计" stroke="#5aa7ff" strokeWidth={2} fill="url(#concept-history-fill)" dot={false} activeDot={{ r: 3 }} />
+        <Area type="monotone" dataKey="cumulativeReturn" name="复合累计" stroke="var(--info)" strokeWidth={2} fill="url(#concept-history-fill)" dot={false} activeDot={{ r: 3 }} />
       </AreaChart>
     </ResponsiveContainer>
     <footer><div>{value.points.slice(-5).map(point => <span key={point.date} data-tone={point.pctChange >= 0 ? 'up' : 'down'}><b>{point.date.slice(5)}</b><em>{signed(point.pctChange)}</em><small>{point.sourceCount}方</small></span>)}</div><p>{value.method}</p></footer>
@@ -464,11 +467,11 @@ function StockLensPanel({ value, onClose, onExport, exporting }: { value: StockT
     {chart.length ? <div className="concept-lens-chart">
       <ResponsiveContainer width="100%" height={230}>
         <BarChart data={chart} layout="vertical" margin={{ left: 8, right: 24 }}>
-          <CartesianGrid stroke="rgba(130,150,190,.13)" horizontal={false} />
-          <XAxis type="number" domain={[0, 100]} tick={{ fill: '#7e91ad', fontSize: 10 }} axisLine={false} tickLine={false} />
-          <YAxis dataKey="name" type="category" width={102} tick={{ fill: '#c8d7eb', fontSize: 10 }} axisLine={false} tickLine={false} />
-          <Tooltip cursor={{ fill: 'rgba(82,127,255,.08)' }} contentStyle={{ background: '#081327', border: '1px solid #29446b', fontSize: 11 }} />
-          <Bar dataKey="weight" name="题材权重" fill="#4e8cff" radius={[0, 5, 5, 0]} />
+          <CartesianGrid stroke="var(--line-1)" horizontal={false} />
+          <XAxis type="number" domain={[0, 100]} tick={{ fill: 'var(--text-3)', fontSize: 12 }} axisLine={false} tickLine={false} />
+          <YAxis dataKey="name" type="category" width={102} tick={{ fill: 'var(--text-3)', fontSize: 12 }} axisLine={false} tickLine={false} />
+          <Tooltip cursor={{ fill: 'var(--bg-3)' }} contentStyle={CHART_TOOLTIP_STYLE} />
+          <Bar dataKey="weight" name="题材权重" fill="var(--bg-3)" radius={[0, 5, 5, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div> : null}
@@ -532,6 +535,8 @@ export default function ConceptThemesPage() {
   const initialSectionValue = initialParams?.get('section') as ConceptSection | null;
   const initialSection = initialThemeId != null ? 'catalog' : CONCEPT_SECTIONS.some(item => item.key === initialSectionValue) ? initialSectionValue! : 'overview';
   const [activeSection, setActiveSection] = useState<ConceptSection>(initialSection);
+  const isMobile = useIsMobile();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [institutionCandidate, setInstitutionCandidate] = useState<InstitutionThemeRadar['items'][number] | null>(null);
   const [leaderMode, setLeaderMode] = useState<ConceptLeaders['mode']>('consensus');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
@@ -781,6 +786,24 @@ export default function ConceptThemesPage() {
       </> : null}
 
       {activeSection === 'catalog' ? <>
+      {isMobile ? (<>
+      <section className="concept-toolbar is-mobile-toolbar">
+        <div className="concept-toolbar__row">
+          <label className="concept-search"><Search /><input value={query} onChange={event => changeCatalogFilters(() => setQuery(event.target.value))} placeholder="搜索题材、行业、股票代码或源代码" /></label>
+          <button type="button" className="concept-filter-trigger" onClick={() => setFiltersOpen(true)} aria-haspopup="dialog">筛选</button>
+        </div>
+      </section>
+      <BottomSheet isOpen={filtersOpen} onClose={() => setFiltersOpen(false)} title="筛选题材" detent="large" footer={<button type="button" className="concept-filter-reset" onClick={() => { openThemeInCatalog(''); setFiltersOpen(false); }}>清除全部筛选</button>}>
+        <div className="concept-filter-sheet">
+          <label><span>题材类型</span><select value={themeType} onChange={event => changeCatalogFilters(() => setThemeType(event.target.value))} aria-label="题材类型"><option value="">全部层级</option><option value="theme">市场题材</option><option value="concept">概念</option><option value="industry">行业</option><option value="region">地域</option><option value="style">风格</option></select></label>
+          <label><span>数据来源</span><select value={source} onChange={event => changeCatalogFilters(() => setSource(event.target.value))} aria-label="数据来源"><option value="">全部来源</option>{overview?.methodology.sources.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</select></label>
+          <label><span>共识门槛</span><select value={minSources} onChange={event => changeCatalogFilters(() => setMinSources(Number(event.target.value)))} aria-label="共识门槛"><option value={1}>全部共识层级</option><option value={2}>至少 2 个来源</option><option value={3}>至少 3 个来源</option><option value={4}>至少 4 个来源</option></select></label>
+          <label><span>数据成熟度</span><select value={readiness} onChange={event => changeCatalogFilters(() => setReadiness(event.target.value as typeof readiness))} aria-label="数据成熟度"><option value="all">全部数据成熟度</option><option value="membered">已有成分股</option><option value="attributed">已完成归因</option><option value="researchable">可研究 · 多源且已归因</option></select></label>
+          <label><span>展示口径</span><select value={catalogView} onChange={event => changeCatalogFilters(() => setCatalogView(event.target.value as typeof catalogView))} aria-label="题材展示口径"><option value="canonical">规范题材 · 去重</option><option value="source">全部源节点</option></select></label>
+          <label><span>排序</span><select value={sortBy} onChange={event => changeCatalogFilters(() => setSortBy(event.target.value as typeof sortBy))} aria-label="排序"><option value="heat">市场热度</option><option value="change">当日涨跌</option><option value="size">成分规模</option><option value="name">名称</option></select></label>
+        </div>
+              </BottomSheet>
+      </>) : (
       <section className="concept-toolbar">
         <label className="concept-search"><Search /><input value={query} onChange={event => changeCatalogFilters(() => setQuery(event.target.value))} placeholder="搜索题材、行业、股票代码或源代码" /></label>
         <select value={themeType} onChange={event => changeCatalogFilters(() => setThemeType(event.target.value))} aria-label="题材类型"><option value="">全部层级</option><option value="theme">市场题材</option><option value="concept">概念</option><option value="industry">行业</option><option value="region">地域</option><option value="style">风格</option></select>
@@ -791,6 +814,7 @@ export default function ConceptThemesPage() {
         <select value={sortBy} onChange={event => changeCatalogFilters(() => setSortBy(event.target.value as typeof sortBy))} aria-label="排序"><option value="heat">市场热度</option><option value="change">当日涨跌</option><option value="size">成分规模</option><option value="name">名称</option></select>
         <button type="button" className="concept-reset-filters" onClick={() => openThemeInCatalog('')}>清除筛选</button>
       </section>
+      )}
       {debouncedQuery && overview?.stockMatches?.length ? <section className="concept-stock-direct" aria-label="股票题材画像直达">
         <span><Target /> 股票画像直达</span>
         <div>{overview.stockMatches.map(item => <button type="button" key={item.tsCode} onClick={() => void openStock(item.tsCode)}>
@@ -897,7 +921,7 @@ export default function ConceptThemesPage() {
       </> : null}
 
       {activeSection === 'overview' ? <section className="concept-method">
-        <header><BrainCircuit /><div><span>ATTRIBUTION METHOD</span><h2>Beta 与 Alpha 如何被计算</h2></div></header>
+        <header><BrainCircuit /><div><h2>Beta 与 Alpha 如何被计算</h2></div></header>
         <div className="concept-method__flow"><div><Boxes /><strong>来源共识</strong><p>同花顺、东财、开盘啦、通达信、申万独立投票</p></div><ArrowRight /><div><Target /><strong>题材权重</strong><p>36%共识 + 29%业务证据 + 20%热度 + 15%专属性</p></div><ArrowRight /><div><TrendingUp /><strong>题材 Beta</strong><p>剔除个股自身后的题材组合，同时控制沪深300</p></div><ArrowRight /><div><Activity /><strong>独特 Alpha</strong><p>统计窗口残差与公司独有事实证据分层展示</p></div></div>
         <p className="concept-method__formula">{overview?.methodology.betaFormula}</p>
         <small>{overview?.methodology.licenseNote}</small>

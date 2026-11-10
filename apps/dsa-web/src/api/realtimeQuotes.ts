@@ -27,7 +27,7 @@ export async function getRealtimeQuotes(symbols: string[]): Promise<RealtimeQuot
   const running = quoteInflight.get(key);
   if (running) return running;
   const request = apiClient.get<RawQuote[]>('/api/v1/stocks/market-data/realtime', {
-    params: { symbols: key, refresh_missing: true },
+    params: { symbols: key, refresh_missing: false },
     headers: BACKGROUND_ROUTE_HEADERS,
   }).then((response) => response.data.map(row => ({
       stockCode: String(row.stock_code ?? ''), stockName: row.stock_name == null ? null : String(row.stock_name),

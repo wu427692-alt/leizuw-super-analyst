@@ -82,7 +82,7 @@ function AccountChart({ run }: { run: LiveTRun }) {
     {[0, 1, 2, 3].map(index => { const value = low - padding + index / 3 * (high - low + padding * 2); return <g key={index}><line x1="90" x2="740" y1={y(value)} y2={y(value)} className="jev-gridline" /><text x="82" y={y(value) + 4} textAnchor="end">{number(value, 0)}</text></g>; })}
     {(['equity', 'holdBaselineEquity'] as const).map((key, series) => { let connected = false; const path = rows.map((row, index) => { const value = row[key]; if (!Number.isFinite(value)) { connected = false; return ''; } const point = `${connected ? 'L' : 'M'}${x(index)},${y(value)}`; connected = true; return point; }).join(' '); return <g key={key}><path d={path} fill="none" stroke={series === 0 ? '#002FA7' : '#9297A2'} strokeWidth="2" />{rows.length === 1 && Number.isFinite(rows[0][key]) ? <circle cx="90" cy={y(rows[0][key])} r="3" fill={series === 0 ? '#002FA7' : '#9297A2'} /> : null}</g>; })}
     <text x="90" y="225">{stamp(rows[0].timestamp).slice(0, 19)}</text><text x="740" y="225" textAnchor="end">{stamp(rows.at(-1)?.timestamp).slice(0, 19)}</text>
-  </svg><div className="jev-chart-legend"><span><i style={{ background: '#002FA7' }} />纸上账户权益</span><span><i style={{ background: '#9297A2' }} />底仓持有基准</span></div></div>;
+  </svg><div className="jev-chart-legend"><span><i style={{ background: 'var(--info)' }} />纸上账户权益</span><span><i style={{ background: 'var(--bg-3)' }} />底仓持有基准</span></div></div>;
 }
 
 function IncrementalChart({ run }: { run: LiveTRun }) {
@@ -101,10 +101,10 @@ function IncrementalChart({ run }: { run: LiveTRun }) {
   return <div className="live-t-incremental"><h3>做T相对持有增量收益 <span>（{run.config.currency}）</span></h3><p className="live-t-caption">以不做交易的初始底仓与现金为对照；零线上方优于持有，下方弱于持有，包含未闭合库存的市值影响。</p>
     <div className="jev-chart live-t-incremental-chart"><svg viewBox="0 0 760 245" role="img" aria-label="做T相对持有增量收益曲线">
       {[-bound, 0, bound].map(value => <g key={value}><line x1="90" x2="740" y1={y(value)} y2={y(value)} className={value === 0 ? 'live-t-zero-line' : 'jev-gridline'}>{value === 0 ? <title>零收益基线</title> : null}</line><text x="82" y={y(value) + 4} textAnchor="end">{number(value, 0)}</text></g>)}
-      <path d={path} fill="none" stroke="#002FA7" strokeWidth="2.5" />
-      {rows.map((row, index) => row.incrementalPnl == null || !Number.isFinite(row.incrementalPnl) ? null : <circle key={`${row.timestamp}-${index}`} cx={x(index)} cy={y(row.incrementalPnl)} r={rows.length === 1 ? 3 : 2} fill="#002FA7"><title>{stamp(row.timestamp)} · 增量收益 {number(row.incrementalPnl)} {run.config.currency}</title></circle>)}
+      <path d={path} fill="none" stroke="var(--line-2)" strokeWidth="2.5" />
+      {rows.map((row, index) => row.incrementalPnl == null || !Number.isFinite(row.incrementalPnl) ? null : <circle key={`${row.timestamp}-${index}`} cx={x(index)} cy={y(row.incrementalPnl)} r={rows.length === 1 ? 3 : 2} fill="var(--bg-3)"><title>{stamp(row.timestamp)} · 增量收益 {number(row.incrementalPnl)} {run.config.currency}</title></circle>)}
       <text x="90" y="227">{stamp(rows[0].timestamp).slice(0, 19)}</text><text x="740" y="227" textAnchor="end">{stamp(rows.at(-1)?.timestamp).slice(0, 19)}</text>
-    </svg><div className="jev-chart-legend"><span><i style={{ background: '#002FA7' }} />相对持有增量收益</span><span><i className="live-t-zero-key" />零收益基线</span></div></div>
+    </svg><div className="jev-chart-legend"><span><i style={{ background: 'var(--info)' }} />相对持有增量收益</span><span><i className="live-t-zero-key" />零收益基线</span></div></div>
   </div>;
 }
 

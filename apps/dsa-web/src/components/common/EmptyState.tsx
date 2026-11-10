@@ -17,10 +17,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   className = '',
 }) => {
   return (
-    <div className={cn('rounded-2xl border border-dashed border-border/60 bg-card/50 px-6 py-10 text-center shadow-soft-card', className)}>
-      {icon ? <div className="mb-4 flex justify-center text-cyan">{icon}</div> : null}
-      <h3 className="text-base font-semibold text-foreground">{title}</h3>
-      {description ? <p className="mx-auto mt-2 max-w-md text-sm text-secondary-text">{description}</p> : null}
+    <div className={cn('rounded-[var(--radius-card)] border border-dashed border-[var(--line-2)] bg-[var(--bg-1)] px-6 py-10 text-center', className)}>
+      {icon ? <div className="mb-4 flex justify-center text-[color:var(--text-3)]">{icon}</div> : null}
+      <h3 className="text-[length:var(--fs-h2)] font-semibold leading-[var(--lh-h2)] text-[color:var(--text-1)]">{title}</h3>
+      {description ? <p className="mx-auto mt-2 max-w-md text-[length:var(--fs-body)] leading-[var(--lh-body)] text-[color:var(--text-2)]">{description}</p> : null}
       {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
     </div>
   );

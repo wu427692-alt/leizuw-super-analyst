@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Archive, ArrowUpRight, BrainCircuit, CalendarClock, ChevronDown, ExternalLink, FileText, Image as ImageIcon, Layers3, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, ArrowUpRight, BrainCircuit, CalendarClock, ChevronDown, ExternalLink, FileText, Image as ImageIcon, Layers3, Plus, RefreshCw, ShieldCheck, Sparkles, Star, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { essayRadarApi } from '../api/essayRadar';
 import { investmentMonitorApi } from '../api/investmentMonitor';
@@ -20,6 +20,8 @@ import type { RealtimeQuote } from '../api/realtimeQuotes';
 import type { ResearchNoteDetail } from '../types/essayRadar';
 import { formatMarketQuoteTimestamp, quoteDateKey, shouldPreferQuote } from '../utils/marketQuoteDate';
 import { directResearchFirst, RESEARCH_MATCH_FIELDS, RESEARCH_RELATION_LABELS, stockResearchRelation } from '../utils/stockResearchRelation';
+import { MobileGroup, MobileListRow, MobileSkeleton } from '../components/mobile/MobilePrimitives';
+import { useIsMobile } from '../hooks/useIsMobile';
 import './SuperWatchlistPage.css';
 
 type WorkspaceView = 'overview' | 'full';
@@ -251,7 +253,7 @@ function ForumPostDrawer({ event, onClose }: { event: MonitorEvent; onClose: () 
       {failed ? <div role="status" className="flex flex-wrap items-center justify-between gap-3 border border-border/70 p-3"><p>详情暂未读取成功，以下仍为列表摘录。</p><button type="button" className="min-h-10 border border-border/70 px-3 font-semibold hover:bg-hover" onClick={() => setAttempt(value => value + 1)}>重试读取详情</button></div> : null}
       <section><h3 className="mb-2 flex items-center gap-2 font-bold"><FileText className="h-4 w-4" />已入库股评摘录</h3><p className="mb-3 text-[12px] leading-6 text-secondary-text">来自公开列表的摘录，不保证包含完整帖子；请结合来源原帖核对。</p><div className="whitespace-pre-wrap break-words border border-border/70 bg-background/30 p-4 text-[14px] leading-7 text-foreground">{detail.summary || '这条记录没有正文摘录。'}</div></section>
       {images.length ? <section><h3 className="mb-3 flex items-center gap-2 font-bold"><ImageIcon className="h-4 w-4" />帖子图片</h3><div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{images.map((image, index) => <a key={`${image}-${index}`} href={image} target="_blank" rel="noreferrer" className="overflow-hidden border border-border/70 bg-background/30">{failedImages[image] ? <p className="p-4 text-secondary-text">图片暂未载入，可打开原图查看。</p> : <img src={image} alt={`股评图片 ${index + 1}`} loading="lazy" onError={() => setFailedImages(value => ({ ...value, [image]: true }))} className="max-h-80 w-full object-contain" />}<span className="flex items-center justify-between px-3 py-2 text-[12px] text-secondary-text">查看原图<ExternalLink className="h-3 w-3" /></span></a>)}</div></section> : null}
-      {originalUrl ? <footer className="border-t border-border/70 pt-4"><a href={originalUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 border border-border/70 px-3 font-semibold text-[#FF4F00] hover:bg-hover">查看来源原帖<ExternalLink className="h-3.5 w-3.5" /></a></footer> : null}
+      {originalUrl ? <footer className="border-t border-border/70 pt-4"><a href={originalUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 border border-border/70 px-3 font-semibold text-[var(--brand-text)] hover:bg-hover">查看来源原帖<ExternalLink className="h-3.5 w-3.5" /></a></footer> : null}
     </article>
   </Drawer>;
 }
@@ -310,7 +312,7 @@ function EssayOriginalDrawer({ event, onClose }: { event: MonitorEvent; onClose:
           return url ? <a key={file.fileId || index} href={url} target="_blank" rel="noreferrer" className="flex items-start justify-between gap-3 border border-border/70 bg-background/30 px-3 py-3 hover:bg-hover">{body}</a> : <div key={file.fileId || index} className="flex items-start justify-between gap-3 border border-border/70 px-3 py-3">{body}</div>;
         })}</div></section> : null}
       </> : null}
-      {originalUrl ? <div className="border-t border-border/70 pt-4"><a href={originalUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 border border-border/70 px-3 font-semibold text-[#FF4F00] hover:bg-hover">在知识星球打开<ExternalLink className="h-3.5 w-3.5" /></a></div> : null}
+      {originalUrl ? <div className="border-t border-border/70 pt-4"><a href={originalUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 border border-border/70 px-3 font-semibold text-[var(--brand-text)] hover:bg-hover">在知识星球打开<ExternalLink className="h-3.5 w-3.5" /></a></div> : null}
     </div>
   </Drawer>;
 }
@@ -614,7 +616,7 @@ function ConsensusSection({ stock, onEssayOpen, onAnalyze, analyzing, analysisMe
 }
 
 function ExpectationList({ title, items, tone }: { title: string; items: string[]; tone: 'cyan' | 'rose' | 'amber' }) {
-  const toneClass = tone === 'cyan' ? 'text-cyan' : tone === 'rose' ? 'text-rose-400' : 'text-amber-400';
+  const toneClass = tone === 'cyan' ? 'text-cyan' : tone === 'rose' ? 'text-[var(--danger)]' : 'text-[var(--warning)]';
   if (!items.length) return null;
   return <details className="super-expectation-list-card"><summary><span className={toneClass}>{title}</span><span>{items.length} 条 <ChevronDown size={14} aria-hidden="true" /></span></summary><ul>{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul></details>;
 }
@@ -763,6 +765,8 @@ function DetailSection({ section, stock, library, material, onMaterialChange, me
 }
 
 export default function SuperWatchlistPage() {
+  const isMobile = useIsMobile();
+  const [editing, setEditing] = useState(false);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [stockCache, setStockCache] = useState<Record<string, SuperWatchlistStock>>({});
   const [listReady, setListReady] = useState(false);
@@ -786,7 +790,7 @@ export default function SuperWatchlistPage() {
     activeSymbol, section, primarySection, materialFilter, messageFilter, query, page,
     selectSymbol, selectPrimary, selectSection, openSection, selectMaterial, selectMessage,
     setQuery, setPage, clearFilters,
-  } = useWatchlistNavigation(symbols);
+  } = useWatchlistNavigation(symbols, { autoSelect: !isMobile });
   const workspaceView: WorkspaceView = section === 'overview' ? 'overview' : 'full';
   const library: LibraryNavigation = {
     query, page, onQueryChange: setQuery, onPageChange: setPage, onClear: clearFilters,
@@ -853,7 +857,28 @@ export default function SuperWatchlistPage() {
     intervalMs: 60_000, minIntervalMs: 5_000,
   });
   const { quotes: liveQuotes, keyFor: quoteKey } = useRealtimeQuotes(symbols);
-  const indexedNames = useMemo(() => new Map(stockIndex.map(item => [item.canonicalCode.toUpperCase(), item.nameZh?.trim() || item.nameEn?.trim()])), [stockIndex]);
+  // 自选列表里可能存的是裸六位代码（历史数据），需要按展示代码回查名称；
+  // 但裸代码在不同交易所可能重名，只接受唯一匹配，避免把别家公司的名字贴上去。
+  const indexNames = useMemo(() => {
+    const canonical = new Map<string, string>();
+    const bare = new Map<string, string | null>();
+    for (const item of stockIndex) {
+      const name = item.nameZh?.trim() || item.nameEn?.trim();
+      if (!name) continue;
+      canonical.set(item.canonicalCode.toUpperCase(), name);
+      const key = (item.displayCode || '').toUpperCase();
+      if (key) bare.set(key, bare.has(key) ? null : name);
+    }
+    return { canonical, bare };
+  }, [stockIndex]);
+  const resolveIndexedName = useCallback((symbol: string) => {
+    const upper = symbol.toUpperCase();
+    const exact = indexNames.canonical.get(upper);
+    if (exact) return exact;
+    if (!/^\d{6}$/.test(upper)) return undefined;
+    const unique = indexNames.bare.get(upper);
+    return unique ?? undefined;
+  }, [indexNames]);
   const railStocks = useMemo(() => symbols.map(symbol => {
     const overview = stockCache[workspaceKey(symbol, 'overview')];
     const full = stockCache[workspaceKey(symbol, 'full')];
@@ -862,8 +887,9 @@ export default function SuperWatchlistPage() {
     const resolved = cached ? applyRealtimeQuote(cached, quote) : undefined;
     // A cold workspace or an upstream code-as-name is not a reason to show
     // an unnamed watchlist. Reuse the already loaded, venue-qualified index.
-    const name = [cached?.name, quote?.stockName, indexedNames.get(symbol.toUpperCase())]
-      .find(value => value?.trim() && ![symbol.toUpperCase(), symbol.split('.')[0].toUpperCase()].includes(value.trim().toUpperCase()));
+    const bareCode = symbol.split('.')[0].toUpperCase();
+    const name = [cached?.name, quote?.stockName, resolveIndexedName(symbol)]
+      .find(value => value?.trim() && ![symbol.toUpperCase(), bareCode].includes(value.trim().toUpperCase()));
     return {
       symbol,
       name: name?.trim() || symbol,
@@ -872,7 +898,7 @@ export default function SuperWatchlistPage() {
         isStale: Boolean(quote?.isStale), quoteKind: 'snapshot',
       }),
     };
-  }), [indexedNames, liveQuotes, quoteKey, stockCache, symbols]);
+  }), [liveQuotes, quoteKey, resolveIndexedName, stockCache, symbols]);
   const loadedDetail = stockCache[workspaceKey(activeSymbol, workspaceView)];
   const baseActive = loadedDetail ?? stockCache[workspaceKey(activeSymbol, 'overview')]
     ?? stockCache[workspaceKey(activeSymbol, 'full')];
@@ -1033,21 +1059,62 @@ export default function SuperWatchlistPage() {
     });
     navigate(`/chat?${query}`);
   };
-  return <AppPage className="super-watchlist-page max-w-[1900px]"><div className="super-watchlist-shell border border-[#C9CCD2] bg-white text-[#17181A]">
+  if (isMobile && !activeSymbol) {
+    return <AppPage className="super-watchlist-page is-mobile-list">
+      <form onSubmit={addStock} className="mobile-watch-add">
+        <div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy || Boolean(deletingSymbol)} placeholder="添加股票：名称或代码" className="mobile-watch-add__input" /></div>
+        <button type="submit" disabled={busy || Boolean(deletingSymbol) || !newSymbol.trim()} aria-label="加入自选股"><Plus aria-hidden="true" /></button>
+      </form>
+      {error ? <p role="status" className="mobile-watch-error">{error}</p> : null}
+      {listError ? <p role="status" className="mobile-watch-error">自选列表暂未更新，<button type="button" onClick={() => void loadWatchlist()}>重试</button></p> : null}
+      <MobileGroup
+        title={`我的自选 ${symbols.length}`}
+        action={symbols.length ? <button type="button" onClick={() => setEditing(value => !value)}>{editing ? '完成' : '编辑'}</button> : undefined}
+      >
+        {!listReady ? <MobileSkeleton rows={4} /> : railStocks.length ? railStocks.map(stock => (
+          <MobileListRow
+            key={stock.symbol}
+            title={stock.name}
+            subtitle={stock.symbol}
+            value={stock.display.price}
+            valueNote={stock.display.change}
+            tone={stock.display.tone > 0 ? 'up' : stock.display.tone < 0 ? 'down' : 'flat'}
+            onClick={editing ? undefined : () => selectSymbol(stock.symbol)}
+            trailing={editing ? <button type="button" className="mobile-watch-delete" onClick={() => setPendingDelete(stock)} disabled={busy || Boolean(deletingSymbol)} aria-label={`删除自选股 ${stock.name}`}><Trash2 aria-hidden="true" /></button> : undefined}
+          />
+        )) : (
+          <div className="mobile-watch-empty"><Star aria-hidden="true" /><strong>还没有自选股</strong><span>在上方输入名称或代码，行情与研究资料会自动归档。</span></div>
+        )}
+      </MobileGroup>
+      <ConfirmDialog
+        isOpen={Boolean(pendingDelete)}
+        title="删除自选股"
+        message={`确认将 ${pendingDelete?.name ?? ''}（${pendingDelete?.symbol ?? ''}）移出自选？已入库的研究资料会保留。`}
+        confirmText={deletingSymbol ? '删除中…' : '删除'}
+        cancelText="取消"
+        confirmDisabled={busy || Boolean(deletingSymbol)}
+        cancelDisabled={Boolean(deletingSymbol)}
+        isDanger
+        onConfirm={() => void removeStock()}
+        onCancel={() => setPendingDelete(null)}
+      />
+    </AppPage>;
+  }
+  return <AppPage className={`super-watchlist-page max-w-[1900px]${isMobile && activeSymbol ? ' is-mobile-detail' : ''}`}><div className="super-watchlist-shell border border-[var(--line-1)] bg-white text-[var(--text-1)]">
     <header className="super-watchlist-header"><div><h1>自选股超级看板</h1><p>关注的公司，放在一起研究。</p></div><div className="super-header-actions"><Link to="/tasks">我的研究任务 <ArrowUpRight size={14} /></Link><button onClick={() => void refreshShared()} disabled={refreshingShared} aria-label="刷新共享行情并唤醒到期数据源" className="super-refresh-button"><RefreshCw size={14} className={refreshingShared ? 'animate-spin' : ''} />{refreshingShared ? '正在更新' : '刷新'}</button></div></header>
-    {error ? <div className="border-b border-[#FDA29B] bg-[#FEF3F2] px-4 py-2 text-[11px] text-[#B42318]">{error}</div> : null}
+    {error ? <div className="border-b border-[var(--danger)] bg-[var(--brand-tint-08)] px-4 py-2 text-[12px] text-[var(--danger)]">{error}</div> : null}
     {listError ? <div role="status" className="super-load-message"><span>自选列表暂未更新，已有内容会保留。</span><button type="button" onClick={() => void loadWatchlist()}>重试列表</button></div> : null}
     <div className={`super-watchlist-grid grid grid-cols-1 ${section === 'consensus' ? 'is-consensus' : ''}`}>
-      <aside className="super-watchlist-sidebar border-b border-r border-[#D8DADF] bg-[#FAFBFC] xl:border-b-0">
+      <aside className="super-watchlist-sidebar border-b border-r border-[var(--line-1)] bg-[var(--bg-1)] xl:border-b-0">
         <form onSubmit={addStock} className="super-add-stock"><h2>我的自选 <span>{symbols.length}</span></h2><div className="flex"><div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy || Boolean(deletingSymbol)} placeholder="输入股票名称或代码" className="h-10 px-2 text-[12px]" /></div><button type="submit" disabled={busy || Boolean(deletingSymbol) || !newSymbol.trim()} aria-label="加入自选股"><Plus size={17} /></button></div><p>添加后自动收集行情与研究资料</p></form>
         <div className="super-watchlist-stock-rail">{railStocks.map(stock => {
           const selected = stock.symbol === activeSymbol;
-          return <div key={stock.symbol} className={`super-watchlist-item flex border-b border-[#D8DADF] ${selected ? 'is-selected bg-[#EEF4FF]' : ''}`}>
+          return <div key={stock.symbol} className={`super-watchlist-item flex border-b border-[var(--line-1)] ${selected ? 'is-selected bg-[var(--bg-1)]' : ''}`}>
             <button type="button" aria-pressed={selected} onClick={() => selectSymbol(stock.symbol)} className="super-watchlist-select min-w-0 flex-1 p-3 text-left hover:bg-white">
-              <div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-bold">{stock.name}</span><span className={`shrink-0 font-mono text-[12px] font-bold ${stock.display.tone > 0 ? 'text-[#B42318]' : stock.display.tone < 0 ? 'text-[#027A48]' : ''}`}>{stock.display.price}</span></div>
-              <div className="mt-1 flex justify-between font-mono text-[9px] text-[#62666D]"><span>{stock.symbol}</span><span>{stock.display.change}</span></div>
+              <div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-bold">{stock.name}</span><span className={`shrink-0 font-mono text-[12px] font-bold ${stock.display.tone > 0 ? 'text-[var(--up)]' : stock.display.tone < 0 ? 'text-[var(--success)]' : ''}`}>{stock.display.price}</span></div>
+              <div className="mt-1 flex justify-between font-mono text-[12px] text-[var(--text-3)]"><span>{stock.symbol}</span><span>{stock.display.change}</span></div>
             </button>
-            <button type="button" onClick={() => setPendingDelete(stock)} disabled={busy || Boolean(deletingSymbol)} aria-label={`删除自选股 ${stock.name}`} className="super-watchlist-delete m-2 ml-0 inline-flex w-8 shrink-0 items-center justify-center self-stretch rounded-lg text-[#7B7F87] hover:bg-[#FEF3F2] hover:text-[#B42318] disabled:cursor-wait disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => setPendingDelete(stock)} disabled={busy || Boolean(deletingSymbol)} aria-label={`删除自选股 ${stock.name}`} className="super-watchlist-delete m-2 ml-0 inline-flex w-8 shrink-0 items-center justify-center self-stretch rounded-lg text-[var(--text-3)] hover:bg-[var(--brand-tint-08)] hover:text-[var(--danger)] disabled:cursor-wait disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>;
         })}</div>
       </aside>

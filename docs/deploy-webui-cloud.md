@@ -368,7 +368,13 @@ ADMIN_AUTH_ENABLED=true
 
 ### 发布、测试与回退
 
+短信发送及密码申请注册受 Cloudflare Turnstile 保护时，在同一份受限服务端配置中设置现有组件的 `TURNSTILE_SECRET` 与公开 `TURNSTILE_SITE_KEY`。后者不是服务端密钥；访问状态 API 仅通过 `captcha.provider`、`captcha.required`、`captcha.siteKey` 向浏览器提供公开渲染配置，绝不返回 secret。已有 secret 但缺公开 key 时仍须验证，并明确提示配置异常，不能通过删除 secret 或放开校验“修复”界面。
+
+组件的 Hostname Management 应包含每个实际登录域名，包括已经批准的备用入口，保留原有域名和组件密钥。手机端使用可见的 flexible 组件；加载失败可重试，过期清除令牌，短信发送尝试后刷新令牌，不自动重新发送短信。Turnstile 可能自动验证成功，并不一定弹窗；页面应有明确的等待、成功或错误状态，不能仅提示“请完成验证”却没有组件。密码登录本身不依赖该组件。
+
 通用登录入口复用 `UserAccessPage`，可单独执行 `npx vite build --config vite.account-access.config.ts` 构建；生成的 `dist-account-access/account-access.html` 发布到后端 `static/account-access/account-access.html`，JS/CSS位于 `static/assets/account-access/`。后端发现此入口后，所有 `/access` 回调统一使用它；不存在时保留原入口。主站同时加载 `public/assets/account-access-navigation.js`，仅在旧SPA页内导航至 `/access` 时转为整页导航，让服务器选用统一入口，不影响其他模块路由。冻结的旧主站发布须把此脚本一并复制到 `static/assets/` 并在主HTML引入；必须同时验证页内导航进入新入口，不能只测试手输网址。
+
+增量发布前必须核对运行时实际静态根目录，而不只看镜像中的 `/app/static`：启动参数可能选择另一份目录。只替换已核对的独立登录入口和新哈希资源；后端修复从线上精确源码合并，禁止把旧本地主站整包覆盖。验证需覆盖主入口和备用入口的公开配置、401/307 登录保护、真实验证组件、手机宽度、失败及过期重试；使用模拟令牌的离线测试不能声称真实短信或登录已验收。
 
 数据库只新增手机身份和验证码挑战表，不改动旧账号主键或旧数据。正式发布前采用 SQLite online backup 保留一致备份（不能仅复制运行中的主库而忽略WAL）。回退只恢复应用镜像和配置，保留新增表与新注册账号，**不回退整库、不删除账号数据**。停用短信后，手机专用账号没有原密码，因此不应把“关闭开关”当作没有影响的回退；需恢复上一可用短信版本或通知用户暂时不可用。
 

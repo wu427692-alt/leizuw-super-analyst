@@ -686,7 +686,7 @@ export const RunFlowGraph: React.FC<RunFlowGraphProps> = ({
                     x={labelX}
                     y={labelY}
                     textAnchor={labelAnchor}
-                    className="fill-muted-text text-[10px]"
+                    className="fill-muted-text text-[12px]"
                     style={{ paintOrder: 'stroke', stroke: 'hsl(var(--card))', strokeWidth: 4 }}
                   >
                     {compactText(displayLabel, 22)}
@@ -792,11 +792,11 @@ export const RunFlowGraph: React.FC<RunFlowGraphProps> = ({
                       {statusLabel}
                     </Badge>
                     {typeof node.durationMs === 'number' ? (
-                      <span className="min-w-0 truncate text-[11px] text-muted-text">{formatDuration(node.durationMs, t)}</span>
+                      <span className="min-w-0 truncate text-[12px] text-muted-text">{formatDuration(node.durationMs, t)}</span>
                     ) : null}
                   </span>
                   {node.startedAt ? (
-                    <span className="mt-1 block w-full min-w-0 truncate text-[11px] text-muted-text">
+                    <span className="mt-1 block w-full min-w-0 truncate text-[12px] text-muted-text">
                       {t('runFlow.graph.startedAt')}: {formatDateTime(node.startedAt, language, t)}
                     </span>
                   ) : null}
@@ -811,7 +811,7 @@ export const RunFlowGraph: React.FC<RunFlowGraphProps> = ({
                       event.stopPropagation();
                       onToggleExpanded?.(node.id);
                     }}
-                    className="absolute bottom-2 right-2 z-40 inline-flex h-[18px] items-center gap-0.5 rounded-md border border-subtle bg-base/80 px-1 text-[9px] font-medium leading-none text-secondary-text shadow-sm transition-colors hover:border-primary/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan/15"
+                    className="absolute bottom-2 right-2 z-40 inline-flex h-[18px] items-center gap-0.5 rounded-md border border-subtle bg-base/80 px-1 text-[12px] font-medium leading-none text-secondary-text shadow-sm transition-colors hover:border-primary/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan/15"
                   >
                     {expanded ? (
                       <ChevronDown className="h-2 w-2" aria-hidden="true" />

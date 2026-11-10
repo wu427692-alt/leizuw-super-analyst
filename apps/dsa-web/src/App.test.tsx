@@ -44,6 +44,10 @@ vi.mock('./pages/MarketDashboardPage', () => ({
   default: () => <div data-testid="home-page">Home</div>,
 }));
 
+vi.mock('./pages/WorkbenchPage', () => ({
+  default: () => <div data-testid="workbench-page">Overview</div>,
+}));
+
 vi.mock('./pages/LandingPage', () => ({
   default: () => <div data-testid="landing-page">Landing</div>,
 }));
@@ -196,11 +200,11 @@ describe('App routing behavior', () => {
     expect(window.location.pathname).toBe('/access');
   });
 
-  it('rejects a protocol-relative post-login destination', async () => {
+  it('rejects a protocol-relative post-login destination and lands on the overview', async () => {
     window.history.pushState({}, '', '/access?redirect=%2F%2Fevil.invalid');
     render(<App />);
-    expect(await screen.findByTestId('home-page')).toBeVisible();
-    expect(window.location.pathname).toBe('/app');
+    expect(await screen.findByTestId('workbench-page')).toBeVisible();
+    expect(window.location.pathname).toBe('/home');
   });
 
   it('shows loading fallback while an admin route is initializing auth', () => {
@@ -326,7 +330,7 @@ describe('App routing behavior', () => {
       expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument();
 
       chatPageShouldThrow.value = false;
-      fireEvent.click(screen.getAllByRole('link', { name: '市场总览' })[0]);
+      fireEvent.click(screen.getAllByRole('link', { name: '行情' })[0]);
 
       expect(await screen.findByTestId('home-page')).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: '模块暂未完成加载' })).not.toBeInTheDocument();

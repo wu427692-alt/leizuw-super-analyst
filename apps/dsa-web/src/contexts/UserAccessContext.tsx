@@ -1,7 +1,7 @@
 import type React from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
-import { userAuthApi, type FrontUser, type SmsChallenge, type SmsVerification, type SmsPhoneBinding } from '../api/userAuth';
+import { userAuthApi, type FrontUser, type SmsChallenge, type SmsVerification, type SmsPhoneBinding, type UserCaptchaConfig } from '../api/userAuth';
 import { clearRequestCache } from '../api/requestCache';
 import { getChatOwnerScope, useAgentChatStore } from '../stores/agentChatStore';
 
@@ -17,9 +17,10 @@ type UserAccessContextValue = {
   statusUnavailable?: boolean;
   registrationMode: 'approval' | 'self_service';
   smsLoginEnabled: boolean;
-  register: (name: string, password: string) => Promise<ActionResult>;
+  captcha?: UserCaptchaConfig | null;
+  register: (name: string, password: string, turnstileToken?: string) => Promise<ActionResult>;
   login: (name: string, password: string) => Promise<ActionResult>;
-  sendSms: (phone: string, purpose: 'login' | 'bind') => Promise<SmsActionResult>;
+  sendSms: (phone: string, purpose: 'login' | 'bind', turnstileToken?: string) => Promise<SmsActionResult>;
   smsLogin: (payload: SmsVerification & { name?: string }) => Promise<ActionResult>;
   bindPhone: (payload: SmsPhoneBinding) => Promise<ActionResult>;
   logout: () => Promise<void>;
@@ -37,6 +38,7 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
   const [statusUnavailable, setStatusUnavailable] = useState(false);
   const [registrationMode, setRegistrationMode] = useState<'approval' | 'self_service'>('approval');
   const [smsLoginEnabled, setSmsLoginEnabled] = useState(false);
+  const [captcha, setCaptcha] = useState<UserCaptchaConfig | null>(null);
   const statusRequest = useRef(0);
   const invalidateStatus = useCallback(() => { statusRequest.current++; }, []);
 
@@ -54,6 +56,7 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
       setAuthMethod(status.authMethod ?? null);
       setRegistrationMode(status.registrationMode ?? 'approval');
       setSmsLoginEnabled(status.smsLoginEnabled === true);
+      setCaptcha(status.captcha ?? null);
       setStatusUnavailable(false);
     } catch {
       if (request !== statusRequest.current) return;
@@ -64,6 +67,7 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
       setUser(null);
       setAuthMethod(null);
       setSmsLoginEnabled(false);
+      setCaptcha(null);
       setStatusUnavailable(true);
     } finally {
       if (request === statusRequest.current) setIsLoading(false);
@@ -75,9 +79,10 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
     return invalidateStatus;
   }, [refresh, invalidateStatus]);
 
-  const register = useCallback(async (name: string, password: string): Promise<ActionResult> => {
+  const register = useCallback(async (name: string, password: string, turnstileToken?: string): Promise<ActionResult> => {
     try {
-      await userAuthApi.register(name, password);
+      if (turnstileToken) await userAuthApi.register(name, password, turnstileToken);
+      else await userAuthApi.register(name, password);
       return { success: true, pending: true };
     } catch (error) {
       return { success: false, error: getParsedApiError(error) };
@@ -97,8 +102,8 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
     }
   }, [refresh]);
 
-  const sendSms = useCallback(async (phone: string, purpose: 'login' | 'bind'): Promise<SmsActionResult> => {
-    try { return { success: true, challenge: await userAuthApi.sendSms(phone, purpose) }; }
+  const sendSms = useCallback(async (phone: string, purpose: 'login' | 'bind', turnstileToken?: string): Promise<SmsActionResult> => {
+    try { return { success: true, challenge: turnstileToken ? await userAuthApi.sendSms(phone, purpose, turnstileToken) : await userAuthApi.sendSms(phone, purpose) }; }
     catch (error) { return { success: false, error: getParsedApiError(error) }; }
   }, []);
 
@@ -133,9 +138,9 @@ export function UserAccessProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const value = useMemo(() => ({
-    accessEnabled, loggedIn, user, authMethod, isLoading, statusUnavailable, registrationMode, smsLoginEnabled,
+    accessEnabled, loggedIn, user, authMethod, isLoading, statusUnavailable, registrationMode, smsLoginEnabled, captcha,
     register, login, sendSms, smsLogin, bindPhone, logout, refresh,
-  }), [accessEnabled, loggedIn, user, authMethod, isLoading, statusUnavailable, registrationMode, smsLoginEnabled, register, login, sendSms, smsLogin, bindPhone, logout, refresh]);
+  }), [accessEnabled, loggedIn, user, authMethod, isLoading, statusUnavailable, registrationMode, smsLoginEnabled, captcha, register, login, sendSms, smsLogin, bindPhone, logout, refresh]);
 
   return <UserAccessContext.Provider value={value}>{children}</UserAccessContext.Provider>;
 }

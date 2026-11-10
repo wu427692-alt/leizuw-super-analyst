@@ -5,21 +5,26 @@ import { useNavigate } from 'react-router-dom';
 import { dataAcquisitionApi } from '../api/dataAcquisition';
 import { essayQuantApi } from '../api/essayQuant';
 import { essayRadarApi } from '../api/essayRadar';
+import { essayExportsApi } from '../api/essayExports';
+import type { EssayExportStatus, EssayExportTask } from '../api/essayExports';
 import { industryResearchApi } from '../api/industryResearch';
 import { AppPage } from '../components/common';
+import { SegmentedChips } from '../components/mobile/SegmentedChips';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './TasksHubPage.css';
 
-type TaskState = 'queued' | 'running' | 'completed' | 'limited' | 'failed';
-type TaskKind = 'research' | 'quant' | 'audio-analysis' | 'audio-package' | 'acquisition';
+type TaskState = 'queued' | 'running' | 'completed' | 'limited' | 'failed' | 'no_results';
+type TaskKind = 'research' | 'quant' | 'audio-analysis' | 'audio-package' | 'acquisition' | 'essay-export';
 type UnifiedTask = {
   id: string;
   kind: TaskKind;
   title: string;
   detail: string;
   status: TaskState;
-  progress: number;
+  progress: number | null;
+  stageLabel?: string;
   updatedAt: string;
   href: string;
 };
@@ -30,9 +35,11 @@ const KIND_META: Record<TaskKind, { label: string; icon: typeof Search }> = {
   'audio-analysis': { label: '录音转写与纪要', icon: AudioLines },
   'audio-package': { label: '录音文件打包', icon: Boxes },
   acquisition: { label: '一站式取数', icon: DatabaseZap },
+  'essay-export': { label: '小作文导出', icon: Boxes },
 };
 
 const ACTIVE_STATES = new Set<TaskState>(['queued', 'running']);
+const FINISHED_STATES = new Set<TaskState>(['completed', 'limited', 'no_results']);
 const TASK_KINDS = Object.keys(KIND_META) as TaskKind[];
 const PAGE_SIZE = 20;
 const RESEARCH_PAGE_SIZE = 30;
@@ -40,12 +47,41 @@ const CHANNEL_LINKS: Record<TaskKind, string> = {
   research: '/industry-research', quant: '/essay-quant?section=history',
   'audio-analysis': '/essay-radar/feed?tab=audio', 'audio-package': '/essay-radar/feed?tab=audio',
   acquisition: '/data-acquisition',
+  'essay-export': '/meeting',
 };
 type ChannelResult = { items: UnifiedTask[]; total: number };
 type ChannelState = { items: UnifiedTask[] | null; total: number | null; loading: boolean; error: 'unavailable' | 'permission' | 'incompatible' | null };
 const initialChannels = () => Object.fromEntries(TASK_KINDS.map(kind => [kind, {
   items: null, total: null, loading: false, error: null,
 }])) as Record<TaskKind, ChannelState>;
+
+const EXPORT_STAGE_LABELS: Record<EssayExportStatus, string> = {
+  queued: '排队中', indexing: '统计总量', collecting: '收集原文', packaging: '生成数据包',
+  retrying: '等待续跑', completed: '已完成', failed: '需要重试', no_results: '无匹配结果',
+};
+const EXPORT_TASK_STATES: Record<EssayExportStatus, TaskState> = {
+  queued: 'queued', indexing: 'running', collecting: 'running', packaging: 'running',
+  retrying: 'running', completed: 'completed', failed: 'failed', no_results: 'no_results',
+};
+
+function countLabel(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('zh-CN') : '待确认';
+}
+
+function byteLabel(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '待确认';
+  if (value < 1024) return `${value.toLocaleString('zh-CN')} B`;
+  const power = Math.min(3, Math.floor(Math.log(value) / Math.log(1024)));
+  return `${(value / 1024 ** power).toLocaleString('zh-CN', { maximumFractionDigits: 1 })} ${['B', 'KB', 'MB', 'GB'][power]}`;
+}
+
+function exportDetail(task: EssayExportTask) {
+  const scope = task.requestedLimit == null ? '全量导出，不设篇数上限' : `用户指定最多 ${countLabel(task.requestedLimit)} 篇`;
+  return [task.message, scope, `匹配 ${countLabel(task.matchedTotal)} 篇`,
+    `已收集 ${countLabel(task.retrievedCount)} / ${countLabel(task.targetTotal)} 篇`,
+    `已打包 ${countLabel(task.packagedCount)} 篇`,
+    `已处理原始字节 ${byteLabel(task.bytesWritten)} / ${byteLabel(task.bytesTotal)}`].filter(Boolean).join(' · ');
+}
 
 async function readChannel(kind: TaskKind, researchCount = RESEARCH_PAGE_SIZE, researchOffset = 0): Promise<ChannelResult> {
   switch (kind) {
@@ -97,6 +133,18 @@ async function readChannel(kind: TaskKind, researchCount = RESEARCH_PAGE_SIZE, r
       updatedAt: task.updatedAt, href: `/data-acquisition?task=${encodeURIComponent(task.taskId)}`,
       })) };
     }
+    case 'essay-export': {
+      const result = await essayExportsApi.tasks();
+      return { total: result.total, items: result.items.map(task => ({
+        id: task.taskId, kind, title: task.title || (task.filters?.query ? `${task.filters.query} · 小作文导出` : '小作文导出任务'),
+        detail: exportDetail(task),
+        status: EXPORT_TASK_STATES[task.status],
+        stageLabel: EXPORT_STAGE_LABELS[task.status],
+        progress: typeof task.progress === 'number' && Number.isFinite(task.progress) ? task.progress : null,
+        updatedAt: task.updatedAt || task.createdAt || '',
+        href: `/meeting?export_task=${encodeURIComponent(task.taskId)}`,
+      })) };
+    }
   }
 }
 
@@ -106,20 +154,24 @@ function safeDate(value: string) {
 }
 
 function statusLabel(status: TaskState) {
-  return ({ queued: '排队中', running: '执行中', completed: '已完成', limited: '部分完成', failed: '失败' })[status];
+  return ({ queued: '排队中', running: '执行中', completed: '已完成', limited: '部分完成', failed: '失败', no_results: '无匹配结果' })[status];
 }
 
 const TasksHubPage = () => {
   const { user, loggedIn, isLoading, authMethod, accessEnabled } = useUserAccess();
-  if (isLoading || !loggedIn || !user || user.status !== 'approved') {
+  // 单机模式（未启用访问控制）没有登录用户，但任务仍属于本机，不能因此挡住页面。
+  const owner = isLoading ? null : !accessEnabled ? 'local'
+    : loggedIn && user?.status === 'approved' && user.id > 0 ? `user:${user.id}` : null;
+  if (!owner) {
     return <AppPage><p role="status">{isLoading ? '正在确认访问权限…' : '请登录已获准的账号查看个人任务。'}</p></AppPage>;
   }
   // Remount on identity/permission changes: never reuse another user's snapshots
   // or accept requests that were started under a previous authorization scope.
-  return <TasksHubContent key={`${user.id}:${user.status}:${authMethod}:${accessEnabled}`} />;
+  return <TasksHubContent key={`${owner}:${authMethod}:${accessEnabled}`} />;
 };
 
 function TasksHubContent() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   useEffect(() => { document.title = '任务与验证 - 乐子乌智能投研平台'; }, []);
   const [channels, setChannels] = useState(initialChannels);
@@ -189,12 +241,12 @@ function TasksHubContent() {
 
   const counts = useMemo(() => ({
     active: items.filter((item) => ACTIVE_STATES.has(item.status)).length,
-    completed: items.filter((item) => item.status === 'completed' || item.status === 'limited').length,
+    completed: items.filter((item) => FINISHED_STATES.has(item.status)).length,
     failed: items.filter((item) => item.status === 'failed').length,
   }), [items]);
   const filtered = useMemo(() => items.filter((item) => (kindFilter === 'all' || kindFilter === item.kind) && (
     filter === 'all' || (filter === 'active' && ACTIVE_STATES.has(item.status))
-    || (filter === 'completed' && (item.status === 'completed' || item.status === 'limited'))
+    || (filter === 'completed' && FINISHED_STATES.has(item.status))
     || (filter === 'failed' && item.status === 'failed')
   )), [filter, items, kindFilter]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -203,15 +255,15 @@ function TasksHubContent() {
   const missingHistory = TASK_KINDS.some(kind => (channels[kind].total ?? 0) > (channels[kind].items?.length ?? 0));
   const selectFilter = (value: typeof filter) => { setFilter(value); setPage(1); };
 
-  return <AppPage className="tasks-hub max-w-none">
+  return <AppPage className={`tasks-hub max-w-none${isMobile ? ' is-mobile' : ''}`}>
     <header className="tasks-hub__header">
-      <div><h1>任务与验证</h1><p>查看自己的研究、转写、回测和取数进度，完成后点击任务查看结果。</p></div>
+      <div><h1>任务与验证</h1><p>查看自己的研究、转写、回测、取数和小作文导出进度，点击任务继续处理或查看结果。</p></div>
       <button type="button" className="tasks-hub__refresh" onClick={() => void load()}><RefreshCw aria-hidden="true" />刷新状态</button>
     </header>
 
     <section className="tasks-hub__summary" aria-label="任务摘要">
       <button onClick={() => selectFilter('active')} aria-pressed={filter === 'active'} className={filter === 'active' ? 'is-active' : ''}><Activity aria-hidden="true" /><span>正在处理</span><strong>{counts.active}</strong></button>
-      <button onClick={() => selectFilter('completed')} aria-pressed={filter === 'completed'} className={filter === 'completed' ? 'is-active' : ''}><CheckCircle2 aria-hidden="true" /><span>已完成</span><strong>{counts.completed}</strong></button>
+      <button onClick={() => selectFilter('completed')} aria-pressed={filter === 'completed'} className={filter === 'completed' ? 'is-active' : ''}><CheckCircle2 aria-hidden="true" /><span>已结束</span><strong>{counts.completed}</strong></button>
       <button onClick={() => selectFilter('failed')} aria-pressed={filter === 'failed'} className={filter === 'failed' ? 'is-active' : ''}><XCircle aria-hidden="true" /><span>需要处理</span><strong>{counts.failed}</strong></button>
       <button onClick={() => selectFilter('all')} aria-pressed={filter === 'all'} className={filter === 'all' ? 'is-active' : ''}><Clock3 aria-hidden="true" /><span>已读取任务</span><strong>{items.length}</strong></button>
     </section>
@@ -238,19 +290,29 @@ function TasksHubContent() {
       </div>)}</div>
     </details> : null}
 
-    <div className="tasks-hub__tools"><label>任务类型<select value={kindFilter} onChange={event => { setKindFilter(event.target.value as TaskKind | 'all'); setPage(1); }}><option value="all">所有类型</option>{TASK_KINDS.map(kind => <option key={kind} value={kind}>{KIND_META[kind].label}</option>)}</select></label><span>筛选命中 {filtered.length} 条已读取任务</span></div>
+    {isMobile ? (
+      <SegmentedChips
+        ariaLabel="按任务类型筛选"
+        value={kindFilter}
+        onChange={(value) => { setKindFilter(value); setPage(1); }}
+        items={[{ value: 'all' as const, label: '全部' }, ...TASK_KINDS.map(kind => ({ value: kind, label: KIND_META[kind].label }))]}
+        className="tasks-hub__chips"
+      />
+    ) : null}
+    <div className="tasks-hub__tools">{isMobile ? null : <label>任务类型<select value={kindFilter} onChange={event => { setKindFilter(event.target.value as TaskKind | 'all'); setPage(1); }}><option value="all">所有类型</option>{TASK_KINDS.map(kind => <option key={kind} value={kind}>{KIND_META[kind].label}</option>)}</select></label>}<span>筛选命中 {filtered.length} 条已读取任务</span></div>
     <section className="tasks-hub__list" aria-busy={loading} aria-label="任务记录">
       {visible.map((task) => {
         const meta = KIND_META[task.kind]; const Icon = meta.icon;
         return <button key={`${task.kind}-${task.id}`} className="tasks-hub__task" onClick={() => navigate(task.href)}>
           <span className="tasks-hub__task-icon"><Icon aria-hidden="true" /></span>
           <span className="tasks-hub__task-main"><span className="tasks-hub__task-meta">{meta.label} · {safeDate(task.updatedAt)}{channels[task.kind].error ? ' · 上次读取状态' : ''}</span><strong>{task.title}</strong><span>{task.detail}</span></span>
-          <span className={`tasks-hub__status is-${task.status}`}>{statusLabel(task.status)}</span>
-          <span className="tasks-hub__progress" aria-label={`进度 ${task.progress}%`}><i style={{ width: `${Math.max(0, Math.min(task.progress, 100))}%` }} /><em>{task.progress}%</em></span>
+          <span className={`tasks-hub__status is-${task.status}`}>{task.stageLabel || statusLabel(task.status)}</span>
+          {task.progress == null ? <span className="tasks-hub__progress" aria-label="进度尚未确认"><em>{ACTIVE_STATES.has(task.status) ? '总量确认中' : '未计算'}</em></span>
+            : <span className={`tasks-hub__progress${task.progress >= 100 ? ' is-complete' : ''}`} aria-label={`进度 ${task.progress}%`}><i style={{ width: `${Math.max(0, Math.min(task.progress, 100))}%` }} /><em>{task.progress}%</em></span>}
         </button>;
       })}
       {!loading && !visible.length ? <div className="tasks-hub__empty"><Boxes /><strong>{failures.length ? '部分渠道尚未读取成功' : '当前筛选下没有任务'}</strong><span>{failures.length ? '可重试上方未返回的渠道，未读取成功不代表没有任务。' : '可以从上方入口发起调研、量化、转写或取数任务。'}</span></div> : null}
-      {loading && !items.length ? <div className="tasks-hub__empty"><RefreshCw className="animate-spin" /><strong>正在汇总任务</strong><span>五类后台任务并行读取，已返回的任务会先显示。</span></div> : null}
+      {loading && !items.length ? <div className="tasks-hub__empty"><RefreshCw className="animate-spin" /><strong>正在汇总任务</strong><span>六类后台任务并行读取，已返回的任务会先显示。</span></div> : null}
     </section>
     {filtered.length > PAGE_SIZE ? <nav className="tasks-hub__pages" aria-label="任务列表分页"><span>第 {currentPage} / {totalPages} 页 · 本页 {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} 条</span><button disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页</button><button disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>下一页</button></nav> : null}
     <details className="tasks-hub__coverage"><summary>读取范围与历史任务</summary><p>调研支持继续读取历史；其他类型的现有列表接口仅返回最近记录，不支持历史翻页。</p>{TASK_KINDS.map(kind => <div key={kind}><span>{KIND_META[kind].label}</span><span>{channels[kind].items === null ? '尚未读取' : `已读取 ${channels[kind].items?.length} / ${channels[kind].total ?? '未知'} 条`}</span><button type="button" onClick={() => navigate(CHANNEL_LINKS[kind])}>{kind === 'research' ? '查看全部调研' : '打开任务模块'}</button></div>)}{(channels.research.total ?? 0) > (channels.research.items?.length ?? 0) ? <button type="button" className="tasks-hub__more" disabled={channels.research.loading || channels.research.error === 'permission'} onClick={() => void loadChannel('research', true)}>{channels.research.loading ? '正在读取历史调研…' : '再读取 30 条历史调研'}</button> : null}</details>

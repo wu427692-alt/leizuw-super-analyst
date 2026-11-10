@@ -61,6 +61,7 @@ function lazyRoute(
 }
 
 const HomePage = lazyRoute(() => import('./pages/MarketDashboardPage'), 'home');
+const WorkbenchPage = lazyRoute(() => import('./pages/WorkbenchPage'), 'workbench');
 const InvestmentMeetingPage = lazyRoute(() => import('./pages/InvestmentMeetingPage'), 'meeting');
 const SettingsPage = lazyRoute(() => import('./pages/SettingsPage'), 'settings');
 const LoginPage = lazyRoute(() => import('./pages/LoginPage'), 'login');
@@ -231,6 +232,7 @@ const AppContent: React.FC = () => {
         )}
       >
         <Route path="/meeting" element={<InvestmentMeetingPage />} />
+        <Route path="/home" element={<WorkbenchPage />} />
         <Route path="/app" element={<HomePage />} />
         <Route path="/dashboard" element={<Navigate to="/app" replace />} />
         <Route path="/chat" element={<ChatPage />} />

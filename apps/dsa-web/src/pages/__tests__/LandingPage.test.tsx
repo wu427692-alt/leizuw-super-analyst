@@ -13,6 +13,10 @@ function productTabs() {
 
 const productCases = [
   {
+    title: '智能投研团队', alt: '智能投研团队实机界面', screenshot: '/landing/screens/meeting.jpg',
+    action: '进入智能投研团队', href: '/meeting',
+  },
+  {
     title: '市场总览', alt: '市场总览历史界面', screenshot: '/landing/screens/market-overview.jpg',
     action: '查看市场总览', href: '/app',
   },
@@ -54,30 +58,31 @@ describe('LandingPage', () => {
     expect(screen.getByText('历史界面示意 · 非实时行情')).toBeVisible();
   });
 
-  it('shows five product tabs with the stock workspace selected by default', () => {
+  it('shows six product tabs with the new research team selected by default', () => {
     renderLanding();
 
     const tabs = productTabs();
+    const team = tabs.getByRole('tab', { name: '智能投研团队' });
     const market = tabs.getByRole('tab', { name: '市场总览' });
     const concepts = tabs.getByRole('tab', { name: '概念题材' });
     const watchlist = tabs.getByRole('tab', { name: '自选股' });
     const research = tabs.getByRole('tab', { name: '深度调研' });
     const quant = tabs.getByRole('tab', { name: '量化验证' });
 
-    expect(tabs.getAllByRole('tab')).toHaveLength(5);
-    expect(watchlist).toHaveAttribute('aria-selected', 'true');
-    expect(watchlist).toHaveAttribute('tabindex', '0');
-    for (const tab of [market, concepts, research, quant]) {
+    expect(tabs.getAllByRole('tab')).toHaveLength(6);
+    expect(team).toHaveAttribute('aria-selected', 'true');
+    expect(team).toHaveAttribute('tabindex', '0');
+    for (const tab of [market, concepts, watchlist, research, quant]) {
       expect(tab).toHaveAttribute('aria-selected', 'false');
       expect(tab).toHaveAttribute('tabindex', '-1');
     }
 
     const panel = screen.getByRole('tabpanel');
     expect(panel).toHaveAttribute('id', 'landing-product-panel');
-    expect(watchlist).toHaveAttribute('aria-controls', panel.id);
-    expect(panel).toHaveAttribute('aria-labelledby', watchlist.id);
-    expect(screen.getByRole('heading', { name: '围绕一家公司，把信息看完整。' })).toBeVisible();
-    expect(screen.getByRole('link', { name: '探索自选股' })).toHaveAttribute('href', '/super-watchlist');
+    expect(team).toHaveAttribute('aria-controls', panel.id);
+    expect(panel).toHaveAttribute('aria-labelledby', team.id);
+    expect(screen.getByRole('heading', { name: '多角色协作，把研究拆成可执行的任务。' })).toBeVisible();
+    expect(screen.getByRole('link', { name: '进入智能投研团队' })).toHaveAttribute('href', '/meeting');
   });
 
   it.each(productCases)('keeps the $title screenshot, page CTA and large preview in sync', ({
@@ -102,7 +107,7 @@ describe('LandingPage', () => {
     renderLanding();
 
     const tabs = productTabs();
-    const market = tabs.getByRole('tab', { name: '市场总览' });
+    const team = tabs.getByRole('tab', { name: '智能投研团队' });
     const watchlist = tabs.getByRole('tab', { name: '自选股' });
     const research = tabs.getByRole('tab', { name: '深度调研' });
     const quant = tabs.getByRole('tab', { name: '量化验证' });
@@ -117,18 +122,18 @@ describe('LandingPage', () => {
     expect(watchlist).toHaveAttribute('aria-selected', 'true');
 
     fireEvent.keyDown(watchlist, { key: 'Home' });
-    expect(market).toHaveFocus();
-    expect(market).toHaveAttribute('aria-selected', 'true');
+    expect(team).toHaveFocus();
+    expect(team).toHaveAttribute('aria-selected', 'true');
 
-    fireEvent.keyDown(market, { key: 'End' });
+    fireEvent.keyDown(team, { key: 'End' });
     expect(quant).toHaveFocus();
     expect(quant).toHaveAttribute('aria-selected', 'true');
 
     fireEvent.keyDown(quant, { key: 'ArrowRight' });
-    expect(market).toHaveFocus();
-    expect(market).toHaveAttribute('aria-selected', 'true');
+    expect(team).toHaveFocus();
+    expect(team).toHaveAttribute('aria-selected', 'true');
 
-    fireEvent.keyDown(market, { key: 'ArrowLeft' });
+    fireEvent.keyDown(team, { key: 'ArrowLeft' });
     expect(quant).toHaveFocus();
     expect(quant).toHaveAttribute('aria-selected', 'true');
   });

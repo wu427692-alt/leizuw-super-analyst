@@ -212,6 +212,8 @@ def list_analyses(
 @router.get("/feed", summary="检索全部已入库小作文，可选关联 AI 分析结果")
 def list_feed(
     days: int = Query(0, ge=0, le=3650),
+    start_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="上海日期，包含当日；显式日期优先于 days"),
+    end_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="上海日期，包含当日；显式日期优先于 days"),
     query: Optional[str] = Query(None, max_length=200),
     query_scope: str = Query("full", pattern="^(title|full)$"),
     analysis_status: Optional[str] = Query(
@@ -227,25 +229,32 @@ def list_feed(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    return EssayAnalysisService().list_feed(
-        days=days,
-        query=query,
-        query_scope=query_scope,
-        analysis_status=analysis_status,
-        sentiment=sentiment,
-        category=category,
-        tag=tag,
-        stock=stock,
-        min_importance=min_importance,
-        known_total=known_total,
-        page=page,
-        page_size=page_size,
-    )
+    try:
+        return EssayAnalysisService().list_feed(
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+            query=query,
+            query_scope=query_scope,
+            analysis_status=analysis_status,
+            sentiment=sentiment,
+            category=category,
+            tag=tag,
+            stock=stock,
+            min_importance=min_importance,
+            known_total=known_total,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError as exc:
+        raise _service_error(exc, 422) from exc
 
 
 @router.get("/feed/export", summary="按当前信息流筛选条件导出分析标签与完整原文 Excel")
 def export_feed(
     days: int = Query(0, ge=0, le=3650),
+    start_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="上海日期，包含当日；显式日期优先于 days"),
+    end_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="上海日期，包含当日；显式日期优先于 days"),
     query: Optional[str] = Query(None, max_length=200),
     query_scope: str = Query("full", pattern="^(title|full)$"),
     analysis_status: Optional[str] = Query(
@@ -261,6 +270,8 @@ def export_feed(
     try:
         exported = EssayAnalysisService().export_feed_excel(
             days=days,
+            start_date=start_date,
+            end_date=end_date,
             query=query,
             query_scope=query_scope,
             analysis_status=analysis_status,
@@ -270,6 +281,8 @@ def export_feed(
             stock=stock,
             min_importance=min_importance,
         )
+    except ValueError as exc:
+        raise _service_error(exc, 422) from exc
     except Exception as exc:  # noqa: BLE001 - endpoint returns a sanitized export failure.
         raise _service_error(exc, 500)
     path = Path(exported["path"])

@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from sqlalchemy import and_, asc, case, desc, func, or_, select, update
+from sqlalchemy import and_, asc, case, desc, func, or_, select, update, text
 from sqlalchemy.exc import IntegrityError
 
 from src.services.financial_data_service import FinancialDataService
@@ -564,19 +564,22 @@ class ResearchReportLibraryService:
             ).all()
         return [{"value": str(value), "count": int(count)} for value, count in rows]
 
+    # 只关心这几个固定标签，没必要把七万多条 tags_json 全读进 Python 再过滤。
+    PREFERRED_TAGS = ("深度研究", "快评跟踪", "有PDF", "个股研报", "行业研报", "策略研报")
+
     def _tag_facets(self) -> List[Dict[str, Any]]:
-        counts: Dict[str, int] = {}
+        placeholders = ", ".join(f":t{index}" for index in range(len(self.PREFERRED_TAGS)))
+        params = {f"t{index}": tag for index, tag in enumerate(self.PREFERRED_TAGS)}
         with self.db.get_session() as session:
-            rows = session.execute(select(ResearchReportRecord.tags_json)).scalars().all()
-        for raw in rows:
-            try:
-                values = json.loads(raw or "[]")
-            except (TypeError, ValueError):
-                values = []
-            for value in values:
-                counts[str(value)] = counts.get(str(value), 0) + 1
-        preferred = {"深度研究", "快评跟踪", "有PDF", "个股研报", "行业研报", "策略研报"}
-        items = [(key, value) for key, value in counts.items() if key in preferred]
+            rows = session.execute(
+                text(
+                    "SELECT j.value AS value, COUNT(*) AS count "
+                    "FROM research_report_records r, json_each(r.tags_json) j "
+                    f"WHERE j.value IN ({placeholders}) GROUP BY j.value"
+                ),
+                params,
+            ).all()
+        items = [(str(value), int(count)) for value, count in rows]
         return [{"value": key, "count": value} for key, value in sorted(items, key=lambda item: (-item[1], item[0]))]
 
     @staticmethod

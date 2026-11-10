@@ -19,4 +19,10 @@ describe('SMS account API request contract', () => {
     await userAuthApi.bindPhone(payload);
     expect(apiClient.post).toHaveBeenCalledExactlyOnceWith('/api/v1/user-auth/sms/bind', payload);
   });
+  it('passes the one-time verification token for SMS and approval registration', async () => {
+    await userAuthApi.sendSms('13900000000', 'login', 'test-turnstile-token');
+    expect(apiClient.post).toHaveBeenLastCalledWith('/api/v1/user-auth/sms/send', { phone: '13900000000', purpose: 'login', turnstileToken: 'test-turnstile-token' });
+    await userAuthApi.register('研究用户', 'test-password', 'register-turnstile-token');
+    expect(apiClient.post).toHaveBeenLastCalledWith('/api/v1/user-auth/register', { name: '研究用户', password: 'test-password', turnstileToken: 'register-turnstile-token' });
+  });
 });

@@ -16,8 +16,8 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.daily-stock-analysis.desktop",
-    "productName": "Daily Stock Analysis",
+    "appId": "com.leziwu.investment.desktop",
+    "productName": "乐子乌智能投研",
     "directories": {
       "output": "dist"
     },
@@ -54,7 +54,11 @@
       "include": "installer.nsh"
     },
     "mac": {
-      "target": "dmg"
+      "target": "dir",
+      "category": "public.app-category.finance",
+      "icon": "build/icon.icns"
     }
-  }
+  },
+  "description": "乐子乌智能投研平台桌面端",
+  "author": "乐子乌"
 }

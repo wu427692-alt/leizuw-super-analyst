@@ -1311,7 +1311,7 @@ describe('SuperWatchlistPage', () => {
       render(<MemoryRouter initialEntries={['/super-watchlist?section=fundamental&query=财报&page=2']}><SuperWatchlistPage /><LocationProbe /></MemoryRouter>);
       const panel = await screen.findByRole('region', { name: '财务与估值详情' });
       expect(mockEvent).not.toHaveBeenCalled();
-      const location = screen.getByTestId('location').textContent;
+      const initialSearch = new URLSearchParams(screen.getByTestId('location').textContent || '');
       for (const [title, id, period, announcedAt, source, table] of [
         ['收入与利润', 1401, '2026-03-31', '2026-04-30', '利润表独立来源', '利润表'],
         ['经营现金流', 1402, '2025-12-31', '2026-03-28', '现金流量表独立来源', '现金流量表'],
@@ -1335,7 +1335,9 @@ describe('SuperWatchlistPage', () => {
         expect(entry).toHaveFocus();
       }
       expect(mockEvent.mock.calls).toEqual([[1401], [1402], [1403]]);
-      expect(screen.getByTestId('location').textContent).toBe(location);
+      const finalSearch = new URLSearchParams(screen.getByTestId('location').textContent || '');
+      for (const key of ['section', 'query', 'page']) expect(finalSearch.get(key)).toBe(initialSearch.get(key));
+      expect(finalSearch.get('symbol')).toBe(item.symbol);
       expect(mockLoad).toHaveBeenCalledExactlyOnceWith(item.symbol, 183, false, 'full');
       expect(mockRefresh).not.toHaveBeenCalled();
       expect(mockAnalyzeConsensus).not.toHaveBeenCalled();

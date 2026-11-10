@@ -192,6 +192,8 @@ def super_watchlist(request: Request, days: int = Query(365, ge=30, le=3650)):
     if user_id > 0:
         from src.services.user_account_service import UserAccountService
         symbols = UserAccountService().list_watchlist(user_id)
+    # Already cached by symbols plus database revision in the service. A
+    # second five-minute cache hides new watchlist membership and live quotes.
     return InvestmentMonitorService().super_watchlist(days=days, symbols=symbols)
 
 

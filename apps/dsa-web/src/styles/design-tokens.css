@@ -1,0 +1,212 @@
+/* =====================================================================
+   乐子乌设计令牌（唯一真源）
+   - 颜色、字号、字重、行高、间距、圆角、阴影、动效、层级只在这里定义。
+   - 页面与组件只引用 var(--*)，不得新写十六进制色值。
+   - 深色为默认主题（.dark），浅色为同一语义的映射（:root）。两套令牌名完全一致。
+   - *-hsl 后缀是给 Tailwind `hsl(var(--x) / α)` 用的裸 HSL 三元组。
+   ===================================================================== */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/inter-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/inter-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/inter-latin-600-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/inter-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* ---------- 字体 ---------- */
+  --font-sans: Inter, "PingFang SC", "MiSans", "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-num: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; /* 配合 tabular-nums */
+
+  /* ---------- 字号/行高（网页端 9 档；行高为固定 px） ---------- */
+  --fs-display: 32px;  --lh-display: 40px;  /* 指数点位主数字，700；不得用于标题 */
+  --fs-h1: 24px;       --lh-h1: 32px;       /* 页面主标题，600；每页 1 个 */
+  --fs-h2: 18px;       --lh-h2: 26px;       /* 卡片标题，600 */
+  --fs-h3: 15px;       --lh-h3: 22px;       /* 区块小标题、表头，600 */
+  --fs-body: 14px;     --lh-body: 22px;     /* 正文、导航、表格内容 */
+  --fs-sm: 13px;       --lh-sm: 20px;       /* 次要列、密集列表 */
+  --fs-caption: 12px;  --lh-caption: 18px;  /* 时间戳、来源、角标；全站最小字号 */
+  --fs-num-lg: 22px;   --lh-num-lg: 28px;   /* 卡片主数值，700 */
+  --fs-num: 15px;      --lh-num: 22px;      /* 行内数值，600 */
+
+  /* ---------- 字重（只有四档） ---------- */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ---------- 间距（4pt 阶梯） ---------- */
+  --gap-2xs: 4px;   /* 图标与文字、tag 内 */
+  --gap-xs: 8px;    /* 同组元素、按钮内 */
+  --gap-sm: 12px;   /* 卡片内行距、单元格内边距 */
+  --gap-md: 16px;   /* 卡片内边距、卡片之间 */
+  --gap-lg: 24px;   /* 页面区块之间 */
+  --gap-xl: 32px;   /* 主区块分组 */
+  --gap-2xl: 48px;  /* 页面级分隔 */
+  --page-x: 24px;   /* 内容区左右页边；手机端 16 */
+
+  /* ---------- 控件高度（4 档） ---------- */
+  --h-sm: 28px;  /* 表格内小按钮、tag 行 */
+  --h-md: 32px;  /* 常规按钮、输入框 */
+  --h-lg: 36px;  /* 主按钮、搜索框 */
+  --h-xl: 44px;  /* 手机主按钮、列表行、最小触控热区 */
+
+  /* ---------- 圆角（4 档） ---------- */
+  --radius-tag: 4px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-pill: 9999px;
+
+  /* ---------- 动效 ---------- */
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --dur-fast: 120ms;   /* hover、按下 */
+  --dur-base: 180ms;   /* 展开、切换 */
+
+  /* ---------- 层级 ---------- */
+  --z-sticky: 10;
+  --z-sidebar: 40;
+  --z-appbar: 45;
+  --z-tabbar: 50;
+  --z-drawer: 90;
+  --z-toast: 100;
+
+  /* ---------- 品牌（唯一强调色；只用于主按钮、当前导航、聚焦环、关键高亮） ---------- */
+  --brand: #FF4F00;
+  --brand-hsl: 19 100% 50%;
+  --brand-hover: #FF6A26;
+  --brand-pressed: #E04600;
+  --brand-text: #C93E00;          /* 浅底上的品牌色文字，对白 5.0:1 */
+  --brand-on: #FFFFFF;            /* 品牌实心底上的文字 */
+  --brand-tint-08: rgb(255 79 0 / .08);
+  --brand-tint-16: rgb(255 79 0 / .16);
+
+  /* ---------- 中性色（浅色） ---------- */
+  --bg-0: #F4F5F7;  --bg-0-hsl: 220 16% 96%;   /* 页面底 */
+  --bg-1: #FFFFFF;  --bg-1-hsl: 0 0% 100%;     /* 卡片 */
+  --bg-2: #F1F3F6;  --bg-2-hsl: 216 22% 95%;   /* 输入框、浮层内底 */
+  --bg-3: #E9ECF1;  --bg-3-hsl: 217 22% 93%;   /* hover、选中行 */
+  --line-1: #E2E6EC; --line-1-hsl: 216 21% 91%; /* 分隔线 */
+  --line-2: #CDD4DE; --line-2-hsl: 215 20% 84%; /* 描边 */
+  --text-1: #0E1420; --text-1-hsl: 220 39% 9%;  /* 标题、主数字 18.4:1 */
+  --text-2: #3A4555; --text-2-hsl: 216 19% 28%; /* 正文 9.7:1 */
+  --text-3: #5F6978; --text-3-hsl: 216 12% 42%; /* 次要 ≥5:1，不得低于 12px */
+  --text-4: #9AA3B0; --text-4-hsl: 215 12% 65%; /* 禁用态，不得用于可读信息 */
+
+  /* ---------- 金融语义色（只用于数字、涨跌 tag、迷你走势） ---------- */
+  --up: #D92D3A;    --up-hsl: 355 69% 51%;   /* 红涨；浅底加深保证 4.8:1 */
+  --up-bg: rgb(217 45 58 / .10);
+  --down: #0E8F55;  --down-hsl: 153 82% 31%; /* 绿跌 */
+  --down-bg: rgb(14 143 85 / .10);
+  --flat: #5F6978;
+
+  /* ---------- 状态色（系统状态，各配 -bg 12% 与 -border 32%） ---------- */
+  --success: #039855; --success-hsl: 153 96% 30%;
+  --success-bg: rgb(3 152 85 / .12);   --success-border: rgb(3 152 85 / .32);
+  --warning: #B54708; --warning-hsl: 22 92% 37%;
+  --warning-bg: rgb(247 144 9 / .12);  --warning-border: rgb(247 144 9 / .32);
+  --danger: #D92D20;  --danger-hsl: 4 74% 49%;
+  --danger-bg: rgb(217 45 32 / .12);   --danger-border: rgb(217 45 32 / .32);
+  --info: #1570EF;    --info-hsl: 215 87% 51%;
+  --info-bg: rgb(21 112 239 / .12);    --info-border: rgb(21 112 239 / .32);
+
+  /* ---------- 图表色板（按序取色，单序列用 chart-1，禁止用品牌橙） ---------- */
+  --chart-1: #3A74E8;
+  --chart-2: #129C84;
+  --chart-3: #D97706;
+  --chart-4: #6E5FD8;
+  --chart-5: #D13F69;
+
+  /* ---------- 阴影（全站只有卡片一种 + 浮层一种） ---------- */
+  --shadow-card: 0 1px 2px rgb(16 24 40 / .06);
+  --shadow-pop: 0 8px 24px rgb(16 24 40 / .12);
+  --focus-ring: 0 0 0 2px var(--brand-tint-16);
+
+  /* ---------- 滚动条 ---------- */
+  --scrollbar-thumb: var(--line-2);
+  --scrollbar-thumb-hover: var(--text-4);
+
+  color-scheme: light;
+}
+
+.dark {
+  --brand-text: #FF6A26;          /* 深底上的品牌色文字 6.7:1 */
+
+  --bg-0: #07080B;  --bg-0-hsl: 225 22% 4%;
+  --bg-1: #0C0F16;  --bg-1-hsl: 222 29% 7%;
+  --bg-2: #121722;  --bg-2-hsl: 221 31% 10%;
+  --bg-3: #1A2130;  --bg-3-hsl: 221 30% 15%;
+  --line-1: #232B3A; --line-1-hsl: 219 25% 18%;
+  --line-2: #2E3849; --line-2-hsl: 218 23% 23%;
+  --text-1: #F2F5FA; --text-1-hsl: 217 44% 96%;  /* 17.5:1 */
+  --text-2: #A8B2C1; --text-2-hsl: 216 17% 71%;  /* 8.9:1 */
+  --text-3: #7C8798; --text-3-hsl: 216 12% 54%;  /* 5.3:1 */
+  --text-4: #55606F; --text-4-hsl: 215 13% 38%;
+
+  --up: #F5333F;    --up-hsl: 356 91% 58%;
+  --up-bg: rgb(245 51 63 / .12);
+  --down: #12B76A;  --down-hsl: 152 82% 39%;
+  --down-bg: rgb(18 183 106 / .12);
+  --flat: #7C8798;
+
+  --success: #12B76A; --success-hsl: 152 82% 39%;
+  --success-bg: rgb(18 183 106 / .12); --success-border: rgb(18 183 106 / .32);
+  --warning: #F79009; --warning-hsl: 34 94% 50%;
+  --warning-bg: rgb(247 144 9 / .12);  --warning-border: rgb(247 144 9 / .32);
+  --danger: #F04438;  --danger-hsl: 4 86% 58%;
+  --danger-bg: rgb(240 68 56 / .12);   --danger-border: rgb(240 68 56 / .32);
+  --info: #2E90FA;    --info-hsl: 211 95% 58%;
+  --info-bg: rgb(46 144 250 / .12);    --info-border: rgb(46 144 250 / .32);
+
+  --chart-1: #4E8CFF;
+  --chart-2: #22C3A6;
+  --chart-3: #F79009;
+  --chart-4: #8A7CF4;
+  --chart-5: #E8557E;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / .32);
+  --shadow-pop: 0 12px 32px rgb(0 0 0 / .48);
+
+  color-scheme: dark;
+}
+
+@media (max-width: 767px) {
+  :root {
+    /* 手机端 5 档：32 / 20 / 16 / 14 / 12 */
+    --fs-display: 32px; --lh-display: 40px;
+    --fs-h1: 20px;      --lh-h1: 28px;
+    --fs-h2: 16px;      --lh-h2: 24px;
+    --fs-h3: 16px;      --lh-h3: 24px;
+    --fs-body: 16px;    --lh-body: 24px;
+    --fs-sm: 14px;      --lh-sm: 21px;
+    --fs-caption: 12px; --lh-caption: 18px;
+    --fs-num-lg: 20px;  --lh-num-lg: 28px;
+    --fs-num: 16px;     --lh-num: 24px;
+    --page-x: 16px;
+  }
+}

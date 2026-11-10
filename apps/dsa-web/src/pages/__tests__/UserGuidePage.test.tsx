@@ -27,6 +27,9 @@ describe('UserGuidePage', () => {
     render(<MemoryRouter><UserGuidePage /></MemoryRouter>);
 
     expect(screen.getByRole('heading', { name: /不是功能清单/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '智能投研团队' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '进入智能投研团队' })).toHaveAttribute('href', '/meeting');
+    expect(screen.getByAltText('智能投研团队实机页面截图')).toHaveAttribute('src', '/landing/screens/meeting.jpg');
     expect(screen.getByRole('heading', { name: '市场总览' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '任务与验证' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '自选股超级看板' })).toBeInTheDocument();
@@ -58,7 +61,7 @@ describe('UserGuidePage', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '搜索使用手册' }), { target: { value: '用户只能看到自己的任务' } });
     expect(screen.getByRole('heading', { name: '任务与验证' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '市场总览' })).not.toBeInTheDocument();
-    expect(screen.getByText('当前显示 1 / 11 个工作台')).toBeInTheDocument();
+    expect(screen.getByText('当前显示 1 / 12 个工作台')).toBeInTheDocument();
   });
 
   it('shows actionable search results near the input and supports multiple terms', () => {
@@ -90,7 +93,7 @@ describe('UserGuidePage', () => {
     expect(within(results).getByText('没有匹配的操作说明')).toBeVisible();
     fireEvent.click(within(results).getByRole('button', { name: '清除全部筛选' }));
     expect(screen.getByRole('button', { name: '全部' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('当前显示 11 / 11 个工作台')).toBeInTheDocument();
+    expect(screen.getByText('当前显示 12 / 12 个工作台')).toBeInTheDocument();
   });
 
   it('restores focus and the previous scroll lock when the native preview is cancelled', () => {

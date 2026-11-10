@@ -19,6 +19,7 @@ from api.v1.endpoints import (
     analysis,
     auth,
     backtest,
+    command,
     concept_themes,
     decision_signals,
     data_acquisition,
@@ -185,6 +186,8 @@ router.include_router(
     prefix="/industry-research",
     tags=["IndustryResearch"],
 )
+
+router.include_router(command.router, prefix="/command", tags=["Command"])
 
 router.include_router(
     health.router,

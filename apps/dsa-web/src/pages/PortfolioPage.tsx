@@ -986,7 +986,7 @@ const PortfolioPage: React.FC = () => {
     : null;
 
   return (
-    <div className="portfolio-page min-h-screen space-y-4 p-4 md:p-6">
+    <div className="portfolio-page min-h-[100svh] space-y-4 p-4 md:p-6">
       <section className="space-y-3">
         <div className="space-y-2">
           <h1 className="text-xl md:text-2xl font-semibold text-foreground">{text.title}</h1>
@@ -1047,7 +1047,7 @@ const PortfolioPage: React.FC = () => {
                   type="button"
                   onClick={openAccountDeleteDialog}
                   disabled={!canDeleteSelectedAccount}
-                  className="btn-secondary text-sm flex-1 border-red-400/40 text-red-100 hover:bg-red-500/15 disabled:border-white/10 disabled:text-secondary"
+                  className="btn-secondary text-sm flex-1 border-[var(--danger-border)] text-[var(--danger)] hover:bg-[var(--danger-bg)] disabled:border-white/10 disabled:text-secondary"
                 >
                   {accountDeleteLoading ? text.deletingAccount : text.deleteAccount}
                 </button>
@@ -1278,7 +1278,7 @@ const PortfolioPage: React.FC = () => {
                       <td className="py-2 pr-2 text-right">{row.avgCost.toFixed(4)}</td>
                       <td className="py-2 pr-2 text-right">
                         <div>{formatPositionPrice(row)}</div>
-                        <div className={`text-[11px] ${hasPositionPrice(row) ? 'text-secondary' : 'text-warning'}`}>
+                        <div className={`text-[12px] ${hasPositionPrice(row) ? 'text-secondary' : 'text-warning'}`}>
                           {getPositionPriceLabel(row)}
                         </div>
                       </td>
@@ -1602,7 +1602,7 @@ const PortfolioPage: React.FC = () => {
                 <option value="split_adjustment">拆并股调整</option>
               </select>
             ) : null}
-            <div className="text-[11px] text-secondary">
+            <div className="text-[12px] text-secondary">
               {writeBlocked ? '删除修正仅在单账户视图可用。请先选择具体账户后再删除错误流水。' : '如有错误流水，可直接删除后重新录入。'}
             </div>
             <div className="max-h-64 overflow-auto rounded-lg border border-white/10 p-2">
@@ -1614,7 +1614,7 @@ const PortfolioPage: React.FC = () => {
                   {!writeBlocked ? (
                     <button
                       type="button"
-                      className="btn-secondary shrink-0 !px-3 !py-1 !text-[11px]"
+                      className="btn-secondary shrink-0 !px-3 !py-1 !text-[12px]"
                       onClick={() => openDeleteDialog({
                         eventType: 'trade',
                         id: item.id,
@@ -1634,7 +1634,7 @@ const PortfolioPage: React.FC = () => {
                   {!writeBlocked ? (
                     <button
                       type="button"
-                      className="btn-secondary shrink-0 !px-3 !py-1 !text-[11px]"
+                      className="btn-secondary shrink-0 !px-3 !py-1 !text-[12px]"
                       onClick={() => openDeleteDialog({
                         eventType: 'cash',
                         id: item.id,
@@ -1654,7 +1654,7 @@ const PortfolioPage: React.FC = () => {
                   {!writeBlocked ? (
                     <button
                       type="button"
-                      className="btn-secondary shrink-0 !px-3 !py-1 !text-[11px]"
+                      className="btn-secondary shrink-0 !px-3 !py-1 !text-[12px]"
                       onClick={() => openDeleteDialog({
                         eventType: 'corporate',
                         id: item.id,

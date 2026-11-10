@@ -1,0 +1,127 @@
+p0: 二、国内外研究现状概述
+p1: 本文关心的是消费者怎样看待和使用AI评论摘要。按照“信息本身—信息的呈现—信息的采纳”的顺序，本部分先梳理在线评论的研究，再梳理AI评论摘要的研究，然后介绍信息采纳模型，并分别梳理模型中的感知有用性和采纳意愿，最后进行述评。
+p2: 1 在线评论
+p3: 1.1 在线评论的定义
+p4: 在线评论源于口碑传播。传统口碑是消费者之间面对面的、非商业性的信息交流，互联网普及后，这种交流逐渐转移到线上。Hennig-Thurau等（2004）将网络口碑定义为潜在、现有或过去的消费者通过互联网发布的、关于产品或企业的任何正面或负面陈述，这些陈述可以被大量的个人和机构看到。在线评论是网络口碑中最常见、也最受研究关注的一种形式。Chen和Xie（2008）认为，在线消费者评论是用户根据个人使用经历发布的产品信息，可以看作营销沟通组合中的一种新要素；Mudambi和Schuff（2010）将在线评论定义为消费者在企业网站或第三方网站上发布的产品评价。
+p5: 以上三种界定都包含三层含义：评论由消费者发布，内容来自其购买和使用经历，并在网络平台上公开展示。与传统口碑相比，在线评论的传播范围更广，一条评论可以被所有浏览商品页面的人看到；评论可以长期保存，消费者能够同时查看大量历史评论；发布者大多是陌生人，消费者无法像判断熟人意见那样判断其可靠性。相较于社交媒体上的分享内容，电商平台与点评网站的在线评论多围绕具体商品展开，通常由评分和文字组合而成，并由平台统一展示。由于评论数量庞大且来源分散，平台需要对这些评论进行进一步整理与呈现，AI摘要便是其中形式之一。
+p6: 1.2 在线评论的维度
+p7: 在线评论包含的信息较多，学者们一般把它拆成若干维度分别测量。Babić Rosario等（2016）对96项研究的1532个效应量进行元分析时，把口碑指标归纳为数量、效价、数量与效价的组合以及离散度四类。更早的Floyd等（2014）对26项实证研究进行元分析时，以评论效价和评论数量作为两个基本指标。以上种种指标均可归类为反映评论所包含的信息内容。
+p8: 此外，信息质量研究将信息的表达方式视为信息质量的一个维度。Wang和Strong（1996）把信息质量分为内在、情境、表达和可获得性四类，其中表达质量既包括格式上的简洁和一致，也包括含义上的可解释和易理解，可获得性质量则指信息是否容易获取。
+p9: 据此，本文把在线评论的维度分为信息维度和呈现维度两类。信息维度包括评论数量、评论效价、评论离散度、评论内容和评论者特征五个方面，其中前三个描述一组评论的整体情况，后两个描述单条评论的特点；呈现维度指评论向消费者展示的形式，也分为若干方面。
+p10: 评论数量指某一商品获得的评论条数，通常用评论总数或一段时间内新增的评论数衡量，反映商品受关注的程度。评论效价指评论的正负倾向，常用平均评分、好评率或正负评论的比例衡量。Liu（2006）研究电影口碑时，分别用评论条数和正负评论的比例衡量数量和效价；Chevalier和Mayzlin（2006）则用平均星级以及一星、五星评论所占的比例衡量效价。Babić Rosario等（2016）指出，有些研究用“五星评论的条数”衡量效价，这类指标实际上同时包含了数量信息，应当单独作为“数量与效价的组合”来处理，否则会影响不同研究结论之间的比较。
+p11: 评论离散度指不同消费者的评价之间的分歧程度，一般用评分的方差或标准差衡量。两件商品的评论数量和平均评分可能相同，但一件商品的评价比较一致，另一件商品好评和差评都很多，消费者从中得到的信息并不一样。
+p12: 评论内容指评论文本本身的特征，是研究最多的维度，常用指标包括评论长度或深度、评论质量、可读性和情感倾向等。Mudambi和Schuff（2010）用评论字数衡量评论深度；Park等（2007）在实验中按论据是否客观、具体、有理由支撑来区分高质量评论和低质量评论；Korfiatis等（2012）用可读性指数衡量评论是否容易读懂；郝媛媛等（2010）通过文本挖掘提取评论的情感倾向和主客观表达等特征。
+p13 [CMT]: 评论者特征指发布评论的消费者本身的信息，如评论者等级、历史评论数量、是否公开身份以及在平台上获得的认可等。这类信息一般显示在评论旁边，消费者会据此判断评论者是否可靠。
+p14: 呈现维度与信息维度相互独立，同样的评论内容可以有不同的展示形式。在线评论研究中已有学者把呈现形式作为评论的一个特征，Xu等（2015）就把文字、图文和视频称为评论的不同呈现格式。呈现形式有的由评论者决定，如是否上传图片；有的由平台决定，如评分汇总、评论排序和评论摘要。由于本文研究的AI评论摘要属于后者，下一节对呈现维度单独展开梳理。
+p15: 1.3 在线评论的呈现形式
+p16: 呈现形式是呈现维度在平台上的具体表现。同样的评论内容，展示方式不同，消费者获取的信息和阅读顺序也会不同。根据平台实践和已有研究，本文从单条评论和多条评论两个层面梳理在线评论的呈现形式：前者关注单条评论的呈现载体和结构，后者关注平台对大量评论的汇总、排序和归纳方式。
+p17: 单条评论的呈现首先体现在载体上。在线评论经历了从纯文字到图文结合、再到视频的变化，目前淘宝、京东等平台都允许消费者在评论中上传图片和视频。Xu等（2015）通过实验比较了文字评论、图文评论和视频评论三种呈现方式，发现消费者对视频评论的可信度和说服力评价更高，并且这种差异会随产品类型而变化。
+p18: 单条评论的呈现还体现在结构上。多数平台的评论是消费者自由撰写的一段文字，也有平台要求按固定栏目填写，如分别填写优点和缺点，或对外观、性能等属性分别打分，这类评论称为结构化评论。刘亚男等（2022）通过组间实验比较了结构化评论和非结构化评论，发现对于体验型产品，结构化评论能提高评论深度和消费者的感知诊断性，对于搜索型产品则作用不明显。此外，国内电商平台普遍提供追加评论功能，消费者可以在初次评论一段时间后补充使用体验，使一条评论在时间上分成前后两部分。王长征等（2015）研究了消费者对追加评论有用性的感知，石文华等（2016）对初次评论和追加评论进行了比较，追加评论已经成为国内在线评论研究的一个专门方向。
+p19: 多条评论层面的呈现形式主要有三类。一是评分汇总，平台通常在评论区顶部展示平均星级、评论总数和各星级的分布，消费者往往先看汇总评分，再看具体评论。Qiu等（2012）通过实验发现，当汇总评分与单条评论的倾向相矛盾时，消费者会降低对这条评论的可信度和诊断性判断，而且这种影响对正面评论更明显。这说明消费者会把汇总信息和单条评论放在一起理解。
+p20: 二是评论的排序与组合。平台一般提供按时间、按有用性投票或按评分筛选等排序方式，消费者实际看到的只是排在前面的一部分评论。Purnawirawan等（2012）把消费者看到的多条评论作为一个“评论集合”来研究，发现集合中正负评论的比例和排列顺序都会影响消费者对整组评论的评价：正面或负面占多数的集合比正负各半的集合评价更高，把负面评论放在中间、首尾放正面评论的排列方式也能提高评价。
+p21: 三是对评论内容进行归纳。一些平台从评论中提取高频词，生成“质量很好”“尺码偏大”等评论标签，并标注提及次数。刘景方等（2016）研究了用户评论标签摘要系统的有效性，这类系统按标签对评论进行归纳，帮助用户较快了解评论的主要观点。标签保留了评论中的具体属性信息，形式上是关键词的罗列。近年来出现的AI评论摘要更进一步，平台直接把多条评论的观点写成一段文字或若干条目，消费者不需要阅读原文就能了解评论的大致情况。AI评论摘要的相关研究放在第2节中梳理。
+p22: 总体而言，在线评论呈现形式的研究对象已从单条评论扩展到由多条评论组成的评论集合，平台对评论的加工程度也不断提高，从展示原文、汇总评分、提取标签发展到直接生成摘要。加工程度越高，消费者获取的信息越依赖平台的组织方式。
+p23: 在线评论呈现形式的研究覆盖了载体、结构、评分汇总、排序和标签等多种形式，研究对象多为单条评论或原始评论列表，对平台加工后形成的摘要关注较少。从信息维度看，AI评论摘要实际上是把一组评论的效价、离散度和评论内容中涉及的商品属性压缩成一份概括。从呈现维度看，结构化评论按优缺点或按属性组织单条评论，与AI评论摘要中按优缺点分组、按属性分项的做法组织逻辑相近，区别在于后者组织的是多条评论归纳后的内容。
+p24: 据此，本文研究的在线评论限定为电商平台上的商品评论，研究对象是由多条评论归纳而成的AI评论摘要。在信息维度上，实验中各组商品的评论数量、平均评分以及摘要所依据的评价内容保持一致；在呈现维度上，本文研究的是AI评论摘要内部的信息组织方式。
+p25: 2． AI评论摘要
+p26: 本节先梳理AI评论摘要的定义和发展，再梳理消费者对AI评论摘要的反应，最后梳理摘要呈现方式的研究和平台做法，并由此引出本文研究的两个方面。
+p27: 2.1 AI评论摘要的定义与发展
+p28: “评论摘要”的概念最早来自计算机领域的观点摘要研究。Hu和Liu（2004）把评论摘要界定为一种基于商品特征的摘要：先找出消费者在评论中评价过的商品特征，再判断每个特征上的评价是正面还是负面，最后按特征汇总。Kim等（2011）在综述中采用了更宽的界定，把对大量观点生成简洁、易于理解的摘要的研究都归入观点摘要，并指出摘要可以是汇总后的情感评分，也可以是按属性或主题分解的结构化摘要，或是一段文字摘要。这一领域的定义着眼于摘要任务和输出形式。
+p29: 围绕这一任务，摘要技术经历了几个阶段，摘要的输出形式也随之变化。Hu和Liu（2004）的摘要按商品特征逐项列出正面和负面评价的数量及例句；Liu等（2005）开发的Opinion Observer系统把不同商品在各属性上的优缺点做成可视化比较。之后的研究转向生成连贯的摘要文本，Ganesan等（2010）提出的Opinosis方法利用评论中反复出现的表达生成简短概括；Chu和Liu（2019）提出的MeanSum模型在没有人工摘要作为训练样本的情况下，也能生成多条评论的综合摘要。
+p30: 大语言模型得到应用后，研究重点转向摘要是否忠实于原始评论。Hosking等（2024）先检索有代表性的评论片段，再由大模型据此生成摘要，使摘要内容能追溯到原文；Siledar等（2024）建立了观点摘要的评价数据集，从忠实性、属性覆盖和情感一致性等方面评价摘要质量。时至今日，按属性列出、按正负对比和连续文本这几种输出形式的呈现，在今天平台上的AI评论摘要中都能看到。
+p31: 生成式AI进入电商平台以后，营销和信息管理领域开始把AI评论摘要作为一种新的平台信息来研究，界定的角度也随之变化。Wang和Wang（2025）以亚马逊2023年上线的功能为对象，将其描述为平台利用人工智能为消费者评论生成简洁摘要，并在过滤虚假或无用评论后置于评论区顶部，作用是从大量评论中提取关键信息。Jia、Zhao和Zhang（2026）认为AI评论摘要是生成式技术分析大量消费者评论后浓缩而成的简洁段落或要点，并把它看作在线评论的“代理”。Jia、Chi和Chi（2025）按生成来源把评论摘要分为AI生成和人工生成两类，说明“AI”一词限定的是摘要的生成主体。国内研究多使用“人工智能生成评论总结”或“AI评论总结”等说法。张鹏和刘春慧（2026）认为，人工智能生成评论总结把分散、碎片化的个体评论转化为聚合性结论，它与个体评论的本质区别在于算法对信息的筛选、重组与建构，具体包括三个方面：识别评论的效价，把模糊的情感表达转为正面、中性或负面的明确分类；抽取评论涉及的维度，如质量、物流和服务，并把分散的内容归类整合；按一定规则对效价信息和维度信息进行二次编排，形成有逻辑的总结框架。
+p32: 比较上述界定，各研究在三点上基本一致：摘要的对象是同一商品或服务的多条评论，生成者是平台的算法，产出是比原始评论简短得多的概括内容。不同之处在于，计算机领域从任务和输出形式出发，营销和信息管理领域从来源和功能出发，多数默认摘要由生成式AI产生。Kim等（2011）和Jia、Zhao和Zhang（2026）提到摘要可以是评分、段落或要点等不同形式，张鹏和刘春慧（2026）把“二次编排”列为摘要的特征之一。
+p33: 结合上述研究和平台实践，本文统一使用“AI评论摘要”一词，将其定义为平台利用人工智能技术，对某一商品或服务的多条用户评论进行归纳后形成、并展示给消费者的摘要内容，主要包括评论中的共同观点、涉及的商品属性和评论效价。与在线评论相比，AI评论摘要由平台生成，内容是对多条评论的整合。
+p34: 2.2 消费者对AI评论摘要的反应
+p35: 在消费者对AI评论摘要的反应方面，不少研究从摘要来源入手。Jia、Chi和Chi（2025）通过三项酒店预订情境实验发现，人工摘要在部分条件下更容易获得消费者信任，但在负面评价条件下，AI摘要和人工摘要带来的预订意愿没有显著差异。Chai等（2026）把措辞也考虑进来，发现当摘要用“多数”等文字形式表达概率时，消费者对AI摘要的反应反而比对人工摘要更积极，感知客观性和信任在其中起中介作用。Jia、Zhao和Zhang（2026）则不比较来源，而是调查了713名消费者对AI摘要本身的感知，发现透明性、可理解性和便利性会影响消费者对摘要可信度的判断。
+p36: 另有研究利用平台数据考察摘要上线后的实际效果。Wang和Wang（2025）用亚马逊商品面板数据和双重差分方法，发现引入AI评论摘要后商品的购买行为指标有所改善；张鹏和古新成（2026）以酒店平台为对象，发现AI评论总结上线后，用户评论数量的增速下降了。前者考察的是消费者的购买行为，后者考察的是评论撰写行为。
+p37: 总的来看，计算机领域的研究主要关注摘要的生成方法及其准确性；营销和信息管理领域的研究主要关注消费者对AI摘要的信任，以及平台引入摘要后消费者购买和评论行为的变化，对摘要内部怎样组织信息关注较少。
+p38: 2.3 AI评论摘要的呈现模式
+p39: 学术研究中对AI评论摘要呈现方式的讨论还不多。张鹏和刘春慧（2026）按信息组织逻辑把摘要的呈现结构分为列表体和叙事体两类：列表体用相互独立的条目逐项陈列商品属性和对应评价，如“优势：续航时间较长，且性价比很高；劣势：有用户反馈机身偏重”；叙事体则借助属性之间的关联，用连贯的段落叙述评价。他们通过眼动实验比较了两种呈现结构以及正面在前和负面在前两种效价顺序，发现呈现结构、效价顺序和产品类型会共同影响消费者对正面内容的视觉注意，并进一步影响购买意愿。
+p40: 从平台实践看，AI评论摘要的组织方式主要有四种：App Store用一段连续文字概括评价；Naver Shopping按商品属性分条列出；美团按优点和缺点分栏；Tripadvisor先用一段话给出总体评价，再按属性列出细项。比较这四种做法，可以看到它们在两个方面不同。第一个方面是分组依据，即摘要内容按什么分组。评论信息由商品属性和评论效价两种成分构成，Hu和Liu（2004）的评论摘要就是按商品属性汇总正负评价，优缺点分栏或按属性打分。摘要可以按属性分组，可以按效价分组，也可以不分组。第二个方面是有无独立总览，即分组内容之前是否另有一段总体评价。Kim等（2011）认为，总体层面的摘要和按主题分解的摘要提供的是不同层次的理解，两者可以相互补充。
+p41: 用这两个方面可以描述上述四种做法：App Store不分组，整段文字本身就是对评价的总体概括，本文称为整体概括式；Naver Shopping按属性分组、没有独立总览，称为属性分项式；美团按效价分组、没有独立总览，称为优缺点分组式；Tripadvisor有独立总览，后面的细项按属性分组，称为总分结合式。总分结合式后面的细项也可以按效价分组，本文据此把它分为属性型和优缺点型两种。与张鹏和刘春慧（2026）的划分相比，他们的叙事体对应本文的整体概括式，列表体在本文中按分组依据分成属性分项式和优缺点分组式，总分结合式是本文增加的一类。
+p42: 本文从分组依据和有无独立总览两个方面研究呈现模式，因为这两个方面决定了消费者打开摘要后先看到什么、按什么顺序找信息，也是各平台做法差别最大的地方。实验把两个方面交叉：分组依据取按属性和按优缺点两个水平，独立总览取有和无两个水平，得到属性分项式、优缺点分组式以及属性型和优缺点型两种总分结合式，共四组。整体概括式不分组作为补充对照组，用来比较分条组织和连续段落的差别。
+p43: 3． 信息采纳模型
+p44: 本文以信息采纳模型为理论基础。本节介绍模型的提出和后续扩展，并说明本文怎样使用这一模型。
+p45: 3.1 模型的提出
+p46: 信息采纳模型由Sussman和Siegal（2003）提出，用来解释个体在接收到信息后为什么会采纳这些信息。该模型结合了技术接受模型（Davis，1989）和精细加工可能性模型（Petty和Cacioppo，1986）。精细加工可能性模型认为，个体处理信息有中心路径和边缘路径两种方式，前者主要依据信息内容本身进行判断，后者主要依据信息来源等外部线索进行判断。信息采纳模型据此把论据质量和来源可信度作为前因变量，分别对应中心路径和边缘路径；同时借鉴技术接受模型中感知有用性影响使用意向的思路，把信息有用性作为中介变量，把信息采纳作为结果变量。Sussman和Siegal（2003）以企业员工收到的建议邮件为对象进行检验，发现论据质量和来源可信度会通过信息有用性影响员工对建议的采纳，员工的专业知识和涉入程度会调节这一过程。
+p47: 3.2 模型的扩展与应用
+p48: 此后，学者们在不同情境中对该模型进行了检验和扩展。Bhattacherjee和Sanford（2006）把精细加工可能性模型用于信息技术接受研究，用论据质量和来源可信度解释用户的感知有用性和态度，并发现用户的专业知识和工作相关性会调节这两条路径的作用。Zhang和Watts（2008）以两个在线社区为对象，发现论据质量和来源可信度都会影响成员对社区信息的采纳，当新信息与已有认知不一致或成员带着明确目的搜索时，成员对来源可信度的依赖会减弱。Cheung等（2008）把模型用于在线消费者社区，发现论据质量中的相关性和全面性对信息有用性的影响较大，而来源可信度的影响不显著。Erkan和Evans（2016）在社交媒体情境中提出扩展的信息采纳模型，加入了信息需求和对信息的态度两个变量，并把购买意愿作为信息采纳之后的结果。
+p49: 从已有研究看，信息采纳模型已经从组织内部的邮件沟通扩展到在线社区、在线评论和社交媒体等情境，“信息有用性影响信息采纳”这一核心路径得到了反复验证。这些研究的前因变量主要是论据质量、来源可信度等内容与来源特征，信息的呈现形式很少被考虑。因此，本文以信息采纳模型为理论基础，把AI评论摘要的呈现模式作为影响消费者处理信息的前因，保留“感知有用性—采纳意愿”这一核心路径。
+p50: 4． 感知有用性
+p51: 4.1 感知有用性的定义
+p52: 感知有用性最早来自技术接受模型。Davis（1989）将其定义为个体认为使用某一特定系统能够提高其工作绩效的程度。Sussman和Siegal（2003）把这一概念用到信息采纳研究中，提出了信息有用性，指个体认为使用某条信息能够帮助自己更好地完成任务的程度。在在线评论研究中，学者们常用“评论有用性”这一概念，Mudambi和Schuff（2010）将有用的评论定义为能够帮助消费者完成购买决策的评论。三个概念的适用对象依次为信息系统、一般信息和在线评论，核心含义一致，均指个体对某一对象能否帮助自己完成任务的判断。本文的研究对象为AI评论摘要，统一使用“感知有用性”这一表述，文中引用的信息有用性和评论有用性研究均按这一含义理解。
+p53: 4.2 感知有用性的测量
+p54: 已有研究测量有用性主要有两种方式。第一种是利用平台上的“有帮助”投票数或投票比例，如Mudambi和Schuff（2010）、Korfiatis等（2012）的研究，这类数据反映的是其他用户对单条评论的评价。第二种是用问卷测量消费者自己感知到的有用程度。Davis（1989）开发的感知有用性量表包括提高工作效率、提高工作绩效和更容易完成工作等题项；Cheung等（2008）结合在线评论情境，从“有价值的”“有信息量的”“有帮助的”三个方面测量信息有用性。多数研究把感知有用性作为单维变量处理。
+p55: 4.3 感知有用性的影响因素
+p56: 在有用性的影响因素中，研究最多的是评论内容本身。Mudambi和Schuff（2010）发现评论深度和评分极端程度会影响评论有用性，且评论深度对搜索型产品的作用更强。Korfiatis等（2012）发现，可读性对“有帮助”投票比例的影响比评论长度更大。郝媛媛等（2010）用国内影评数据得出的结论是，积极的情感倾向、较高的正负情感混杂度和较长的平均句长都会提高评论有用性。Cheung等（2008）则从论据质量的角度，发现相关性和全面性的影响最大。
+p57: 也有研究关注信息来源和评论者特征的作用。Sussman和Siegal（2003）发现来源可信度会影响信息有用性；Pan和Zhang（2011）发现评论者在文字中表现出的创新性与评论有用性呈倒U型关系；Ghose和Ipeirotis（2011）把文本特征和评论者信息放在一起分析，发现主观性、可读性、拼写错误和评论者的历史信息都有影响；殷国鹏（2012）基于豆瓣网数据，发现评论与平均星级的偏差、评论者的社会特征也会起作用。
+p58: 从呈现方式解释有用性的研究相对较少。刘亚男等（2022）发现，对于体验型产品，结构化呈现的评论能提高感知诊断性和感知有用性；Jia、Zhao和Zhang（2026）发现，AI摘要的可理解性和便利性会提高消费者对摘要的信任，并提高其感知帮助程度。
+p59: 
+p60: 
+p61: 5 采纳意愿
+p62: 5.1 采纳意愿的定义与测量
+p63: 信息采纳指个体有目的地使用信息的过程（Sussman和Siegal，2003）。在在线评论情境中，Cheung等（2008）把信息采纳理解为消费者接受评论中的观点，并据此作出购买相关的决策。Erkan和Evans（2016）进一步区分了信息采纳和购买意愿，认为消费者先采纳信息，再形成购买意愿。在测量上，部分研究测量的是消费者已经发生的采纳行为，如Cheung等（2008）的题项询问消费者是否同意评论观点、是否按照评论建议采取过行动；也有研究测量消费者在当前情境下的采纳意愿，如刘亚男等（2022）测量的评论接受意愿，以及Jia、Zhao和Zhang（2026）测量的摘要采纳意愿。
+p64: 5.2 采纳意愿的影响因素
+p65: 信息有用性是影响信息采纳最直接的因素。Sussman和Siegal（2003）发现信息有用性在论据质量、来源可信度与信息采纳之间起中介作用；Cheung等（2008）和Erkan和Evans（2016）分别在在线消费者社区和社交媒体情境中发现，信息有用性会正向影响信息采纳；Jia、Zhao和Zhang（2026）在AI评论摘要情境中也发现，摘要可信度会通过感知帮助程度影响消费者的采纳意愿。除有用性外，Filieri和McLeay（2014）发现信息的准确性、增值性、相关性、及时性以及产品排名都会影响游客对评论信息的采纳；Filieri（2015）发现消费者主要根据信息质量判断评论能否帮助自己识别商品的特点，即信息诊断性，而诊断性会进一步影响信息采纳。
+p66: 
+p67: 
+p68: 6． 文献述评
+p69: 综上所述，在线评论、信息采纳和感知有用性的研究基础比较扎实，概念、维度和量表都可以借鉴。评论的载体、结构、汇总评分和排列方式对消费者判断的影响，已在原始评论情境中得到较多检验，AI摘要情境中的相关研究还很少。AI评论摘要研究主要比较摘要的来源和平台引入摘要的效果，对呈现方式只比较过列表体和叙事体，摘要的分组依据和独立总览各自起什么作用还缺少检验。感知有用性和采纳意愿的研究也很少以整份AI摘要为对象。
+p70: 基于此，本文以信息采纳模型为理论基础，以AI评论摘要的分组依据和有无独立总览为自变量，感知有用性为中介变量，消费者采纳意愿为因变量，通过2×2组间实验检验两个自变量的主效应和交互作用，以及感知有用性的中介作用，并以整体概括式作为补充对照组。
+p71: 参考文献
+p72: [1] 郝媛媛, 叶强, 李一军. 基于影评数据的在线评论有用性影响因素研究[J]. 管理科学学报, 2010, 13(8): 78-88.
+p73: [2] 刘景方, 李嘉, 张朋柱, 等. 用户评论标签摘要系统的有效性研究[J]. 系统管理学报, 2016, 25(4): 613-623. https://xtglxb.sjtu.edu.cn/CN/abstract/abstract637.shtml
+p74: [3] 刘亚男, 邓立杰, 宋阳, 等. 结构化评论对消费者评论接受意愿的影响研究[J]. 信息系统学报, 2022(2): 45-61. https://cjis.sem.tsinghua.edu.cn/vol27-03.pdf
+p75: [4] 石文华, 龚雪, 张绮, 等. 在线初次评论与在线追加评论的比较研究[J]. 管理科学, 2016(4): 45-58.
+p76: [5] 王长征, 何钐, 王魁. 网络口碑中追加评论的有用性感知研究[J]. 管理科学, 2015, 28(3): 102-114.
+p77: [6] 殷国鹏. 消费者认为怎样的在线评论更有用？——社会性因素的影响效应[J]. 管理世界, 2012(12): 115-124. https://it.uibe.edu.cn/kxyj/kycg/36739.htm
+p78: [7] 张鹏, 刘春慧. 人工智能生成评论总结如何影响购买意愿？——来自眼动实验的证据[J]. 财经论丛, 2026, 42(6): 101-112. https://cjlc.zufe.edu.cn/CN/Y2026/V42/I6/101
+p79: [8] 张鹏, 古新成. AI生成评论总结对用户参与评论行为的影响——基于DID的准自然实验研究[J]. 科学决策, 2026, 31(1): 41-52. DOI: 10.27034/j.cnki.ISSN:1006-4885.2026.01.004.
+p80: [9] 油焖小虾米. AI智慧助理-大厂都在做的AI赋能究竟是什么-附案例[EB/OL]. (2024-11-24)[2026-11-01]. https://www.zcool.com.cn/article/ZMTYzNjEzNg%3D%3D.html
+p81: [10] Amazon. How Amazon continues to improve the customer reviews experience with generative AI[EB/OL]. (2023-08-14)[2026-11-03]. https://www.aboutamazon.com/news/amazon-ai/amazon-improves-customer-reviews-with-generative-ai
+p82: [11] Apple. An LLM-Based Approach to Review Summarization on the App Store[EB/OL]. (2025-04-24)[2026-11-03]. https://machinelearning.apple.com/research/app-store-review
+p83: [12] Babić Rosario A, Sotgiu F, De Valck K, et al. The effect of electronic word of mouth on sales: A meta-analytic review of platform, product, and metric factors[J]. Journal of Marketing Research, 2016, 53(3): 297-318. DOI: 10.1509/jmr.14.0380.
+p84: [13] Bettman J R, Kakkar P. Effects of information presentation format on consumer information acquisition strategies[J]. Journal of Consumer Research, 1977, 3(4): 233-240. DOI: 10.1086/208672.
+p85: [14] Bhattacherjee A, Sanford C. Influence processes for information technology acceptance: An elaboration likelihood model[J]. MIS Quarterly, 2006, 30(4): 805-825. DOI: 10.2307/25148755.
+p86: [15] Chai S, Chang Y, Wang H. How consumers respond to AI- versus human-generated review summaries: The moderating role of verbal versus numerical probability expressions[J]. Journal of Business Research, 2026, 214: 116245. DOI: 10.1016/j.jbusres.2026.116245.
+p87: [16] Chen Y, Xie J. Online consumer review: Word-of-mouth as a new element of marketing communication mix[J]. Management Science, 2008, 54(3): 477-491. DOI: 10.1287/mnsc.1070.0810.
+p88: [17] Cheung C M K, Lee M K O, Rabjohn N. The impact of electronic word-of-mouth: The adoption of online opinions in online customer communities[J]. Internet Research, 2008, 18(3): 229-247. DOI: 10.1108/10662240810883290.
+p89: [18] Chevalier J A, Mayzlin D. The effect of word of mouth on sales: Online book reviews[J]. Journal of Marketing Research, 2006, 43(3): 345-354. DOI: 10.1509/jmkr.43.3.345.
+p90: [19] Chu E, Liu P J. MeanSum: A neural model for unsupervised multi-document abstractive summarization[C]//Proceedings of the 36th International Conference on Machine Learning. PMLR, 2019, 97: 1223-1232. https://proceedings.mlr.press/v97/chu19b.html
+p91: [20] Davis F D. Perceived usefulness, perceived ease of use, and user acceptance of information technology[J]. MIS Quarterly, 1989, 13(3): 319-340. DOI: 10.2307/249008.
+p92: [21] Eisend M. Two-sided advertising: A meta-analysis[J]. International Journal of Research in Marketing, 2006, 23(2): 187-198. DOI: 10.1016/j.ijresmar.2005.11.001.
+p93: [22] Erkan I, Evans C. The influence of eWOM in social media on consumers’ purchase intentions: An extended approach to information adoption[J]. Computers in Human Behavior, 2016, 61: 47-55. DOI: 10.1016/j.chb.2016.03.003.
+p94: [23] Filieri R, McLeay F. E-WOM and accommodation: An analysis of the factors that influence travelers’ adoption of information from online reviews[J]. Journal of Travel Research, 2014, 53(1): 44-57. DOI: 10.1177/0047287513481274.
+p95: [24] Filieri R. What makes online reviews helpful? A diagnosticity-adoption framework to explain informational and normative influences in e-WOM[J]. Journal of Business Research, 2015, 68(6): 1261-1270. DOI: 10.1016/j.jbusres.2014.11.006.
+p96: [25] Floyd K, Freling R, Alhoqail S, et al. How online product reviews affect retail sales: A meta-analysis[J]. Journal of Retailing, 2014, 90(2): 217-232. DOI: 10.1016/j.jretai.2014.04.004.
+p97: [26] Ganesan K, Zhai C, Han J. Opinosis: A graph based approach to abstractive summarization of highly redundant opinions[C]//Proceedings of the 23rd International Conference on Computational Linguistics. Beijing: Coling 2010 Organizing Committee, 2010: 340-348. https://aclanthology.org/C10-1039/
+p98: [27] Ghose A, Ipeirotis P G. Estimating the helpfulness and economic impact of product reviews: Mining text and reviewer characteristics[J]. IEEE Transactions on Knowledge and Data Engineering, 2011, 23(10): 1498-1512. DOI: 10.1109/TKDE.2010.188.
+p99: [28] Hayes A F. Introduction to mediation, moderation, and conditional process analysis: A regression-based approach[M]. 2nd ed. New York: Guilford Press, 2018.
+p100: [29] Hennig-Thurau T, Gwinner K P, Walsh G, et al. Electronic word-of-mouth via consumer-opinion platforms: What motivates consumers to articulate themselves on the Internet?[J]. Journal of Interactive Marketing, 2004, 18(1): 38-52. DOI: 10.1002/dir.10073.
+p101: [30] Hosking T, Tang H, Lapata M. Hierarchical indexing for retrieval-augmented opinion summarization[J]. Transactions of the Association for Computational Linguistics, 2024, 12: 1533-1555. DOI: 10.1162/tacl_a_00703.
+p102: [31] Hu M, Liu B. Mining and summarizing customer reviews[C]//Proceedings of the Tenth ACM SIGKDD International Conference on Knowledge Discovery and Data Mining. New York: ACM, 2004: 168-177. DOI: 10.1145/1014052.1014073.
+p103: [32] Jensen M L, Averbeck J M, Zhang Z, et al. Credibility of anonymous online product reviews: A language expectancy perspective[J]. Journal of Management Information Systems, 2013, 30(1): 293-324. DOI: 10.2753/MIS0742-1222300109.
+p104: [33] Jia M, Zhao Y, Zhang X. Navigating the perceived credibility and adoption of AI-generated review summaries in online shopping: An affordance perspective[J]. Information Processing & Management, 2026, 63(2): 104404. DOI: 10.1016/j.ipm.2025.104404.
+p105: [34] Jia S J, Chi O H, Chi C G. Unpacking the impact of AI vs. human-generated review summary on hotel booking intentions[J]. International Journal of Hospitality Management, 2025, 126: 104030. DOI: 10.1016/j.ijhm.2024.104030.
+p106: [35] Kim H D, Ganesan K, Sondhi P, et al. Comprehensive review of opinion summarization[R]. Urbana-Champaign: University of Illinois at Urbana-Champaign, 2011.
+p107: [36] Korfiatis N, García-Barriocanal E, Sánchez-Alonso S. Evaluating content quality and helpfulness of online product reviews: The interplay of review helpfulness vs. review content[J]. Electronic Commerce Research and Applications, 2012, 11(3): 205-217. DOI: 10.1016/j.elerap.2011.10.003.
+p108: [37] Lee B K, Lee W N. The effect of information overload on consumer choice quality in an on-line environment[J]. Psychology & Marketing, 2004, 21(3): 159-183. DOI: 10.1002/mar.20000.
+p109: [38] Liu B, Hu M, Cheng J. Opinion observer: Analyzing and comparing opinions on the Web[C]//Proceedings of the 14th International Conference on World Wide Web. New York: ACM, 2005: 342-351. DOI: 10.1145/1060745.1060797.
+p110: [39] Liu Y. Word of mouth for movies: Its dynamics and impact on box office revenue[J]. Journal of Marketing, 2006, 70(3): 74-89. DOI: 10.1509/jmkg.70.3.074.
+p111: [40] Lurie N H. Decision making in information-rich environments: The role of information structure[J]. Journal of Consumer Research, 2004, 30(4): 473-486. DOI: 10.1086/380283.
+p112: [41] Mudambi S M, Schuff D. What makes a helpful online review? A study of customer reviews on Amazon.com[J]. MIS Quarterly, 2010, 34(1): 185-200. DOI: 10.2307/20721420.
+p113: [42] NAVER. 推出将海量购物评论概括为一句话的“Ai评论摘要”功能（题名译）[EB/OL]. (2021-07-30)[2026-11-03]. https://navercorp.com/media/pressReleasesDetail?seq=30513
+p114: [43] Pan Y, Zhang J Q. Born unequal: A study of the helpfulness of user-generated product reviews[J]. Journal of Retailing, 2011, 87(4): 598-612. DOI: 10.1016/j.jretai.2011.05.002.
+p115: [44] Park D H, Lee J, Han I. The effect of on-line consumer reviews on consumer purchasing intention: The moderating role of involvement[J]. International Journal of Electronic Commerce, 2007, 11(4): 125-148. DOI: 10.2753/JEC1086-4415110405.
+p116: [45] Payne J W. Task complexity and contingent processing in decision making: An information search and protocol analysis[J]. Organizational Behavior and Human Performance, 1976, 16(2): 366-387. DOI: 10.1016/0030-5073(76)90022-2.
+p117: [46] Petty R E, Cacioppo J T. The elaboration likelihood model of persuasion[J]. Advances in Experimental Social Psychology, 1986, 19: 123-205. DOI: 10.1016/S0065-2601(08)60214-2.
+p118: [47] Purnawirawan N, De Pelsmacker P, Dens N. Balance and sequence in online reviews: How perceived usefulness affects attitudes and intentions[J]. Journal of Interactive Marketing, 2012, 26(4): 244-255. DOI: 10.1016/j.intmar.2012.04.002.
+p119: [48] Qiu L, Pang J, Lim K H. Effects of conflicting aggregated rating on eWOM review credibility and diagnosticity: The moderating role of review valence[J]. Decision Support Systems, 2012, 54(1): 631-643. DOI: 10.1016/j.dss.2012.08.020.
+p120: [49] Siledar T, Nath S, et al. One prompt to rule them all: LLMs for opinion summary evaluation[C]//Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Bangkok: Association for Computational Linguistics, 2024: 12119-12134. DOI: 10.18653/v1/2024.acl-long.655.
+p121: [50] Sussman S W, Siegal W S. Informational influence in organizations: An integrated approach to knowledge adoption[J]. Information Systems Research, 2003, 14(1): 47-65. DOI: 10.1287/isre.14.1.47.14767.
+p122: [51] Tripadvisor. Revolutionizing travel reviews: Tripadvisor’s AI-driven summaries[EB/OL]. (2024-06-03)[2026-11-03]. https://medium.com/tripadvisor/revolutionizing-travel-reviews-tripadvisors-ai-driven-summaries-d956e9e0f438
+p123: [52] Wang H, Wang T. Does AI-generated review summarization affect consumer purchasing behavior? An empirical study based on the Amazon platform[C]//Proceedings of the 58th Hawaii International Conference on System Sciences. 2025: 4606-4615. DOI: 10.24251/HICSS.2025.553.
+p124: [53] Wang R Y, Strong D M. Beyond accuracy: What data quality means to data consumers[J]. Journal of Management Information Systems, 1996, 12(4): 5-33. DOI: 10.1080/07421222.1996.11518099.
+p125: [54] Xu P, Chen L, Santhanam R. Will video be the next generation of e-commerce product reviews? Presentation format and the role of product type[J]. Decision Support Systems, 2015, 73: 85-96. DOI: 10.1016/j.dss.2015.03.001.
+p126: [55] Zhang W, Watts S A. Capitalizing on content: Information adoption in two online communities[J]. Journal of the Association for Information Systems, 2008, 9(2): 73-94. DOI: 10.17705/1jais.00149.

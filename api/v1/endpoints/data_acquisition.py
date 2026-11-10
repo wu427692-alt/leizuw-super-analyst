@@ -3,6 +3,7 @@
 
 from io import BytesIO
 from datetime import date, timedelta
+import re
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -12,8 +13,10 @@ from api.v1.schemas.data_acquisition import (
     DataAcquisitionRunRequest,
     ResearchReportExportRequest,
 )
+from src.request_identity import get_current_user_id
 from src.services.data_acquisition_service import DataAcquisitionError, DataAcquisitionService
 from src.services.data_acquisition_task_service import DataAcquisitionTaskService
+from src.services.user_quota_service import FEATURE_DOWNLOAD, QuotaExceeded, UserQuotaService
 from src.services.research_report_library_service import (
     ResearchReportLibraryError,
     ResearchReportLibraryService,
@@ -42,7 +45,13 @@ def plan(request: DataAcquisitionPlanRequest):
 @router.post("/run", summary="执行确认后的多渠道取数计划并生成统一数据包")
 def run(request: DataAcquisitionRunRequest):
     try:
+        UserQuotaService().consume(get_current_user_id(), FEATURE_DOWNLOAD)
         return DataAcquisitionService().run(request.request, request.plan)
+    except QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "quota_exceeded", "message": exc.message},
+        )
     except DataAcquisitionError as exc:
         raise _error(exc)
 
@@ -59,6 +68,11 @@ def validate_plan(request: DataAcquisitionRunRequest):
 def run_async(request: DataAcquisitionRunRequest):
     try:
         return DataAcquisitionTaskService.get_instance().submit(request.request, request.plan)
+    except QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "quota_exceeded", "message": exc.message},
+        )
     except DataAcquisitionError as exc:
         raise _error(exc)
 
@@ -74,6 +88,14 @@ def task(task_id: str):
         return DataAcquisitionTaskService.get_instance().get(task_id)
     except DataAcquisitionError as exc:
         raise _error(exc, 404)
+
+
+@router.post("/tasks/{task_id}/resume", status_code=202, summary="在原任务内从文件断点继续，不重建数据包")
+def resume_task(task_id: str):
+    try:
+        return DataAcquisitionTaskService.get_instance().resume(task_id)
+    except DataAcquisitionError as exc:
+        raise _error(exc)
 
 
 @router.get("/jobs", summary="列出最近生成的数据包")
@@ -93,15 +115,25 @@ def job(job_id: str):
 @router.head("/jobs/{job_id}/download", summary="读取数据包长度与续传校验标识")
 def download(job_id: str):
     try:
-        path = DataAcquisitionService().package_path(job_id)
+        service = DataAcquisitionService()
+        metadata = service.get_job(job_id)
+        if metadata.get("document_export") and metadata.get("complete") is not True:
+            raise HTTPException(status_code=409, detail={"error": "package_not_ready", "message": "资料尚未完整取得，保留断点后可继续"})
+        path = service.package_path(job_id)
     except DataAcquisitionError as exc:
         raise _error(exc, 404)
+    filename = f"财经数据包_{job_id}.zip"
+    if metadata.get("document_export"):
+        label = str(metadata.get("filename") or metadata.get("title") or "资料下载").strip()
+        label = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]', "_", label).strip(" ._") or "资料下载"
+        stem = label[:-4] if label.lower().endswith(".zip") else label
+        filename = stem.encode("utf-8")[:230].decode("utf-8", "ignore").rstrip(" ._") + ".zip"
     # package_path checks ownership before FileResponse stats the file or parses
     # Range/If-Range. Reuse Starlette's bounded streaming and range implementation.
     # ZIP is already compressed: a second gzip transform changes byte offsets
     # and lengths, making otherwise valid browser resumes corrupt the archive.
     return FileResponse(
-        path, media_type="application/zip", filename=f"财经数据包_{job_id}.zip",
+        path, media_type="application/zip", filename=filename,
         headers={"Content-Encoding": "identity", "Cache-Control": "private, no-store, no-transform"},
     )
 

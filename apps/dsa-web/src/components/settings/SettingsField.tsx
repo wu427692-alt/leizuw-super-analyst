@@ -288,7 +288,7 @@ export const SettingsField: React.FC<SettingsFieldProps> = ({
       </div>
 
       {schema?.isSensitive ? (
-        <p className="mt-3 text-[11px] leading-5 text-secondary-text">
+        <p className="mt-3 text-[12px] leading-5 text-secondary-text">
           {t('settings.fieldSensitiveHint')}
           {isMultiValue ? t('settings.fieldSensitiveMultiHint') : ''}
         </p>

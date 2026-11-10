@@ -85,11 +85,13 @@ PUBLIC_FRONTEND_PATHS = frozenset({
     "/favicon.ico",
     "/robots.txt",
     "/manifest.webmanifest",
+    "/sw.js",
 })
 
 PUBLIC_FRONTEND_PREFIXES = (
     "/assets/",
     "/landing/",  # Dedicated image-only route; never falls back to the SPA.
+    "/icons/",  # PWA 图标：安装与主屏图标必须能匿名取到。
 )
 
 

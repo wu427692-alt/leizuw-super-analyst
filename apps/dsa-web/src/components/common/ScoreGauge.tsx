@@ -99,19 +99,19 @@ export const ScoreGauge: React.FC<ScoreGaugeProps> = ({
   // Light theme uses a restrained glow; dark theme keeps the stronger terminal-style glow.
   const sentimentConfig = {
     greed: {
-      color: '#00d4ff',       // Cyan
+      color: 'var(--text-2)',       // Cyan
       glowFilter: 'rgba(0, 212, 255, 0.66)',
       lightColor: '#22d3ee',  // Lighter cyan
       lightEndColor: '#0891b2', // Darker cyan
     },
     neutral: {
-      color: '#a855f7',       // Purple
+      color: 'var(--text-2)',       // Purple
       glowFilter: 'rgba(168, 85, 247, 0.66)',
       lightColor: '#c084fc',  // Lighter purple
       lightEndColor: '#9333ea', // Darker purple
     },
     fear: {
-      color: '#ff4466',       // Red
+      color: 'var(--danger)',       // Red
       glowFilter: 'rgba(255, 68, 102, 0.66)',
       lightColor: '#fb7185',  // Lighter rose
       lightEndColor: '#e11d48', // Darker rose

@@ -24,7 +24,7 @@ function EquityChart({ rows }: { rows: LineRow[] }) {
   const min = low - pad; const max = high + pad;
   const x = (index: number) => 76 + index / Math.max(rows.length - 1, 1) * 650;
   const y = (value: number) => 170 - (value - min) / (max - min) * 145;
-  const series = [{ key: 'equity', label: 'Jev 权益', color: '#002FA7' }, { key: 'buyHold', label: '买入并持有', color: '#30343B' }, { key: 'ma', label: 'MA5 / MA20', color: '#9297A2' }] as const;
+  const series = [{ key: 'equity', label: 'Jev 权益', color: 'var(--text-2)' }, { key: 'buyHold', label: '买入并持有', color: 'var(--text-2)' }, { key: 'ma', label: 'MA5 / MA20', color: 'var(--text-3)' }] as const;
   return <div className="jev-chart"><svg viewBox="0 0 750 215" role="img" aria-label="截至当前回放时点的 Jev、买持和均线基准权益曲线，单位元">
     {[0, 1, 2, 3].map(index => { const value = min + (max - min) * index / 3; return <g key={index}><line x1="76" x2="726" y1={y(value)} y2={y(value)} className="jev-gridline" /><text x="68" y={y(value) + 4} textAnchor="end">{n(value, 0)}</text></g>; })}
     {series.map(series => {
@@ -55,11 +55,11 @@ function PriceChart({ bars, equity, trades }: { bars: JevPriceBar[]; equity: Jev
   const volumeY = (volume: number) => 298 - volume / Math.max(maxVolume, 1) * 65;
   return <div className="jev-chart"><svg viewBox="0 0 750 335" role="img" aria-label={`截至当前时点的${candles.length ? '真实分钟K线' : '分钟收盘价'}、原始成交量及实际成交点`}>
     {[0, 1, 2, 3].map(index => { const value = min + (max - min) * index / 3; return <g key={index}><line x1="58" x2="726" y1={y(value)} y2={y(value)} className="jev-gridline" /><text x="48" y={y(value) + 4} textAnchor="end">{n(value)}</text></g>; })}
-    {candles.length ? candles.map((bar, index) => <g key={bar.date}><title>{time(bar.date)} 开 {n(bar.open)} 高 {n(bar.high)} 低 {n(bar.low)} 收 {n(bar.close)}{Number.isFinite(bar.volume) && bar.volume >= 0 ? ` · 原始成交量 ${volumeText(bar.volume)}` : ' · 成交量未返回'}</title><line x1={x(index)} x2={x(index)} y1={y(bar.high)} y2={y(bar.low)} stroke={bar.close >= bar.open ? '#002FA7' : '#4E535C'} /><rect x={x(index) - width / 2} y={Math.min(y(bar.open), y(bar.close))} width={width} height={Math.max(1, Math.abs(y(bar.open) - y(bar.close)))} fill={bar.close >= bar.open ? '#FFFFFF' : '#4E535C'} stroke={bar.close >= bar.open ? '#002FA7' : '#4E535C'} /></g>) : <path d={points.map((row, index) => `${index ? 'L' : 'M'}${x(index)},${y(row.close)}`).join(' ')} stroke="#30343B" strokeWidth="1.7" fill="none" />}
+    {candles.length ? candles.map((bar, index) => <g key={bar.date}><title>{time(bar.date)} 开 {n(bar.open)} 高 {n(bar.high)} 低 {n(bar.low)} 收 {n(bar.close)}{Number.isFinite(bar.volume) && bar.volume >= 0 ? ` · 原始成交量 ${volumeText(bar.volume)}` : ' · 成交量未返回'}</title><line x1={x(index)} x2={x(index)} y1={y(bar.high)} y2={y(bar.low)} stroke={bar.close >= bar.open ? '#002FA7' : '#4E535C'} /><rect x={x(index) - width / 2} y={Math.min(y(bar.open), y(bar.close))} width={width} height={Math.max(1, Math.abs(y(bar.open) - y(bar.close)))} fill={bar.close >= bar.open ? '#FFFFFF' : '#4E535C'} stroke={bar.close >= bar.open ? '#002FA7' : '#4E535C'} /></g>) : <path d={points.map((row, index) => `${index ? 'L' : 'M'}${x(index)},${y(row.close)}`).join(' ')} stroke="var(--line-2)" strokeWidth="1.7" fill="none" />}
     {visibleTrades.map((trade, index) => {
       const barIndex = points.findIndex(bar => bar.date === trade.date); if (barIndex < 0) return null;
       const cx = x(barIndex); const cy = y(trade.price);
-      return <g key={`${trade.date}-${index}`}><title>{time(trade.date)} {trade.action} {trade.shares} 股 · 成交 {n(trade.price, 3)}</title><circle cx={cx} cy={cy} r="7" fill={trade.action === 'BUY' ? '#002FA7' : '#30343B'} stroke="#FFFFFF" strokeWidth="1.5" /><text x={cx} y={cy + 3} textAnchor="middle" className="jev-trade-marker">{trade.action === 'BUY' ? 'B' : 'S'}</text></g>;
+      return <g key={`${trade.date}-${index}`}><title>{time(trade.date)} {trade.action} {trade.shares} 股 · 成交 {n(trade.price, 3)}</title><circle cx={cx} cy={cy} r="7" fill={trade.action === 'BUY' ? '#002FA7' : '#30343B'} stroke="var(--line-1)" strokeWidth="1.5" /><text x={cx} y={cy + 3} textAnchor="middle" className="jev-trade-marker">{trade.action === 'BUY' ? 'B' : 'S'}</text></g>;
     })}
     <text x="58" y="220">成交量（源原始单位）</text>
     {volumePoints.length ? <g aria-label="当前可见原始成交量">

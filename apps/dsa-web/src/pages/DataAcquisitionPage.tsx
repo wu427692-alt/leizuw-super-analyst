@@ -149,7 +149,7 @@ function DownloadProgress({ state }: { state: DownloadState }) {
     ? `${formatBytes(state.loaded)} / ${formatBytes(state.total)}`
     : `已接收 ${formatBytes(state.loaded)}`;
   return <div className="mt-3" aria-live="polite">
-    <div className="flex items-center justify-between gap-3 text-[11px] text-secondary-text">
+    <div className="flex items-center justify-between gap-3 text-[12px] text-secondary-text">
       <span>{state.status === 'completed' ? '下载完成' : state.status === 'failed' ? '下载中断，可重新下载；后台数据包仍保留' : '正在下载；连接中断将自动重连，已完成分块不会重复下载'}</span>
       <span className="font-mono">{state.percent !== undefined ? `${state.percent}% · ` : ''}{label}</span>
     </div>
@@ -158,7 +158,7 @@ function DownloadProgress({ state }: { state: DownloadState }) {
       <div className={`h-full rounded-full ${state.status === 'failed' ? 'bg-danger' : 'bg-primary'} transition-[width] duration-200 ${state.percent === undefined ? `w-1/3 ${state.status === 'downloading' ? 'animate-pulse' : ''}` : ''}`}
         style={state.percent === undefined ? undefined : { width: `${state.percent}%` }} />
     </div>
-    {state.status === 'downloading' ? <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-secondary-text" aria-label="下载传输情况">
+    {state.status === 'downloading' ? <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-secondary-text" aria-label="下载传输情况">
       <span>{state.bytesPerSecond === undefined ? '速度统计中' : `速度 ${formatBytes(Math.round(state.bytesPerSecond))}/秒`}</span>
       {state.total && state.loaded >= state.total ? <span>正在校验完整文件</span>
         : state.estimatedSecondsRemaining !== undefined && state.estimatedSecondsRemaining > 0
@@ -169,10 +169,12 @@ function DownloadProgress({ state }: { state: DownloadState }) {
 
 const DataAcquisitionPage = () => {
   const { user, loggedIn, isLoading, authMethod, accessEnabled } = useUserAccess();
-  if (isLoading || !loggedIn || !user || user.status !== 'approved') {
+  // 单机模式（未启用访问控制）没有登录用户，取数任务仍属于本机，不能因此挡住页面。
+  const ownerId = !accessEnabled ? 0 : loggedIn && user?.status === 'approved' ? user.id : null;
+  if (isLoading || ownerId === null) {
     return <AppPage><p role="status">{isLoading ? '正在确认访问权限…' : '请登录已获准的账号查看个人取数任务。'}</p></AppPage>;
   }
-  return <DataAcquisitionContent key={`${user.id}:${user.status}:${authMethod}:${accessEnabled}`} userId={user.id} />;
+  return <DataAcquisitionContent key={`${ownerId}:${authMethod}:${accessEnabled}`} userId={ownerId} />;
 };
 
 function DataAcquisitionContent({ userId }: { userId: number }) {
@@ -398,7 +400,7 @@ function DataAcquisitionContent({ userId }: { userId: number }) {
                 <div className="flex justify-between gap-2 text-xs text-secondary-text"><span>{TASK_STATUS_LABELS[task.status]}</span><span>{task.progress}%</span></div>
                 <p className="mt-1 truncate text-sm font-medium">{task.result?.title || task.tasks.map(item => item.label).slice(0, 2).join('、') || '数据获取任务'}</p>
                 <p className="mt-1 truncate text-xs text-secondary-text">{task.message}</p>
-                <p className="mt-2 text-[11px] text-secondary-text">{formatTime(task.updatedAt)}</p>
+                <p className="mt-2 text-[12px] text-secondary-text">{formatTime(task.updatedAt)}</p>
               </button>)}</div> : <p className="text-sm text-secondary-text">还没有后台取数任务，先在下方生成计划并确认执行。</p>}
             {tracked.loading ? <p className="mt-3 text-sm text-secondary-text" role="status">正在恢复所选任务进度…</p> : null}
             {tracked.notice ? <p className="mt-3 text-sm text-warning" role="status">{tracked.notice} <button className="underline" onClick={tracked.retry}>重试所选任务</button></p> : null}
@@ -469,7 +471,7 @@ function DataAcquisitionContent({ userId }: { userId: number }) {
               <div className="flex items-start justify-between gap-3"><span className="text-xs font-semibold text-primary">{String(index + 1).padStart(2, '0')}</span><Badge>{SOURCE_LABELS[task.source] ?? task.source}</Badge></div>
               <h3 className="mt-3 font-semibold text-foreground">{task.label}</h3>
               <p className="mt-1 text-xs leading-5 text-secondary-text">{task.reason || '按用户需求获取该数据集'}</p>
-              {task.resource === 'research_report' ? <div className="mt-3 space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-[11px] text-secondary-text">
+              {task.resource === 'research_report' ? <div className="mt-3 space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-[12px] text-secondary-text">
                 <p className="font-medium text-foreground">按目标与日期现场调用研报 API → 严格筛选 → PDF链接/原文</p>
                 <div className="flex flex-wrap gap-1.5">
                   {(Array.isArray(task.params.topics) ? task.params.topics : []).map((topic) => <Badge key={String(topic)}>{String(topic)}</Badge>)}
@@ -477,7 +479,7 @@ function DataAcquisitionContent({ userId }: { userId: number }) {
                   <Badge variant="success">人工确认优先</Badge>
                 </div>
               </div> : null}
-              <code className="mt-3 block truncate rounded-lg bg-card px-2 py-1.5 text-[11px] text-secondary-text">{task.source}.{task.resource}</code>
+              <code className="mt-3 block truncate rounded-lg bg-card px-2 py-1.5 text-[12px] text-secondary-text">{task.source}.{task.resource}</code>
               {plan.preflight?.checks.filter(check => check.taskId === task.id).map((check, checkIndex) => <p key={checkIndex}
                 className={`mt-2 text-xs leading-5 ${check.status === 'blocked' ? 'text-warning' : 'text-secondary-text'}`}>{check.message}</p>)}
             </div>)}
@@ -521,12 +523,12 @@ function DataAcquisitionContent({ userId }: { userId: number }) {
               const failed = Boolean(dataset && (dataset.status === 'failed' || dataset.rowCount === 0));
               const current = task.id === runTask.currentTaskId && runTask.status === 'running';
               return <div key={task.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${completed ? 'border-success/25 bg-success/5' : failed ? 'border-warning/25 bg-warning/5' : current ? 'border-primary/35 bg-primary/5' : 'border-border/70 bg-background/40'}`}>
-                {completed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-warning" /> : current ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border text-[9px] text-secondary-text">{index + 1}</span>}
-                <div className="min-w-0"><p className="truncate text-xs font-medium text-foreground">{task.label}</p><p className="truncate text-[10px] text-secondary-text">{SOURCE_LABELS[task.source] ?? task.source}</p></div>
+                {completed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-warning" /> : current ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border text-[12px] text-secondary-text">{index + 1}</span>}
+                <div className="min-w-0"><p className="truncate text-xs font-medium text-foreground">{task.label}</p><p className="truncate text-[12px] text-secondary-text">{SOURCE_LABELS[task.source] ?? task.source}</p></div>
               </div>;
             })}
           </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-secondary-text">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-secondary-text">
             <span>已处理 {runTask.completedTasks}/{runTask.totalTasks || 0} 个渠道任务</span>
             <span>最后更新 {formatTime(runTask.updatedAt)}</span>
           </div>

@@ -1,10 +1,11 @@
 import type React from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowRight, BarChart3, CheckCircle2, KeyRound, LockKeyhole, MessageSquareText, ShieldCheck, Smartphone, UserRoundPlus } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import { safeUserAccessRedirect } from '../utils/userAccessRedirect';
+import TurnstileChallenge from '../components/auth/TurnstileChallenge';
 import '../components/layout/GlassWorkspace.css';
 import './UserAccessPage.css';
 
@@ -37,6 +38,16 @@ const UserAccessPage: React.FC<{ documentNavigation?: boolean }> = ({ documentNa
   const destination = safeUserAccessRedirect(searchParams.get('redirect'));
   const phoneAlreadyBound = binding && (bound || access.user?.phoneBound);
   const smsEnabled = access.smsLoginEnabled === true;
+  const captchaRequired = (smsMode || mode === 'register') && access.captcha?.required === true;
+  const captchaScope = `${smsMode ? `${binding ? 'bind' : 'sms'}:${normalizePhone(phone)}` : mode}:${access.captcha?.siteKey ?? ''}`;
+  const [captchaResult, setCaptchaResult] = useState<{ token: string; scope: string } | null>(null);
+  const [captchaAttempt, setCaptchaAttempt] = useState(0);
+  const captchaToken = captchaResult?.scope === captchaScope ? captchaResult.token : null;
+  const captchaBlocked = captchaRequired && !captchaToken;
+  const onCaptchaToken = useCallback((token: string | null) => {
+    setCaptchaResult(token ? { token, scope: captchaScope } : null);
+  }, [captchaScope]);
+  const resetCaptcha = () => { setCaptchaResult(null); setCaptchaAttempt(value => value + 1); };
 
   useEffect(() => { document.title = `${binding ? '绑定手机号' : '登录'} · 乐子乌智能投研平台`; }, [binding]);
   useEffect(() => {
@@ -45,7 +56,7 @@ const UserAccessPage: React.FC<{ documentNavigation?: boolean }> = ({ documentNa
     return () => window.clearInterval(timer);
   }, [retryAt, challenge]);
 
-  const switchMode = (next: Mode) => { setChosenMode(next); setMessage(null); setNotice(null); setCode(''); setChallenge(null); };
+  const switchMode = (next: Mode) => { setChosenMode(next); setMessage(null); setNotice(null); setCode(''); setChallenge(null); resetCaptcha(); };
   const retryStatus = async () => {
     if (mutationLock.current) return;
     mutationLock.current = true; setBusy(true);
@@ -56,23 +67,25 @@ const UserAccessPage: React.FC<{ documentNavigation?: boolean }> = ({ documentNa
     if (mutationLock.current || retrySeconds || !smsEnabled) return;
     const normalized = normalizePhone(phone);
     if (!/^1[3-9]\d{9}$/.test(normalized)) { setMessage('请输入有效的中国大陆手机号'); return; }
+    if (captchaBlocked) { setMessage('请先完成下方人机验证，再获取短信验证码'); return; }
     mutationLock.current = true; setSending(true); setMessage(null); setNotice(null);
     try {
       const purpose = binding ? 'bind' : 'login';
-      const result = await access.sendSms(normalized, purpose);
+      const result = captchaRequired && captchaToken ? await access.sendSms(normalized, purpose, captchaToken) : await access.sendSms(normalized, purpose);
       if (!result.success || !result.challenge) { setMessage(result.error?.message ?? '短信未发送，请稍后重试'); return; }
       const now = Date.now(); setClock(now);
       setChallenge({ id: result.challenge.challengeId, phone: normalized, purpose, expiresAt: now + result.challenge.expiresIn * 1000 });
       setRetryAt(now + result.challenge.retryAfter * 1000); setCode('');
       setNotice('验证码已发送，请查看手机短信。');
     } catch { setMessage('短信未发送，请稍后重试'); }
-    finally { mutationLock.current = false; setSending(false); }
+    finally { if (captchaRequired) resetCaptcha(); mutationLock.current = false; setSending(false); }
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault(); if (mutationLock.current) return;
     if (smsMode && (!smsEnabled || !challenge || expired || challenge.phone !== normalizePhone(phone) || challenge.purpose !== (binding ? 'bind' : 'login') || !/^\d{6}$/.test(code))) {
       setMessage(!smsEnabled ? '短信服务暂不可用，已有账号可使用姓名和密码登录' : expired ? '验证码已过期，请重新获取' : '请先获取验证码，再输入短信中的 6 位数字'); return;
     }
+    if (!smsMode && mode === 'register' && captchaBlocked) { setMessage('请先完成下方人机验证，再提交申请'); return; }
     mutationLock.current = true; setBusy(true); setMessage(null); setNotice(null);
     try {
       if (smsMode && challenge) {
@@ -85,12 +98,12 @@ const UserAccessPage: React.FC<{ documentNavigation?: boolean }> = ({ documentNa
         if (selfService && mode === 'login' && bindAfterLogin) {
           const params = new URLSearchParams(searchParams); params.set('bind', 'phone'); params.set('mode', 'login'); setSearchParams(params, { replace: true });
         }
-        const result = mode === 'register' ? await access.register(name, password) : await access.login(name, password);
+        const result = mode === 'register' ? captchaRequired && captchaToken ? await access.register(name, password, captchaToken) : await access.register(name, password) : await access.login(name, password);
         if (result.success && result.pending) { setPending(true); setMessage('申请已经进入管理员审核队列。管理员批准后，请使用姓名和密码登录。'); }
         else if (!result.success) setMessage(result.error?.message ?? '请求未完成，请稍后重试');
         else setPassword('');
       }
-    } finally { mutationLock.current = false; setBusy(false); }
+    } finally { if (!smsMode && mode === 'register' && captchaRequired) resetCaptcha(); mutationLock.current = false; setBusy(false); }
   };
 
   return <main className="user-access-page">
@@ -111,9 +124,14 @@ const UserAccessPage: React.FC<{ documentNavigation?: boolean }> = ({ documentNa
         {!binding && selfService && mode === 'sms' && <button className="user-access-existing" type="button" onClick={() => switchMode('login')}><KeyRound size={15} />已有姓名密码账号？请先登录再绑定，保留原有数据</button>}
         <form onSubmit={submit}>
           {binding && <label><span>原账号密码</span><input aria-label="原账号密码" aria-describedby="binding-password-help" type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="再次验证原账号密码" minLength={6} maxLength={256} required disabled={busy} /><small id="binding-password-help">确认是你本人在绑定，不会更改原密码。</small></label>}
-          {smsMode ? <><label><span>手机号</span><div className="user-access-phone"><span>+86</span><input aria-label="手机号" type="tel" inputMode="tel" autoComplete="tel-national" placeholder="中国大陆手机号" maxLength={16} required disabled={busy || sending || !smsEnabled} value={phone} onChange={event => { setPhone(event.target.value); setChallenge(null); setCode(''); setMessage(null); setNotice(null); }} /></div></label><label><span>短信验证码</span><div className="user-access-code"><input aria-label="短信验证码" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} placeholder="6 位数字" required disabled={busy || !smsEnabled} /><button type="button" disabled={busy || sending || retrySeconds > 0 || !smsEnabled} onClick={() => void sendCode()}>{sending ? '发送中…' : retrySeconds > 0 ? `${retrySeconds} 秒后重发` : challenge ? '重新获取' : '获取验证码'}</button></div></label>{!binding && <label><span>姓名 <small>首次使用可填写</small></span><input value={name} onChange={event => setName(event.target.value)} autoComplete="name" placeholder="可选，方便在平台中识别" minLength={2} maxLength={40} disabled={busy} /></label>}{expired && <p className="user-access-expired">验证码已过期，请重新获取。</p>}{notice && <p className="user-access-notice" role="status"><MessageSquareText size={15} />{notice}</p>}</> : <><label><span>姓名</span><input value={name} onChange={event => setName(event.target.value)} autoComplete="username" placeholder="输入姓名" minLength={2} maxLength={40} required disabled={busy} /></label><label><span>密码</span><input value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} type="password" placeholder="至少 6 位" minLength={6} maxLength={256} required disabled={busy} /></label>{selfService && <label className="user-access-bind-option"><input type="checkbox" checked={bindAfterLogin} onChange={event => setBindAfterLogin(event.target.checked)} disabled={busy} /><span>登录后绑定手机号，保留这个账号的原有数据</span></label>}</>}
+          {smsMode ? <><label><span>手机号</span><div className="user-access-phone"><span>+86</span><input aria-label="手机号" type="tel" inputMode="tel" autoComplete="tel-national" placeholder="中国大陆手机号" maxLength={16} required disabled={busy || sending || !smsEnabled} value={phone} onChange={event => { setPhone(event.target.value); setChallenge(null); setCode(''); setMessage(null); setNotice(null); }} /></div></label><label><span>短信验证码</span><div className="user-access-code"><input aria-label="短信验证码" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} placeholder="6 位数字" required disabled={busy || !smsEnabled} /><button type="button" disabled={busy || sending || retrySeconds > 0 || !smsEnabled || captchaBlocked} onClick={() => void sendCode()}>{sending ? '发送中…' : retrySeconds > 0 ? `${retrySeconds} 秒后重发` : challenge ? '重新获取' : '获取验证码'}</button></div></label>{!binding && <label><span>姓名 <small>首次使用可填写</small></span><input value={name} onChange={event => setName(event.target.value)} autoComplete="name" placeholder="可选，方便在平台中识别" minLength={2} maxLength={40} disabled={busy} /></label>}{expired && <p className="user-access-expired">验证码已过期，请重新获取。</p>}{notice && <p className="user-access-notice" role="status"><MessageSquareText size={15} />{notice}</p>}</> : <><label><span>姓名</span><input value={name} onChange={event => setName(event.target.value)} autoComplete="username" placeholder="输入姓名" minLength={2} maxLength={40} required disabled={busy} /></label><label><span>密码</span><input value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} type="password" placeholder="至少 6 位" minLength={6} maxLength={256} required disabled={busy} /></label>{selfService && <label className="user-access-bind-option"><input type="checkbox" checked={bindAfterLogin} onChange={event => setBindAfterLogin(event.target.checked)} disabled={busy} /><span>登录后绑定手机号，保留这个账号的原有数据</span></label>}</>}
+          {captchaRequired && policyReady && (!smsMode || (smsEnabled && retrySeconds === 0)) && (
+            !access.captcha?.siteKey ? <div className="user-access-service-notice"><p role="alert">本站人机验证配置暂未就绪。请重试读取，已有账号可使用原账号密码登录。</p><button type="button" className="user-access-existing" disabled={busy || sending} onClick={() => void retryStatus()}>重试读取验证配置</button></div>
+              : smsMode && !/^1[3-9]\d{9}$/.test(normalizePhone(phone)) ? <p className="user-access-notice" role="status">输入完整手机号后，将在此显示人机验证。</p>
+                : <TurnstileChallenge key={`${captchaScope}:${captchaAttempt}`} siteKey={access.captcha.siteKey} onTokenChange={onCaptchaToken} />
+          )}
           {message && <p className="user-access-error" role="alert">{message}</p>}
-          <button className="user-access-submit" type="submit" disabled={busy || sending || (smsMode && (!smsEnabled || !challenge || expired))}>{busy ? '正在处理…' : binding ? '验证并绑定手机号' : mode === 'sms' ? '验证并登录 / 注册' : mode === 'login' ? selfService && bindAfterLogin ? '登录并绑定手机号' : '进入工作台' : '提交管理员审核'}<ArrowRight /></button>
+          <button className="user-access-submit" type="submit" disabled={busy || sending || (smsMode && (!smsEnabled || !challenge || expired)) || (!smsMode && mode === 'register' && captchaBlocked)}>{busy ? '正在处理…' : binding ? '验证并绑定手机号' : mode === 'sms' ? '验证并登录 / 注册' : mode === 'login' ? selfService && bindAfterLogin ? '登录并绑定手机号' : '进入工作台' : '提交管理员审核'}<ArrowRight /></button>
         </form>
         {binding ? <Link className="user-access-skip" to={destination} reloadDocument={documentNavigation}>暂不绑定，继续使用原账号</Link> : <p className="user-access-note">{access.statusUnavailable ? '已有账号可继续使用原姓名和密码登录。' : selfService ? '短信仅用于身份验证。验证码不会保存在浏览器中。' : '注册只需要姓名和密码。我们不会在前台展示 API 密钥或系统配置。'}</p>}
         <Link className="user-access-admin-link" to="/admin" reloadDocument={documentNavigation}><LockKeyhole />管理员入口</Link>

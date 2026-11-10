@@ -1,5 +1,5 @@
 /** Keep account callbacks inside the product and avoid login redirect loops. */
-export function safeUserAccessRedirect(value: string | null | undefined, fallback = '/app'): string {
+export function safeUserAccessRedirect(value: string | null | undefined, fallback = '/home'): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')
     || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return fallback;
   try {

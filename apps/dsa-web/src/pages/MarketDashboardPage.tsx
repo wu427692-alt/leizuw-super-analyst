@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowRight, BarChart3, Bot, BrainCircuit, Building2, ClipboardCheck,
-  FileSearch, Globe2, MessageSquareText, RadioTower, RefreshCw, ShieldAlert,
-  Newspaper, Pin, Sparkles, Zap, Layers3, Network, Star,
+  FileSearch, Globe2, Layers3, MessageSquareText, Newspaper, Pin, RadioTower,
+  RefreshCw, ShieldAlert, Sparkles, Zap,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { homeDashboardApi } from '../api/homeDashboard';
@@ -20,12 +20,15 @@ import { areStockCodesEquivalent } from '../utils/stockCode';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import './MarketDashboardPage.css';
 import { SourceRecordDrawer } from '../components/investmentMonitor/SourceRecordDrawer';
+import { MobileHome } from '../components/mobile/MobileHome';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { newsPublisher } from '../utils/newsPublisher';
+import { stripHtmlText } from '../utils/plainText';
 
 const DATA_SOURCE_LABELS: Record<string, string> = {
   'tushare.index_daily': 'Tushare 指数日线',
   'tushare.index_global': 'Tushare 全球指数',
-  'tushare.legacy_snapshot': '本地秒级快照',
+  'tushare.legacy_snapshot': '收盘快照',
   'tushare.daily': 'Tushare 全市场日线',
   'tushare.moneyflow_ind_ths': 'Tushare 同花顺行业',
   'tushare.moneyflow_ind_dc': 'Tushare 东方财富行业',
@@ -157,22 +160,32 @@ function IndexTicker({ item, selected, onSelect }: { item: MarketIndexCard; sele
     onClick={onSelect}
     className={`market-index-switch min-w-[188px] flex-1 border-r border-border/50 px-3 py-2.5 text-left last:border-r-0 ${selected ? 'is-selected' : ''}`}
   >
-    <div className="flex items-start justify-between gap-3">
-      <div><p className="text-[11px] text-secondary-text">{item.name}</p><p className="mt-0.5 text-[9px] text-secondary-text">{session.label}点位</p><p className={`mt-0.5 text-lg font-semibold tabular-nums ${tone(verifiedChangePct)}`}>{formatNumber(item.close)}</p>
-        <p className={`text-[11px] tabular-nums ${tone(verifiedChangePct)}`}>{session.canShowChange ? percent(verifiedChangePct) : '涨跌幅待核验'}</p></div>
-      <div className="mt-2 h-10 w-20"><Sparkline points={item.history} positive={positive} height={40} /></div>
+    <div className="market-index-switch__body">
+      <p className="market-index-switch__name">{item.name}</p>
+      <div className="market-index-switch__value-row">
+        <p className="market-index-switch__value tabular-nums">{formatNumber(item.close)}</p>
+        <span className={`market-index-switch__change tabular-nums ${tone(verifiedChangePct)}`}>
+          {session.canShowChange ? percent(verifiedChangePct) : '待核验'}
+        </span>
+      </div>
+      <div className="market-index-switch__spark"><Sparkline points={item.history} positive={positive} height={28} /></div>
     </div>
-    <div className="mt-1 flex items-center justify-between gap-2 text-[9px] text-secondary-text"><span className="truncate">{sourceLabel(item.source)}</span><span className="market-index-switch__hint">{selected ? '当前K线' : '切换'}</span></div>
   </button>;
 }
 
 function OverseasCard({ item }: { item: MarketIndexCard }) {
   const session = marketQuoteSession(item.updateTime ?? item.tradeDate, item.source);
   const verifiedChangePct = session.canShowChange ? item.changePct : null;
-  return <div className="market-overseas-row grid min-w-0 grid-cols-[96px_minmax(0,1fr)_72px] items-center gap-3 border-b border-border/55 px-3 py-2 last:border-b-0">
-    <div><p className="truncate text-[11px] font-medium text-foreground">{item.name}</p><p className="text-[9px] text-secondary-text">{item.region}</p></div>
-    <div><p className={`text-right text-sm font-semibold tabular-nums ${tone(verifiedChangePct)}`}>{formatNumber(item.close)}</p><p className="truncate text-right text-[9px] text-secondary-text">{session.label}</p></div>
-    <span className={`text-right text-[11px] font-medium ${tone(verifiedChangePct)}`}>{session.canShowChange ? percent(verifiedChangePct) : '待核验'}</span>
+  // 面板标题已说明「最近收盘」，行内不再重复交易日，避免窄列里被省略和重叠
+  return <div className="market-overseas-row border-b border-border/55 px-3 py-2 last:border-b-0">
+    <div className="min-w-0">
+      <p className="truncate text-[12px] font-medium text-foreground">{item.name}</p>
+      <p className="truncate text-[12px] text-secondary-text">{item.region}</p>
+    </div>
+    <div className="text-right">
+      <p className={`text-sm font-semibold tabular-nums ${tone(verifiedChangePct)}`}>{formatNumber(item.close)}</p>
+      <p className={`text-[12px] font-medium tabular-nums ${tone(verifiedChangePct)}`}>{session.canShowChange ? percent(verifiedChangePct) : '待核验'}</p>
+    </div>
   </div>;
 }
 
@@ -197,21 +210,28 @@ function IntelligenceLine({ event }: { event?: MonitorEvent | null }) {
 }
 
 function WatchlistFocus({ card, onAnalyze }: { card: HomeWatchlistCard; onAnalyze: () => void }) {
+  const [chartOpen, setChartOpen] = useState(false);
   const quote = card.latestQuote; const changePct = quote?.changePercent;
   const bullish = card.sentiment.bullish ?? 0; const bearish = card.sentiment.bearish ?? 0;
   const totalSentiment = Math.max(1, bullish + bearish + (card.sentiment.neutral ?? 0) + (card.sentiment.mixed ?? 0));
-  return <div className="market-panel grid gap-px bg-border/60 xl:grid-cols-[minmax(0,1fr)_310px]">
+  return <div className={`market-panel market-watch-focus grid gap-px bg-border/60 ${chartOpen ? 'is-chart-open' : ''} xl:grid-cols-[minmax(0,1fr)_310px]`}>
     <div className="min-w-0 bg-card/90 p-3">
-      <MarketTimeframeChart key={card.symbol} symbol={card.symbol} initialPeriod="intraday" initialRange="1d" compact />
+      <button type="button" className="market-watch-focus__toggle" aria-expanded={chartOpen} onClick={() => setChartOpen((open) => !open)}>
+        {chartOpen ? `收起${card.name}分时走势` : `查看${card.name}分时走势`}
+      </button>
+      {/* 图始终挂载（避免重复请求与布局跳动），收起时只做视觉折叠 */}
+      <div className={`market-watch-focus__chart${chartOpen ? '' : ' is-collapsed'}`}>
+        <MarketTimeframeChart key={card.symbol} symbol={card.symbol} initialPeriod="intraday" initialRange="1d" compact />
+      </div>
     </div>
     <aside className="bg-card/95 p-4">
       <div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="text-lg font-semibold">{card.name}</h3><Badge>{card.symbol}</Badge></div><div className="mt-2 flex items-baseline gap-2"><span className={`text-3xl font-semibold tabular-nums ${tone(changePct)}`}>{formatNumber(quote?.currentPrice)}</span><span className={`text-sm ${tone(changePct)}`}>{percent(changePct)}</span></div></div><button className="btn-primary inline-flex items-center gap-1.5 px-3 py-2" onClick={onAnalyze}><Sparkles className="h-3.5 w-3.5" />分析</button></div>
-      <p className="mt-1 text-[9px] text-secondary-text">{shortTime(quote?.updateTime)} · {sourceLabel(quote?.source)}{quote?.isStale ? ' · 非连续竞价时段最新值' : ''}</p>
-      <div className="mt-4 grid grid-cols-2 gap-px border border-border/60 bg-border/60 text-[10px]">
+      <p className="mt-1 text-[12px] text-secondary-text">{shortTime(quote?.updateTime)} · {sourceLabel(quote?.source)}{quote?.isStale ? ' · 非连续竞价时段最新值' : ''}</p>
+      <div className="mt-4 grid grid-cols-2 gap-px border border-border/60 bg-border/60 text-[12px]">
         {[["今开", quote?.open], ["最高", quote?.high], ["最低", quote?.low], ["成交额", formatCompact(quote?.amount)], ["秒量", quote?.secondVolume], ["秒成交额", formatCompact(quote?.secondAmount)]].map(([label, value]) => <div key={String(label)} className="flex justify-between bg-background/70 px-2 py-2"><span className="text-secondary-text">{label}</span><span className="tabular-nums">{typeof value === 'number' ? formatNumber(value, 0) : value ?? '—'}</span></div>)}
       </div>
-      <div className="mt-4"><div className="flex justify-between text-[10px]"><span className="text-secondary-text">情报结构</span><span>{card.opportunityScore >= card.riskScore ? '机会占优' : '风险占优'}</span></div><div className="mt-2 h-1 bg-elevated"><div className="h-full bg-cyan" style={{ width: `${Math.round((bullish / totalSentiment) * 100)}%` }} /></div><div className="mt-1 flex justify-between text-[9px] text-secondary-text"><span>机会 {card.opportunityScore}</span><span>风险 {card.riskScore}</span><span>{card.eventCount} 条</span></div></div>
-      <div className="mt-4 space-y-3 border-t border-border/60 pt-3 text-[10px]"><div><p className="text-secondary-text">机构最新</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestInstitution} /></p></div><div><p className="flex items-center gap-1 text-danger"><Zap className="h-3 w-3" />最新催化</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestCatalyst} /></p></div><div><p className="flex items-center gap-1 text-warning"><ShieldAlert className="h-3 w-3" />最新风险</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestRisk} /></p></div></div>
+      <div className="mt-4"><div className="flex justify-between text-[12px]"><span className="text-secondary-text">情报结构</span><span>{card.opportunityScore >= card.riskScore ? '机会占优' : '风险占优'}</span></div><div className="mt-2 h-1 bg-elevated"><div className="h-full bg-cyan" style={{ width: `${Math.round((bullish / totalSentiment) * 100)}%` }} /></div><div className="mt-1 flex justify-between text-[12px] text-secondary-text"><span>机会 {card.opportunityScore}</span><span>风险 {card.riskScore}</span><span>{card.eventCount} 条</span></div></div>
+      <div className="mt-4 space-y-3 border-t border-border/60 pt-3 text-[12px]"><div><p className="text-secondary-text">机构最新</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestInstitution} /></p></div><div><p className="flex items-center gap-1 text-danger"><Zap className="h-3 w-3" />最新催化</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestCatalyst} /></p></div><div><p className="flex items-center gap-1 text-warning"><ShieldAlert className="h-3 w-3" />最新风险</p><p className="mt-1 line-clamp-2"><IntelligenceLine event={card.latestRisk} /></p></div></div>
     </aside>
   </div>;
 }
@@ -231,12 +251,12 @@ function NewsPanel({
     </div>
     {pinned.map(event => <button type="button" key={`pinned-${event.id}`} className="market-pinned-news" aria-label={`打开重要新闻：${event.title}`} onClick={() => onOpen(event)}>
       <div className="market-news-meta"><span className="market-news-priority"><Pin aria-hidden="true" size={12} />重点关注</span><time>{shortTime(event.eventAt)}</time>{newsPublisher(event) && <span>{newsPublisher(event)}</span>}</div>
-      <h3>{event.title}</h3>{event.summary && <p>{event.summary}</p>}
+      <h3>{stripHtmlText(event.title)}</h3>{stripHtmlText(event.summary) && <p>{stripHtmlText(event.summary)}</p>}
     </button>)}
     <div className="market-news-list">{latest.map(event => <button type="button" key={event.id} className="market-latest-event" aria-label={`查看新闻详情：${event.title}`} onClick={() => onOpen(event)}>
       <time dateTime={event.eventAt}>{new Date(event.eventAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}<small>{new Date(event.eventAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</small></time>
-      <div className="market-news-copy"><h3>{event.title}</h3><div className="market-news-meta">{newsPublisher(event) && <span>{newsPublisher(event)}</span>}{event.importanceScore >= 70 && <span className="market-news-priority">重要</span>}</div></div>
-    </button>)}{!pinned.length && !latest.length ? <EmptyState title="暂无新闻" description="财经新闻同步后自动展示。" /> : null}</div>
+      <div className="market-news-copy"><h3>{stripHtmlText(event.title)}</h3><div className="market-news-meta">{newsPublisher(event) && <span>{newsPublisher(event)}</span>}{event.importanceScore >= 70 && <span className="market-news-priority">重要</span>}</div></div>
+    </button>)}{!pinned.length && !latest.length ? <div className="market-news-empty"><p>暂无新闻</p><span>财经新闻同步后自动展示</span></div> : null}</div>
   </Card>;
 }
 
@@ -266,6 +286,7 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const [selectedIndexCode, setSelectedIndexCode] = useState('000001.SH');
+  const isMobile = useIsMobile();
   const load = useCallback(async (force = false, refresh = false) => {
     if (!alive.current) return;
     // The API cache predates personal dashboards and has one shared key. Drop
@@ -311,7 +332,7 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
     const timer = window.setTimeout(() => void load(), 8_000);
     return () => window.clearTimeout(timer);
   }, [error, load]);
-  useEffect(() => { document.title = '市场总览 - 乐子乌智能投研平台'; }, []);
+  useEffect(() => { document.title = '行情 - 乐子乌智能投研平台'; }, []);
 
   const watchlistSymbols = useMemo(() => (data?.watchlist ?? []).map(card => card.symbol), [data]);
   const watchlistSymbolKey = watchlistSymbols.join('|');
@@ -398,28 +419,88 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
   ).filter(item => !pinnedNewsIds.has(item.id)).slice(0, 6);
   const openNews = (event: MonitorEvent) => setSelectedNews(event);
 
+  const mobileIndexList = cnIndices.map(item => ({
+    ...item,
+    session: marketQuoteSession(item.updateTime ?? item.tradeDate, item.source),
+  }));
+  const mobileToneOf = (value?: number | null): 'up' | 'down' | 'flat' => ((value ?? 0) > 0 ? 'up' : (value ?? 0) < 0 ? 'down' : 'flat');
+  const mobileValue = formatNumber(leadIndex?.close);
+  const mobileChange = leadIndexSession.canShowChange
+    ? percent(leadIndexChangePct)
+    : '涨跌幅待核验';
+
+  if (isMobile) {
+    return (
+      <AppPage className="market-command-center is-mobile">
+        <MobileHome
+          indices={mobileIndexList}
+          activeCode={leadIndex?.code ?? '000001.SH'}
+          onSelectIndex={setSelectedIndexCode}
+          leadIndex={mobileIndexList.find(item => item.code === leadIndex?.code)}
+          mainValue={mobileValue}
+          mainChange={leadIndexSession.canShowChange ? mobileChange : '涨跌幅待核验'}
+          mainTone={mobileToneOf(leadIndexChangePct)}
+          changeLabel={leadIndexSession.label}
+          watchlist={liveWatchlist.map(card => ({
+            symbol: card.symbol,
+            name: card.name,
+            price: formatNumber(card.latestQuote?.currentPrice),
+            change: card.latestQuote?.changePercent != null ? percent(card.latestQuote.changePercent) : '—',
+            tone: mobileToneOf(card.latestQuote?.changePercent),
+          }))}
+          onOpenWatchlist={() => navigate('/super-watchlist')}
+          onOpenStock={symbol => navigate(`/investment-monitor/feed?symbol=${encodeURIComponent(symbol)}`)}
+          breadth={breadthAvailable && data?.breadth ? {
+            up: data.breadth.up ?? 0,
+            down: data.breadth.down ?? 0,
+            flat: data.breadth.flat ?? 0,
+            total: data.breadth.total ?? 0,
+          } : null}
+          breadthNote={breadthAvailable ? sourceLabel(data?.breadth.source) : ''}
+          sectors={sectorDistributionAvailable ? {
+            leaders: (data?.sectorDistribution.leaders ?? []).slice(0, 4).map(item => ({ name: item.name, value: percent(item.changePct) })),
+            laggards: (data?.sectorDistribution.laggards ?? []).slice(0, 4).map(item => ({ name: item.name, value: percent(item.changePct) })),
+          } : null}
+          news={[
+            ...pinnedNews.map(item => ({ id: String(item.id), title: item.title ?? '', time: shortTime(item.eventAt) })),
+            ...latestNews.map(item => ({ id: String(item.id), title: item.title ?? '', time: shortTime(item.eventAt) })),
+          ]}
+          onOpenNews={id => {
+            const found = [...pinnedNews, ...latestNews].find(item => String(item.id) === id);
+            if (found) openNews(found);
+          }}
+          onOpenAllNews={() => navigate('/investment-monitor/feed?channel=news', { state: { returnTo: '/app' } })}
+          quickActions={[
+            { label: 'AI 问股', icon: MessageSquareText, onClick: () => navigate('/chat') },
+            { label: '深度分析', icon: BrainCircuit, onClick: () => navigate(focusedWatchlist ? `/chat?stock=${encodeURIComponent(focusedWatchlist.symbol.split('.')[0])}&name=${encodeURIComponent(focusedWatchlist.name)}` : '/chat') },
+            { label: '财报解读', icon: FileSearch, onClick: () => navigate('/data-acquisition') },
+            { label: '任务', icon: ClipboardCheck, onClick: () => navigate('/tasks') },
+          ]}
+          onRefresh={() => void load(true)}
+          refreshing={refreshing}
+          loading={loading}
+          error={error}
+          updatedLabel={data?.marketTime ? `更新于 ${shortTime(data.marketTime)}` : undefined}
+        />
+        {selectedNews ? <SourceRecordDrawer event={selectedNews} homeNews onClose={() => setSelectedNews(null)} /> : null}
+      </AppPage>
+    );
+  }
+
   return <AppPage className="market-command-center max-w-none px-2 pb-4 pt-1.5 md:px-3 lg:px-4">
     <div className="space-y-1.5">
-      <section className="decision-workspace-rail" aria-label="核心工作区">
-        {[
-          { label: '今日决策', note: '市场环境与重要变化', to: '/app', icon: Activity },
-          { label: '机会发现', note: '题材、事件与候选', to: '/concept-themes', icon: Layers3 },
-          { label: '个股决策', note: '证据、情景与条件', to: '/super-watchlist', icon: Star },
-          { label: '深度研究', note: '公司、行业与原文', to: '/industry-research', icon: Network },
-          { label: '任务与验证', note: '进度、结果与复盘', to: '/tasks', icon: ClipboardCheck },
-        ].map((item, index) => <button key={item.to} type="button" className={index === 0 ? 'is-current' : ''} onClick={() => navigate(item.to)}><item.icon aria-hidden="true" /><span><strong>{item.label}</strong><em>{item.note}</em></span><i>{String(index + 1).padStart(2, '0')}</i></button>)}
-      </section>
       <section className="market-panel overflow-hidden border border-border/70 bg-card/90">
         <div className="market-overview-header flex flex-col border-b border-border/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><div className="flex items-center gap-2"><RadioTower className="h-4 w-4 text-cyan" /><h1 className="text-base font-semibold">市场总览</h1><Badge variant="info">本地秒库</Badge></div><p className="mt-0.5 text-[10px] text-secondary-text">{data?.marketTime ? shortTime(data.marketTime) : '正在同步市场时间'} · 自选与大盘读取 SQLite 秒快照 · 广度、行业和海外指数按所示交易日</p></div>
+          <div><div className="flex items-center gap-2"><RadioTower aria-hidden="true" className="h-[18px] w-[18px] text-text-2" /><h1 className="text-[length:var(--fs-h1)] font-semibold leading-[var(--lh-h1)]">行情</h1></div><p className="mt-1 text-[length:var(--fs-caption)] leading-[var(--lh-caption)] text-text-3">{data?.marketTime ? `更新于 ${shortTime(data.marketTime)}` : '正在同步市场时间'}</p></div>
           <button className="btn-secondary mt-2 inline-flex items-center gap-2 sm:mt-0" disabled={refreshing} onClick={() => void load(true)}><RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />刷新数据</button>
         </div>
-        <div className="market-index-rail flex overflow-x-auto">{cnIndices.map((item) => <IndexTicker key={item.code} item={item} selected={item.code === leadIndex?.code} onSelect={() => setSelectedIndexCode(item.code)} />)}</div>
+        <div className="market-index-rail">{cnIndices.map((item) => <IndexTicker key={item.code} item={item} selected={item.code === leadIndex?.code} onSelect={() => setSelectedIndexCode(item.code)} />)}</div>
+        {cnIndices.length ? <p className="market-index-source">行情来源：{[...new Set(cnIndices.map(item => sourceLabel(item.source)))].join(' / ')}</p> : null}
       </section>
 
       <EvidenceRail className="market-evidence-rail" items={[
         { label: '行情基准', value: leadIndexSession.label, note: sourceLabel(leadIndex?.source), tone: 'verified' },
-        { label: '最新数据时间', value: shortTime(data?.marketTime), note: '切回本页自动刷新', tone: 'live' },
+        { label: '数据时间', value: shortTime(data?.marketTime), note: '与行情同步', tone: 'live' },
         { label: '市场广度', value: breadthAvailable ? `${data?.breadth.total ?? 0} 只股票` : '等待数据', note: sourceLabel(data?.breadth.source), tone: breadthAvailable ? 'verified' : 'warning' },
         { label: '自选股覆盖', value: `${liveWatchlist.length} 只`, note: '行情与情报使用同一标的', tone: liveWatchlist.length ? 'verified' : 'warning' },
       ]} />
@@ -427,23 +508,43 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
       {error ? <div role="status" className="border border-warning/25 bg-warning/5 px-3 py-2 text-xs text-secondary-text">{error}</div> : null}
       <div className="market-primary-grid grid gap-1.5 xl:grid-cols-[minmax(0,1.28fr)_minmax(420px,.72fr)]">
         <section className="market-panel border border-border/70 bg-card/90 p-3">
-          <div className="market-main-quote-head flex flex-wrap items-end justify-between gap-3 border-b border-border/55 pb-2"><div><p className="text-[9px] text-secondary-text">大盘主行情 · K线 · {leadIndexSession.label} · {sourceLabel(leadIndex?.source)}</p><div className="mt-1 flex flex-wrap items-baseline gap-3"><h2 className="text-sm font-semibold">{leadIndex?.name ?? '上证指数'}</h2><Badge>{leadIndex?.code ?? '000001.SH'}</Badge><p className={`text-2xl font-semibold tabular-nums ${tone(leadIndexChangePct)}`}>{formatNumber(leadIndex?.close)}</p><span className={`text-xs ${tone(leadIndexChangePct)}`}>{leadIndexSession.canShowChange ? percent(leadIndexChangePct) : '涨跌幅待核验'}</span></div></div><div className="text-right text-[9px] text-secondary-text"><p>八个核心指数可切换主K线</p><p>分时 / 日K / 周K / 月K / 年K</p></div></div>
+          <div className="market-main-quote-head flex flex-wrap items-end justify-between gap-3 border-b border-border/55 pb-2"><div><div className="flex flex-wrap items-baseline gap-3"><h2 className="text-[length:var(--fs-h2)] font-semibold leading-[var(--lh-h2)]">{leadIndex?.name ?? '上证指数'}</h2><span className="text-[length:var(--fs-sm)] tabular-nums text-text-3">{leadIndex?.code ?? '000001.SH'}</span><p className={`text-[length:var(--fs-display)] font-bold leading-[var(--lh-display)] tabular-nums ${tone(leadIndexChangePct)}`}>{formatNumber(leadIndex?.close)}</p><span className={`text-xs ${tone(leadIndexChangePct)}`}>{leadIndexSession.canShowChange ? percent(leadIndexChangePct) : '涨跌幅待核验'}</span></div></div><p className="text-[length:var(--fs-caption)] leading-[var(--lh-caption)] text-text-3">{leadIndexSession.label} · {sourceLabel(leadIndex?.source)}</p></div>
           <MarketTimeframeChart key={leadIndex?.code ?? '000001.SH'} symbol={leadIndex?.code ?? '000001.SH'} assetType="index" initialPeriod="intraday" initialRange="1d" className="mt-2" compact />
         </section>
-        <NewsPanel pinned={pinnedNews} latest={latestNews} onOpen={openNews} onOpenAll={() => navigate('/investment-monitor/feed?channel=news', { state: { returnTo: '/app' } })} />
+        <div className="market-right-rail">
+          <NewsPanel pinned={pinnedNews} latest={latestNews} onOpen={openNews} onOpenAll={() => navigate('/investment-monitor/feed?channel=news', { state: { returnTo: '/app' } })} />
+          {!pinnedNews.length && !latestNews.length ? (
+            <Card padding="none" className="market-right-rail__fill p-3">
+              <div className="market-news-heading"><div className="flex items-center gap-2"><Layers3 aria-hidden="true" size={17} /><h2>市场广度</h2></div></div>
+              {breadthAvailable && data?.breadth ? (
+                <>
+                  <div className="market-breadth-ratio mt-3" aria-label={`上涨${data.breadth.up}家，下跌${data.breadth.down}家，平盘${data.breadth.flat}家`}>
+                    <span className="is-up" style={{ width: `${(data.breadth.up / breadthTotal) * 100}%` }} />
+                    <span className="is-down" style={{ width: `${(data.breadth.down / breadthTotal) * 100}%` }} />
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-px border border-border/60 bg-border/60 text-center text-[12px]">
+                    <div className="bg-background/70 p-2"><p className="text-secondary-text">上涨</p><strong className="text-danger">{data.breadth.up}</strong></div>
+                    <div className="bg-background/70 p-2"><p className="text-secondary-text">下跌</p><strong className="text-success">{data.breadth.down}</strong></div>
+                    <div className="bg-background/70 p-2"><p className="text-secondary-text">平盘</p><strong>{data.breadth.flat}</strong></div>
+                  </div>
+                </>
+              ) : <p className="mt-3 text-[12px] text-secondary-text">等待市场广度数据。</p>}
+            </Card>
+          ) : null}
+        </div>
       </div>
 
       {breadthAvailable || sectorDistributionAvailable ? <div className={`grid gap-2 ${breadthAvailable && sectorDistributionAvailable ? 'xl:grid-cols-2' : ''}`}>
         {breadthAvailable ? <section className="market-panel border border-border/70 bg-card/90 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">市场广度</h2><p className="mt-0.5 text-[9px] text-secondary-text">{breadthSession.label} · {sourceLabel(data?.breadth.source)}</p></div><div className="flex gap-3 text-[10px]"><span className="text-danger">上涨 {data?.breadth.up}</span><span className="text-success">下跌 {data?.breadth.down}</span><span className="text-secondary-text">平盘 {data?.breadth.flat}</span></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">市场广度</h2><p className="mt-0.5 text-[12px] text-secondary-text">{breadthSession.label} · {sourceLabel(data?.breadth.source)}</p></div><div className="flex gap-3 text-[12px]"><span className="text-danger">上涨 {data?.breadth.up}</span><span className="text-success">下跌 {data?.breadth.down}</span><span className="text-secondary-text">平盘 {data?.breadth.flat}</span></div></div>
           <>
             <div className="market-breadth-ratio mt-3" aria-label={`上涨${data?.breadth.up}家，下跌${data?.breadth.down}家，平盘${data?.breadth.flat}家`}><span className="is-up" style={{ width: `${(data?.breadth.up ?? 0) / breadthTotal * 100}%` }} /><span className="is-flat" style={{ width: `${(data?.breadth.flat ?? 0) / breadthTotal * 100}%` }} /><span className="is-down" style={{ width: `${(data?.breadth.down ?? 0) / breadthTotal * 100}%` }} /></div>
             <DistributionHistogram items={data?.breadth.distribution ?? []} />
-            <div className="mt-2 grid grid-cols-3 gap-px border border-border/60 bg-border/60 text-center text-[9px]"><div className="bg-background/70 p-2"><p className="text-secondary-text">有效交易股票</p><p className="mt-1 text-xs">{data?.breadth.total}</p></div><div className="bg-background/70 p-2"><p className="text-secondary-text">涨停</p><p className="mt-1 text-xs text-danger">{data?.breadth.limitUp}</p></div><div className="bg-background/70 p-2"><p className="text-secondary-text">跌停</p><p className="mt-1 text-xs text-success">{data?.breadth.limitDown}</p></div></div>
+            <div className="mt-2 grid grid-cols-3 gap-px border border-border/60 bg-border/60 text-center text-[12px]"><div className="bg-background/70 p-2"><p className="text-secondary-text">有效交易股票</p><p className="mt-1 text-xs">{data?.breadth.total}</p></div><div className="bg-background/70 p-2"><p className="text-secondary-text">涨停</p><p className="mt-1 text-xs text-danger">{data?.breadth.limitUp}</p></div><div className="bg-background/70 p-2"><p className="text-secondary-text">跌停</p><p className="mt-1 text-xs text-success">{data?.breadth.limitDown}</p></div></div>
           </>
         </section> : null}
         {sectorDistributionAvailable ? <section className="market-panel border border-border/70 bg-card/90 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">行业涨跌分布</h2><p className="mt-0.5 text-[9px] text-secondary-text">{sectorSession.label} · {sourceLabel(data?.sectorDistribution.source)}</p></div><div className="flex gap-3 text-[10px]"><span className="text-danger">上涨 {data?.sectorDistribution.up}</span><span className="text-success">下跌 {data?.sectorDistribution.down}</span><span className="text-secondary-text">平盘 {data?.sectorDistribution.flat}</span></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-sm font-semibold">行业涨跌分布</h2><p className="mt-0.5 text-[12px] text-secondary-text">{sectorSession.label} · {sourceLabel(data?.sectorDistribution.source)}</p></div><div className="flex gap-3 text-[12px]"><span className="text-danger">上涨 {data?.sectorDistribution.up}</span><span className="text-success">下跌 {data?.sectorDistribution.down}</span><span className="text-secondary-text">平盘 {data?.sectorDistribution.flat}</span></div></div>
           <>
             <DistributionHistogram items={data?.sectorDistribution.distribution ?? []} />
             <div className="market-sector-movers mt-2">
@@ -455,17 +556,18 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
       </div> : null}
 
       <div className="market-secondary-grid grid gap-1.5 xl:grid-cols-[minmax(0,1.4fr)_minmax(420px,.6fr)]">
-        <section className="market-panel border border-border/70 bg-card/90"><div className="flex items-center justify-between border-b border-border/55 px-3 py-1.5"><div><h2 className="text-sm font-semibold">海外市场最近收盘</h2><p className="text-[9px] text-secondary-text">逐项显示实际交易日</p></div><Globe2 className="h-4 w-4 text-cyan" /></div><div className="market-overseas-list market-overseas-compact grid grid-cols-2 lg:grid-cols-3">{(data?.globalIndices ?? []).map((item) => <OverseasCard key={item.code} item={item} />)}</div></section>
-        <Card padding="none" className="market-analysis-panel p-3"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">分析入口</h2><p className="text-[9px] text-secondary-text">使用当前数据库真实上下文</p></div><Bot className="h-4 w-4 text-cyan" /></div><div className="market-ai-actions mt-2 grid grid-cols-5 gap-px bg-border/60">{aiActions.map((item) => <button key={item.label} onClick={item.action} className="group bg-background/60 p-2 text-left hover:bg-hover"><item.icon className="h-4 w-4 text-cyan" /><p className="mt-1.5 text-[9px] font-medium">{item.label}</p><p className="mt-0.5 text-[8px] leading-3 text-secondary-text">{item.note}</p></button>)}</div><div className="mt-1.5 grid grid-cols-3 gap-px bg-border/60 text-center text-[9px]"><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">活跃源</p><p>{data?.intelligenceSummary.activeSourceCount ?? 0}</p></div><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">近7日情报</p><p>{data?.intelligenceSummary.eventCount ?? 0}</p></div><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">高优先级</p><p>{data?.intelligenceSummary.highPriorityCount ?? 0}</p></div></div></Card>
+        <section className="market-panel border border-border/70 bg-card/90"><div className="flex items-center justify-between border-b border-border/55 px-3 py-1.5"><div><h2 className="text-sm font-semibold">海外市场最近收盘</h2><p className="text-[12px] text-secondary-text">逐项显示实际交易日</p></div><Globe2 className="h-4 w-4 text-cyan" /></div><div className="market-overseas-list market-overseas-compact grid grid-cols-2 lg:grid-cols-3">{(data?.globalIndices ?? []).map((item) => <OverseasCard key={item.code} item={item} />)}</div></section>
+        <Card padding="none" className="market-analysis-panel p-3"><div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">分析入口</h2></div><Bot className="h-4 w-4 text-cyan" /></div><div className="market-ai-actions mt-2 grid grid-cols-3 gap-px bg-border/60">{aiActions.map((item) => <button key={item.label} onClick={item.action} className="market-ai-action group bg-background/60 p-2 text-left hover:bg-hover"><item.icon className="h-4 w-4 text-cyan" /><p className="market-ai-action__label mt-1.5 text-[12px] font-medium">{item.label}</p></button>)}</div><div className="mt-1.5 grid grid-cols-3 gap-px bg-border/60 text-center text-[12px]"><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">活跃源</p><p>{data?.intelligenceSummary.activeSourceCount ?? 0}</p></div><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">近7日情报</p><p>{data?.intelligenceSummary.eventCount ?? 0}</p></div><div className="bg-elevated/60 p-1.5"><p className="text-secondary-text">高优先级</p><p>{data?.intelligenceSummary.highPriorityCount ?? 0}</p></div></div></Card>
       </div>
 
-      <section><div className="mb-2 flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-base font-semibold">自选股行情与情报</h2><p className="mt-0.5 text-[9px] text-secondary-text">切换股票后，报价、K线、秒量、情报和来源保持同一标的</p></div><div className="market-watchlist-switcher flex flex-wrap items-center gap-1">{liveWatchlist.map(card => <button key={card.symbol} onClick={() => setSelectedSymbol(card.symbol)} className={`border px-3 py-2 text-left ${card.symbol === focusedWatchlist?.symbol ? 'border-cyan bg-cyan/10' : 'border-border bg-card'}`}><span className="text-[10px]">{card.name}</span><span className={`ml-2 text-[10px] tabular-nums ${tone(card.latestQuote?.changePercent)}`}>{formatNumber(card.latestQuote?.currentPrice)} {percent(card.latestQuote?.changePercent)}</span></button>)}<button className="btn-secondary inline-flex items-center gap-1.5" onClick={() => navigate(focusedWatchlist ? `/investment-monitor/feed?symbol=${encodeURIComponent(focusedWatchlist.symbol)}` : '/investment-monitor/feed')}><Building2 className="h-3.5 w-3.5" />证据原文<ArrowRight className="h-3.5 w-3.5" /></button></div></div>
+      <section><div className="mb-2 flex flex-wrap items-end justify-between gap-2"><div><h2 className="text-base font-semibold">自选股行情与情报</h2></div><div className="market-watchlist-switcher flex flex-wrap items-center gap-1">{liveWatchlist.map(card => <button key={card.symbol} onClick={() => setSelectedSymbol(card.symbol)} className={`border px-3 py-2 text-left ${card.symbol === focusedWatchlist?.symbol ? 'border-cyan bg-cyan/10' : 'border-border bg-card'}`}><span className="text-[12px]">{card.name}</span><span className={`ml-2 text-[12px] tabular-nums ${tone(card.latestQuote?.changePercent)}`}>{formatNumber(card.latestQuote?.currentPrice)} {percent(card.latestQuote?.changePercent)}</span></button>)}<button className="btn-secondary inline-flex items-center gap-1.5" onClick={() => navigate(focusedWatchlist ? `/investment-monitor/feed?symbol=${encodeURIComponent(focusedWatchlist.symbol)}` : '/investment-monitor/feed')}><Building2 className="h-3.5 w-3.5" />证据原文<ArrowRight className="h-3.5 w-3.5" /></button></div></div>
         {!watchlistReady ? <p role="status" className="text-xs text-secondary-text">{error ? '当前账号的自选股尚未读取成功，正在自动重试。' : '正在读取当前账号的自选股…'}</p> : !loading && !liveWatchlist.length ? <EmptyState title="暂无自选股数据" description="请在设置中添加自选股，或等待情报台首次同步。" /> : focusedWatchlist ? <WatchlistFocus card={focusedWatchlist} onAnalyze={() => navigate(`/chat?stock=${encodeURIComponent(focusedWatchlist.symbol.split('.')[0])}&name=${encodeURIComponent(focusedWatchlist.name)}`)} /> : null}
       </section>
 
       {loading && !data ? <div role="status" className="border border-cyan/20 bg-cyan/5 px-4 py-3 text-xs text-secondary-text">正在读取本地缓存并聚合市场数据，页面会自动完成加载…</div> : null}
     </div>
     {selectedNews ? <SourceRecordDrawer event={selectedNews} homeNews onClose={() => setSelectedNews(null)} /> : null}
+    <p className="market-disclaimer">数据仅供参考，不构成投资建议</p>
   </AppPage>;
 }
 

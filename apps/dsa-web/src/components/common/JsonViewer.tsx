@@ -10,13 +10,14 @@ interface JsonViewerProps {
 const JSON_TOKEN_PATTERN = /"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|true|false|null/g;
 
 function getTokenClassName(token: string, remainingLine: string): string {
+  // 结构高亮只用图表色板：蓝色系是"键"，数字与字符串各占一色，布尔/空值保持中性。
   if (token.startsWith('"')) {
-    return /^\s*:/.test(remainingLine) ? 'text-cyan-400' : 'text-emerald-400';
+    return /^\s*:/.test(remainingLine) ? 'text-[var(--chart-1)]' : 'text-[var(--chart-2)]';
   }
   if (token === 'true' || token === 'false' || token === 'null') {
-    return 'text-purple-400';
+    return 'text-[var(--text-3)]';
   }
-  return 'text-amber-400';
+  return 'text-[var(--chart-3)]';
 }
 
 function renderHighlightedLine(line: string): React.ReactNode[] {
@@ -61,7 +62,7 @@ export const JsonViewer: React.FC<JsonViewerProps> = ({
 
   if (!data) {
     return (
-      <div className="text-gray-500 italic py-4 text-center">{t('common.noData')}</div>
+      <div className="text-[var(--text-3)] italic py-4 text-center">{t('common.noData')}</div>
     );
   }
 
@@ -89,7 +90,7 @@ export const JsonViewer: React.FC<JsonViewerProps> = ({
       <button
         onClick={handleCopy}
         className="absolute top-2 right-2 px-2 py-1 text-xs rounded
-          bg-slate-700 hover:bg-slate-600 text-gray-300
+          bg-[var(--bg-3)] hover:bg-[var(--bg-3)] text-[var(--text-2)]
           transition-colors z-10"
       >
         {copied ? t('common.copied') : t('common.copy')}
@@ -97,8 +98,8 @@ export const JsonViewer: React.FC<JsonViewerProps> = ({
 
       {/* JSON 内容 */}
       <div
-        className="bg-slate-900/80 rounded-lg p-4 overflow-auto custom-scrollbar
-          border border-slate-700/50 font-mono text-sm text-gray-300"
+        className="bg-[var(--bg-2)] rounded-lg p-4 overflow-auto custom-scrollbar
+          border border-[var(--line-1)] font-mono text-sm text-[var(--text-2)]"
         style={{ maxHeight }}
       >
         <pre className="whitespace-pre-wrap break-words">

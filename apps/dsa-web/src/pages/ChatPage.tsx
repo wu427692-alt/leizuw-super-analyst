@@ -848,7 +848,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
   const sidebarContent = (
     <>
       <div className="flex items-center justify-between border-b border-white/5 bg-white/2 p-3.5">
-        <h2 className="text-sm font-semibold text-cyan uppercase tracking-[0.2em] flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-cyan uppercase tracking-normal flex items-center gap-2">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
@@ -1022,7 +1022,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                 </svg>
               </button>
               <svg
-                className="w-6 h-6 text-cyan"
+                className="chat-header-brand hidden w-6 h-6 text-cyan md:block"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1034,7 +1034,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                   d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
                 />
               </svg>
-              问股
+              <span className="hidden md:inline">问股</span>
             </h1>
             {messages.length > 0 && (
               <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
@@ -1210,7 +1210,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                 >
                   <div
                     className={cn(
-                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold shadow-sm transition-all',
+                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold shadow-sm transition-all',
                       msg.role === 'user' ? 'chat-avatar-user' : 'chat-avatar-ai'
                     )}
                   >
@@ -1444,7 +1444,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                       'max-h-40 flex-wrap items-start gap-x-5 gap-y-2 overflow-y-auto rounded-xl border border-white/6 bg-surface/25 px-3 py-2 md:flex md:max-h-none md:overflow-visible md:border-0 md:bg-transparent md:p-0',
                     )}
                   >
-                    <span className="text-xs text-muted-text font-medium uppercase tracking-wider flex-shrink-0 mt-1">
+                    <span className="text-xs text-muted-text font-medium uppercase tracking-normal flex-shrink-0 mt-1">
                       策略
                     </span>
                     <label className="flex items-center gap-1.5 text-sm cursor-pointer group mt-0.5">
@@ -1507,12 +1507,12 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                   size="xsm"
                   isLoading={isWatchlistActioning}
                   onClick={() => void handleToggleWatchlist(activeStockCode)}
-                  className="text-[11px]"
+                  className="text-[12px]"
                 >
                   {stockInWatchlist(activeStockCode) ? '从自选删除' : '加入自选'}
                 </Button>
                 {watchlistMessage && (
-                  <span className="text-[11px] text-secondary-text animate-in fade-in">{watchlistMessage}</span>
+                  <span className="text-[12px] text-secondary-text animate-in fade-in">{watchlistMessage}</span>
                 )}
               </div>
             )}

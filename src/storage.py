@@ -506,6 +506,10 @@ class ResearchNote(Base):
     __table_args__ = (
         Index('ix_research_note_group_time', 'group_id', 'created_at'),
         Index('ix_research_note_digest_time', 'digested', 'created_at'),
+        # 覆盖索引：来源汇总按 group 聚合 count/max(created_at)/max(synced_at)、
+        # 覆盖率按 created_at 过滤 topic_id。缺它们时是 12 万行全表 + 逐行回表，实测 4–20s。
+        Index('ix_research_notes_group_cover', 'group_id', 'group_name', 'created_at', 'synced_at'),
+        Index('ix_research_notes_created_topic', 'created_at', 'topic_id'),
     )
 
 
@@ -627,6 +631,8 @@ class EssayAnalysisRecord(Base):
     __table_args__ = (
         Index('ix_essay_analysis_status_retry', 'status', 'next_retry_at'),
         Index('ix_essay_analysis_category_sentiment', 'primary_category', 'sentiment'),
+        # 「最近 N 天覆盖率」按 topic 回查状态时用；缺它时计划器会扫全表再回表，实测 5–18s。
+        Index('ix_essay_analysis_topic_status', 'topic_id', 'status'),
     )
 
 

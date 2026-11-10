@@ -43,6 +43,12 @@ def package_factory(tmp_path, monkeypatch):
         lambda: SimpleNamespace(database_path=str(tmp_path / "unused.db")),
     )
     monkeypatch.setenv("DATA_ACQUISITION_MAX_WORKERS", "1")
+    # The production task boundary reserves a download quota. This suite tests
+    # ownership, not quotas; never touch the workstation's runtime counters.
+    monkeypatch.setattr(
+        "src.services.data_acquisition_task_service.UserQuotaService",
+        lambda: SimpleNamespace(consume=lambda *args, **kwargs: {"remaining": 10}),
+    )
 
     def no_network(*args, **kwargs):
         raise AssertionError("Ownership tests must not call a network provider")

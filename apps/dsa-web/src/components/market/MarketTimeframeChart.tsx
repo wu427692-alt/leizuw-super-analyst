@@ -9,6 +9,7 @@ import type { MarketBar, MarketPeriod, MarketRange, MarketSeries } from '../../t
 import { adaptivePercentDomain, resolveIntradayBasePrice, tooltipChangePercent } from './marketChartDomain';
 import { usePageActivationRefresh } from '../../hooks/usePageActivationRefresh';
 import { isAshareLiveWindow } from '../../utils/marketSession';
+import { CHART_DOWN, CHART_FLAT, CHART_SERIES, CHART_UP } from '../../utils/chartTheme';
 
 const PERIODS: Array<{ value: MarketPeriod; label: string }> = [
   { value: 'intraday', label: '分时' }, { value: 'daily', label: '日K' },
@@ -23,9 +24,9 @@ const RANGES: Record<MarketPeriod, Array<{ value: MarketRange; label: string }>>
   yearly: [{ value: '5y', label: '5年' }, { value: '10y', label: '10年' }, { value: 'max', label: '全部' }],
 };
 const DEFAULT_RANGE: Record<MarketPeriod, MarketRange> = { intraday: '1d', daily: '6m', weekly: '2y', monthly: '5y', yearly: 'max' };
-const UP = '#EF4444';
-const DOWN = '#16A06A';
-const FLAT = '#7B8494';
+const UP = CHART_UP;
+const DOWN = CHART_DOWN;
+const FLAT = CHART_FLAT;
 
 type ChartRow = MarketBar & {
   label: string;
@@ -94,7 +95,7 @@ function PriceTooltip({ active, payload, basePrice, intraday, intradayRange }: {
   if (!active || !row) return null;
   const pct = tooltipChangePercent(row, basePrice, Boolean(intraday));
   const tone = (pct ?? 0) > 0 ? UP : (pct ?? 0) < 0 ? DOWN : FLAT;
-  return <div className="border border-border bg-card/95 px-2.5 py-2 text-[10px] shadow-lg backdrop-blur">
+  return <div className="border border-border bg-card/95 px-2.5 py-2 text-[12px] shadow-lg backdrop-blur">
     <p className="mb-1 font-mono text-secondary-text">{row.date.replace('T', ' ')}</p>
     {intraday ? <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 tabular-nums">
       <span style={{ color: tone }}>时点价格 {number(row.close)}</span>
@@ -111,10 +112,11 @@ function PriceTooltip({ active, payload, basePrice, intraday, intradayRange }: {
   </div>;
 }
 
-function Metric({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return <div role="group" aria-label={label} className="min-w-0 border-r border-border/55 px-2 py-1.5 last:border-r-0">
-    <span className="text-[11px] text-secondary-text">{label}</span>
-    <p className="truncate text-[13px] font-semibold tabular-nums" style={tone ? { color: tone } : undefined}>{value}</p>
+function Metric({ label, value, tone, emphasis }: { label: string; value: string; tone?: string; emphasis?: boolean }) {
+  // 首项（最新价）是这一行的锚点：更大更亮，其余指标退为辅助信息
+  return <div role="group" aria-label={label} className={`market-metric${emphasis ? ' is-lead' : ''}`}>
+    <span className="market-metric__label">{label}</span>
+    <p className="market-metric__value tabular-nums" style={tone ? { color: tone } : undefined}>{value}</p>
   </div>;
 }
 
@@ -217,10 +219,6 @@ export function MarketTimeframeChart({
   const sessionOpen = period === 'intraday' ? chart.find((row) => row.open != null)?.open : latest?.open;
   const sessionHigh = period === 'intraday' && chart.length ? Math.max(...chart.map((row) => Number(row.high ?? row.close ?? -Infinity))) : latest?.high;
   const sessionLow = period === 'intraday' && chart.length ? Math.min(...chart.map((row) => Number(row.low ?? row.close ?? Infinity))) : latest?.low;
-  const latestIntervalVolume = latest?.volume;
-  const sessionAmount = period === 'intraday' && chart.length
-    ? Math.max(...chart.map((row) => Number(row.cumulativeAmount ?? row.amount ?? 0)))
-    : (latest?.amount ?? latest?.volume);
   const priceDomain = useMemo<[number, number]>(() => {
     if (!chart.length) return [0, 1];
     const low = Math.min(...chart.map((row) => Number(row.low ?? row.close ?? Infinity)));
@@ -230,12 +228,12 @@ export function MarketTimeframeChart({
   }, [chart]);
   const intradayPercentDomain = useMemo(() => adaptivePercentDomain(chart), [chart]);
   const zeroInIntradayDomain = intradayPercentDomain[0] <= 0 && intradayPercentDomain[1] >= 0;
-  const quoteAt = latest?.date ?? series?.latestAt;
 
   const selectPeriod = (next: MarketPeriod) => startTransition(() => { setPeriod(next); setRange(DEFAULT_RANGE[next]); });
-  const priceHeight = compact ? 205 : 320;
+  const quoteAt = latest?.date ?? null;
+  const priceHeight = compact ? 205 : 268;
   const volumeHeight = compact ? 72 : 100;
-  const chartMargin = { top: 8, right: compact ? 8 : 16, bottom: 0, left: 0 };
+  const chartMargin = { top: 8, right: compact ? 12 : 28, bottom: 0, left: 0 };
 
   return <section className={`market-timeframe-chart overflow-hidden border border-border/70 bg-background/25 ${className}`}>
     <div className="market-chart-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-2 py-1.5">
@@ -248,31 +246,31 @@ export function MarketTimeframeChart({
       </div>
     </div>
 
-    <div className="grid grid-cols-4 border-b border-border/55 sm:grid-cols-8">
-      <Metric label="最新" value={number(latest?.close)} tone={changeTone} />
+    <div className="market-chart-metrics">
+      <Metric label="最新" value={number(latest?.close)} tone={changeTone} emphasis />
       <Metric label="涨跌" value={change == null ? '—' : `${change > 0 ? '+' : ''}${change.toFixed(2)}`} tone={changeTone} />
       <Metric label="涨幅" value={changePct == null ? '—' : `${changePct > 0 ? '+' : ''}${changePct.toFixed(2)}%`} tone={changeTone} />
       <Metric label={period === 'intraday' && range === '5d' ? '区间基准' : period === 'intraday' || period === 'daily' ? '昨收' : '上期收盘'} value={number(period === 'intraday' ? stageBase : comparison)} />
       <Metric label="开盘" value={number(sessionOpen)} />
       <Metric label="最高" value={number(sessionHigh)} tone={UP} />
       <Metric label="最低" value={number(sessionLow)} tone={DOWN} />
-      <Metric label={period === 'intraday' ? '本分钟量' : '成交'} value={compactNumber(period === 'intraday' ? latestIntervalVolume : sessionAmount)} />
+      <div className="market-metric is-time">
+        <span className="market-metric__label">数据时间</span>
+        <p className="market-metric__value">{quoteAt?.replace('T', ' ') ?? '—'}</p>
+      </div>
     </div>
 
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/45 px-3 py-1.5 text-[11px] text-secondary-text">
-      <span>{series?.storedCount ?? 0} 个{period === 'intraday' ? '分钟点' : '数据点'} · {series?.source ?? '本地缓存'}</span>
-      <div className="flex flex-wrap items-center gap-3 tabular-nums">{period !== 'intraday' ? <><span className="text-[#E4B64A]">MA5</span><span className="text-[#A987FF]">MA10</span><span className="text-cyan">MA20</span></> : null}<span>{quoteAt?.replace('T', ' ') ?? '暂无时间'}</span></div>
-    </div>
+    <div className="market-chart-legend">{period !== 'intraday' ? <><span style={{ color: CHART_SERIES[2] }}>MA5</span><span style={{ color: CHART_SERIES[3] }}>MA10</span><span style={{ color: CHART_SERIES[0] }}>MA20</span></> : null}</div>
 
-    {error && chart.length ? <div role="status" className="border-b border-warning/20 bg-warning/5 px-3 py-1.5 text-[9px] text-secondary-text">行情更新暂时延迟，当前仍展示最近一次成功数据，系统正在自动重试。</div> : null}
+    {error && chart.length ? <div role="status" className="border-b border-warning/20 bg-warning/5 px-3 py-1.5 text-[12px] text-secondary-text">行情更新暂时延迟，当前仍展示最近一次成功数据，系统正在自动重试。</div> : null}
     {chart.length ? <>
       <div style={{ height: priceHeight }}>
         <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: compact ? 520 : 900, height: priceHeight }}>
           <ComposedChart data={chart} margin={chartMargin} syncId={`market-${symbol}-${period}`}>
-            <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.55} vertical={false} />
+            <CartesianGrid stroke="var(--line-1)" vertical={false} />
             <XAxis dataKey="label" hide />
             <YAxis
-              tick={{ fontSize: 11, fill: 'hsl(var(--secondary-text))' }}
+              tick={{ fontSize: 12, fill: 'var(--text-3)' }}
               width={period === 'intraday' ? 64 : 58}
               domain={period === 'intraday' ? intradayPercentDomain : priceDomain}
               tickFormatter={(value) => period === 'intraday' ? `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(2)}%` : Number(value).toFixed(2)}
@@ -280,11 +278,11 @@ export function MarketTimeframeChart({
             <Tooltip content={<PriceTooltip basePrice={period === 'intraday' ? stageBase : null} intraday={period === 'intraday'} intradayRange={range} />} cursor={{ stroke: 'hsl(var(--secondary-text))', strokeDasharray: '3 3' }} />
             {period === 'intraday' ? <>
               {zeroInIntradayDomain ? <ReferenceLine y={0} ifOverflow="hidden" stroke="hsl(var(--secondary-text))" strokeDasharray="4 4" strokeOpacity={.75} /> : null}
-              <Area type="monotone" dataKey="stageChangePercent" stroke="#2F80ED" fill="#2F80ED" fillOpacity={.10} strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
+              <Area type="monotone" dataKey="stageChangePercent" stroke="var(--info)" fill="var(--info)" fillOpacity={.10} strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
             </> : <>
               <Bar dataKey="priceRange" shape={(props: CandleProps) => <Candle {...props} />} isAnimationActive={false} />
-              <Line dataKey="ma5" stroke="#E4B64A" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
-              <Line dataKey="ma10" stroke="#A987FF" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
+              <Line dataKey="ma5" stroke="var(--warning)" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
+              <Line dataKey="ma10" stroke="var(--chart-4)" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
               <Line dataKey="ma20" stroke="hsl(var(--primary))" strokeWidth={1} dot={false} connectNulls isAnimationActive={false} />
             </>}
           </ComposedChart>
@@ -293,13 +291,15 @@ export function MarketTimeframeChart({
       <div className="border-t border-border/45" style={{ height: volumeHeight }}>
         <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: compact ? 520 : 900, height: volumeHeight }}>
           <ComposedChart data={chart} margin={{ ...chartMargin, top: 4 }} syncId={`market-${symbol}-${period}`}>
-            <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.35} vertical={false} />
+            <CartesianGrid stroke="var(--line-1)" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 11, fill: 'hsl(var(--secondary-text))' }}
+              tick={{ fontSize: 12, fill: 'var(--text-3)' }}
               interval="preserveStartEnd"
               minTickGap={range === '5d' ? 70 : compact ? 48 : 36}
               tickMargin={7}
+              // 最右刻度会被容器右边缘裁掉半个字符，留出文字宽度
+              padding={{ right: 14 }}
               height={range === '5d' ? 32 : 24}
             />
             <YAxis hide domain={[0, 'auto']} />
@@ -309,6 +309,6 @@ export function MarketTimeframeChart({
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-    </> : <div role="status" className={`flex items-center justify-center text-secondary-text ${compact ? 'h-[277px] text-[10px]' : 'h-[420px] text-[11px]'}`}>{loading ? '正在读取本地行情数据库…' : error ? '行情连接正在恢复，页面会自动重试…' : '所选周期暂无行情'}</div>}
+    </> : <div role="status" className={`flex items-center justify-center text-secondary-text ${compact ? 'h-[277px] text-[12px]' : 'h-[420px] text-[12px]'}`}>{loading ? '正在读取本地行情数据库…' : error ? '行情连接正在恢复，页面会自动重试…' : '所选周期暂无行情'}</div>}
   </section>;
 }

@@ -34,34 +34,34 @@ function time(value?: string | null, withDate = true) {
 }
 
 function freshness(source: MonitoringSource) {
-  if (source.lastStatus === 'failed') return { label: '同步失败', color: '#FF5D5D' };
-  if (source.lastStatus === 'not_configured') return { label: '未配置上游', color: '#717A84' };
-  if (source.monitoringStatus === 'delayed') return { label: '监控延迟', color: '#FFB800' };
+  if (source.lastStatus === 'failed') return { label: '同步失败', color: 'var(--danger)' };
+  if (source.lastStatus === 'not_configured') return { label: '未配置上游', color: 'var(--text-3)' };
+  if (source.monitoringStatus === 'delayed') return { label: '监控延迟', color: 'var(--warning)' };
   if (source.monitoringStatus === 'live' && source.freshnessStatus === 'stale') return { label: '实时巡检 · 上游暂无新事实', color: GREEN };
   if (source.monitoringStatus === 'live' && source.freshnessStatus === 'empty') return { label: '实时巡检 · 尚无匹配数据', color: GREEN };
   if (source.freshnessStatus === 'fresh') return { label: '新鲜', color: GREEN };
-  if (source.freshnessStatus === 'stale') return { label: '陈旧', color: '#FFB800' };
-  return { label: '暂无数据', color: '#717A84' };
+  if (source.freshnessStatus === 'stale') return { label: '陈旧', color: 'var(--warning)' };
+  return { label: '暂无数据', color: 'var(--text-3)' };
 }
 
 function EventRow({ event }: { event: MonitorEvent }) {
   const content = <>
     <div className="min-w-0">
-      <div className="flex flex-wrap items-center gap-2 text-[9px] text-[#717A84]">
-        <span className="font-mono text-[#00E676]">{time(event.eventAt)}</span>
-        {event.symbols.map(symbol => <span key={symbol} className="border border-[#303740] px-1.5 py-0.5">{symbol}</span>)}
+      <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-3)]">
+        <span className="font-mono text-[var(--success)]">{time(event.eventAt)}</span>
+        {event.symbols.map(symbol => <span key={symbol} className="border border-[var(--line-2)] px-1.5 py-0.5">{symbol}</span>)}
       </div>
-      <h3 className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-[#D7DCE2] group-hover:text-white">{event.title}</h3>
-      {event.summary ? <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#8B949E]">{event.summary}</p> : null}
+      <h3 className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-[var(--text-2)] group-hover:text-white">{event.title}</h3>
+      {event.summary ? <p className="mt-1 line-clamp-2 text-[12px] leading-4 text-[var(--text-3)]">{event.summary}</p> : null}
     </div>
     <div className="text-right">
-      <p className="font-mono text-[9px] text-[#717A84]">入库 {time(event.ingestedAt, false)}</p>
-      <span className="mt-2 inline-flex items-center gap-1 text-[9px] font-semibold text-[#00E676]">
+      <p className="font-mono text-[12px] text-[var(--text-3)]">入库 {time(event.ingestedAt, false)}</p>
+      <span className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--success)]">
         {event.url ? '打开原文' : '接口原文'} {event.url ? <ExternalLink className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
       </span>
     </div>
   </>;
-  const className = 'group grid grid-cols-[minmax(0,1fr)_86px] gap-3 border-t border-[#242A31] px-3 py-3 text-left first:border-t-0 hover:bg-[#0D100E]';
+  const className = 'group grid grid-cols-[minmax(0,1fr)_86px] gap-3 border-t border-[var(--line-1)] px-3 py-3 text-left first:border-t-0 hover:bg-[var(--bg-1)]';
   return event.url
     ? <a href={event.url} target="_blank" rel="noreferrer" className={className}>{content}</a>
     : <Link to={`/investment-monitor/feed?event=${event.id}`} className={className}>{content}</Link>;
@@ -144,43 +144,43 @@ export default function InvestmentMonitorOverviewPage() {
   };
 
   return <AppPage className="intelligence-hub-page max-w-[1760px]">
-    <main className="intelligence-terminal overflow-hidden border border-[#242A31] bg-[#050605] text-[#D7DCE2]">
-      <header className="flex flex-col gap-4 border-b border-[#242A31] bg-[#090B09] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
-        <div><p className="text-[9px] uppercase tracking-[0.22em] text-[#00E676]">统一事件库 · 全部真实来源</p><h1 className="mt-2 text-2xl font-black tracking-[-0.05em] text-white">全渠道情报</h1><p className="mt-1 text-[10px] text-[#717A84]">按信息渠道查看存量、最新时间、同步状态与原始消息；不混入行情看板和自选股分析。</p></div>
-        <div className="intelligence-header-actions flex gap-2"><button onClick={() => void Promise.allSettled([loadStatus(), loadEvents()])} disabled={loadingStatus || loadingEvents} className="inline-flex h-8 items-center gap-2 border border-[#303740] bg-[#0B0C0A] px-3 text-[10px] hover:border-[#00E676] disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${loadingStatus || loadingEvents ? 'animate-spin' : ''}`} />刷新本地情报</button><button onClick={() => void syncAll()} disabled={syncingAll} className="inline-flex h-8 items-center gap-2 border border-[#00E676] px-3 text-[10px] font-bold text-[#00E676] disabled:opacity-50"><DatabaseZap className="h-3.5 w-3.5"/>{syncingAll ? '逐源同步中' : '从上游同步全部'}</button></div>
+    <main className="intelligence-terminal overflow-hidden border border-[var(--line-1)] bg-[var(--bg-1)] text-[var(--text-2)]">
+      <header className="flex flex-col gap-4 border-b border-[var(--line-1)] bg-[var(--bg-1)] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
+        <div><p className="text-[12px] uppercase tracking-normal text-[var(--success)]">统一事件库 · 全部真实来源</p><h1 className="mt-2 text-2xl font-bold tracking-[-0.05em] text-white">全渠道情报</h1><p className="mt-1 text-[12px] text-[var(--text-3)]">按信息渠道查看存量、最新时间、同步状态与原始消息；不混入行情看板和自选股分析。</p></div>
+        <div className="intelligence-header-actions flex gap-2"><button onClick={() => void Promise.allSettled([loadStatus(), loadEvents()])} disabled={loadingStatus || loadingEvents} className="inline-flex h-8 items-center gap-2 border border-[var(--line-2)] bg-[var(--bg-1)] px-3 text-[12px] hover:border-[var(--success)] disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${loadingStatus || loadingEvents ? 'animate-spin' : ''}`} />刷新本地情报</button><button onClick={() => void syncAll()} disabled={syncingAll} className="inline-flex h-8 items-center gap-2 border border-[var(--success)] px-3 text-[12px] font-bold text-[var(--success)] disabled:opacity-50"><DatabaseZap className="h-3.5 w-3.5"/>{syncingAll ? '逐源同步中' : '从上游同步全部'}</button></div>
       </header>
 
       <InvestmentMonitorNav />
-      {error ? <div role="alert" className="border-b border-[#6B4423] bg-[#19130A] px-4 py-2 text-[10px] text-[#FFB800]">{error}</div> : null}
+      {error ? <div role="alert" className="border-b border-[var(--line-2)] bg-[var(--bg-1)] px-4 py-2 text-[12px] text-[var(--warning)]">{error}</div> : null}
 
-      <section className="grid grid-cols-2 border-b border-[#242A31] lg:grid-cols-5">
+      <section className="grid grid-cols-2 border-b border-[var(--line-1)] lg:grid-cols-5">
         {[
           ['渠道总数', status?.sources.enabled ?? '—'], ['真正有数据', status?.sources.withData ?? '—'],
           ['实时巡检', status?.sources.monitoringLive ?? '—'], ['延迟 / 失败', status?.sources.monitoringDelayed ?? '—'],
           ['最后调度', time(status?.worker.lastSyncAt, false)],
-        ].map(([label, value]) => <div key={String(label)} className="border-r border-t border-[#242A31] px-4 py-3 first:border-t-0 lg:border-t-0"><p className="text-[9px] text-[#717A84]">{label}</p><p className="mt-1 text-lg font-bold text-white">{value}</p></div>)}
+        ].map(([label, value]) => <div key={String(label)} className="border-r border-t border-[var(--line-1)] px-4 py-3 first:border-t-0 lg:border-t-0"><p className="text-[12px] text-[var(--text-3)]">{label}</p><p className="mt-1 text-lg font-bold text-white">{value}</p></div>)}
       </section>
 
       <section aria-labelledby="source-channel-heading">
-        <div className="flex items-center justify-between border-b border-[#242A31] px-4 py-3"><div><h2 id="source-channel-heading" className="text-xs font-bold text-white">信息渠道</h2><p className="mt-1 text-[9px] text-[#717A84]">选择一个渠道查看其真实消息；每个渠道独立同步、独立失败。</p></div><span className={`text-[9px] ${status?.worker.running ? 'text-[#00E676]' : 'text-[#717A84]'}`}>{status?.worker.running ? '后台监控运行中' : '后台监控已停止'}</span></div>
+        <div className="flex items-center justify-between border-b border-[var(--line-1)] px-4 py-3"><div><h2 id="source-channel-heading" className="text-xs font-bold text-white">信息渠道</h2><p className="mt-1 text-[12px] text-[var(--text-3)]">选择一个渠道查看其真实消息；每个渠道独立同步、独立失败。</p></div><span className={`text-[12px] ${status?.worker.running ? 'text-[var(--success)]' : 'text-[var(--text-3)]'}`}>{status?.worker.running ? '后台监控运行中' : '后台监控已停止'}</span></div>
         <div className="grid xl:grid-cols-4">
-          {groups.map((group, groupIndex) => <section key={group.key} className={groupIndex ? 'border-t border-[#242A31] xl:border-l xl:border-t-0' : ''}>
-            <header className="border-b border-[#242A31] bg-[#090B09] px-3 py-2.5"><div className="flex items-center justify-between"><h3 className="text-[10px] font-bold text-white">{group.title}</h3><span className="text-[9px] text-[#717A84]">{group.items.length}</span></div><p className="mt-0.5 text-[9px] text-[#59616A]">{group.description}</p></header>
-            <div>{group.items.map(source => { const state = freshness(source); const active = source.sourceKey === selectedSourceKey; return <button key={source.sourceKey} onClick={() => setSelectedSourceKey(source.sourceKey)} className={`grid w-full grid-cols-[minmax(0,1fr)_70px] gap-2 border-b border-[#1C211E] px-3 py-2.5 text-left transition-colors ${active ? 'bg-[#0C1710] shadow-[inset_2px_0_0_#00E676]' : 'hover:bg-[#0D100E]'}`}>
-              <span className="min-w-0"><span className={`block truncate text-[10px] font-semibold ${active ? 'text-[#00E676]' : 'text-[#D7DCE2]'}`}>{source.name}</span><span className="mt-1 block truncate text-[8px] text-[#59616A]">{source.config?.originApis?.join(' · ') || source.adapterType}</span><span className="mt-1 block truncate text-[8px]" style={{ color: state.color }}>{state.label} · 检查 {time(source.lastCheckAt)}</span><span className="mt-0.5 block truncate text-[8px] text-[#59616A]">最新事实 {time(source.latestEventAt)}</span></span>
-              <span className="text-right"><span className="block text-sm font-bold text-white">{source.storedEventCount ?? 0}</span><span className="text-[8px] text-[#59616A]">存量</span><span className="mt-1 block text-[8px] text-[#717A84]">收到 {source.lastReceivedCount ?? 0} · 新 {source.lastCreatedCount ?? 0}</span></span>
-            </button>; })}{!group.items.length ? <p className="px-3 py-5 text-[9px] text-[#59616A]">暂无渠道</p> : null}</div>
+          {groups.map((group, groupIndex) => <section key={group.key} className={groupIndex ? 'border-t border-[var(--line-1)] xl:border-l xl:border-t-0' : ''}>
+            <header className="border-b border-[var(--line-1)] bg-[var(--bg-1)] px-3 py-2.5"><div className="flex items-center justify-between"><h3 className="text-[12px] font-bold text-white">{group.title}</h3><span className="text-[12px] text-[var(--text-3)]">{group.items.length}</span></div><p className="mt-0.5 text-[12px] text-[var(--text-3)]">{group.description}</p></header>
+            <div>{group.items.map(source => { const state = freshness(source); const active = source.sourceKey === selectedSourceKey; return <button key={source.sourceKey} onClick={() => setSelectedSourceKey(source.sourceKey)} className={`grid w-full grid-cols-[minmax(0,1fr)_70px] gap-2 border-b border-[var(--line-1)] px-3 py-2.5 text-left transition-colors ${active ? 'bg-[var(--bg-1)] shadow-[inset_2px_0_0_#00E676]' : 'hover:bg-[var(--bg-1)]'}`}>
+              <span className="min-w-0"><span className={`block truncate text-[12px] font-semibold ${active ? 'text-[var(--success)]' : 'text-[var(--text-2)]'}`}>{source.name}</span><span className="mt-1 block truncate text-[12px] text-[var(--text-3)]">{source.config?.originApis?.join(' · ') || source.adapterType}</span><span className="mt-1 block truncate text-[12px]" style={{ color: state.color }}>{state.label} · 检查 {time(source.lastCheckAt)}</span><span className="mt-0.5 block truncate text-[12px] text-[var(--text-3)]">最新事实 {time(source.latestEventAt)}</span></span>
+              <span className="text-right"><span className="block text-sm font-bold text-white">{source.storedEventCount ?? 0}</span><span className="text-[12px] text-[var(--text-3)]">存量</span><span className="mt-1 block text-[12px] text-[var(--text-3)]">收到 {source.lastReceivedCount ?? 0} · 新 {source.lastCreatedCount ?? 0}</span></span>
+            </button>; })}{!group.items.length ? <p className="px-3 py-5 text-[12px] text-[var(--text-3)]">暂无渠道</p> : null}</div>
           </section>)}
         </div>
       </section>
 
-      <section className="border-t border-[#303740]">
-        <div className="flex flex-col gap-3 border-b border-[#242A31] bg-[#090B09] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0"><p className="truncate text-xs font-bold text-white">{selectedSource?.name ?? '请选择信息渠道'}</p><p className="mt-1 truncate text-[9px] text-[#717A84]">{selectedSource ? `${selectedSource.provider} · 最后尝试 ${time(selectedSource.lastSuccessAt)} · 上轮收到 ${selectedSource.lastReceivedCount ?? 0} / 新增 ${selectedSource.lastCreatedCount ?? 0} / 更新 ${selectedSource.lastUpdatedCount ?? 0} · 存量 ${events?.total ?? selectedSource.storedEventCount ?? 0}` : '上方列出全部已接入来源'}</p>{selectedSource?.lastError ? <p className="mt-1 truncate text-[9px] text-[#FFB800]">{selectedSource.lastError}</p> : null}</div>
-          <div className="intelligence-source-controls flex gap-2"><label className="relative min-w-[240px]"><Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[#59616A]"/><input aria-label="搜索当前渠道" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索当前渠道标题或摘要" className="h-8 w-full border border-[#303740] bg-[#050605] pl-8 pr-3 text-[10px] text-white outline-none focus:border-[#00E676]"/></label><button onClick={() => void syncSelected()} disabled={!selectedSource || syncing} className="inline-flex h-8 items-center gap-1.5 border border-[#00E676] px-3 text-[9px] font-bold text-[#00E676] disabled:border-[#303740] disabled:text-[#59616A]"><DatabaseZap className="h-3.5 w-3.5"/>{syncing ? '同步中' : '同步当前渠道'}</button></div>
+      <section className="border-t border-[var(--line-2)]">
+        <div className="flex flex-col gap-3 border-b border-[var(--line-1)] bg-[var(--bg-1)] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0"><p className="truncate text-xs font-bold text-white">{selectedSource?.name ?? '请选择信息渠道'}</p><p className="mt-1 truncate text-[12px] text-[var(--text-3)]">{selectedSource ? `${selectedSource.provider} · 最后尝试 ${time(selectedSource.lastSuccessAt)} · 上轮收到 ${selectedSource.lastReceivedCount ?? 0} / 新增 ${selectedSource.lastCreatedCount ?? 0} / 更新 ${selectedSource.lastUpdatedCount ?? 0} · 存量 ${events?.total ?? selectedSource.storedEventCount ?? 0}` : '上方列出全部已接入来源'}</p>{selectedSource?.lastError ? <p className="mt-1 truncate text-[12px] text-[var(--warning)]">{selectedSource.lastError}</p> : null}</div>
+          <div className="intelligence-source-controls flex gap-2"><label className="relative min-w-[240px]"><Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--text-3)]"/><input aria-label="搜索当前渠道" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索当前渠道标题或摘要" className="h-8 w-full border border-[var(--line-2)] bg-[var(--bg-1)] pl-8 pr-3 text-[12px] text-white outline-none focus:border-[var(--success)]"/></label><button onClick={() => void syncSelected()} disabled={!selectedSource || syncing} className="inline-flex h-8 items-center gap-1.5 border border-[var(--success)] px-3 text-[12px] font-bold text-[var(--success)] disabled:border-[var(--line-2)] disabled:text-[var(--text-3)]"><DatabaseZap className="h-3.5 w-3.5"/>{syncing ? '同步中' : '同步当前渠道'}</button></div>
         </div>
         <div aria-live="polite">{!loadingEvents && selectedSource && !events?.items.length ? <EmptyState title="当前渠道暂无匹配消息" description="清除关键词或同步该渠道后再查看。" /> : null}{events?.items.map(event => <EventRow key={event.id} event={event}/>)}</div>
-        <div className="flex items-center justify-between border-t border-[#242A31] px-4 py-2 text-[9px] text-[#59616A]"><span>{loadingEvents ? '正在读取本地事件库，保留现有结果…' : `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><Link to={selectedSourceKey ? `/investment-monitor/feed?source=${encodeURIComponent(selectedSourceKey)}` : '/investment-monitor/feed'} className="text-[#00E676] hover:underline">进入实时流水</Link></div>
+        <div className="flex items-center justify-between border-t border-[var(--line-1)] px-4 py-2 text-[12px] text-[var(--text-3)]"><span>{loadingEvents ? '正在读取本地事件库，保留现有结果…' : `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><Link to={selectedSourceKey ? `/investment-monitor/feed?source=${encodeURIComponent(selectedSourceKey)}` : '/investment-monitor/feed'} className="text-[var(--success)] hover:underline">进入实时流水</Link></div>
       </section>
     </main>
   </AppPage>;

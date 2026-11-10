@@ -35,9 +35,9 @@ describe('JsonViewer', () => {
       note: 'ok',
     });
 
-    expect(screen.getByText('"status"')).toHaveClass('text-cyan-400');
-    expect(screen.getByText('true')).toHaveClass('text-purple-400');
-    expect(screen.getByText('82')).toHaveClass('text-amber-400');
-    expect(screen.getByText('"ok"')).toHaveClass('text-emerald-400');
+    expect(screen.getByText('"status"')).toHaveClass('text-[var(--chart-1)]');
+    expect(screen.getByText('true')).toHaveClass('text-[var(--text-3)]');
+    expect(screen.getByText('82')).toHaveClass('text-[var(--chart-3)]');
+    expect(screen.getByText('"ok"')).toHaveClass('text-[var(--chart-2)]');
   });
 });

@@ -95,13 +95,13 @@ export function UnifiedStockContextPanel({
   };
 
   return (
-    <section className={cn('overflow-hidden rounded-2xl border border-cyan-400/15 bg-[linear-gradient(120deg,rgba(8,21,36,.94),rgba(14,17,31,.96))] shadow-[0_18px_60px_rgba(0,0,0,.18)]', className)}>
+    <section className={cn('overflow-hidden rounded-2xl border border-[var(--line-2)] bg-[linear-gradient(120deg,rgba(8,21,36,.94),rgba(14,17,31,.96))] shadow-[0_18px_60px_rgba(0,0,0,.18)]', className)}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-4 py-3">
         <div className="flex items-center gap-3">
-          <span className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-300/20 bg-cyan-400/10 text-cyan-300"><Database className="h-4 w-4" /></span>
+          <span className="grid h-9 w-9 place-items-center rounded-xl border border-[var(--line-2)] bg-[var(--bg-3)] text-[var(--text-2)]"><Database className="h-4 w-4" /></span>
           <div>
-            <div className="flex items-center gap-2"><h2 className="text-sm font-semibold text-foreground">{title}</h2><span className="rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-300">本地共享 · 只读事实</span></div>
-            <p className="mt-0.5 text-[11px] text-muted-text">行情、Tushare、公告、研报、小作文、天眼查与股评统一口径</p>
+            <div className="flex items-center gap-2"><h2 className="text-sm font-semibold text-foreground">{title}</h2><span className="rounded-full bg-[var(--success-bg)] px-2 py-0.5 text-[12px] text-[var(--success)]">本地共享 · 只读事实</span></div>
+            <p className="mt-0.5 text-[12px] text-muted-text">行情、公告、研报、机构小作文与股评统一口径</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -117,13 +117,13 @@ export function UnifiedStockContextPanel({
 
       {!activeSymbol ? <div className="px-4 py-5 text-sm text-secondary-text">输入个股代码后，加载该股的全渠道事实底稿；不会触发外部下载。</div> : null}
       {activeSymbol && loading && !data ? <div className="h-28 animate-pulse bg-[linear-gradient(90deg,transparent,rgba(255,255,255,.035),transparent)]" aria-label="正在准备全渠道底稿" /> : null}
-      {quietError && !data ? <div className="px-4 py-5 text-xs text-amber-200/80">{quietError}</div> : null}
+      {quietError && !data ? <div className="px-4 py-5 text-xs text-[color-mix(in_srgb,var(--warning)_80%,transparent)]">{quietError}</div> : null}
       {stock ? (
         <div className="grid gap-0 xl:grid-cols-[1.1fr_1.35fr_.85fr]">
           <div className="border-b border-white/8 p-4 xl:border-b-0 xl:border-r">
             <div className="flex items-baseline gap-2"><strong className="text-lg text-foreground">{stock.name || stock.symbol}</strong><span className="text-xs text-muted-text">{stock.symbol}</span></div>
-            <div className="mt-3 flex items-end gap-3"><span className="font-mono text-3xl font-semibold tracking-tight text-foreground">{number(stock.market.price)}</span><span className={cn('pb-1 text-sm font-semibold', (change ?? 0) >= 0 ? 'text-red-400' : 'text-emerald-400')}>{percent(change)}</span></div>
-            <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]"><span className="text-muted-text">PE TTM<br/><b className="text-secondary-text">{number(stock.valuation.peTtm, 1)}</b></span><span className="text-muted-text">ROE<br/><b className="text-secondary-text">{percent(stock.fundamentals.roe)}</b></span><span className="text-muted-text">净利同比<br/><b className="text-secondary-text">{percent(stock.fundamentals.netProfitYoy)}</b></span></div>
+            <div className="mt-3 flex items-end gap-3"><span className="font-mono text-3xl font-semibold tracking-tight text-foreground">{number(stock.market.price)}</span><span className={cn('pb-1 text-sm font-semibold', (change ?? 0) >= 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]')}>{percent(change)}</span></div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-[12px]"><span className="text-muted-text">PE TTM<br/><b className="text-secondary-text">{number(stock.valuation.peTtm, 1)}</b></span><span className="text-muted-text">ROE<br/><b className="text-secondary-text">{percent(stock.fundamentals.roe)}</b></span><span className="text-muted-text">净利同比<br/><b className="text-secondary-text">{percent(stock.fundamentals.netProfitYoy)}</b></span></div>
           </div>
 
           <div className="border-b border-white/8 p-4 xl:border-b-0 xl:border-r">
@@ -131,7 +131,7 @@ export function UnifiedStockContextPanel({
             <div className="grid grid-cols-3 gap-2">
               {stock.coverage.map((item) => (
                 <div key={item.name} className="rounded-lg border border-white/7 bg-white/[.025] px-2.5 py-2">
-                  <div className="flex items-center justify-between gap-1"><span className="truncate text-[11px] text-secondary-text">{item.name}</span><i className={cn('h-1.5 w-1.5 rounded-full', item.freshnessStatus === 'fresh' ? 'bg-emerald-400' : item.available ? 'bg-amber-400' : 'bg-slate-600')} /></div>
+                  <div className="flex items-center justify-between gap-1"><span className="truncate text-[12px] text-secondary-text">{item.name}</span><i className={cn('h-1.5 w-1.5 rounded-full', item.freshnessStatus === 'fresh' ? 'bg-[var(--success)]' : item.available ? 'bg-[var(--warning)]' : 'bg-[var(--bg-3)]')} /></div>
                   <b className="mt-1 block font-mono text-sm text-foreground">{item.count}</b>
                 </div>
               ))}
@@ -140,12 +140,12 @@ export function UnifiedStockContextPanel({
 
           <div className="p-4">
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-white/[.035] p-3"><Activity className="mb-2 h-4 w-4 text-cyan-300"/><b className="text-xl text-foreground">{stock.evidence.eventCount}</b><p className="text-[10px] text-muted-text">去重决策证据</p></div>
-              <div className="rounded-xl bg-white/[.035] p-3"><ShieldCheck className="mb-2 h-4 w-4 text-emerald-300"/><b className="text-xl text-foreground">{stock.evidence.factualCount}</b><p className="text-[10px] text-muted-text">事实/已报告</p></div>
+              <div className="rounded-xl bg-white/[.035] p-3"><Activity className="mb-2 h-4 w-4 text-[var(--text-2)]"/><b className="text-xl text-foreground">{stock.evidence.eventCount}</b><p className="text-[12px] text-muted-text">去重决策证据</p></div>
+              <div className="rounded-xl bg-white/[.035] p-3"><ShieldCheck className="mb-2 h-4 w-4 text-[var(--success)]"/><b className="text-xl text-foreground">{stock.evidence.factualCount}</b><p className="text-[12px] text-muted-text">事实/已报告</p></div>
             </div>
-            <div className="mt-3 grid gap-1.5 text-[11px] text-secondary-text"><span>机构 {stock.institution.researchCount} · 公告 {stock.company.announcementCount}</span><span>小作文 {stock.alternative.essayCount} · 股评 {stock.stockComments.count}</span></div>
-            <Link to={`/super-watchlist?symbol=${encodeURIComponent(stock.symbol)}`} className="mt-3 inline-flex items-center gap-1 text-xs text-cyan-300 hover:text-cyan-200">打开完整证据工作台 <ArrowRight className="h-3 w-3" /></Link>
-            {quietError ? <p className="mt-2 text-[10px] text-amber-200/70">{quietError}</p> : null}
+            <div className="mt-3 grid gap-1.5 text-[12px] text-secondary-text"><span>机构 {stock.institution.researchCount} · 公告 {stock.company.announcementCount}</span><span>小作文 {stock.alternative.essayCount} · 股评 {stock.stockComments.count}</span></div>
+            <Link to={`/super-watchlist?symbol=${encodeURIComponent(stock.symbol)}`} className="mt-3 inline-flex items-center gap-1 text-xs text-[var(--text-2)] hover:text-[var(--text-2)]">打开完整证据工作台 <ArrowRight className="h-3 w-3" /></Link>
+            {quietError ? <p className="mt-2 text-[12px] text-[color-mix(in_srgb,var(--warning)_70%,transparent)]">{quietError}</p> : null}
           </div>
         </div>
       ) : null}

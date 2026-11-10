@@ -12,22 +12,24 @@ interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   style?: React.CSSProperties;
 }
 
+/* Tag 只有三种长相：status（语义色浅底）、neutral（中性底）、brand（品牌浅底）。
+   info/history 是历史遗留名，按语义归入 status 与 neutral，不再另起颜色。 */
 const variantStyles: Record<BadgeVariant, string> = {
-  default: 'border-border/55 bg-elevated/75 text-secondary-text',
-  success: 'border-success/20 bg-success/10 text-success',
-  warning: 'border-warning/20 bg-warning/10 text-warning',
-  danger: 'border-danger/20 bg-danger/10 text-danger',
-  info: 'border-cyan/30 bg-cyan/12 text-cyan',
-  history: 'border-purple/20 bg-purple/10 text-purple',
+  default: 'border-transparent bg-[var(--bg-2)] text-[var(--text-3)]',
+  success: 'border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success)]',
+  warning: 'border-[var(--warning-border)] bg-[var(--warning-bg)] text-[var(--warning)]',
+  danger: 'border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger)]',
+  info: 'border-transparent bg-[var(--brand-tint-08)] text-[var(--brand-text)]',
+  history: 'border-transparent bg-[var(--bg-2)] text-[var(--text-3)]',
 };
 
 const glowStyles: Record<BadgeVariant, string> = {
   default: '',
-  success: 'shadow-success/20',
-  warning: 'shadow-warning/20',
-  danger: 'shadow-danger/20',
-  info: 'shadow-cyan/20',
-  history: 'shadow-purple/20',
+  success: '',
+  warning: '',
+  danger: '',
+  info: '',
+  history: '',
 };
 
 /**
@@ -42,17 +44,19 @@ export const Badge: React.FC<BadgeProps> = ({
   style,
   ...rest
 }) => {
-  const sizeStyles = size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm';
+  const sizeStyles = size === 'sm'
+    ? 'h-5 px-2 text-[length:var(--fs-caption)] leading-[16px]'
+    : 'h-7 px-2 text-[length:var(--fs-sm)] leading-[20px]';
 
   return (
     <span
       {...rest}
       style={style}
       className={cn(
-        'inline-flex items-center gap-1 rounded-full border font-medium backdrop-blur-sm',
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-[var(--radius-tag)] border font-medium',
         sizeStyles,
         variantStyles[variant],
-        glow && `shadow-lg ${glowStyles[variant]}`,
+        glow && glowStyles[variant],
         className,
       )}
     >

@@ -194,6 +194,8 @@ def _warn_if_open_cors_without_auth() -> None:
     )
 
 from api.v1 import api_v1_router
+from api.middlewares.compression import PathAwareGZipMiddleware
+from api.middlewares.timing import RequestTimingMiddleware
 from api.middlewares.auth import add_auth_middleware
 from api.middlewares.feature_availability import FeatureAvailabilityMiddleware, unavailable_feature_response
 from api.middlewares.error_handler import add_error_handlers
@@ -358,6 +360,7 @@ async def app_lifespan(app: FastAPI):
     data_storage_worker = None
     essay_quant_worker = None
     essay_quant_task_manager = None
+    essay_export_service = None
     industry_research_task_manager = None
     concept_theme_worker = None
     if os.getenv("DATA_STORAGE_MAINTENANCE_AUTO_START", "true").strip().lower() in {"1", "true", "yes", "on"}:
@@ -426,6 +429,14 @@ async def app_lifespan(app: FastAPI):
         app.state.essay_quant_task_manager = essay_quant_task_manager
     except Exception as exc:  # noqa: BLE001 - user tasks must not prevent API startup.
         logger.warning("Essay quant task manager did not start: %s", exc)
+    try:
+        from src.services.essay_export_service import get_essay_export_service
+
+        essay_export_service = get_essay_export_service()
+        essay_export_service.start_worker()
+        app.state.essay_export_service = essay_export_service
+    except Exception as exc:  # noqa: BLE001 - preserve API if export storage is unavailable.
+        logger.warning("Essay export worker did not start: %s", exc)
     try:
         from src.services.industry_research_service import IndustryResearchTaskManager
 
@@ -498,9 +509,32 @@ async def app_lifespan(app: FastAPI):
             ai_news_service.start()
         except Exception:
             logger.exception("AI news background refresh unavailable; main service remains available")
+    import threading
+
+    def _warm_heavy_dashboards():
+        try:
+            from src.services.essay_quant_service import EssayQuantService
+
+            EssayQuantService().latest_dashboard()
+            EssayQuantService().latest_institution_dashboard()
+        except Exception:
+            logger.warning("warm essay-quant dashboards failed", exc_info=True)
+        try:
+            from src.services.investment_monitor_service import InvestmentMonitorService
+
+            InvestmentMonitorService().intelligence_dashboard(days=14)
+        except Exception:
+            logger.warning("warm intelligence dashboard failed", exc_info=True)
+
+    threading.Thread(target=_warm_heavy_dashboards, daemon=True).start()
+
     try:
         yield
     finally:
+        if essay_export_service is not None:
+            essay_export_service.stop_worker()
+            if hasattr(app.state, "essay_export_service"):
+                delattr(app.state, "essay_export_service")
         if ai_news_service is not None:
             ai_news_service.stop()
         # Stop supervision first so it cannot restart a worker while the API is
@@ -640,7 +674,9 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.add_middleware(GZipMiddleware, minimum_size=1_024, compresslevel=5)
+    app.add_middleware(PathAwareGZipMiddleware, minimum_size=1_024, compresslevel=5)
+    # 慢请求（>=200ms）落 WARNING，正常请求不写日志。
+    app.add_middleware(RequestTimingMiddleware)
 
     # Authentication stays outermost; retired routes cannot bypass login.
     app.add_middleware(FeatureAvailabilityMiddleware)
@@ -653,32 +689,100 @@ def create_app(static_dir: Optional[Path] = None) -> FastAPI:
     app.include_router(api_v1_router, prefix="/api/v1")
     add_error_handlers(app)
 
-    @app.on_event("startup")
-    def _warm_heavy_dashboards():
-        import threading
+    # Health probes must not be swallowed by the SPA fallback. Reuse the
+    # canonical endpoint so all deployment aliases retain one JSON contract.
+    from api.v1.endpoints.health import health_check
 
-        def run():
-            try:
-                from src.services.essay_quant_service import EssayQuantService
+    for health_path in ("/health", "/api/health"):
+        app.add_api_route(
+            health_path,
+            health_check,
+            methods=["GET", "HEAD"],
+            include_in_schema=False,
+        )
 
-                EssayQuantService().latest_dashboard()
-                EssayQuantService().latest_institution_dashboard()
-            except Exception:
-                pass
-            try:
-                from src.services.investment_monitor_service import InvestmentMonitorService
+    # Only marketing screenshots are public under /landing/. Do not let this
+    # auth exemption expose arbitrary files or fall through to SPA HTML.
+    @app.api_route("/landing/{image_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def landing_image(image_path: str):
+        image = _resolve_asset_path(static_dir / "landing", image_path)
+        media_type = _LANDING_IMAGE_MEDIA_TYPES.get(image.suffix.lower()) if image else None
+        if image is None or media_type is None or not image.is_file():
+            return Response(
+                content="Not Found",
+                status_code=404,
+                media_type="text/plain",
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            )
+        return FileResponse(
+            image,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"},
+        )
 
-                InvestmentMonitorService().intelligence_dashboard(days=14)
-            except Exception:
-                pass
+    # Isolated Vite entries have their own build roots, but use the shared
+    # public /assets namespace. These routes must precede both /assets/* and
+    # the SPA: returning index.html for an imported module blanks the login.
+    asset_responder = StaticFiles(directory=str(static_dir), check_dir=False)
 
-        threading.Thread(target=run, daemon=True).start()
+    def _serve_asset(request: Request, asset_path: str, roots: tuple[Path, ...]):
+        for root in roots:
+            candidate = _resolve_asset_path(root, asset_path)
+            if candidate is None:
+                return Response("not found", status_code=404, media_type="text/plain",
+                                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+            # Public build assets are not an alternative document entrypoint.
+            if candidate.suffix.lower() in {".html", ".htm"} or not candidate.is_file():
+                continue
+            relative = candidate.relative_to(static_dir.resolve()).as_posix()
+            feature = unavailable_feature_for_path("/" + relative)
+            if feature is not None:
+                return unavailable_feature_response(request.url.path, feature)
+            response = asset_responder.file_response(candidate, candidate.stat(), request.scope)
+            if response.status_code != 304:
+                media_type = _frontend_asset_media_type(str(candidate))
+                if media_type:
+                    response.headers["Content-Type"] = media_type
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+        return Response("asset not found", status_code=404, media_type=_missing_asset_media_type(asset_path),
+                        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+    @app.api_route("/assets/account-access/{asset_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def account_access_asset(request: Request, asset_path: str):
+        return _serve_asset(request, asset_path, (
+            static_dir / "account-access", static_dir / "assets" / "account-access",
+        ))
+
+    @app.api_route("/assets/ai-news/{asset_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def ai_news_asset(request: Request, asset_path: str):
+        return _serve_asset(request, asset_path, (
+            static_dir / "ai-news", static_dir / "assets" / "ai-news",
+        ))
+
+    @app.api_route("/assets/{asset_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def frontend_asset(request: Request, asset_path: str):
+        return _serve_asset(request, asset_path, (static_dir / "assets",))
+
     
     # ============================================================
     # 根路由和健康检查
     # ============================================================
     
     has_frontend = static_dir.exists() and (static_dir / "index.html").exists()
+
+    @app.api_route("/stocks.index.json", methods=["GET", "HEAD"], include_in_schema=False)
+    async def stock_index(request: Request):
+        remote = get_remote_stock_index_cache_path()
+        path = find_existing_stock_index_path((remote, static_dir / _STOCK_INDEX_FILENAME), remote_cache_path=remote)
+        if path is None:
+            path = find_existing_stock_index_path((_bundled_stock_index_path(),), remote_cache_path=remote)
+        _schedule_stock_index_background_refresh(request.app, "serve-stock-index")
+        if path is None:
+            return Response("stock index not found", status_code=404, media_type="text/plain",
+                            headers={"Cache-Control": "no-store"})
+        return FileResponse(path, media_type="application/json", headers=_STOCK_INDEX_HEADERS)
 
     ai_news_index = static_dir / "ai-news" / "ai-news.html"
     if ai_news_index.is_file():

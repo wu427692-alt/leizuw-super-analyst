@@ -4,13 +4,18 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
-from datetime import datetime, timedelta
+from contextlib import contextmanager
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 import json
+from pathlib import Path
+import sqlite3
 import threading
 import time
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
-from sqlalchemy import and_, asc, case, desc, func, or_, select
+from sqlalchemy import and_, asc, case, create_engine, desc, func, or_, select, text
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from src.storage import DatabaseManager, EssayAnalysisRecord, ResearchNote, utc_naive_now
 from src.research_note_assets import (
@@ -120,6 +125,36 @@ def _feed_keyword_conditions(keyword: str, query_scope: str) -> Tuple[List[Any],
                 EssayAnalysisRecord.stock_mentions_json.like(pattern, escape="\\"),
             ))
     return note_conditions, analysis_conditions
+
+
+def feed_date_bounds(start_date: Optional[str], end_date: Optional[str]) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """Inclusive Shanghai calendar dates against UTC-naive note timestamps.
+
+    Explicit calendar bounds replace a relative-days cutoff, even when only
+    one bound is supplied. Never approximate a historical range as days ago.
+    """
+    parsed = []
+    for name, value in (("start_date", start_date), ("end_date", end_date)):
+        if value in (None, ""):
+            parsed.append(None)
+            continue
+        try:
+            day = date.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} 必须是有效的 YYYY-MM-DD 日期") from None
+        if day.isoformat() != str(value):
+            raise ValueError(f"{name} 必须使用 YYYY-MM-DD 日期格式")
+        parsed.append(day)
+    start, end = parsed
+    if start and end and start > end:
+        raise ValueError("start_date 不得晚于 end_date")
+    shanghai = timezone(timedelta(hours=8))
+    def utc_midnight(day):
+        return datetime.combine(day, datetime_time.min, tzinfo=shanghai).astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        return utc_midnight(start) if start else None, utc_midnight(end + timedelta(days=1)) if end else None
+    except OverflowError:
+        raise ValueError("日期超出支持的时间范围") from None
 
 
 class EssayAnalysisRepository:
@@ -599,17 +634,39 @@ class EssayAnalysisRepository:
         if cutoff is not None:
             conditions.append(ResearchNote.created_at >= cutoff)
         where_clause = and_(*conditions) if conditions else True
-        with self.db.get_session() as session:
-            rows = session.execute(
-                select(EssayAnalysisRecord.status, func.count(EssayAnalysisRecord.id))
-                .join(ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
-                .where(where_clause)
-                .group_by(EssayAnalysisRecord.status)
-            ).all()
-            status_counts = {str(status): int(count or 0) for status, count in rows}
-            total_notes = session.execute(
-                select(func.count(ResearchNote.id)).where(where_clause)
-            ).scalar() or 0
+        # 计划器原来会从 essay_analysis_records 出发扫状态索引、再逐行回查 notes，
+        # 30 天窗口下实测 5–18s。用 MATERIALIZED CTE 强制"先按时间过滤 notes"，
+        # 实测热态 ~120ms。
+        if cutoff is not None:
+            counts_sql = text(
+                """
+                WITH recent AS MATERIALIZED (
+                    SELECT topic_id FROM research_notes WHERE created_at >= :cutoff
+                )
+                SELECT a.status AS status, COUNT(a.id) AS cnt
+                FROM recent JOIN essay_analysis_records a ON a.topic_id = recent.topic_id
+                GROUP BY a.status
+                """
+            )
+            notes_sql = text(
+                "SELECT COUNT(id) FROM research_notes WHERE created_at >= :cutoff"
+            )
+            params = {"cutoff": cutoff}
+            with self.db.get_session() as session:
+                rows = session.execute(counts_sql, params).all()
+                status_counts = {str(status): int(count or 0) for status, count in rows}
+                total_notes = session.execute(notes_sql, params).scalar() or 0
+        else:
+            with self.db.get_session() as session:
+                rows = session.execute(
+                    select(EssayAnalysisRecord.status, func.count(EssayAnalysisRecord.id))
+                    .join(ResearchNote, ResearchNote.topic_id == EssayAnalysisRecord.topic_id)
+                    .group_by(EssayAnalysisRecord.status)
+                ).all()
+                status_counts = {str(status): int(count or 0) for status, count in rows}
+                total_notes = session.execute(
+                    select(func.count(ResearchNote.id))
+                ).scalar() or 0
         analyzed = status_counts.get("completed", 0)
         media_only = status_counts.get("media_only", 0)
         ai_eligible_notes = max(0, int(total_notes) - media_only)
@@ -680,6 +737,8 @@ class EssayAnalysisRepository:
         self,
         *,
         cutoff: Optional[datetime] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         query: Optional[str] = None,
         query_scope: str = "full",
         analysis_status: Optional[str] = None,
@@ -700,6 +759,8 @@ class EssayAnalysisRepository:
         """
         filters = dict(
             cutoff=cutoff,
+            start_date=start_date,
+            end_date=end_date,
             query=query,
             query_scope=query_scope,
             analysis_status=analysis_status,
@@ -782,6 +843,8 @@ class EssayAnalysisRepository:
         self,
         *,
         cutoff: Optional[datetime] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         query: Optional[str] = None,
         query_scope: str = "full",
         analysis_status: Optional[str] = None,
@@ -795,6 +858,8 @@ class EssayAnalysisRepository:
         """Iterate every matching note without offset pagination for exports."""
         where_clause, _cache_key = self._feed_where_clause(
             cutoff=cutoff,
+            start_date=start_date,
+            end_date=end_date,
             query=query,
             query_scope=query_scope,
             analysis_status=analysis_status,
@@ -819,6 +884,83 @@ class EssayAnalysisRepository:
             for analysis, note in rows:
                 yield self._to_feed_dict(analysis, note)
 
+    @contextmanager
+    def _export_read_session(self):
+        """Use a separate read-only connection, never poison the write pool.
+
+        SQLite needs an explicit BEGIN before the count: its implicit Python
+        transaction otherwise does not cover two SELECT statements. The export
+        membership and its factual count consequently share one source snapshot.
+        """
+        with self.db.get_session() as source_session:
+            source_engine = source_session.get_bind()
+            url = source_engine.url
+            if url.get_backend_name() != "sqlite" or not url.database or url.database == ":memory:":
+                # Primarily for injected in-memory test databases / other SQL
+                # backends; production file SQLite always takes mode=ro below.
+                yield source_session
+                return
+            uri = Path(url.database).absolute().as_uri() + "?mode=ro"
+        reader = create_engine(
+            "sqlite://", creator=lambda: sqlite3.connect(uri, uri=True, timeout=30),
+            poolclass=NullPool,
+        )
+        try:
+            with reader.connect() as connection:
+                connection.exec_driver_sql("PRAGMA query_only=ON")
+                connection.exec_driver_sql("BEGIN")
+                with Session(bind=connection, autoflush=False) as session:
+                    yield session
+                connection.rollback()
+        finally:
+            reader.dispose()
+
+    def iter_export_snapshot(self, *, requested_limit=None, batch_size=250, **filters):
+        """Yield a factual count followed by ordered, frozen membership batches.
+
+        This iterator never reads bodies or invokes analysis/attachment services.
+        Batch size is a memory bound, not a total-result limit.
+        """
+        allowed = {"cutoff", "start_date", "end_date", "query", "query_scope", "analysis_status",
+                   "sentiment", "category", "tag", "stock", "min_importance"}
+        params = {name: filters.get(name) for name in allowed}
+        params["query_scope"] = params.get("query_scope") or "full"
+        where_clause, _ = self._feed_where_clause(**params)
+        with self._export_read_session() as session:
+            total = int(session.execute(self._feed_count_statement(where_clause, params)).scalar() or 0)
+            target = min(total, requested_limit) if requested_limit is not None else total
+            yield {"total": total, "target_total": target, "items": [], "done": False}
+            statement = (
+                select(ResearchNote.id, ResearchNote.topic_id).select_from(ResearchNote)
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(where_clause).order_by(desc(ResearchNote.created_at), desc(ResearchNote.id))
+            )
+            if requested_limit is not None:
+                statement = statement.limit(target)
+            rows = session.execute(statement.execution_options(yield_per=batch_size))
+            batch = []
+            for note_id, topic_id in rows:
+                batch.append((int(note_id), str(topic_id)))
+                if len(batch) >= batch_size:
+                    yield {"items": batch, "done": False}
+                    batch = []
+            if batch:
+                yield {"items": batch, "done": False}
+            yield {"items": [], "done": True}
+
+    def export_payloads(self, topic_ids: Sequence[str]) -> Iterator[Dict[str, Any]]:
+        """Read a frozen membership batch, without re-applying mutable filters."""
+        if not topic_ids:
+            return
+        with self._export_read_session() as session:
+            rows = session.execute(
+                select(EssayAnalysisRecord, ResearchNote).select_from(ResearchNote)
+                .outerjoin(EssayAnalysisRecord, EssayAnalysisRecord.topic_id == ResearchNote.topic_id)
+                .where(ResearchNote.topic_id.in_(list(topic_ids)))
+            )
+            for analysis, note in rows:
+                yield self._to_feed_dict(analysis, note)
+
     def _feed_where_clause(
         self,
         *,
@@ -831,9 +973,16 @@ class EssayAnalysisRepository:
         tag: Optional[str],
         stock: Optional[str],
         min_importance: Optional[int],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> Tuple[Any, Tuple[Any, ...]]:
         conditions = []
-        if cutoff is not None:
+        calendar_start, calendar_end = feed_date_bounds(start_date, end_date)
+        if calendar_start is not None:
+            conditions.append(ResearchNote.created_at >= calendar_start)
+        if calendar_end is not None:
+            conditions.append(ResearchNote.created_at < calendar_end)
+        if calendar_start is None and calendar_end is None and cutoff is not None:
             conditions.append(ResearchNote.created_at >= cutoff)
         normalized_query_scope = "title" if str(query_scope or "").strip().lower() == "title" else "full"
         for keyword in str(query or "").split():
@@ -879,7 +1028,9 @@ class EssayAnalysisRepository:
         where_clause = and_(*conditions) if conditions else True
         count_cache_key = (
             id(self.db),
-            cutoff.replace(second=0, microsecond=0).isoformat() if cutoff else None,
+            cutoff.replace(second=0, microsecond=0).isoformat() if cutoff and calendar_start is None and calendar_end is None else None,
+            calendar_start.isoformat() if calendar_start else None,
+            calendar_end.isoformat() if calendar_end else None,
             " ".join(str(query or "").split()),
             normalized_query_scope,
             analysis_status or "",

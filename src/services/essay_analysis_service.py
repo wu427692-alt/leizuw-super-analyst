@@ -26,7 +26,7 @@ from json_repair import repair_json
 from src.config import get_config
 from src.data.stock_index_loader import get_stock_name_index_map
 from src.repositories.essay_daily_report_repo import EssayDailyReportRepository
-from src.repositories.essay_analysis_repo import EssayAnalysisRepository
+from src.repositories.essay_analysis_repo import EssayAnalysisRepository, feed_date_bounds
 from src.llm.provider_schedule import (
     DirectChatRoute,
     active_direct_model,
@@ -921,14 +921,18 @@ class EssayAnalysisService:
         days = max(0, min(int(filters.pop("days", 0) or 0), 3650))
         page = max(1, int(filters.get("page") or 1))
         page_size = max(1, min(int(filters.get("page_size") or 20), 100))
-        cutoff = utc_naive_now() - timedelta(days=days) if days else None
+        start_date, end_date = filters.get("start_date"), filters.get("end_date")
+        explicit_dates = bool(start_date or end_date)
+        feed_date_bounds(start_date, end_date)
+        cutoff = utc_naive_now() - timedelta(days=days) if days and not explicit_dates else None
         rows, total = self.repo.list_feed(cutoff=cutoff, **filters)
         return {
             "items": rows,
             "total": total,
             "page": page,
             "page_size": page_size,
-            "scope": "all_stored_notes" if cutoff is None else f"last_{days}_days",
+            "scope": "calendar_date_range" if explicit_dates else "all_stored_notes" if cutoff is None else f"last_{days}_days",
+            **({"start_date": start_date, "end_date": end_date, "date_timezone": "Asia/Shanghai"} if explicit_dates else {}),
         }
 
     def export_feed_excel(self, **filters: Any) -> Dict[str, Any]:
@@ -937,13 +941,18 @@ class EssayAnalysisService:
         selected_topic_ids = list(dict.fromkeys(
             str(value).strip() for value in (filters.pop("topic_ids", None) or []) if str(value).strip()
         ))
-        cutoff = utc_naive_now() - timedelta(days=days) if days else None
+        start_date, end_date = filters.get("start_date"), filters.get("end_date")
+        explicit_dates = bool(start_date or end_date)
+        feed_date_bounds(start_date, end_date)
+        cutoff = utc_naive_now() - timedelta(days=days) if days and not explicit_dates else None
         export_filters = {
             key: filters.get(key)
             for key in (
                 "query", "query_scope", "analysis_status", "sentiment", "category", "tag", "stock", "min_importance",
             )
         }
+        if explicit_dates:
+            export_filters.update(start_date=start_date, end_date=end_date)
         workbook = Workbook(write_only=True)
         result_sheet = workbook.create_sheet("搜索结果与分析标签")
         raw_sheet = workbook.create_sheet("原文全文")
@@ -1025,7 +1034,7 @@ class EssayAnalysisService:
             ("导出时间", datetime.now().astimezone().isoformat(timespec="seconds")),
             ("匹配数量", row_count),
             ("原文分段数量", raw_chunk_count),
-            ("时间范围", f"近 {days} 日" if days else "全部已入库"),
+            ("时间范围", f"{start_date or '最早已入库'} 至 {end_date or '最新已入库'}（上海日期，含首尾）" if explicit_dates else f"近 {days} 日" if days else "全部已入库"),
             ("关键词", export_filters.get("query") or ""),
             ("检索范围", "仅标题" if export_filters.get("query_scope") == "title" else "全文与分析标签"),
             ("AI状态", export_filters.get("analysis_status") or "全部"),

@@ -256,7 +256,7 @@ const TokenUsagePage: React.FC = () => {
               <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/75 shadow-soft-card">
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-border/70 text-sm">
-                    <thead className="bg-surface-2/70 text-left text-xs uppercase tracking-[0.16em] text-secondary-text">
+                    <thead className="bg-surface-2/70 text-left text-xs uppercase tracking-normal text-secondary-text">
                       <tr>
                         <th className="px-4 py-3 font-medium">{t('usage.table.time')}</th>
                         <th className="px-4 py-3 font-medium">{t('usage.table.type')}</th>

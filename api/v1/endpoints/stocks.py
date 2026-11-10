@@ -69,21 +69,37 @@ def refresh_market_data():
 @router.get("/market-data/realtime", response_model=List[StockQuote], summary="批量读取本地秒级最新行情")
 def get_realtime_market_data(
     symbols: str = Query(..., min_length=1, description="逗号分隔股票代码，最多100只"),
-    refresh_missing: bool = Query(True, description="首次缺失时立即向上游补采一次"),
+    refresh_missing: bool = Query(False, description="缺失时是否在本次请求里同步回源（默认不，改为唤醒后台采集）"),
 ) -> List[StockQuote]:
     from src.services.market_data_service import MarketDataService
 
     codes = [item.strip() for item in symbols.split(",") if item.strip()]
     if len(codes) > 100:
-        raise HTTPException(status_code=422, detail={"error": "too_many_symbols", "message": "一次最多查询100只"})
-    return [StockQuote(**item) for item in MarketDataService().latest_quotes(codes, refresh_missing=refresh_missing)]
+        raise HTTPException(status_code=422, detail={"error": "too_many_symbols", "message": "一次最多查100只"})
+    quotes = MarketDataService().latest_quotes(codes, refresh_missing=refresh_missing)
+    # 读路径不回源：缺数据时只唤醒后台采集，下个轮询周期自然变新。
+    # 同步回源会撞上各数据源 2–5 秒的节流睡眠，把 P99 从 30ms 拉到 10s+。
+    if not refresh_missing and any(item.get("is_stale") or item.get("current_price") in (None, 0) for item in quotes):
+        try:
+            from src.services.market_data_worker import MarketDataWorker
+            MarketDataWorker.get_instance().trigger()
+        except Exception:  # 唤醒失败不影响本次读取
+            pass
+    return [StockQuote(**item) for item in quotes]
 
 
 @router.get("/market-data/realtime-indices", summary="批量读取本地秒级指数行情")
 def get_realtime_indices(symbols: Optional[str] = Query(None, description="留空时返回完整配置指数池")):
     from src.services.market_data_service import MarketDataService
     codes = [item.strip() for item in symbols.split(",") if item.strip()] if symbols else None
-    return MarketDataService().latest_index_quotes(codes, refresh_missing=True)
+    quotes = MarketDataService().latest_index_quotes(codes, refresh_missing=False)
+    if any(item.get("is_stale") or item.get("current_price") in (None, 0) for item in quotes):
+        try:
+            from src.services.market_data_worker import MarketDataWorker
+            MarketDataWorker.get_instance().trigger()
+        except Exception:  # 唤醒失败不影响本次读取
+            pass
+    return quotes
 
 
 @router.get("/market-data/index/{symbol}", response_model=StockHistoryResponse, summary="获取本地优先的指数多周期行情")

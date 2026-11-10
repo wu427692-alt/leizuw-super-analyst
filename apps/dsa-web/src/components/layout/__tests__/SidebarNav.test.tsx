@@ -39,8 +39,8 @@ vi.mock('../../theme/ThemeToggle', () => ({
 
 describe('SidebarNav', () => {
   it.each([
-    ['zh', ['市场总览', '题材图谱', '自选看板', '深度研究', '任务中心', 'AI 热点', '机构纪要与录音', '量化研究', '数据下载', 'AI 问股', '使用指南']],
-    ['en', ['Market Overview', 'Theme Map', 'Watchlist', 'Deep Research', 'Task Center', 'AI News', 'Institutional Notes & Audio', 'Quant Research', 'Data Downloads', 'AI Stock Q&A', 'User Guide']],
+    ['zh', ['投研团队', '行情', '总览', '题材图谱', '自选看板', '深度研究', '任务中心', 'AI 热点', '机构纪要与录音', '量化研究', '数据下载', 'AI 问股', '使用指南']],
+    ['en', ['Research Team', 'Markets', 'Overview', 'Theme Map', 'Watchlist', 'Deep Research', 'Task Center', 'AI News', 'Institutional Notes & Audio', 'Quant Research', 'Data Downloads', 'AI Stock Q&A', 'User Guide']],
   ] as const)('uses concise and complete %s workspace names in the expanded and collapsed sidebar', (language, labels) => {
     const previousLanguage = localStorage.getItem(UI_LANGUAGE_STORAGE_KEY);
     localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, language);
@@ -67,7 +67,7 @@ describe('SidebarNav', () => {
     render(<MemoryRouter initialEntries={['/ai-news']}><SidebarNav documentNavigation /></MemoryRouter>);
     expect(mockGetAlphaSiftStatus).not.toHaveBeenCalled();
     expect(screen.getByRole('link', { name: 'AI 热点' })).toHaveAttribute('aria-current', 'page');
-    for (const label of ['市场总览', '自选看板', '管理员']) {
+    for (const label of ['行情', '自选看板', '管理员']) {
       const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
       screen.getByRole('link', { name: label }).dispatchEvent(click);
       expect(click.defaultPrevented).toBe(false);
@@ -97,7 +97,7 @@ describe('SidebarNav', () => {
     expect(await screen.findByRole('link', { name: '智能选股' })).toHaveAttribute('href', '/screening');
   });
 
-  it('keeps five decision workspaces before research tools', async () => {
+  it('keeps the new team and five decision workspaces before research tools', async () => {
     mockGetAlphaSiftStatus.mockResolvedValueOnce({ enabled: true, available: false, installSpecIsDefault: false });
 
     render(
@@ -108,7 +108,9 @@ describe('SidebarNav', () => {
 
     await screen.findByRole('link', { name: '智能选股' });
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs.slice(0, 13)).toEqual([
+    expect(hrefs).toEqual([
+      '/home',
+      '/meeting',
       '/app',
       '/concept-themes',
       '/super-watchlist',

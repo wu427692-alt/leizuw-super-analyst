@@ -10,6 +10,7 @@ type NetworkInformationLike = {
 const ROUTE_LOADERS: Array<{ match: (pathname: string) => boolean; load: () => RouteModule }> = [
   { match: (path) => path === '/meeting', load: () => import('../pages/InvestmentMeetingPage') },
   { match: (path) => path === '/app' || path === '/dashboard', load: () => import('../pages/MarketDashboardPage') },
+  { match: (path) => path === '/home', load: () => import('../pages/WorkbenchPage') },
   { match: (path) => path.startsWith('/industry-research'), load: () => import('../pages/IndustryResearchPage') },
   { match: (path) => path.startsWith('/concept-themes'), load: () => import('../pages/ConceptThemesPage') },
   { match: (path) => path.startsWith('/tasks'), load: () => import('../pages/TasksHubPage') },

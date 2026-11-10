@@ -35,7 +35,8 @@ describe('MarketTimeframeChart recovery', () => {
 
     expect(await screen.findByText('行情连接正在恢复，页面会自动重试…')).toBeInTheDocument();
     await waitFor(() => expect(mockGetMarketSeries).toHaveBeenCalledTimes(2), { timeout: 3_000 });
-    expect(await screen.findByText(/2 个分钟点/)).toBeInTheDocument();
+    // 技术说明行（「N 个分钟点 · 来源」）已按设计删除，改为断言图表指标区已渲染
+    expect(await screen.findByRole('group', { name: '最新' })).toBeInTheDocument();
     expect(screen.queryByText('行情连接正在恢复，页面会自动重试…')).not.toBeInTheDocument();
   });
 
@@ -103,7 +104,7 @@ describe('MarketTimeframeChart recovery', () => {
       expect(screen.getByRole('button', { name: '2年' })).toHaveAttribute('aria-pressed', 'false');
       expect(within(screen.getByRole('group', { name: '最新' })).getByText('142.75')).toBeInTheDocument();
       expect(screen.getByText('2026-08-21')).toBeInTheDocument();
-      expect(screen.getByText(/3 个数据点/)).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: '最新' })).toBeInTheDocument();
       expect(screen.queryByText('正在读取本地行情数据库…')).not.toBeInTheDocument();
       screen.getAllByTestId('market-chart').forEach((chart, index) => {
         expect(chart).toBe(savedCharts[index]);

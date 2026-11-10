@@ -460,7 +460,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
         role="button"
         tabIndex={0}
       >
-        <span className={`w-4 shrink-0 text-[11px] text-muted-text transition-transform ${expanded ? 'rotate-90' : ''}`}>▶</span>
+        <span className={`w-4 shrink-0 text-[12px] text-muted-text transition-transform ${expanded ? 'rotate-90' : ''}`}>▶</span>
 
         <input
           type="checkbox"
@@ -478,7 +478,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
               {channel.protocol}
             </Badge>
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-secondary-text">
+          <p className="mt-0.5 truncate text-[12px] text-secondary-text">
             {modelCount > 0 ? `${modelCount} 个模型已配置` : '未配置模型'}
           </p>
         </div>
@@ -519,7 +519,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-8 shrink-0 px-2 text-xs text-muted-text hover:text-rose-300"
+              className="h-8 shrink-0 px-2 text-xs text-muted-text hover:text-[var(--danger)]"
               disabled={busy}
               onClick={(e) => {
                 e.stopPropagation();
@@ -594,7 +594,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
           {showProviderTemplateDetails ? (
             <div className="space-y-2 rounded-xl border border-[var(--settings-border)] bg-[var(--settings-surface-hover)] p-3">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-medium text-muted-text">配置参考</span>
+                <span className="text-[12px] font-medium text-muted-text">配置参考</span>
                 {providerCapabilities.map((capability) => {
                   const capabilityMeta = LLM_PROVIDER_CAPABILITY_LABELS[capability];
                   return (
@@ -609,10 +609,10 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                 })}
               </div>
               {providerHint ? (
-                <p className="text-[11px] leading-5 text-secondary-text">{providerHint}</p>
+                <p className="text-[12px] leading-5 text-secondary-text">{providerHint}</p>
               ) : null}
               {providerSources.length > 0 ? (
-                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-5 text-secondary-text">
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] leading-5 text-secondary-text">
                   <span>官方来源：</span>
                   {providerSources.map((source) => (
                     <a
@@ -627,7 +627,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                   ))}
                 </p>
               ) : null}
-              <p className="text-[11px] leading-5 text-muted-text">
+              <p className="text-[12px] leading-5 text-muted-text">
                 能力标签仅用于配置参考，不代表运行时能力已验证通过。
               </p>
             </div>
@@ -661,7 +661,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                 type="button"
                 variant="settings-secondary"
                 size="sm"
-                className="px-3 text-[11px] shadow-none"
+                className="px-3 text-[12px] shadow-none"
                 disabled={busy}
                 onClick={() => onDiscoverModels(channel)}
               >
@@ -679,7 +679,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
               </span>
             </div>
             {discoveryState?.hint ? (
-              <p className="text-[11px] text-secondary-text">
+              <p className="text-[12px] text-secondary-text">
                 {discoveryState.hint}
               </p>
             ) : null}
@@ -734,7 +734,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
             </div>
 
             {manualOnlyModels.length > 0 ? (
-              <p className="text-[11px] text-secondary-text">
+              <p className="text-[12px] text-secondary-text">
                 额外手动模型：{manualOnlyModels.join('，')}
               </p>
             ) : null}
@@ -745,7 +745,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
               type="button"
               variant="settings-secondary"
               size="sm"
-              className="px-3 text-[11px] shadow-none"
+              className="px-3 text-[12px] shadow-none"
               disabled={busy}
               onClick={() => onTest(channel, index)}
             >
@@ -764,12 +764,12 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                   {testState.text}
                 </span>
                 {selectedModels[0] ? (
-                  <p className="text-[11px] text-secondary-text">
+                  <p className="text-[12px] text-secondary-text">
                     基础连接测试默认使用模型列表首项：{selectedModels[0]}
                   </p>
                 ) : null}
                 {testState.hint ? (
-                  <p className="text-[11px] text-secondary-text">
+                  <p className="text-[12px] text-secondary-text">
                     {testState.hint}
                   </p>
                 ) : null}
@@ -781,7 +781,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="flex items-center gap-1.5">
-                  <p className="text-[11px] font-medium text-muted-text">运行时能力检测（可选）</p>
+                  <p className="text-[12px] font-medium text-muted-text">运行时能力检测（可选）</p>
                   <SettingsHelpButton
                     fieldKey="LLM_CHANNEL_CAPABILITY_CHECKS"
                     title="运行时能力检测"
@@ -790,7 +790,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                     docs={LLM_CHANNEL_HELP_DOCS}
                   />
                 </div>
-                <p className="mt-0.5 text-[11px] text-secondary-text">
+                <p className="mt-0.5 text-[12px] text-secondary-text">
                   仅在手动触发时发起真实 LLM 请求；多选可能需要 20-40 秒。
                 </p>
               </div>
@@ -798,7 +798,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                 type="button"
                 variant="settings-secondary"
                 size="sm"
-                className="px-3 text-[11px] shadow-none"
+                className="px-3 text-[12px] shadow-none"
                 disabled={busy || capabilityBusy || selectedCapabilities.length === 0}
                 onClick={() => onCheckCapabilities(channel)}
               >
@@ -809,7 +809,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
             <div className="flex flex-wrap gap-2">
               {runtimeCapabilityOptions.map((option) => (
                 <Tooltip key={option.value} content={option.hint}>
-                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--settings-border)] bg-[var(--settings-surface)] px-2 py-1 text-[11px] text-secondary-text">
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--settings-border)] bg-[var(--settings-surface)] px-2 py-1 text-[12px] text-secondary-text">
                     <input
                       type="checkbox"
                       checked={selectedCapabilities.includes(option.value)}
@@ -836,7 +836,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
                   {capabilityState.text}
                 </p>
                 {capabilityState.hint ? (
-                  <p className="text-[11px] text-secondary-text">{capabilityState.hint}</p>
+                  <p className="text-[12px] text-secondary-text">{capabilityState.hint}</p>
                 ) : null}
               </div>
             ) : null}
@@ -2154,9 +2154,9 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between px-1">
-              <span className="text-xs font-medium uppercase tracking-wider text-muted-text">渠道列表</span>
+              <span className="text-xs font-medium uppercase tracking-normal text-muted-text">渠道列表</span>
               {channels.length > 0 ? (
-                <span className="text-[10px] text-muted-text">{channels.filter((c) => c.enabled).length}/{channels.length} 已启用</span>
+                <span className="text-[12px] text-muted-text">{channels.filter((c) => c.enabled).length}/{channels.length} 已启用</span>
               ) : null}
             </div>
 
@@ -2192,8 +2192,8 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
             <div className="rounded-[1.35rem] border border-[var(--settings-border)] bg-[var(--settings-surface)] p-4 shadow-soft-card">
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <span className="settings-accent-text text-xs font-medium uppercase tracking-wider">运行时参数</span>
-                  <p className="mt-1 text-[11px] text-muted-text">主模型、备选模型、Vision 与 Temperature 会直接写入运行时配置。</p>
+                  <span className="settings-accent-text text-xs font-medium uppercase tracking-normal">运行时参数</span>
+                  <p className="mt-1 text-[12px] text-muted-text">主模型、备选模型、Vision 与 Temperature 会直接写入运行时配置。</p>
                 </div>
                 <Badge variant="default" className="border-[var(--settings-border)] bg-[var(--settings-surface-hover)] text-muted-text">Runtime</Badge>
               </div>
@@ -2218,7 +2218,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
                   />
                   <span className="w-8 text-right text-sm text-secondary-text">{runtimeConfig.temperature}</span>
                 </div>
-                <p className="mt-1 text-[11px] text-secondary-text">
+                <p className="mt-1 text-[12px] text-secondary-text">
                   控制模型输出随机性，0 为确定性输出，2 为最大随机性，推荐 0.7。
                 </p>
               </div>
@@ -2296,7 +2296,7 @@ export const LLMChannelEditor: React.FC<LLMChannelEditorProps> = ({
                         </label>
                       ))}
                     </div>
-                    <p className="mt-1 text-[11px] text-secondary-text">
+                    <p className="mt-1 text-[12px] text-secondary-text">
                       备选模型只会在主模型失败时使用。主模型不会重复加入备选模型。
                     </p>
                   </div>

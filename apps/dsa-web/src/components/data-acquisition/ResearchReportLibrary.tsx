@@ -36,7 +36,7 @@ function saveBlob(blob: Blob, filename: string) {
 
 const SelectField = ({ label, value, values, onChange }: {
   label: string; value: string; values: Array<{ value: string; count: number }>; onChange: (value: string) => void;
-}) => <label className="space-y-1.5 text-[11px] text-secondary-text">
+}) => <label className="space-y-1.5 text-[12px] text-secondary-text">
   <span>{label}</span>
   <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground outline-none focus:border-primary/60">
     <option value="">全部{label}</option>
@@ -46,23 +46,23 @@ const SelectField = ({ label, value, values, onChange }: {
 
 const TextField = ({ label, value, placeholder, onChange, list }: {
   label: string; value: string; placeholder: string; onChange: (value: string) => void; list?: string;
-}) => <label className="space-y-1.5 text-[11px] text-secondary-text">
+}) => <label className="space-y-1.5 text-[12px] text-secondary-text">
   <span>{label}</span>
   <input value={value} list={list} onChange={(event) => onChange(event.target.value)} placeholder={placeholder}
     className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground outline-none placeholder:text-muted-text focus:border-primary/60" />
 </label>;
 
 const ReportRow = ({ item, checked, onToggle }: { item: ResearchReportItem; checked: boolean; onToggle: () => void }) => (
-  <article className={`grid gap-3 border-t border-border/60 px-3 py-4 first:border-t-0 lg:grid-cols-[28px_110px_minmax(0,1fr)_170px_110px] ${checked ? 'bg-primary/5' : ''}`}>
+  <article className={`report-lib-row grid gap-3 border-t border-border/60 px-3 py-4 first:border-t-0 lg:grid-cols-[28px_110px_minmax(0,1fr)_170px_110px] ${checked ? 'bg-primary/5' : ''}`}>
     <label className="pt-1"><input type="checkbox" checked={checked} onChange={onToggle} aria-label={`选择研报 ${item.title}`} className="h-4 w-4 accent-primary" /></label>
-    <div className="text-xs"><strong className="font-mono text-foreground">{item.tradeDate}</strong><p className="mt-1 text-muted-text">{item.reportType || '未分类'}</p></div>
+    <div className="report-lib-date text-xs"><strong className="font-mono text-foreground">{item.tradeDate}</strong><p className="mt-1 text-muted-text">{item.reportType || '未分类'}</p></div>
     <div className="min-w-0">
       <h4 className="text-sm font-semibold leading-5 text-foreground">{item.title}</h4>
       <p className="mt-1 line-clamp-2 text-xs leading-5 text-secondary-text">{item.abstract || '暂无摘要'}</p>
-      <div className="mt-2 flex flex-wrap gap-1.5">{item.tags.slice(0, 6).map((tag) => <span key={tag} className="rounded-md border border-primary/15 bg-primary/5 px-1.5 py-0.5 text-[10px] text-primary">{tag}</span>)}</div>
+      <div className="report-lib-tags mt-2 flex flex-wrap gap-1.5">{item.tags.slice(0, 6).map((tag) => <span key={tag} className="rounded-md border border-primary/15 bg-primary/5 px-1.5 py-0.5 text-[12px] text-primary">{tag}</span>)}</div>
     </div>
-    <div className="text-xs leading-5 text-secondary-text"><p className="font-medium text-foreground">{item.broker || '未知券商'}</p><p>{item.author || '作者未标注'}</p><p>{item.companyName || item.industry || '策略/行业研究'} {item.tsCode ? `· ${item.tsCode}` : ''}</p></div>
-    <div className="flex items-center justify-end">{item.pdfUrl ? <a href={item.pdfUrl} target="_blank" rel="noreferrer" className="btn-secondary inline-flex items-center gap-1.5 text-xs"><ExternalLink className="h-3.5 w-3.5" />打开 PDF</a> : <span className="text-xs text-muted-text">无 PDF 链接</span>}</div>
+    <div className="report-lib-meta text-xs leading-5 text-secondary-text"><p className="font-medium text-foreground">{item.broker || '未知券商'}</p><p>{item.author || '作者未标注'}</p><p>{item.companyName || item.industry || '策略/行业研究'} {item.tsCode ? `· ${item.tsCode}` : ''}</p></div>
+    <div className="report-lib-actions flex items-center justify-end">{item.pdfUrl ? <a href={item.pdfUrl} target="_blank" rel="noreferrer" className="btn-secondary inline-flex items-center gap-1.5 text-xs"><ExternalLink className="h-3.5 w-3.5" />打开 PDF</a> : <span className="text-xs text-muted-text">无 PDF 链接</span>}</div>
   </article>
 );
 
@@ -177,16 +177,16 @@ export default function ResearchReportLibrary() {
   return <section className="overflow-hidden rounded-3xl border border-primary/20 bg-card shadow-card">
     <header className="border-b border-border/70 bg-gradient-to-r from-primary/10 via-card to-info/5 px-5 py-5 lg:px-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div><div className="flex items-center gap-2 text-xs font-semibold tracking-[.18em] text-primary"><BookOpenCheck className="h-4 w-4" />LOCAL RESEARCH TERMINAL</div><h2 className="mt-2 text-xl font-bold text-foreground">两年研报链接库 · 人工筛选台</h2><p className="mt-1 text-sm text-secondary-text">后台先完整同步 Tushare 研报元数据与 PDF URL；每次点击搜索只查本地 SQLite，不调用 AI、不临时扫接口。</p></div>
+        <div><div className="lib-eyebrow flex items-center gap-2 text-xs font-semibold tracking-normal text-primary"><BookOpenCheck className="h-4 w-4" />本地研报库</div><h2 className="mt-2 text-xl font-bold text-foreground">两年研报链接库 · 人工筛选台</h2><p className="mt-1 text-sm text-secondary-text">券商研报的标题、作者与 PDF 链接已按交易日入库；搜索在本机完成，不打第三方接口，也不调用模型。</p></div>
         <div className="grid w-full min-w-0 grid-cols-3 gap-2 lg:w-auto lg:min-w-[320px]">
-          <div className="rounded-xl border border-border/70 bg-background/55 p-3"><span className="text-[10px] text-muted-text">已入库</span><strong className="mt-1 block font-mono text-lg text-foreground">{status ? compact(status.total) : '—'}</strong></div>
-          <div className="rounded-xl border border-border/70 bg-background/55 p-3"><span className="text-[10px] text-muted-text">PDF链接</span><strong className="mt-1 block font-mono text-lg text-success">{status ? compact(status.pdfCount) : '—'}</strong></div>
-          <div className="rounded-xl border border-border/70 bg-background/55 p-3"><span className="text-[10px] text-muted-text">同步进度</span><strong className="mt-1 block font-mono text-lg text-primary">{status ? `${status.progress}%` : '—'}</strong></div>
+          <div className="rounded-xl border border-border/70 bg-background/55 p-3"><span className="text-[12px] text-muted-text">已入库</span><strong className="mt-1 block font-mono text-lg text-foreground">{status ? compact(status.total) : '—'}</strong></div>
+          <div className="rounded-xl border border-border/70 bg-background/55 p-3"><span className="text-[12px] text-muted-text">PDF链接</span><strong className="mt-1 block font-mono text-lg text-success">{status ? compact(status.pdfCount) : '—'}</strong></div>
+          <div className="rounded-xl border border-border/70 bg-background/55 p-3"><span className="text-[12px] text-muted-text">同步进度</span><strong className="mt-1 block font-mono text-lg text-primary">{status ? `${status.progress}%` : '—'}</strong></div>
         </div>
       </div>
       <div className="mt-4 flex flex-col gap-2 rounded-xl border border-border/60 bg-background/45 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-2 text-xs text-secondary-text">{status && ['queued', 'running'].includes(status.status) ? <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <Database className="h-4 w-4 shrink-0 text-success" />}<span className="truncate">{status?.message || '正在读取研报库状态'}</span></div>
-        <span className="shrink-0 font-mono text-[11px] text-muted-text">{status?.earliestTradeDate || '—'} → {status?.latestTradeDate || '—'} · 本地库</span>
+        <span className="shrink-0 font-mono text-[12px] text-muted-text">{status?.earliestTradeDate || '—'} → {status?.latestTradeDate || '—'} · 本地库</span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border/60"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${status?.progress ?? 0}%` }} /></div>
     </header>
@@ -194,7 +194,7 @@ export default function ResearchReportLibrary() {
     <form className="p-4 lg:p-6" onSubmit={event => { event.preventDefault(); if (!loading) void runSearch(draft, 1); }}>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <TextField label="标题关键词" value={draft.titleQuery} placeholder="例：低空经济 无人机" onChange={(value) => setFilter('titleQuery', value)} />
-        <TextField label="摘要关键词（接口内容）" value={draft.contentQuery} placeholder="Tushare 摘要字段，不冒充PDF全文" onChange={(value) => setFilter('contentQuery', value)} />
+        <TextField label="正文关键词" value={draft.contentQuery} placeholder="按摘要与正文关键词筛选，不等于 PDF 全文检索" onChange={(value) => setFilter('contentQuery', value)} />
         <SelectField label="券商" value={draft.broker} values={facets.brokers} onChange={(value) => setFilter('broker', value)} />
         <TextField label="公司名称" value={draft.company} list="report-company-options" placeholder="例：华懋科技" onChange={(value) => setFilter('company', value)} />
         <datalist id="report-company-options">{facets.companies.map((item) => <option key={item.value} value={item.value} />)}</datalist>
@@ -203,9 +203,9 @@ export default function ResearchReportLibrary() {
         <SelectField label="人工标签" value={draft.tag} values={facets.tags} onChange={(value) => setFilter('tag', value)} />
         <TextField label="作者/研究员" value={draft.author} placeholder="输入作者姓名" onChange={(value) => setFilter('author', value)} />
         <TextField label="股票代码" value={draft.tsCode} placeholder="例：603306.SH" onChange={(value) => setFilter('tsCode', value.toUpperCase())} />
-        <label className="space-y-1.5 text-[11px] text-secondary-text"><span>开始日期</span><input type="date" value={draft.startDate} onChange={(event) => setFilter('startDate', event.target.value)} className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground" /></label>
-        <label className="space-y-1.5 text-[11px] text-secondary-text"><span>结束日期</span><input type="date" value={draft.endDate} onChange={(event) => setFilter('endDate', event.target.value)} className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground" /></label>
-        <label className="space-y-1.5 text-[11px] text-secondary-text"><span>排序</span><select value={draft.sort} onChange={(event) => setFilter('sort', event.target.value as 'latest' | 'oldest')} className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground"><option value="latest">日期从新到旧</option><option value="oldest">日期从旧到新</option></select></label>
+        <label className="space-y-1.5 text-[12px] text-secondary-text"><span>开始日期</span><input type="date" value={draft.startDate} onChange={(event) => setFilter('startDate', event.target.value)} className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground" /></label>
+        <label className="space-y-1.5 text-[12px] text-secondary-text"><span>结束日期</span><input type="date" value={draft.endDate} onChange={(event) => setFilter('endDate', event.target.value)} className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground" /></label>
+        <label className="space-y-1.5 text-[12px] text-secondary-text"><span>排序</span><select value={draft.sort} onChange={(event) => setFilter('sort', event.target.value as 'latest' | 'oldest')} className="h-10 w-full rounded-xl border border-border bg-background/75 px-3 text-xs text-foreground"><option value="latest">日期从新到旧</option><option value="oldest">日期从旧到新</option></select></label>
       </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
         <div className="flex flex-wrap gap-2 text-xs"><button type="button" className="btn-secondary" onClick={() => setDraft((current) => ({ ...current, startDate: isoDate(30), endDate: isoDate() }))}>近1月</button><button type="button" className="btn-secondary" onClick={() => setDraft((current) => ({ ...current, startDate: isoDate(90), endDate: isoDate() }))}>近3月</button><button type="button" className="btn-secondary" onClick={() => setDraft((current) => ({ ...current, startDate: isoDate(365), endDate: isoDate() }))}>近1年</button><button type="button" className="btn-secondary" onClick={() => setDraft((current) => ({ ...current, startDate: isoDate(730), endDate: isoDate() }))}>近2年</button><label className="flex items-center gap-2 rounded-xl border border-border px-3"><input type="checkbox" checked={draft.hasPdf} onChange={(event) => setFilter('hasPdf', event.target.checked)} className="accent-primary" />只看有 PDF</label></div>

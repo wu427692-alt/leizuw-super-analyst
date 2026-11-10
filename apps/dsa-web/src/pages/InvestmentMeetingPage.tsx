@@ -1,15 +1,20 @@
 import { useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 const InvestmentMeetingPage = () => {
+  const [searchParams] = useSearchParams();
+  const taskId = searchParams.get('export_task') || '';
+  const embedParams = new URLSearchParams({ embed: '1' });
+  if (/^essay-export-[a-zA-Z0-9-]{1,100}$/.test(taskId)) embedParams.set('export_task', taskId);
   useEffect(() => {
-    document.title = '投资会议 - 乐子乌智能投研平台';
+    document.title = '投研团队 - 乐子乌智能投研平台';
   }, []);
 
   return (
-    <div className="h-[calc(100vh-8.5rem)] min-h-[520px] w-full overflow-hidden lg:h-[calc(100vh-2rem)]">
+    <div className="meeting-frame w-full overflow-hidden">
       <iframe
-        src="/meeting-embed?embed=1"
-        title="投资会议"
+        src={`/meeting-embed?${embedParams}`}
+        title="投研团队"
         className="h-full w-full border-0"
       />
     </div>

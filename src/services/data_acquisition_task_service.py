@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from datetime import datetime, timezone
 import json
+import fcntl
 import logging
 import os
 from pathlib import Path
@@ -14,8 +15,9 @@ import threading
 from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 
-from src.request_identity import current_owner_id
-from src.services.data_acquisition_service import DataAcquisitionError, DataAcquisitionService
+from src.request_identity import current_owner_id, get_current_user_id
+from src.services.data_acquisition_service import DataAcquisitionError, DataAcquisitionService, DocumentAcquisitionPaused
+from src.services.user_quota_service import FEATURE_DOWNLOAD, UserQuotaService
 
 logger = logging.getLogger(__name__)
 _TASK_ID_RE = re.compile(r"^acq-[A-Za-z0-9_-]{8,80}$")
@@ -39,7 +41,8 @@ class DataAcquisitionTaskService:
         self._owner_getter = owner_getter
         service = service_factory()
         self.task_root = Path(task_root or (service.output_root / ".tasks")).resolve()
-        self.task_root.mkdir(parents=True, exist_ok=True)
+        self.task_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.task_root.chmod(0o700)
         workers = max(1, min(int(os.getenv("DATA_ACQUISITION_MAX_WORKERS", "2")), 4))
         self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="data-acquisition")
         self._lock = threading.RLock()
@@ -58,6 +61,7 @@ class DataAcquisitionTaskService:
         # checks even when the client sends can_execute=true.
         service = self._service_factory()
         plan = service.validate_plan(request_text, plan or service.plan(request_text), require_ready=True)
+        UserQuotaService().consume(get_current_user_id(), FEATURE_DOWNLOAD)
         now = datetime.now(timezone.utc)
         task_id = f"acq-{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:10]}"
         total_tasks = min(len((plan or {}).get("tasks") or []), 12)
@@ -82,11 +86,16 @@ class DataAcquisitionTaskService:
             "tasks": task_summaries,
             "current_task_id": None,
             "current_source": None,
-            "job_id": None,
+            "job_id": task_id if plan.get("document_export") else None,
             "result": None,
             "error": None,
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
+            "title": plan.get("title"),
+            "document_export": bool(plan.get("document_export")),
+            "resumable": bool(plan.get("document_export")),
+            "_request": str(request_text or "").strip() if plan.get("document_export") else None,
+            "_plan": plan if plan.get("document_export") else None,
         }
         self._write_state(state)
         # ThreadPoolExecutor does not inherit request ContextVars. Capture a
@@ -94,6 +103,42 @@ class DataAcquisitionTaskService:
         # user-scoped reads survive both queuing and executor thread reuse.
         self._executor.submit(copy_context().run, self._run, task_id, str(request_text or "").strip(), plan)
         return self._public_state(state)
+
+    def resume(self, task_id: str) -> Dict[str, Any]:
+        state = self._read_state(task_id)
+        if state.get("owner_id") != self._owner_getter():
+            raise DataAcquisitionError("取数任务不存在或无权访问")
+        if not state.get("document_export") or not isinstance(state.get("_plan"), dict):
+            raise DataAcquisitionError("该旧任务没有可恢复的文档断点，请重新确认资料需求")
+        if state.get("status") == "completed":
+            return self._public_state(state)
+        lock = self._execution_lock(task_id)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.close()
+            return self._public_state(state)
+        try:
+            state = self._read_state(task_id)
+            if state.get("status") == "completed":
+                return self._public_state(state)
+            if state.get("status") == "queued":
+                return self._public_state(state)
+            state = self._update(task_id, status="queued", phase="resuming", message="已从原任务断点继续，不重复计算下载配额",
+                                 error=None, resumable=True)
+            # Public state deliberately omits private inputs: re-read the ledger.
+            state = self._read_state(task_id)
+            lock.close()  # release before the executor can attempt the same lease
+            self._executor.submit(copy_context().run, self._run, task_id, state["_request"], state["_plan"])
+            return self._public_state(state)
+        finally:
+            lock.close()
+
+    def _execution_lock(self, task_id: str):
+        path = self._task_path(task_id).with_suffix(".runner.lock")
+        if path.is_symlink():
+            raise DataAcquisitionError("无效的取数任务锁")
+        return os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "a+b")
 
     def get(self, task_id: str) -> Dict[str, Any]:
         state = self._read_state(task_id)
@@ -131,6 +176,18 @@ class DataAcquisitionTaskService:
             raise DataAcquisitionError("取数任务状态暂时不可读") from exc
 
     def _run(self, task_id: str, request_text: str, plan: Optional[Dict[str, Any]]) -> None:
+        lease = self._execution_lock(task_id)
+        try:
+            fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lease.close()
+            return
+        try:
+            self._run_claimed(task_id, request_text, plan)
+        finally:
+            lease.close()
+
+    def _run_claimed(self, task_id: str, request_text: str, plan: Optional[Dict[str, Any]]) -> None:
         self._update(
             task_id,
             status="running",
@@ -139,11 +196,18 @@ class DataAcquisitionTaskService:
             message="后台任务已启动",
         )
         try:
+            options = {"job_id": self._read_state(task_id)["job_id"]} if (plan or {}).get("document_export") else {}
             result = self._service_factory().run(
                 request_text,
                 plan,
                 progress_callback=lambda update: self._update(task_id, status="running", **update),
+                **options,
             )
+            document_counts = ({"matched_total": int((result.get("summary") or {}).get("row_count") or 0),
+                                "total_files": int((result.get("summary") or {}).get("row_count") or 0),
+                                "completed_files": int((result.get("summary") or {}).get("downloaded_file_count") or 0),
+                                "downloaded_bytes": int((result.get("summary") or {}).get("downloaded_bytes") or 0)}
+                               if (plan or {}).get("document_export") else {})
             self._update(
                 task_id,
                 status="failed" if result.get("status") == "failed" else "completed",
@@ -157,7 +221,11 @@ class DataAcquisitionTaskService:
                 job_id=result.get("job_id"),
                 result=result,
                 error=DataAcquisitionService.result_message(result) if result.get("status") == "failed" else None,
+                resumable=False,
+                **document_counts,
             )
+        except DocumentAcquisitionPaused as exc:
+            self._fail(task_id, str(exc)[:500])
         except DataAcquisitionError as exc:
             self._fail(task_id, str(exc)[:500])
         except Exception as exc:  # noqa: BLE001 - background failure must become visible task state.
@@ -187,14 +255,25 @@ class DataAcquisitionTaskService:
 
     @staticmethod
     def _public_state(state: Dict[str, Any]) -> Dict[str, Any]:
-        return {key: value for key, value in state.items() if key != "owner_id"}
+        public = {key: value for key, value in state.items() if key != "owner_id" and not key.startswith("_")}
+        if state.get("document_export"):
+            public.update(poll_path=f"/api/v1/data-acquisition/tasks/{state['task_id']}",
+                          resume_path=f"/api/v1/data-acquisition/tasks/{state['task_id']}/resume")
+        return public
 
     def _write_state(self, state: Dict[str, Any]) -> None:
         path = self._task_path(str(state["task_id"]))
-        temporary = path.with_suffix(".json.tmp")
+        temporary = path.with_suffix(f".json.{uuid4().hex}.tmp")
         with self._lock:
-            temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-            temporary.replace(path)
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    json.dump(state, stream, ensure_ascii=False, indent=2)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def _task_path(self, task_id: str) -> Path:
         if not _TASK_ID_RE.fullmatch(str(task_id or "")):
@@ -209,11 +288,18 @@ class DataAcquisitionTaskService:
                 continue
             if state.get("status") not in _ACTIVE_STATUSES:
                 continue
+            lease = self._execution_lock(str(state.get("task_id") or ""))
+            try:
+                fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                lease.close()
+                continue
             state.update({
                 "status": "failed",
                 "phase": "interrupted",
-                "message": "服务重启中断了该任务，请重新执行",
-                "error": "服务重启中断了该任务，请重新执行",
+                "message": "服务重启中断任务，可从已保存资料断点继续" if state.get("document_export") else "服务重启中断了该任务，请重新执行",
+                "error": "服务重启中断任务，可从已保存资料断点继续" if state.get("document_export") else "服务重启中断了该任务，请重新执行",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
             self._write_state(state)
+            lease.close()

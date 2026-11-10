@@ -34,15 +34,10 @@ describe('login theme tokens', () => {
     }
   });
 
-  it('defines all login-specific tokens in the dark theme block', () => {
+  it('does not fork login tokens into a separate dark block (one token set for both themes)', () => {
     const css = readFileSync(resolve(__dirname, '..', 'src', 'index.css'), 'utf8');
-    const darkMatch = css.match(/\.dark\s*\{([\s\S]*?)\n\}/);
-
-    expect(darkMatch).not.toBeNull();
-    const darkBlock = darkMatch?.[1] ?? '';
-
-    for (const token of REQUIRED_LOGIN_TOKENS) {
-      expect(darkBlock).toContain(token);
-    }
+    expect(css).not.toMatch(/\.dark\s*\{[^}]*--login-/);
+    const tokens = readFileSync(resolve(__dirname, '..', 'src', 'styles', 'design-tokens.css'), 'utf8');
+    expect(tokens).toMatch(/\.dark\s*\{/);
   });
 });

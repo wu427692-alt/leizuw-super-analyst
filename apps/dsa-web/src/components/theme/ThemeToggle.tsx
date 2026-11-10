@@ -87,10 +87,10 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({
           triggerClassName
             ? triggerClassName
             : isRailVariant
-              ? 'flex h-[var(--nav-item-height)] w-full items-center justify-center gap-2.5 rounded-2xl border border-transparent px-2 text-sm leading-none text-secondary-text transition-all hover:bg-[var(--nav-hover-bg)] hover:text-foreground data-[state=open]:border-[var(--nav-active-border)] data-[state=open]:bg-[var(--nav-active-bg)] data-[state=open]:text-[hsl(var(--primary))]'
+              ? 'flex h-10 w-full items-center justify-start gap-2 rounded-[var(--radius-control)] px-3 text-[length:var(--fs-body)] text-text-2 transition-colors hover:bg-bg-3 hover:text-text-1 data-[state=open]:bg-bg-3 data-[state=open]:text-text-1'
               : isNavVariant
-                ? 'group relative flex h-12 w-full select-none items-center gap-3 rounded-[1.35rem] border border-transparent px-4 text-sm text-secondary-text transition-all duration-300 hover:bg-hover hover:text-foreground data-[state=open]:border-subtle data-[state=open]:bg-subtle data-[state=open]:text-foreground'
-                : 'inline-flex h-10 items-center gap-2 rounded-xl border border-border/70 bg-card/80 px-3 text-sm text-secondary-text shadow-soft-card transition-colors hover:bg-hover hover:text-foreground',
+                ? 'group relative flex h-10 w-full select-none items-center justify-start gap-2 rounded-[var(--radius-control)] px-3 text-[length:var(--fs-body)] text-text-2 transition-colors hover:bg-bg-3 hover:text-text-1 data-[state=open]:bg-bg-3 data-[state=open]:text-text-1'
+                : 'inline-flex h-9 min-w-9 items-center justify-center gap-2 rounded-[var(--radius-control)] border border-line-1 bg-bg-2 px-2 text-[length:var(--fs-sm)] text-text-2 transition-colors hover:bg-bg-3 hover:text-text-1',
           triggerClassName && open ? triggerActiveClassName : '',
           isNavVariant && collapsed ? 'justify-center px-2' : ''
         )}
@@ -102,7 +102,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({
         {isRailVariant ? (
           <span className={labelClassName}>{t('theme.theme')}</span>
         ) : isNavVariant ? (
-          collapsed ? null : <span className="truncate text-[1.02rem] font-medium">{t('theme.theme')}</span>
+          collapsed ? null : <span className="truncate">{t('theme.theme')}</span>
         ) : (
           <span className="hidden sm:inline">{resolveThemeLabel(activeTheme, t)}</span>
         )}
@@ -113,7 +113,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({
           role="menu"
           aria-label={t('theme.menu')}
           className={cn(
-            'z-[100] min-w-[8rem] overflow-hidden rounded-2xl border border-border/70 bg-elevated p-1.5 shadow-[0_24px_48px_rgba(3,8,20,0.32)] backdrop-blur-xl',
+            'z-[100] min-w-[8rem] rounded-[var(--radius-control)] border border-line-2 bg-bg-1 p-1 shadow-pop',
             isNavVariant || isRailVariant
               ? 'absolute bottom-full left-0 mb-2 w-max min-w-[9rem]'
               : 'absolute right-0 mt-2'
@@ -132,17 +132,17 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({
                   setOpen(false);
                 }}
                 className={cn(
-                  'flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition-colors',
+                  'flex h-9 w-full items-center justify-between rounded-[var(--radius-tag)] px-3 text-[length:var(--fs-sm)] transition-colors',
                   isActive
-                    ? 'bg-cyan/10 text-foreground'
-                    : 'text-secondary-text hover:bg-hover hover:text-foreground'
+                    ? 'bg-bg-3 text-text-1'
+                    : 'text-text-2 hover:bg-bg-3 hover:text-text-1'
                 )}
               >
                 <span className="flex items-center gap-2">
                   <Icon className="h-4 w-4" />
                   {t(labelKey)}
                 </span>
-                {isActive ? <Check className="h-4 w-4 text-cyan" /> : null}
+                {isActive ? <Check aria-hidden="true" className="h-4 w-4 text-brand" /> : null}
               </button>
             );
           })}

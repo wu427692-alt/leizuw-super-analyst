@@ -5,7 +5,7 @@
 
 .rc-uses article {
   min-height: 145px;
-  padding: 18px;
+  padding: 16px;
   border-right: 1px solid var(--rc-line);
   border-bottom: 1px solid var(--rc-line);
 }
@@ -17,21 +17,21 @@
 .rc-uses span,
 .rc-reflection > article > span {
   color: var(--rc-signal);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .rc-uses h3,
 .rc-reflection h3 {
   margin: 16px 0 8px;
-  color: #fff;
-  font-size: 11px;
+  color: var(--text-1);
+  font-size: 12px;
 }
 
 .rc-uses p,
 .rc-reflection p {
   margin: 0;
-  color: #8f979f;
-  font-size: 8px;
+  color: var(--text-3);
+  font-size: 12px;
   line-height: 1.65;
 }
 
@@ -43,9 +43,9 @@
 .rc-reflection article {
   display: grid;
   grid-template-columns: 28px 1fr;
-  gap: 14px;
+  gap: 12px;
   min-height: 155px;
-  padding: 18px;
+  padding: 16px;
   border-right: 1px solid var(--rc-line);
   border-bottom: 1px solid var(--rc-line);
 }
@@ -61,10 +61,10 @@
 .rc-reflection strong {
   display: block;
   margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid #171b18;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-1);
   color: var(--rc-signal);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1.6;
 }

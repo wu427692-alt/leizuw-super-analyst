@@ -22,7 +22,7 @@ export const PageLoadingFallback: React.FC<PageLoadingFallbackProps> = ({
   <div
     className={
       fullPage
-        ? 'flex min-h-screen items-center justify-center bg-base'
+        ? 'flex min-h-[100svh] items-center justify-center bg-base'
         : 'flex min-h-[420px] items-center justify-center px-4'
     }
     role="status"
@@ -145,7 +145,7 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
     }
 
     return (
-      <div className={this.props.fullPage ? 'flex min-h-screen items-center justify-center bg-base px-4' : 'px-2 py-4'}>
+      <div className={this.props.fullPage ? 'flex min-h-[100svh] items-center justify-center bg-base px-4' : 'px-2 py-4'}>
         <div className="w-full rounded-xl border border-warning/25 bg-warning/5 p-4 text-left">
           <h1 className="text-sm font-semibold text-foreground">
             {this.state.automaticRecoveryUsed ? this.props.text.title : '正在恢复当前模块'}

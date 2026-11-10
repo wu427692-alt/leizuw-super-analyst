@@ -390,10 +390,10 @@ const getHotspotStrength = (item: AlphaSiftHotspot, index: number) => {
   const heat = Number(item.heatScore ?? 0);
   const changePct = Number(item.changePct ?? 0);
   if (index === 0 || heat >= 90 || changePct >= 8) {
-    return { label: '强势领先', className: 'bg-red-500/10 text-red-500' };
+    return { label: '强势领先', className: 'bg-[var(--danger-bg)] text-[var(--danger)]' };
   }
   if (heat >= 80 || changePct >= 5) {
-    return { label: '强势', className: 'bg-blue-500/10 text-blue-500' };
+    return { label: '强势', className: 'bg-[var(--bg-3)] text-[var(--text-2)]' };
   }
   return { label: '较强', className: 'bg-cyan/10 text-cyan' };
 };
@@ -403,18 +403,18 @@ const HOTSPOT_ICON_RULES: Array<{
   icon: React.ComponentType<{ className?: string }>;
   className: string;
 }> = [
-  { pattern: /金|银|铜|铝|铅|锌|钼|钴|镍|贵金属|矿|有色/, icon: Pickaxe, className: 'bg-orange-500/10 text-orange-500' },
-  { pattern: /黄金|珠宝/, icon: Gem, className: 'bg-amber-500/10 text-amber-500' },
-  { pattern: /油|气|能源|煤/, icon: Droplet, className: 'bg-yellow-700/10 text-yellow-700' },
-  { pattern: /金融|券商|银行|保险|资本/, icon: Landmark, className: 'bg-orange-500/10 text-orange-500' },
-  { pattern: /航空|机场|航天|运输/, icon: Plane, className: 'bg-blue-500/10 text-blue-500' },
-  { pattern: /林业|农业|种植/, icon: Trees, className: 'bg-emerald-500/10 text-emerald-500' },
-  { pattern: /医疗|诊断|卫生|医药/, icon: Stethoscope, className: 'bg-teal-500/10 text-teal-500' },
-  { pattern: /食品|餐饮|酒/, icon: Utensils, className: 'bg-violet-500/10 text-violet-500' },
-  { pattern: /工业|制造|修理|机械|设备/, icon: Wrench, className: 'bg-blue-500/10 text-blue-500' },
-  { pattern: /租赁|地产|建筑/, icon: Building2, className: 'bg-emerald-500/10 text-emerald-500' },
-  { pattern: /电|芯片|算力|AI|机器人/, icon: Factory, className: 'bg-indigo-500/10 text-indigo-500' },
-  { pattern: /保险|安全/, icon: Shield, className: 'bg-blue-500/10 text-blue-500' },
+  { pattern: /金|银|铜|铝|铅|锌|钼|钴|镍|贵金属|矿|有色/, icon: Pickaxe, className: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
+  { pattern: /黄金|珠宝/, icon: Gem, className: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
+  { pattern: /油|气|能源|煤/, icon: Droplet, className: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
+  { pattern: /金融|券商|银行|保险|资本/, icon: Landmark, className: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
+  { pattern: /航空|机场|航天|运输/, icon: Plane, className: 'bg-[var(--bg-3)] text-[var(--text-2)]' },
+  { pattern: /林业|农业|种植/, icon: Trees, className: 'bg-[var(--success-bg)] text-[var(--success)]' },
+  { pattern: /医疗|诊断|卫生|医药/, icon: Stethoscope, className: 'bg-[var(--bg-3)] text-[var(--text-2)]' },
+  { pattern: /食品|餐饮|酒/, icon: Utensils, className: 'bg-[var(--bg-3)] text-[var(--text-2)]' },
+  { pattern: /工业|制造|修理|机械|设备/, icon: Wrench, className: 'bg-[var(--bg-3)] text-[var(--text-2)]' },
+  { pattern: /租赁|地产|建筑/, icon: Building2, className: 'bg-[var(--success-bg)] text-[var(--success)]' },
+  { pattern: /电|芯片|算力|AI|机器人/, icon: Factory, className: 'bg-[var(--bg-3)] text-[var(--text-2)]' },
+  { pattern: /保险|安全/, icon: Shield, className: 'bg-[var(--bg-3)] text-[var(--text-2)]' },
 ];
 
 const getHotspotIcon = (topic: string) => {
@@ -887,7 +887,7 @@ const StockScreeningPage: React.FC = () => {
       <section className="rounded-2xl border border-border/80 bg-card/95 p-4 shadow-soft-card">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-orange-500/10 text-orange-500 shadow-[0_10px_30px_rgba(249,115,22,0.16)]">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--warning-bg)] text-[var(--warning)] shadow-[0_10px_30px_rgba(249,115,22,0.16)]">
               <Flame className="h-5 w-5" />
             </span>
             <div>
@@ -958,8 +958,8 @@ const StockScreeningPage: React.FC = () => {
                 key={`${item.topic}-${item.rank ?? ''}`}
                 className={`group relative min-h-[116px] overflow-hidden rounded-xl border px-3 py-3 text-left transition-all ${
                   selected
-                    ? 'border-orange-400 bg-gradient-to-br from-orange-500/10 via-card to-card shadow-[0_0_0_1px_rgba(249,115,22,0.16),0_18px_44px_rgba(249,115,22,0.14)]'
-                    : 'border-border/80 bg-card hover:-translate-y-0.5 hover:border-orange-300/70 hover:shadow-soft-card'
+                    ? 'border-[var(--warning-border)] bg-gradient-to-br from-[var(--warning-bg)] via-card to-card shadow-[0_0_0_1px_rgba(249,115,22,0.16),0_18px_44px_rgba(249,115,22,0.14)]'
+                    : 'border-border/80 bg-card hover:-translate-y-0.5 hover:border-[var(--warning-border)] hover:shadow-soft-card'
                 }`}
                 type="button"
                 onClick={() => handleHotspotSelect(item.topic)}
@@ -968,7 +968,7 @@ const StockScreeningPage: React.FC = () => {
                   <div className="flex min-w-0 items-start gap-3">
                     <span
                       className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
-                        index < 3 ? 'bg-orange-500 text-white shadow-[0_8px_24px_rgba(249,115,22,0.24)]' : 'bg-surface text-secondary-text'
+                        index < 3 ? 'bg-[var(--warning)] text-white shadow-[0_8px_24px_rgba(249,115,22,0.24)]' : 'bg-surface text-secondary-text'
                       }`}
                     >
                       {index + 1}
@@ -978,16 +978,16 @@ const StockScreeningPage: React.FC = () => {
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-foreground">{item.name || item.topic}</p>
-                      <span className={`mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${strength.className}`}>
+                      <span className={`mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[12px] font-semibold ${strength.className}`}>
                         {strength.label}
                       </span>
                     </div>
                   </div>
-                  <span className="shrink-0 text-2xl font-black leading-none text-orange-500">
+                  <span className="shrink-0 text-2xl font-bold leading-none text-[var(--warning)]">
                     {formatNumber(item.heatScore, 0)}
                   </span>
                 </div>
-                <div className="mt-4 grid max-w-[72%] gap-1 text-[11px] text-secondary-text">
+                <div className="mt-4 grid max-w-[72%] gap-1 text-[12px] text-secondary-text">
                   <span>涨跌幅 <strong className="font-semibold text-foreground">{formatHotspotMetric(item.changePct)}%</strong></span>
                   <span>趋势 <strong className="font-semibold text-foreground">{formatHotspotMetric(item.trendScore)}</strong> · 持续 <strong className="font-semibold text-foreground">{formatHotspotMetric(item.persistenceScore)}</strong></span>
                   <span>{getHotspotSampleText(item)} · 龙头 {getHotspotLeadersText(item)}</span>
@@ -1012,7 +1012,7 @@ const StockScreeningPage: React.FC = () => {
                   {loadingHotspotDetail ? '正在读取发酵路线与概念股...' : hotspotDetail?.summary || '点击题材查看发酵路线与概念股。'}
                 </p>
                 {hotspotDetail?.canonicalTopic && hotspotDetail.canonicalTopic !== selectedHotspotTopic ? (
-                  <p className="mt-1 text-[11px] text-secondary-text">标准题材：{hotspotDetail.canonicalTopic}</p>
+                  <p className="mt-1 text-[12px] text-secondary-text">标准题材：{hotspotDetail.canonicalTopic}</p>
                 ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1027,7 +1027,7 @@ const StockScreeningPage: React.FC = () => {
                   </span>
                 ) : null}
                 {hotspotDetail?.stockCount != null ? (
-                  <span className="w-fit rounded-full bg-orange-500/10 px-3 py-1 text-xs font-semibold text-orange-500">
+                  <span className="w-fit rounded-full bg-[var(--warning-bg)] px-3 py-1 text-xs font-semibold text-[var(--warning)]">
                     概念股 {hotspotDetail.stockCount}
                   </span>
                 ) : null}
@@ -1058,18 +1058,18 @@ const StockScreeningPage: React.FC = () => {
               <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr]">
                 <div>
                   <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-secondary-text">
-                    <Clock3 className="h-3.5 w-3.5 text-orange-500" />
+                    <Clock3 className="h-3.5 w-3.5 text-[var(--warning)]" />
                     发酵时间线
                   </p>
                   <div className="relative space-y-0 pl-4 before:absolute before:bottom-3 before:left-[5px] before:top-2 before:w-px before:bg-border">
                     {getHotspotRouteItems(hotspotDetail).map((item, index) => (
                       <div key={`${item.title}-${index}`} className="relative pb-4 last:pb-0">
-                        <span className="absolute -left-4 top-1 h-2.5 w-2.5 rounded-full border border-orange-400 bg-card" />
+                        <span className="absolute -left-4 top-1 h-2.5 w-2.5 rounded-full border border-[var(--warning-border)] bg-card" />
                         <div className="rounded-lg border border-border/70 bg-card/80 p-3">
-                          <p className="text-[11px] font-semibold text-orange-500">{getRouteTimeLabel(item)}</p>
+                          <p className="text-[12px] font-semibold text-[var(--warning)]">{getRouteTimeLabel(item)}</p>
                           <p className="mt-1 text-xs font-semibold text-foreground">{item.title}</p>
                           <p className="mt-1 text-xs leading-5 text-secondary-text">{item.description}</p>
-                          {item.source ? <p className="mt-2 text-[11px] text-secondary-text">来源 {item.source}</p> : null}
+                          {item.source ? <p className="mt-2 text-[12px] text-secondary-text">来源 {item.source}</p> : null}
                         </div>
                       </div>
                     ))}
@@ -1083,17 +1083,17 @@ const StockScreeningPage: React.FC = () => {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-xs font-semibold text-foreground">{stock.name || stock.code || '-'}</p>
-                            <p className="mt-1 text-[11px] text-secondary-text">{stock.code || '-'}</p>
+                            <p className="mt-1 text-[12px] text-secondary-text">{stock.code || '-'}</p>
                           </div>
                           <div className="flex shrink-0 items-center gap-1">
-                            <span className="rounded-full bg-cyan/10 px-2 py-1 text-[11px] font-semibold text-cyan">
+                            <span className="rounded-full bg-cyan/10 px-2 py-1 text-[12px] font-semibold text-cyan">
                               {stock.role || '概念股'}
                             </span>
                             {stock.code ? (
                               <button
                                 type="button"
                                 aria-label={`分析 ${stock.name || stock.code}`}
-                                className="inline-flex h-7 items-center gap-1 rounded-full border border-cyan/30 bg-cyan/10 px-2 text-[11px] font-semibold text-cyan transition-colors hover:border-cyan hover:bg-cyan/15 hover:text-foreground"
+                                className="inline-flex h-7 items-center gap-1 rounded-full border border-cyan/30 bg-cyan/10 px-2 text-[12px] font-semibold text-cyan transition-colors hover:border-cyan hover:bg-cyan/15 hover:text-foreground"
                                 onClick={() => handleAnalyzeHotspotStock(stock)}
                               >
                                 <Play className="h-3 w-3" />
@@ -1102,11 +1102,11 @@ const StockScreeningPage: React.FC = () => {
                             ) : null}
                           </div>
                         </div>
-                        <p className="mt-2 text-[11px] text-secondary-text">
+                        <p className="mt-2 text-[12px] text-secondary-text">
                           涨跌幅 {formatStockChangeText(stock.changePct)} · 热度 {formatNumber(stock.hotStockScore, 0)}
                         </p>
                         {stock.source || stock.sourceConfidence != null || stock.fallbackUsed ? (
-                          <p className="mt-1 text-[11px] text-secondary-text">
+                          <p className="mt-1 text-[12px] text-secondary-text">
                             来源 {stock.source || '-'}
                             {stock.sourceConfidence != null ? ` · 置信 ${formatPercent(stock.sourceConfidence)}` : ''}
                             {stock.fallbackUsed ? ' · 回退' : ''}

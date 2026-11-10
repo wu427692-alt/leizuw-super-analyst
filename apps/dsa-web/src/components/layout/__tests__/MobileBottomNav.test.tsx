@@ -13,7 +13,7 @@ describe('MobileBottomNav', () => {
 
   it('uses native document links without prefetching unrelated modules in an isolated entry', () => {
     render(<MemoryRouter initialEntries={['/ai-news']}><MobileBottomNav documentNavigation /></MemoryRouter>);
-    const link = screen.getByRole('link', { name: '市场总览' });
+    const link = screen.getByRole('link', { name: '投研团队' });
     fireEvent.focus(link);
     expect(preloadRoute).not.toHaveBeenCalled();
     expect(preloadRouteData).not.toHaveBeenCalled();
@@ -30,35 +30,31 @@ describe('MobileBottomNav', () => {
     expect(preloadRouteData).toHaveBeenCalledExactlyOnceWith('/super-watchlist');
   });
 
-  it('exposes the five decision workspaces', () => {
+  it('exposes four primary destinations in the agreed order plus a More entry', () => {
     render(
       <MemoryRouter initialEntries={['/super-watchlist']}>
         <MobileBottomNav />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: '市场总览' })).toHaveAttribute('href', '/app');
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(4);
+    expect(links.map((link) => link.getAttribute('href'))).toEqual(['/meeting', '/app', '/super-watchlist', '/home']);
+    expect(links.map((link) => link.textContent)).toEqual(['团队', '行情', '自选', '总览']);
     expect(screen.getByRole('link', { name: '自选看板' })).toHaveClass('is-active');
-    expect(screen.getByRole('link', { name: '题材图谱' })).toHaveAttribute('href', '/concept-themes');
-    expect(screen.getByRole('link', { name: '深度研究' })).toHaveAttribute('href', '/industry-research');
-    expect(screen.getByRole('link', { name: '任务中心' })).toHaveAttribute('href', '/tasks');
-    expect(screen.getByText('题材')).toBeInTheDocument();
-    expect(screen.getByText('自选')).toBeInTheDocument();
-    expect(screen.getByText('任务')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '全部模块' })).not.toHaveClass('is-active');
     expect(screen.queryByRole('link', { name: 'AI 问股' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: '投资情报台' })).not.toBeInTheDocument();
-
-    expect(screen.queryByRole('button', { name: '导航菜单' })).not.toBeInTheDocument();
   });
 
-  it('marks tasks active', () => {
+  it('highlights More when the current page is not a primary destination', () => {
     render(
       <MemoryRouter initialEntries={['/tasks']}>
         <MobileBottomNav />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: '任务中心' })).toHaveClass('is-active');
+    expect(screen.getByRole('button', { name: '全部模块' })).toHaveClass('is-active');
+    for (const link of screen.getAllByRole('link')) expect(link).not.toHaveClass('is-active');
   });
 
   it('does not put utility pages in the primary mobile bar', () => {

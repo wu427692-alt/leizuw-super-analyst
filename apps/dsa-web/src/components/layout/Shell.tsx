@@ -1,14 +1,15 @@
 import type React from 'react';
 import { useEffect, useState } from 'react';
-import { BarChart3, Menu } from 'lucide-react';
-import { Outlet } from 'react-router-dom';
+import { Moon, Sun } from 'lucide-react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useTheme } from 'next-themes';
 import { Drawer } from '../common/Drawer';
 import { SidebarNav } from './SidebarNav';
 import { cn } from '../../utils/cn';
-import { ThemeToggle } from '../theme/ThemeToggle';
-import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { MobileBottomNav } from './MobileBottomNav';
+import { MobileAppBar } from '../mobile/MobileAppBar';
+import { useMobileRouteMeta } from './useMobileRouteMeta';
 import './GlassWorkspace.css';
 
 type ShellProps = {
@@ -17,48 +18,53 @@ type ShellProps = {
   documentNavigation?: boolean;
 };
 
+/** 浏览器历史里是否还有上一页；用于决定手机应用栏是否显示返回。 */
+function hasHistoryBack(): boolean {
+  const state = window.history.state as { idx?: number } | null;
+  return typeof state?.idx === 'number' && state.idx > 0;
+}
+
 export const Shell: React.FC<ShellProps> = ({ children, documentNavigation = false }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const collapsed = false;
   const { t } = useUiLanguage();
+  const { resolvedTheme, setTheme } = useTheme();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { title, largeTitle, nested } = useMobileRouteMeta();
 
+  const canGoBack = hasHistoryBack();
+
+  // 路由切换回到顶部，避免手机上停在上一页的滚动位置
   useEffect(() => {
-    if (!mobileOpen) {
-      return undefined;
-    }
+    window.scrollTo({ top: 0 });
+  }, [location.pathname]);
 
-    const handleResize = () => {
-      if (window.innerWidth >= 1024) {
-        setMobileOpen(false);
-      }
-    };
+  const toggleTheme = () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
 
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [mobileOpen]);
+  const mobileActions = [
+    {
+      key: 'theme',
+      label: resolvedTheme === 'dark' ? '切换到浅色' : '切换到深色',
+      icon: resolvedTheme === 'dark' ? Sun : Moon,
+      onClick: toggleTheme,
+    },
+  ];
 
   return (
-    <div className="glass-workspace min-h-screen bg-background text-foreground">
-      <header className="mobile-app-bar lg:hidden">
-        <div className="mobile-app-bar__brand">
-          <span><BarChart3 aria-hidden="true" /></span>
-          <div><strong>乐子乌智能投研平台</strong><small>证据驱动的投资研究</small></div>
-        </div>
-        <div className="mobile-app-bar__actions">
-          <button type="button" className="mobile-app-bar__menu" aria-label={t('layout.openNav')} onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></button>
-          <UiLanguageToggle />
-          <ThemeToggle />
-        </div>
-      </header>
+    <div className="glass-workspace min-h-[100svh] bg-bg-0 text-text-1">
+      <MobileAppBar
+          title={title}
+          largeTitle={largeTitle}
+          onBack={nested || canGoBack ? () => navigate(-1) : undefined}
+          actions={mobileActions}
+        />
 
-      <div className="mx-auto flex min-h-screen w-full max-w-[1920px] px-0 lg:px-4 lg:py-4">
+      <div className="flex min-h-[100svh] w-full">
         <aside
           className={cn(
-            'research-sidebar sticky top-4 z-40 hidden shrink-0 overflow-visible border border-[var(--shell-sidebar-border)] bg-card/94 p-2.5 transition-[width] duration-200 lg:flex',
-            'max-h-[calc(100vh-2rem)] self-start',
-            collapsed ? 'w-[64px]' : 'w-[208px]'
+            'research-sidebar sticky top-0 z-40 hidden h-[100dvh] shrink-0 overflow-y-auto border-r border-line-1 bg-bg-1 lg:flex',
+            collapsed ? 'w-16' : 'w-60'
           )}
           aria-label={t('layout.desktopSidebar')}
         >
@@ -67,8 +73,10 @@ export const Shell: React.FC<ShellProps> = ({ children, documentNavigation = fal
           </div>
         </aside>
 
-        <main className="mobile-shell-main min-h-0 min-w-0 flex-1 lg:pl-4 touch-pan-y">
-          {children ?? <Outlet />}
+        <main className="mobile-shell-main min-h-0 min-w-0 flex-1 touch-pan-y">
+          <div className="shell-content mx-auto w-full min-w-0 max-w-[1680px] lg:px-6 lg:py-6">
+            {children ?? <Outlet />}
+          </div>
         </main>
       </div>
 

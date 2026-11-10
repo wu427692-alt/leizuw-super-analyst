@@ -344,7 +344,11 @@ describe('MarketDashboardPage 个人自选股缓存隔离与证据入口', () =>
     render(fixture()); await flush();
     expectFocusedQuote('10.00', '+1.00%', expected, 'test');
     expect(within(screen.getByRole('region', { name: '数据证据轨道' })).getByText(expected)).toBeInTheDocument();
-    if (input) expect(screen.getByText(text => text.startsWith(`${expected} · 自选与大盘`))).toBeInTheDocument();
+    if (input) {
+      // 技术实现细节不进界面：只保留一行「更新于 时间」
+      expect(screen.getByText(`更新于 ${expected}`)).toBeInTheDocument();
+      expect(screen.queryByText(/SQLite/)).not.toBeInTheDocument();
+    }
   });
 
   it('同号不同交易所切换时，不把指数报价覆盖股票或沿用前一个证券的时间涨跌', async () => {

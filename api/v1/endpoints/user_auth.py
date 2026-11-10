@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
+import urllib.parse
+import urllib.request
 from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
+from dotenv import dotenv_values
 from pydantic import BaseModel, Field
 
 from src.auth import (
@@ -35,6 +39,9 @@ from src.services.user_account_service import (
 from src.services.sms_auth_service import (
     SMS_BROWSER_COOKIE, SmsAuthError, SmsAuthService, sms_login_enabled,
 )
+from src.services.user_quota_service import (
+    QuotaRequestError, UserQuotaService,
+)
 
 router = APIRouter()
 
@@ -50,9 +57,14 @@ class UserCredentialsRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class RegisterRequest(UserCredentialsRequest):
+    turnstileToken: str | None = Field(None, max_length=2048)
+
+
 class SmsSendRequest(BaseModel):
     phone: str = Field(min_length=11, max_length=16)
     purpose: Literal["login", "bind"] = "login"
+    turnstileToken: str | None = Field(None, max_length=2048)
 
 
 class SmsVerifyRequest(BaseModel):
@@ -64,6 +76,16 @@ class SmsVerifyRequest(BaseModel):
 
 class SmsBindRequest(SmsVerifyRequest):
     currentPassword: str = Field(min_length=1, max_length=256)
+
+
+class QuotaRequestCreate(BaseModel):
+    feature: Literal["download_task", "chat_message"]
+    amount: int = Field(ge=1, le=200)
+    reason: str | None = Field(None, max_length=500)
+
+
+class QuotaDecision(BaseModel):
+    amount: int | None = Field(None, ge=1, le=200)
 
 
 def _current_user_payload(user, method: str) -> dict:
@@ -128,7 +150,7 @@ def _resolve_request_user(request: Request):
 @router.get("/status", summary="读取普通用户访问状态")
 def status(request: Request):
     enabled = user_access_enabled()
-    mode = {"registrationMode": registration_mode(), "smsLoginEnabled": sms_login_enabled()}
+    mode = {"registrationMode": registration_mode(), "smsLoginEnabled": sms_login_enabled(), "captcha": _public_captcha_config()}
     if not enabled:
         return JSONResponse(
             content={"accessEnabled": False, "loggedIn": True, "user": None, "authMethod": "disabled", **mode},
@@ -156,10 +178,69 @@ def status(request: Request):
     return JSONResponse(content=payload, headers=_PRIVATE_STATUS_HEADERS)
 
 
-@router.post("/register", status_code=202, summary="提交姓名与密码注册申请")
-def register(request: Request, body: UserCredentialsRequest):
+def _public_captcha_config() -> dict:
+    """Expose only the public widget key; a missing key never disables verification."""
+    required = bool(_turnstile_secret())
+    site_key = ""
+    env_path = os.environ.get("ENV_FILE")
+    if env_path and os.path.isfile(env_path):
+        try:
+            site_key = (dotenv_values(env_path).get("TURNSTILE_SITE_KEY") or "").strip()
+        except Exception:
+            site_key = ""
+    else:
+        site_key = (os.environ.get("TURNSTILE_SITE_KEY") or "").strip()
+    return {
+        "provider": "turnstile",
+        "required": required,
+        "siteKey": site_key if required and site_key else None,
+    }
+
+
+def _turnstile_secret() -> str:
+    """Read the Turnstile secret from the mounted private env file."""
+    env_path = os.environ.get("ENV_FILE")
+    if env_path and os.path.isfile(env_path):
+        try:
+            return (dotenv_values(env_path).get("TURNSTILE_SECRET") or "").strip()
+        except Exception:
+            return ""
+    return (os.environ.get("TURNSTILE_SECRET") or "").strip()
+
+
+def _verify_turnstile(token: str | None, client_ip: str) -> bool:
+    secret = _turnstile_secret()
+    if not secret:
+        # Fail open only when the feature is not configured, so a missing
+        # secret cannot lock every applicant out during a bad deploy.
+        return True
+    if not token:
+        return False
+    payload = urllib.parse.urlencode(
+        {"secret": secret, "response": token, "remoteip": client_ip}
+    ).encode()
+    req = urllib.request.Request(
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
     try:
-        user = UserAccountService().register(body.name, body.password, get_client_ip(request))
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            return bool(json.loads(resp.read().decode()).get("success"))
+    except Exception:
+        return False
+
+
+@router.post("/register", status_code=202, summary="提交姓名与密码注册申请")
+def register(request: Request, body: RegisterRequest):
+    client_ip = get_client_ip(request)
+    if not _verify_turnstile(body.turnstileToken, client_ip):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "captcha_failed", "message": "请完成人机验证后重试"},
+        )
+    try:
+        user = UserAccountService().register(body.name, body.password, client_ip)
         return {"success": True, "status": "pending", "message": "申请已提交，等待管理员审核", "user": user}
     except UserAccountError as exc:
         return _error(exc, 409 if exc.code == "name_exists" else 403 if exc.code == "sms_required" else 400)
@@ -197,6 +278,11 @@ def login(request: Request, body: UserCredentialsRequest):
 
 @router.post("/sms/send", summary="发送手机号登录或绑定验证码")
 def send_sms(request: Request, body: SmsSendRequest):
+    if not _verify_turnstile(body.turnstileToken, get_client_ip(request)):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "captcha_failed", "message": "请完成人机验证后重试"},
+        )
     try:
         _check_sms_origin(request)
         user_id = None
@@ -258,6 +344,27 @@ def bind_sms(request: Request, body: SmsBindRequest):
     return _verify_sms(request, body, purpose="bind")
 
 
+@router.get("/quota", summary="读取当前用户今日额度")
+def quota_status(request: Request):
+    user_id = int(getattr(request.state, "user_id", 0) or 0)
+    return UserQuotaService().snapshot(user_id)
+
+
+@router.post("/quota/request", status_code=202, summary="申请增加今日额度")
+def quota_request(request: Request, body: QuotaRequestCreate):
+    user_id = int(getattr(request.state, "user_id", 0) or 0)
+    try:
+        row = UserQuotaService().request_extension(
+            user_id, body.feature, body.amount, body.reason
+        )
+        return {"success": True, "request": row}
+    except QuotaRequestError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "quota_request_error", "message": str(exc)},
+        )
+
+
 @router.post("/logout", summary="退出普通用户会话")
 def logout(request: Request):
     response = Response(status_code=204)
@@ -266,6 +373,46 @@ def logout(request: Request):
     # longer accepted as authentication credentials.
     response.delete_cookie(USER_AUTO_LOGIN_SUPPRESSION_COOKIE, path="/")
     return response
+
+
+@router.get("/admin/quota/requests", summary="管理员查看额度申请")
+def admin_quota_requests(status: str | None = Query("pending")):
+    return {"requests": UserQuotaService().list_requests(status)}
+
+
+@router.post("/admin/quota/requests/{request_id}/approve", summary="管理员批准额度申请")
+def admin_quota_approve(request_id: int, request: Request, body: QuotaDecision | None = None):
+    try:
+        return {
+            "success": True,
+            "request": UserQuotaService().decide_request(
+                request_id, True,
+                getattr(request.state, "user_name", "administrator"),
+                body.amount if body else None,
+            ),
+        }
+    except QuotaRequestError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "quota_request_error", "message": str(exc)},
+        )
+
+
+@router.post("/admin/quota/requests/{request_id}/reject", summary="管理员拒绝额度申请")
+def admin_quota_reject(request_id: int, request: Request):
+    try:
+        return {
+            "success": True,
+            "request": UserQuotaService().decide_request(
+                request_id, False,
+                getattr(request.state, "user_name", "administrator"),
+            ),
+        }
+    except QuotaRequestError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "quota_request_error", "message": str(exc)},
+        )
 
 
 @router.get("/admin/users", summary="管理员查看用户申请")

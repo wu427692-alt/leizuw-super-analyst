@@ -7,6 +7,6 @@ describe('account redirects', () => {
     expect(safeUserAccessRedirect('/super-watchlist?symbol=603306.SH')).toBe('/super-watchlist?symbol=603306.SH');
   });
   it.each([null, '', 'https://example.com', '//example.com', '/\\example.com', '/\n/example.com', '/access', '/access/?bind=phone'])('rejects unsafe or looping callback %s', value => {
-    expect(safeUserAccessRedirect(value)).toBe('/app');
+    expect(safeUserAccessRedirect(value)).toBe('/home');
   });
 });

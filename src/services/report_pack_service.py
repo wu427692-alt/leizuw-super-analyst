@@ -19,8 +19,9 @@ import threading
 import time
 import uuid
 import zipfile
+from contextvars import copy_context
 
-from src.services.workspace import current_workspace
+from src.services.workspace import workspace_id, workspace_directory, workspace_owner
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -34,15 +35,11 @@ DOWNLOAD_DIR = Path(os.environ.get("REPORT_DOWNLOAD_DIR", "/app/data/downloads")
 
 
 def _workspace_name(workspace: Optional[str] = None) -> str:
-    raw = workspace or current_workspace()
-    return _safe_name(raw, 40) if raw else ""
+    return workspace_id(workspace)
 
 
 def _output_dir(workspace: Optional[str] = None) -> Path:
-    ws = _workspace_name(workspace)
-    out = DOWNLOAD_DIR / ws if ws else DOWNLOAD_DIR
-    out.mkdir(parents=True, exist_ok=True)
-    return out
+    return workspace_directory(DOWNLOAD_DIR, workspace, create=True)
 
 
 def _download_url(filename: str, workspace: Optional[str] = None) -> str:
@@ -261,7 +258,6 @@ class ReportPackService:
                 archive.writestr("清单.txt", "\n".join(manifest).encode("utf-8-sig"))
 
         size = zip_path.stat().st_size
-        threading.Thread(target=self._prewarm, args=(filename, workspace), daemon=True).start()
         if progress_cb:
             progress_cb(100, "打包完成")
         return {
@@ -383,7 +379,6 @@ class ReportPackService:
             archive.writestr("清单.txt", "\n".join(manifest).encode("utf-8-sig"))
 
         size = zip_path.stat().st_size
-        threading.Thread(target=self._prewarm, args=(filename, workspace), daemon=True).start()
         total = len(normalized) + len(missing)
         failed_count = len(failed) + len(missing)
         return {
@@ -406,24 +401,27 @@ class ReportPackService:
             ],
         }
 
-    def package_essays(self, items: List[Dict[str, Any]], subject: str = "小作文", workspace: Optional[str] = None) -> Dict[str, Any]:
+    def package_essays(
+        self, items: List[Dict[str, Any]], subject: str = "小作文",
+        workspace: Optional[str] = None, retrieval: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         cleaned = [dict(item) for item in (items or []) if isinstance(item, dict)]
         if not cleaned:
             return {"ok": False, "error": "没有可打包的小作文"}
         subject_text = _safe_name(subject or "小作文", 24)
         date_text = datetime.now().strftime("%Y-%m-%d")
-        key = _sha1(
-            json.dumps([item.get("title") or "" for item in cleaned], ensure_ascii=False) + subject_text
-        )[:10]
-        filename = f"{subject_text}_小作文_{date_text}_{len(cleaned)}条_{key}.zip"
+        # Every export is immutable: equal titles can have different original
+        # text, scopes or partial results. Never overwrite an existing download.
+        key = uuid.uuid4().hex[:12]
+        coverage = "_部分" if retrieval is not None and not retrieval.get("complete") else ""
+        filename = f"{subject_text}_小作文{coverage}_{date_text}_{len(cleaned)}条_{key}.zip"
         zip_path = _output_dir(workspace) / filename
 
-        scalar_fields: List[str] = []
+        scalar_fields: List[str] = ["topic_id", "title", "published_at", "source", "author", "content", "summary"]
         for item in cleaned:
             for field, value in item.items():
                 if field not in scalar_fields and not isinstance(value, (dict, list)):
                     scalar_fields.append(field)
-        scalar_fields = scalar_fields[:30] or ["title"]
 
         csv_buffer = io.StringIO()
         writer = csv.DictWriter(csv_buffer, fieldnames=scalar_fields, extrasaction="ignore")
@@ -437,6 +435,15 @@ class ReportPackService:
             f"共 {len(cleaned)} 条",
             "",
         ]
+        if retrieval is not None:
+            lines.extend([
+                "## 检索与完整性",
+                f"状态：{'完整获取' if retrieval.get('complete') else '部分获取，不是全部结果'}",
+                f"筛选条件：{json.dumps(retrieval.get('filters') or {}, ensure_ascii=False, default=str)}",
+                f"检索命中：{retrieval.get('expected_total')} 条；实际导出：{len(cleaned)} 条；去重：{retrieval.get('duplicates', 0)} 条",
+                *[f"注意：{error}" for error in retrieval.get("errors") or []],
+                "",
+            ])
         for index, item in enumerate(cleaned, 1):
             lines.append(f"## {index}. {item.get('title') or '未命名'}")
             meta = [
@@ -446,21 +453,30 @@ class ReportPackService:
             ]
             if meta:
                 lines.append(" · ".join(meta))
-            summary = item.get("summary") or item.get("content") or item.get("snippet")
-            if summary:
-                lines.append(str(summary)[:1200])
+            content = item.get("content")
+            if content:
+                lines.extend(["### 原文全文", str(content)])
+            summary = item.get("summary") or item.get("snippet")
+            if summary and summary != content:
+                lines.extend(["### 现有分析摘要", str(summary)])
             url = item.get("url") or item.get("source_url")
             if url:
                 lines.append(str(url))
             lines.append("")
 
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as archive:
-            archive.writestr("小作文.json", json.dumps(cleaned, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
-            archive.writestr("小作文.csv", csv_buffer.getvalue().encode("utf-8-sig"))
-            archive.writestr("清单.md", "\n".join(lines).encode("utf-8-sig"))
+        temporary_path = zip_path.with_suffix(f".zip.{uuid.uuid4().hex}.tmp")
+        try:
+            with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("小作文.json", json.dumps(cleaned, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
+                archive.writestr("小作文.csv", csv_buffer.getvalue().encode("utf-8-sig"))
+                archive.writestr("清单.md", "\n".join(lines).encode("utf-8-sig"))
+                if retrieval is not None:
+                    archive.writestr("检索与完整性.json", json.dumps(retrieval, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
+            os.replace(temporary_path, zip_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
         size = zip_path.stat().st_size
-        threading.Thread(target=self._prewarm, args=(filename, workspace), daemon=True).start()
         return {
             "ok": True,
             "title": f"{subject_text} 小作文（{len(cleaned)} 条）",
@@ -471,28 +487,8 @@ class ReportPackService:
         }
 
     def _prewarm(self, filename: str, workspace: Optional[str] = None) -> None:
-        """Fetch the public URL once so Cloudflare caches the ZIP before the user clicks."""
-        base = (os.environ.get("PUBLIC_BASE_URL") or "https://app.leziwu.com").rstrip("/")
-        try:
-            from src.auth import create_session
-
-            session = create_session()
-        except Exception:
-            return
-        try:
-            with requests.get(
-                f"{base}{_download_url(filename, workspace)}",
-                headers={
-                    "Cookie": f"dsa_session={session}",
-                    "User-Agent": "LeziwuPrewarm/1.0",
-                },
-                timeout=180,
-                stream=True,
-            ) as response:
-                for _ in response.iter_content(65536):
-                    pass
-        except Exception:
-            return
+        """Private files are not CDN objects; do not re-download or mint a session."""
+        return None
 
     # ---------------- background tasks ----------------
 
@@ -506,10 +502,13 @@ class ReportPackService:
         begin_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
+        owner = workspace_owner()
+        workspace = _workspace_name(workspace)
         task_id = uuid.uuid4().hex
         with _TASK_LOCK:
             _TASKS[task_id] = {
                 "task_id": task_id,
+                "owner": owner,
                 "status": "pending",
                 "progress": 0,
                 "message": "排队中",
@@ -519,8 +518,8 @@ class ReportPackService:
                 "error": None,
             }
         thread = threading.Thread(
-            target=self._run_task,
-            args=(task_id, symbol, keyword, urls, limit, workspace, begin_date, end_date),
+            target=copy_context().run,
+            args=(self._run_task, task_id, symbol, keyword, urls, limit, workspace, begin_date, end_date),
             daemon=True,
         )
         thread.start()
@@ -532,9 +531,10 @@ class ReportPackService:
         }
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        owner = workspace_owner()
         with _TASK_LOCK:
             task = _TASKS.get(task_id)
-            return dict(task) if task else None
+            return {k: v for k, v in task.items() if k != "owner"} if task and task.get("owner") == owner else None
 
     def _update_task(self, task_id: str, **fields: Any) -> None:
         with _TASK_LOCK:

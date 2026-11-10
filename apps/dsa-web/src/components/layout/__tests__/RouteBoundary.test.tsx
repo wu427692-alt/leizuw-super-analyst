@@ -145,7 +145,7 @@ describe('RouteOutletBoundary', () => {
       expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument();
 
       fireEvent.click(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('link', {
-        name: '自选股超级看板',
+        name: '自选看板',
       }));
 
       expect(await screen.findByTestId('watchlist-page')).toBeInTheDocument();
