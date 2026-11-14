@@ -300,6 +300,20 @@ def parse_env_float(
     return parsed
 
 
+def runtime_data_directory() -> Path:
+    """Return the runtime data directory (parent of ``DATABASE_PATH``).
+
+    This is the single source of truth for "where do runtime files live".
+    Docker sets ``DATABASE_PATH=/app/data/stock_analysis.db`` explicitly, so the
+    directory stays ``/app/data`` and every default sub-directory keeps its
+    previous Docker location. Local / desktop deployments usually leave
+    ``DATABASE_PATH`` unset (config default ``./data/stock_analysis.db``), so
+    runtime files land next to the database instead of an unwritable ``/app``.
+    """
+    database_path = os.getenv("DATABASE_PATH", "./data/stock_analysis.db")
+    return Path(database_path).expanduser().resolve().parent
+
+
 def normalize_news_strategy_profile(value: Optional[str]) -> str:
     """Normalize news strategy profile to known values."""
     candidate = (value or "short").strip().lower()
@@ -1058,6 +1072,11 @@ class Config:
     realtime_source_priority: str = "tencent,akshare_sina,efinance,akshare_em"
     # 实时行情缓存时间（秒）
     realtime_cache_ttl: int = 600
+    # 实时行情降级链整体预算（秒）：所有数据源串行尝试必须在预算内返回。
+    # 数值 <= 0 表示不限制（保持旧行为）。
+    realtime_quote_budget_seconds: float = 8.0
+    # 历史行情（日线）降级链整体预算（秒）：数值 <= 0 表示不限制。
+    history_data_budget_seconds: float = 20.0
     # 熔断器冷却时间（秒）
     circuit_breaker_cooldown: int = 300
 
@@ -1998,6 +2017,18 @@ class Config:
             # - tushare: Tushare Pro，需要2000积分，数据全面
             realtime_source_priority=cls._resolve_realtime_source_priority(),
             realtime_cache_ttl=parse_env_int(os.getenv('REALTIME_CACHE_TTL'), 600, field_name='REALTIME_CACHE_TTL', minimum=0),
+            realtime_quote_budget_seconds=parse_env_float(
+                os.getenv('REALTIME_QUOTE_BUDGET_SECONDS'),
+                8.0,
+                field_name='REALTIME_QUOTE_BUDGET_SECONDS',
+                minimum=0.0,
+            ),
+            history_data_budget_seconds=parse_env_float(
+                os.getenv('HISTORY_DATA_BUDGET_SECONDS'),
+                20.0,
+                field_name='HISTORY_DATA_BUDGET_SECONDS',
+                minimum=0.0,
+            ),
             circuit_breaker_cooldown=parse_env_int(os.getenv('CIRCUIT_BREAKER_COOLDOWN'), 300, field_name='CIRCUIT_BREAKER_COOLDOWN', minimum=0),
             enable_fundamental_pipeline=os.getenv('ENABLE_FUNDAMENTAL_PIPELINE', 'true').lower() == 'true',
             fundamental_stage_timeout_seconds=parse_env_float(

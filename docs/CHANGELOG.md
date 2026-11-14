@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- [修复] 行情接口离线过慢：`DataFetcherManager` 的实时行情/历史行情降级链加整体时间预算（`REALTIME_QUOTE_BUDGET_SECONDS` 默认 8s、`HISTORY_DATA_BUDGET_SECONDS` 默认 20s，<=0 不限制），预算耗尽立即返回当前最好结果并记录被跳过的数据源，不再各源串行各等超时（实测单次报价 35s、历史 87s）；同时用 `BaseFetcher.supports_capability()` 做能力声明，缺少 `get_realtime_quote` 的源（如 Baostock）被优雅跳过而不是 `AttributeError` 崩溃，`PytdxFetcher` 连接收敛为最多 `PYTDX_MAX_CONNECT_ATTEMPTS`（默认 3）台、单台 `PYTDX_CONNECT_TIMEOUT_SECONDS`（默认 3s）。
 - [测试] 新增一键发布门禁 `scripts/release_gate.sh`：把静态检查、后端全量 pytest、前端全量 vitest、界面规范（页面预算 + UI 治理断言）、构建、E2E 串成六层，支持 `--fast`（1+4+5）/`--full`（1–6）/`--layer=N`（单层调试）；失败打印失败用例名与单条复现命令，产出 `release-gate-report.md`，历史遗留失败白名单单列不阻断，E2E 无密码时跳过不报错。
 - [测试] 新增 E2E 主流程 `apps/dsa-web/e2e/user-flows.spec.ts`：桌面端登录→总览切 Tab→点快讯抽屉看正文且不跳路由、主要页面无横向溢出且可见文本 ≥12px；手机端 390×844 下 `/meeting` 渲染团队条与对话输入框、`/chat` 重定向保留 query、主要可点热区 ≥44×44。
 - [文档] 新增 `docs/testing.md`：说明六层分别覆盖/不覆盖什么、`--fast`/`--full`/`--layer=N` 三种用法、环境要求、已知遗留失败白名单及修复条件、新增功能补测试 checklist。
@@ -381,6 +382,8 @@
 - 修复“数据一站式获取”中知识星球小作文空包：组合关键词会自动拆成独立检索词，并合并任务作用域关键词。
 - 小作文筛选改为正文命中与股票代码命中取并集，避免旧 AI 股票标签误伤真实相关原文。
 - `created_to` 仅指定日期时按该日结束时间处理，不再遗漏结束日期当天的小作文。
+- [修复] 后端 5 个 API 缺陷：① 报告打包/年报/研报下载服务的默认目录改为由 `DATABASE_PATH` 推导的统一数据目录（新增 `runtime_data_directory()`），非 Docker 部署不再因硬编码 `/app/data` 返回 500，Docker 里 `DATABASE_PATH=/app/data/stock_analysis.db` 时行为不变；② 巨潮上游不可达由 500 改为 503 `upstream_unavailable`（上游返回 HTTP 错误仍为 502 `upstream_error`）；③ `GET /investment-monitor/dragon-tiger/daily` 缺 `TUSHARE_TOKEN` 改为 503 `dependency_not_configured` 并在 message 说明缺哪个配置；④ 不支持的纪要附件 `kind` 由 502 改为 400 `validation_error`；⑤ 全局异常处理器的 `HTTPException(headers=...)` 现在透传自定义响应头（logo 404 的 `Cache-Control: no-store` 恢复生效）。
+- [测试] 移除 `tests/fixtures/api_endpoint_smoke_policy.json` 与 `tests/test_api_contract.py` 里对应的 6 条 xfail，并补 6 条回归测试锁定上述错误码/目录语义；冒烟策略新增 `environment_dependent` 段，把「离线环境下上游必然不可达」的 503 从 xfail 改为硬断言。
 
 ## 2026-08-22 - 手机端可读性与浏览动线升级
 

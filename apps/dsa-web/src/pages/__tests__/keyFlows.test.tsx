@@ -493,6 +493,8 @@ async function renderAt(path: string): Promise<void> {
 }
 
 async function waitForMainContent(): Promise<HTMLElement> {
+  // 应用外壳（Shell / AdminShell）提供全站唯一的 `<main>`；页面自己的 AppPage 只是 div，
+  // 所以这里取到的就是「外壳主区域」，页面内容在它里面。
   await waitFor(() => {
     const mains = Array.from(document.querySelectorAll<HTMLElement>('main'));
     expect(mains.length).toBeGreaterThan(0);
@@ -597,7 +599,7 @@ describe('研究议题就是会话标题：页头、首条消息、返回入口'
     expect(document.title).toContain('宁德时代 2026 年储能业务怎么看');
   });
 
-  it('空白会话里定议题 = 发起一次研究：新建会话、议题作为首条消息、URL 与页头同步', async () => {
+  it('空白会话里定议题 = 发起一次研究：新建会话、议题作为首条消息、URL 同时保留 topic 与 session 深链', async () => {
     viewport.isMobile = true;
     await renderAt('/meeting');
     expect(await screen.findByTestId('meeting-chat-page')).toBeInTheDocument();
@@ -621,13 +623,11 @@ describe('研究议题就是会话标题：页头、首条消息、返回入口'
       expect(findResearchSession(useAgentChatStore.getState().ownerScope, newSessionId)?.topic)
         .toBe('储能怎么看');
 
-      // URL 上议题可见（页头/返回入口从此处恢复）。
-      // 注意：这里不断言 `?session=`——实测 saveTopic 的写参数与 ChatPage 的
-      // 研究上下文回写会竞争同一个 URLSearchParams，session 参数可能被后者覆盖掉
-      //（已作为真实 bug 记录在交付报告里，不在本任务里改业务代码）。
+      // URL 上同时保留议题与本次研究的 session 深链（页头/返回入口/刷新回看从此处恢复）。
       await waitFor(() => {
         const params = new URLSearchParams(window.location.search);
         expect(params.get('topic')).toBe('储能怎么看');
+        expect(params.get('session')).toBe(newSessionId);
       });
 
       // 议题同时成为页头标题与上下文条，并保留返回入口。
@@ -808,4 +808,35 @@ describe('桌面端切页：主要页面切 Tab 后只渲染当前视图', () =>
     },
     30_000,
   );
+});
+
+// ---------------------------------------------------------------------------
+// 6. 地标：每页只有一个 main
+// ---------------------------------------------------------------------------
+
+describe('landmark：整页只有一个 main', () => {
+  // 注意要等懒加载的页面本体挂载完再数：外壳 <main> 会先出现，太早数会漏掉页面里的 main。
+  it.each([
+    { path: '/home', pageReady: /快讯/ },
+    { path: '/tasks', pageReady: /读取范围/ },
+  ])(
+    '应用页面 $path 只有外壳的一个 main（AppPage 不再嵌套 main）',
+    async ({ path, pageReady }) => {
+      await renderAt(path);
+      await waitForMainContent();
+      await screen.findByRole('tab', { name: pageReady });
+      const mains = document.querySelectorAll('main');
+      expect(mains).toHaveLength(1);
+      // 页面内容仍然在唯一的 main 里，样式/读屏都能找到。
+      expect((mains[0]?.textContent ?? '').trim().length).toBeGreaterThan(0);
+    },
+    30_000,
+  );
+
+  it('管理后台页面也只有 AdminShell 的一个 main', async () => {
+    await renderAt('/admin');
+    await waitForMainContent();
+    await screen.findByRole('heading', { name: '运行概览' });
+    expect(document.querySelectorAll('main')).toHaveLength(1);
+  }, 30_000);
 });

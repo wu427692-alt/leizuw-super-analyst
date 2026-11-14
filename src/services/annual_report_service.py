@@ -12,9 +12,12 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from src.config import runtime_data_directory
 from src.services.cninfo_announcement_service import CninfoAnnouncementService
 
-DOWNLOAD_DIR = Path(os.getenv("ANNUAL_REPORT_DIR", "/app/data/annual_reports"))
+# 默认放在运行时数据目录（DATABASE_PATH 的同级目录）；Docker 里 DATABASE_PATH=/app/data/...，
+# 因此默认值仍是 /app/data/annual_reports，非容器部署则落在仓库 ./data 下。
+DOWNLOAD_DIR = Path(os.getenv("ANNUAL_REPORT_DIR") or runtime_data_directory() / "annual_reports")
 
 REPORT_TYPES = {
     "annual": ("category_ndbg_szsh", "年度报告"),

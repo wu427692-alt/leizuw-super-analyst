@@ -15,7 +15,8 @@ import {
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import apiClient from '../api';
-import { BarMeter, MetricRow, PageTabs, ShareBar } from '../components/common';
+import { getParsedApiError, type ParsedApiError } from '../api/error';
+import { ApiErrorAlert, BarMeter, MetricRow, PageTabs, ShareBar } from '../components/common';
 
 type HealthState = 'online' | 'degraded' | 'unknown';
 type Probe = {
@@ -72,14 +73,20 @@ const AdminConsolePage: React.FC = () => {
   const [checkedAt, setCheckedAt] = useState<string>('尚未检测');
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<ParsedApiError | null>(null);
   const [userActionId, setUserActionId] = useState<number | null>(null);
   const [accessTab, setAccessTab] = useState<AccessTab>('queue');
 
   const loadUsers = useCallback(async () => {
     setUsersLoading(true);
+    setUsersError(null);
     try {
       const response = await apiClient.get<{ users: ManagedUser[] }>('/api/v1/user-auth/admin/users');
       setUsers(response.data.users ?? []);
+    } catch (error) {
+      // 不能只吞掉异常：列表失败必须留下可见错误态，并给出重试入口，否则页面看起来只是「没有用户」。
+      setUsers([]);
+      setUsersError(getParsedApiError(error));
     } finally {
       setUsersLoading(false);
     }
@@ -87,9 +94,13 @@ const AdminConsolePage: React.FC = () => {
 
   const setUserStatus = async (userId: number, action: 'approve' | 'reject' | 'disable') => {
     setUserActionId(userId);
+    setUsersError(null);
     try {
       await apiClient.post(`/api/v1/user-auth/admin/users/${userId}/${action}`);
       await loadUsers();
+    } catch (error) {
+      // 审批/停用失败同样要可见，而不是静默按下无反应。
+      setUsersError(getParsedApiError(error));
     } finally {
       setUserActionId(null);
     }
@@ -177,6 +188,15 @@ const AdminConsolePage: React.FC = () => {
         onChange={(key) => navigate(key)}
         items={sections.map((item) => ({ key: item.key, label: item.label }))}
       />
+
+      {usersError ? (
+        <ApiErrorAlert
+          className="mb-[var(--gap-md)]"
+          error={usersError}
+          actionLabel="重试"
+          onAction={() => void loadUsers()}
+        />
+      ) : null}
 
       {section === '/admin' ? (
         <>
@@ -343,7 +363,7 @@ const AdminConsolePage: React.FC = () => {
                     </span>
                   </div>
                 ))}
-                {!usersLoading && users.length === 0 && <div className="admin-users-empty">暂无注册申请</div>}
+                {!usersLoading && users.length === 0 && <div className="admin-users-empty">{usersError ? '用户列表读取失败，请重试' : '暂无注册申请'}</div>}
               </div>
             </section>
           ) : (

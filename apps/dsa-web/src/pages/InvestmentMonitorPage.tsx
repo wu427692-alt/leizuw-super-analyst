@@ -143,7 +143,7 @@ export default function InvestmentMonitorPage() {
 
   return <AppPage className="intelligence-feed-page max-w-[1760px]">
     {fromHome ? <Link to="/app" className="btn-secondary mb-3 inline-flex">返回首页</Link> : null}
-    <main className="intelligence-terminal overflow-hidden border border-[var(--line-1)] bg-[var(--bg-1)] text-[var(--text-2)]">
+    <section className="intelligence-terminal overflow-hidden border border-[var(--line-1)] bg-[var(--bg-1)] text-[var(--text-2)]">
       <header className="flex flex-col gap-4 border-b border-[var(--line-1)] bg-[var(--bg-1)] px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
         <div><p className="text-[12px] uppercase tracking-normal text-[var(--success)]">本地统一事件库 · 10 秒刷新</p><h1 className="mt-2 text-2xl font-bold tracking-[-0.05em] text-white">实时流水</h1><p className="mt-1 text-[12px] text-[var(--text-3)]">只展示按时间进入本地库的原始消息；渠道全景与同步状态已拆到“全渠道情报”。</p></div>
         <div className="flex flex-wrap gap-2">
@@ -177,7 +177,7 @@ export default function InvestmentMonitorPage() {
         <span className="text-[var(--text-3)]"><FileText className="h-3.5 w-3.5"/></span>
       </button>; })}</div>
       <div className="flex items-center justify-between px-4 py-2 text-[12px] text-[var(--text-3)]" aria-live="polite"><span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在读取本地索引，保留当前结果…' : notice || `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><span>每 10 秒刷新本地索引</span></div>
-    </main>
+    </section>
 
     {selectedId ? <SourceRecordDrawer eventId={selectedId} event={selected?.id === selectedId ? selected : undefined} onClose={closeEvent} /> : null}
   </AppPage>;

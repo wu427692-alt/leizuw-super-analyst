@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -73,6 +73,22 @@ type ActiveStockResolution = {
   context: ActiveStockContext;
   useForCurrentSend: boolean;
 };
+
+/**
+ * 取「当前真实地址」的 query。
+ *
+ * react-router 的 `useLocation()` / `useSearchParams()` 是**本次渲染的快照**：同一 tick 里
+ * 别的组件刚 navigate 过时，浏览器地址已经变了、渲染快照还是旧的。回写 URL 时若拿快照
+ * 重建参数，就会把别人刚写入的键（典型是 `/meeting` 发起研究时写入的 `session`）冲掉。
+ * BrowserRouter 下以 `window.location` 为准；MemoryRouter / 非浏览器环境下路径对不上，
+ * 回退到渲染快照。
+ */
+function readLatestLocationSearch(routerPathname: string, fallback: URLSearchParams): URLSearchParams {
+  if (typeof window === 'undefined') return new URLSearchParams(fallback);
+  const live = window.location;
+  if (live.pathname !== routerPathname) return new URLSearchParams(fallback);
+  return new URLSearchParams(live.search.replace(/^\?/, ''));
+}
 
 const getMessageSkillNames = (msg: Message): string[] => {
   if (msg.skillNames?.length) return msg.skillNames;
@@ -172,6 +188,7 @@ const restoreActiveStockContextFromMessages = (messages: Message[]): ActiveStock
 
 const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGlobals }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   // 手机/平板（≤1023px，与 index.css 的 chat 版式断点一致）：对话区改为
   // 「AI 回答直接铺在页面底色上、只有用户消息有气泡、不显示头像」。
@@ -378,19 +395,28 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
   }, [navigate, researchContext]);
 
   // 从侧栏回看研究会话时把议题写回 URL：应用栏标题、「返回研究议题」才不会丢上下文。
+  //
+  // 注意：react-router 的 `setSearchParams(prev => ...)` 里 `prev` 是**本次渲染的快照**，
+  // 不是已经排队但还没提交的地址。`/meeting` 发起研究时刚写入 `from/topic/session`，
+  // 同一 tick 里这里读到的渲染快照还是旧的，拿它重建参数就会把别人写入的 `session` 冲掉
+  //（实测：两次连续 replaceState，第一次带 session，第二次没有）。所以回写前先取
+  // 「当前真实地址」合并，只增补自己负责的键，不删别人写的键。
   useEffect(() => {
     if (!researchContext || isMeetingEntry) return;
-    if (searchParams.get('from') === 'meeting' && searchParams.get('topic')) return;
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
+    const latestSearch = readLatestLocationSearch(location.pathname, searchParams);
+    if (latestSearch.get('from') === 'meeting' && latestSearch.get('topic')) return;
+    setSearchParams(() => {
+      const next = readLatestLocationSearch(location.pathname, searchParams);
       next.set('from', 'meeting');
       next.set('topic', researchContext.topic);
+      // 议题属于某次研究会话：深链必须带上它，刷新/回看才能对回同一个会话。
+      if (researchContext.sessionId) next.set('session', researchContext.sessionId);
       if (researchContext.stock) next.set('stock', researchContext.stock);
       if (researchContext.stockName) next.set('name', researchContext.stockName);
       if (researchContext.cycle) next.set('cycle', researchContext.cycle);
       return next;
     }, { replace: true });
-  }, [researchContext, isMeetingEntry, searchParams, setSearchParams]);
+  }, [researchContext, isMeetingEntry, location.pathname, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (activeStockContext || messages.length === 0) {

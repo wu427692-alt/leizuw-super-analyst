@@ -135,4 +135,49 @@ describe('AdminConsolePage 四个管理入口', () => {
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(4);
   });
+
+  // 回归：loadUsers 曾经只有 try/finally、没有 catch，接口失败时变成 unhandled rejection，
+  // 页面看起来只是「没有注册申请」，用户无从知道数据没读到、也无从重试。
+  it('用户列表接口失败时给出可见错误态与重试入口，而不是静默空列表', async () => {
+    const usersUrl = '/api/v1/user-auth/admin/users';
+    get.mockImplementation((url: string) => {
+      if (url === usersUrl) return Promise.reject(new Error('用户列表读取失败'));
+      return Promise.resolve({ data: { status: 'ok' } });
+    });
+
+    renderAt('/admin/access');
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('请求失败');
+    expect(alert).toHaveTextContent('用户列表读取失败');
+    // 空态不能把「读取失败」伪装成「没有申请」。
+    expect(screen.getByText('用户列表读取失败，请重试')).toBeInTheDocument();
+    expect(screen.queryByText('暂无注册申请')).not.toBeInTheDocument();
+
+    // 重试入口：接口恢复后点击「重试」重新拉取并渲染真实列表。
+    get.mockImplementation((url: string) => {
+      if (url === usersUrl) return Promise.resolve({ data: { users } });
+      return Promise.resolve({ data: { status: 'ok' } });
+    });
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(await screen.findByText('已批准用户')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('用户列表读取失败，请重试')).not.toBeInTheDocument();
+  });
+
+  it('审批操作失败时同样给出可见错误，而不是静默无反应', async () => {
+    post.mockRejectedValue(new Error('审批接口暂不可用'));
+    renderAt('/admin/access');
+
+    const approve = await screen.findByRole('button', { name: '批准' });
+    await act(async () => {
+      fireEvent.click(approve);
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('审批接口暂不可用');
+    // 操作结束后按钮回到可点击状态，用户可以再试。
+    await waitFor(() => expect(screen.getByRole('button', { name: '批准' })).not.toBeDisabled());
+  });
 });

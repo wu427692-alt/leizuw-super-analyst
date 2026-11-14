@@ -86,7 +86,10 @@ def add_error_handlers(app) -> None:
         if isinstance(exc.detail, dict) and "error" in exc.detail and "message" in exc.detail:
             return JSONResponse(
                 status_code=exc.status_code,
-                content=exc.detail
+                content=exc.detail,
+                # 保留端点显式设置的自定义头（如 logo 404 的 Cache-Control: no-store）：
+                # 重新构造响应时丢掉这些头会让浏览器缓存住「没有资源」的负结果。
+                headers=exc.headers,
             )
         # 否则将 detail 包装成 ErrorResponse 格式
         return JSONResponse(
@@ -95,7 +98,8 @@ def add_error_handlers(app) -> None:
                 "error": "http_error",
                 "message": str(exc.detail) if exc.detail else "HTTP Error",
                 "detail": None
-            }
+            },
+            headers=exc.headers,
         )
     
     @app.exception_handler(RequestValidationError)

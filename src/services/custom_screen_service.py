@@ -12,12 +12,16 @@ import os
 import re
 import sqlite3
 from datetime import date, timedelta
+
+from src.config import runtime_data_directory
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
-DB_PATH = os.environ.get("DATABASE_PATH", "/app/data/stock_analysis.db")
+# 与其它服务共用同一个数据目录解析：Docker 里 DATABASE_PATH 显式指向
+# /app/data，本机/桌面端未设置时落在 ./data，不再硬编码不可写的 /app。
+DB_PATH = os.environ.get("DATABASE_PATH", str(runtime_data_directory() / "stock_analysis.db"))
 
 THEME_INDUSTRIES: Dict[str, List[str]] = {
     "科技": ["半导体", "元器件", "软件服务", "通信设备", "互联网", "IT设备", "电信运营"],

@@ -591,7 +591,7 @@ function ConsensusSection({ stock, onEssayOpen, onAnalyze, analyzing, analysisMe
     </details> : null}
 
     <div className="super-consensus-body">
-      <main>
+      <section>
         {hasReport ? <>
         <section className="super-consensus-conclusion"><div className="super-section-kicker"><Sparkles /><span>综合结论</span></div><p>{essay.summary || '报告未提供综合结论，可核对下面的预期证据与原文。'}</p><div className="super-outlook-grid"><article><span>利润与经营预期</span><p>{essay.profitOutlook || '当前没有可追溯的利润、收入或 EPS 预期。'}</p></article><article><span>估值与市值推测</span><p>{essay.valuationOutlook || '当前没有可追溯的目标价、市值或估值倍数推测。'}</p></article></div></section>
 
@@ -599,7 +599,7 @@ function ConsensusSection({ stock, onEssayOpen, onAnalyze, analyzing, analysisMe
         </> : <section className="super-consensus-conclusion" aria-label="小作文分析状态"><h4>{inProgress ? '小作文正在后台分析' : essay.status === 'failed' ? '本次小作文分析未完成' : '尚未生成小作文报告'}</h4><p>{inProgress ? '可以先查看券商预测与候选原文，或离开本页；后台任务会继续。' : candidateCount > 0 ? `当前有 ${candidateCount} 篇候选小作文。点击上方分析按钮后，将提取利润、估值和对应预测期间；分析前也可先核对候选原文。` : '当前没有匹配的候选小作文。可先使用券商预测、查看资料，或检索原文核对材料；不会提交空分析任务。'}</p></section>}
 
         <BrokerForecastPanel consensus={consensus} />
-      </main>
+      </section>
 
       {displayedSourceNotes.length > 0 || hasReport ? <aside className="super-consensus-sources"><details><summary>{reportSourcesDisplayed ? '报告引用原文' : '当前候选原文'} · {displayedSourceNotes.length} 篇</summary><header><div><h4>{reportSourcesDisplayed ? '报告引用原文' : '当前候选原文'}</h4><p>{reportSourcesDisplayed ? (essay.reportSourcesComplete === false ? '历史输入清单不完整，仅展示可追溯的引用。' : '这里是生成当前报告实际使用的来源。') : hasReport ? '旧接口返回候选清单，不将它冒充历史报告的实际引用。' : '这是本次可分析的材料，尚未生成报告。'} 点击在页内阅读。</p></div></header>{renderSourceGroup('单股专属小作文', `标签中仅有 ${stock.name}`, dedicatedNotes, 'dedicated')}{renderSourceGroup('相关小作文', '多标的、产业链或关键词匹配', relatedNotes, 'related')}</details></aside> : null}
     </div>
@@ -1225,7 +1225,7 @@ export default function SuperWatchlistPage() {
           </div>;
         })}</div>
       </aside>
-      <main className="super-watchlist-main min-w-0">{active ? <>
+      <section className="super-watchlist-main min-w-0">{active ? <>
         <section className="super-market-band">
           <div className="super-stock-identity"><h2>{active.name}</h2><span>{active.symbol}</span></div>
           <div className={`super-stock-price ${activeMarket.tone > 0 ? 'is-up' : activeMarket.tone < 0 ? 'is-down' : ''}`}><strong>{activeMarket.price}</strong><span>{activeMarket.change}</span></div>
@@ -1251,7 +1251,7 @@ export default function SuperWatchlistPage() {
         </section> : null}
         {section === 'overview' ? <Overview stock={active} onSection={openSection} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} /> : loadedDetail ? <DetailSection key={`${active.symbol}:${section}`} section={section} library={library} stock={activeForDetail ?? active} material={materialFilter} onMaterialChange={selectMaterial} message={messageFilter} onMessageChange={selectMessage} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} onAnalyzeConsensus={() => void analyzeConsensus()} analyzingConsensus={analyzingConsensus} consensusMessage={consensusMessage} /> : !workspaceError ? <div role="status" className="super-detail-loading">正在读取{primarySection.label}，行情和其他栏目仍可使用。</div> : null}
         <details className="super-data-notes"><summary>数据来源与使用说明</summary><p>行情来源：{active.market.source || '未注明'}；实际时间：{active.market.updatedAt || '未取得'}。财务指标期：{reportDate(financialSource(active.fundamentals, 'indicator')?.period)}。不同资料按各自披露日期展示；观点、预测不代表已实现业绩，也不构成买卖指令。</p><p>页面可见时自动更新。资料库展示当前已载入资料，完整原文检索请使用 <Link to={`/essay-radar/feed?query=${encodeURIComponent(active.name || active.symbol)}`}>检索{active.name || active.symbol}的机构段子与录音</Link> 或 <Link to="/data-acquisition">数据一站式获取</Link>。</p></details>
-      </> : workspaceError ? <section role="status" className="super-workspace-retry"><h2>暂未加载</h2><button type="button" onClick={() => void loadWorkspace(activeSymbol, true, workspaceView)}>重试当前股票</button><details><summary>查看原因</summary><p>{workspaceError}</p></details></section> : loading ? <div role="status" className="space-y-4 p-5" aria-label={`正在加载 ${activeSymbol || loadingSymbol || '自选股'} 数据`}><div className="h-16 animate-pulse rounded-xl bg-border/45" /><div className="h-[320px] animate-pulse rounded-xl bg-border/30" /><p className="text-center text-[12px] text-secondary-text">正在读取当前股票，其他股票不会阻塞本页。</p></div> : listError ? <EmptyState title="自选列表暂未读取" description="请点击上方“重试列表”，无需重新添加已有自选股。" /> : <EmptyState title="暂无自选股" description="输入股票名称或代码加入，行情与研究资料会自动归档。" />}</main>
+      </> : workspaceError ? <section role="status" className="super-workspace-retry"><h2>暂未加载</h2><button type="button" onClick={() => void loadWorkspace(activeSymbol, true, workspaceView)}>重试当前股票</button><details><summary>查看原因</summary><p>{workspaceError}</p></details></section> : loading ? <div role="status" className="space-y-4 p-5" aria-label={`正在加载 ${activeSymbol || loadingSymbol || '自选股'} 数据`}><div className="h-16 animate-pulse rounded-xl bg-border/45" /><div className="h-[320px] animate-pulse rounded-xl bg-border/30" /><p className="text-center text-[12px] text-secondary-text">正在读取当前股票，其他股票不会阻塞本页。</p></div> : listError ? <EmptyState title="自选列表暂未读取" description="请点击上方“重试列表”，无需重新添加已有自选股。" /> : <EmptyState title="暂无自选股" description="输入股票名称或代码加入，行情与研究资料会自动归档。" />}</section>
     </div>
     {selectedEssay ? <EssayOriginalDrawer key={selectedEssay.externalId} event={selectedEssay} onClose={() => setSelectedEssay(null)} /> : null}
     {selectedForumPost ? <ForumPostDrawer key={selectedForumPost.id} event={selectedForumPost} onClose={() => setSelectedForumPost(null)} /> : null}

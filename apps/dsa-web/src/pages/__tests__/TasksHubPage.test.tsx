@@ -43,6 +43,12 @@ function fixture() { return <MemoryRouter initialEntries={['/tasks']}><TasksHubP
 async function flush() { await act(async () => { await Promise.resolve(); }); }
 async function advance(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); }
 function expandFailures() { fireEvent.click(screen.getByText('异常详情')); }
+/** 页面主体：AppPage 不再是 `<main>`（外壳才是全站唯一 main），用它的根属性定位页面区域。 */
+function pageRegion(): HTMLElement {
+  const region = document.querySelector<HTMLElement>('[data-research-workspace="true"]');
+  expect(region).not.toBeNull();
+  return region as HTMLElement;
+}
 
 describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
   beforeEach(() => {
@@ -132,7 +138,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
       .mockRejectedValueOnce({ isAxiosError: true, response: { status } })
       .mockResolvedValue({ items: [{ ...running, status: 'completed', progress: 100, resultRunId: 55 }], total: 1 });
     render(fixture()); await flush(); await advance(10_000);
-    expect(within(screen.getByRole('main')).getByRole('status')).toHaveTextContent('1 类接口版本不兼容');
+    expect(within(pageRegion()).getByRole('status')).toHaveTextContent('1 类接口版本不兼容');
     expect(screen.getByText(running.name)).toBeVisible();
     expect(screen.getByLabelText('进度 45%')).toBeVisible();
     expect(screen.getByText(/上次读取状态/)).toBeVisible();
@@ -142,7 +148,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     expandFailures();
     expect(screen.getByText(/量化研究接口版本不兼容，已停止自动重试/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: '重试量化研究' })); await flush();
-    expect(within(screen.getByRole('main')).queryByRole('status')).not.toBeInTheDocument();
+    expect(within(pageRegion()).queryByRole('status')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     expect(screen.getByLabelText('进度 100%')).toBeVisible();
     expect(essayQuantApi.tasks).toHaveBeenCalledTimes(3);
@@ -154,8 +160,8 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     vi.mocked(essayRadarApi.audioBatchTasks).mockRejectedValue({ isAxiosError: true, response: { status: 400 } });
     vi.mocked(dataAcquisitionApi.tasks).mockRejectedValue({ isAxiosError: true, response: { status: 503 } });
     render(fixture()); await flush();
-    expect(within(screen.getByRole('main')).getAllByRole('status')).toHaveLength(1);
-    expect(within(screen.getByRole('main')).getByRole('status')).toHaveTextContent('4 类任务读取异常 · 3 类接口版本不兼容');
+    expect(within(pageRegion()).getAllByRole('status')).toHaveLength(1);
+    expect(within(pageRegion()).getByRole('status')).toHaveTextContent('4 类任务读取异常 · 3 类接口版本不兼容');
     expect(screen.getByText(running.name)).toBeVisible();
     expect(screen.getByRole('button', { name: '重试行业与公司调研' })).not.toBeVisible();
     const failures = screen.getByText('异常详情').closest('details')!;
@@ -189,7 +195,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     fireEvent(document, new Event('visibilitychange')); await flush();
     expect(industryResearchApi.projects).toHaveBeenCalledTimes(2);
     expect(screen.getByText('当前筛选下没有任务')).toBeVisible();
-    expect(within(screen.getByRole('main')).queryByRole('status')).not.toBeInTheDocument();
+    expect(within(pageRegion()).queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('账号切换立即隔离旧快照，旧身份的慢请求不能覆盖新账号', async () => {

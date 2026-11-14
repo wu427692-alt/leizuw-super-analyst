@@ -21,6 +21,7 @@ import uuid
 import zipfile
 from contextvars import copy_context
 
+from src.config import runtime_data_directory
 from src.services.workspace import workspace_id, workspace_directory, workspace_owner
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -30,8 +31,11 @@ from urllib.parse import quote
 
 import requests
 
-DB_PATH = os.environ.get("DATABASE_PATH", "/app/data/stock_analysis.db")
-DOWNLOAD_DIR = Path(os.environ.get("REPORT_DOWNLOAD_DIR", "/app/data/downloads"))
+# 默认可写目录来自运行时数据目录（DATABASE_PATH 的同级目录）。Docker 显式设置
+# DATABASE_PATH=/app/data/stock_analysis.db，默认值因此仍是 /app/data/...，行为不变；
+# 非容器部署落在仓库 ./data 下，不再因 mkdir('/app') 抛 OSError。
+DB_PATH = os.environ.get("DATABASE_PATH", str(runtime_data_directory() / "stock_analysis.db"))
+DOWNLOAD_DIR = Path(os.environ.get("REPORT_DOWNLOAD_DIR") or runtime_data_directory() / "downloads")
 
 
 def _workspace_name(workspace: Optional[str] = None) -> str:
@@ -46,7 +50,7 @@ def _download_url(filename: str, workspace: Optional[str] = None) -> str:
     ws = _workspace_name(workspace)
     prefix = f"{quote(ws)}/" if ws else ""
     return f"/api/v1/financial-data/downloads/{prefix}{quote(filename)}"
-CACHE_DIR = Path(os.environ.get("REPORT_CACHE_DIR", "/app/data/report_cache"))
+CACHE_DIR = Path(os.environ.get("REPORT_CACHE_DIR") or runtime_data_directory() / "report_cache")
 FETCH_URL = os.environ.get("REPORT_FETCH_URL", "http://host.docker.internal:8765/fetch")
 FETCH_TOKEN = os.environ.get("REPORT_FETCH_TOKEN", "")
 

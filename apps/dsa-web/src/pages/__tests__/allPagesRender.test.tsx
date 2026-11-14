@@ -198,8 +198,9 @@ function unexpectedUnhandledRejections(): string[] {
 }
 
 /**
- * 页面主区域。应用外壳（Shell/AdminShell）本身有 `<main>`，页面自己的 `AppPage`
- * 也是一个 `<main>`，所以取 DOM 里最内层的那个（页面内容）。
+ * 页面主区域。应用外壳（Shell/AdminShell）提供全站唯一的 `<main>`，页面自己的 `AppPage`
+ * 只是 div，所以取 DOM 里唯一的那个 `<main>`（外壳主区域，页面内容在它里面）。
+ * 少数页面的子模块仍自带 `<main>` 时取最内层那个，保证断言落在页面内容上。
  */
 function currentPageMain(): HTMLElement | null {
   const mains = Array.from(document.querySelectorAll<HTMLElement>('main'));

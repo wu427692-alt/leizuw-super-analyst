@@ -43,6 +43,34 @@ import os
 logger = logging.getLogger(__name__)
 
 _PYTDX_CONNECTION_COOLDOWN_SECONDS = 15.0
+# 单台服务器连接超时（秒）：pytdx 默认 5s，8 台串行最坏 40s（实测报价 35.74s）。
+_PYTDX_DEFAULT_CONNECT_TIMEOUT_SECONDS = 3.0
+# 每轮最多尝试的服务器台数：全部失败后本轮放弃，下一轮从下一台开始轮转。
+_PYTDX_DEFAULT_MAX_CONNECT_ATTEMPTS = 3
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.1) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return float(default)
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a valid number, using default %.1fs", name, raw, default)
+        return float(default)
+    return max(minimum, value)
+
+
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return int(default)
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a valid integer, using default %s", name, raw, default)
+        return int(default)
+    return max(minimum, value)
 
 
 def _parse_hosts_from_env() -> Optional[List[Tuple[str, int]]]:
@@ -152,6 +180,13 @@ class PytdxFetcher(BaseFetcher):
         self._stock_name_cache = {}    # 股票名称缓存 {code: name}
         self._unavailable_until = 0.0
         self._last_unavailable_reason = ""
+        # 连接尝试收敛：每轮最多试 N 台，每台有明确连接超时。
+        self._connect_timeout = _env_float(
+            "PYTDX_CONNECT_TIMEOUT_SECONDS", _PYTDX_DEFAULT_CONNECT_TIMEOUT_SECONDS
+        )
+        self._max_connect_attempts = _env_int(
+            "PYTDX_MAX_CONNECT_ATTEMPTS", _PYTDX_DEFAULT_MAX_CONNECT_ATTEMPTS
+        )
 
     def _is_in_connection_cooldown(self) -> bool:
         return time.time() < self._unavailable_until
@@ -206,15 +241,25 @@ class PytdxFetcher(BaseFetcher):
         
         api = TdxHq_API()
         connected = False
-        
+        # 上限：最多尝试 N 台服务器，且连接阶段总时长不超过 N * 单台超时。
+        # 失败后把起点轮转到下一台，避免同一个坏服务器长期挡住后续服务器。
+        max_attempts = min(len(self._hosts), self._max_connect_attempts)
+        connect_deadline = time.monotonic() + self._connect_timeout * max_attempts
+
         try:
             # 尝试连接服务器（自动选择最优）
-            for i in range(len(self._hosts)):
+            for i in range(max_attempts):
+                if time.monotonic() >= connect_deadline:
+                    break
                 host_idx = (self._current_host_idx + i) % len(self._hosts)
                 host, port = self._hosts[host_idx]
-                
+                host_timeout = min(
+                    self._connect_timeout,
+                    max(0.05, connect_deadline - time.monotonic()),
+                )
+
                 try:
-                    if api.connect(host, port, time_out=5):
+                    if api.connect(host, port, time_out=host_timeout):
                         connected = True
                         self._current_host_idx = host_idx
                         logger.debug(f"Pytdx 连接成功: {host}:{port}")
@@ -222,9 +267,12 @@ class PytdxFetcher(BaseFetcher):
                 except Exception as e:
                     logger.debug(f"Pytdx 连接 {host}:{port} 失败: {e}")
                     continue
-            
+
             if not connected:
-                self._mark_connection_cooldown("Pytdx 无法连接任何服务器")
+                self._current_host_idx = (self._current_host_idx + max_attempts) % len(self._hosts)
+                self._mark_connection_cooldown(
+                    f"Pytdx 本轮 {max_attempts} 台服务器均无法连接"
+                )
                 raise DataFetchError("Pytdx 无法连接任何服务器")
             
             yield api

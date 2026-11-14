@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 # === 标准化列名定义 ===
 STANDARD_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg']
 
+# === 降级链整体预算默认值（秒）===
+# 单个数据源可以各自等待自己的超时，但整条降级链必须在预算内返回，
+# 否则离线/上游抽风时会出现「每个源都等满超时」的串行叠加（实测报价 35s、历史 87s）。
+# 通过 REALTIME_QUOTE_BUDGET_SECONDS / HISTORY_DATA_BUDGET_SECONDS 覆盖，数值 <= 0 表示不限制。
+DEFAULT_REALTIME_QUOTE_BUDGET_SECONDS = 8.0
+DEFAULT_HISTORY_DATA_BUDGET_SECONDS = 20.0
+
 
 def unwrap_exception(exc: Exception) -> Exception:
     """
@@ -323,6 +330,41 @@ class DataSourceUnavailableError(DataFetchError):
     pass
 
 
+class FallbackBudget:
+    """Wall-clock budget shared by one serial fallback chain.
+
+    The manager keeps trying priority-ordered sources until one succeeds, but the
+    whole chain must return within ``total_seconds``. A value <= 0 disables the
+    limit (keeps the legacy unbounded behaviour).
+    """
+
+    __slots__ = ("chain", "total_seconds", "started_at")
+
+    def __init__(self, total_seconds: float, *, chain: str):
+        try:
+            total = float(total_seconds)
+        except (TypeError, ValueError):
+            total = 0.0
+        self.chain = str(chain or "fallback")
+        self.total_seconds = max(0.0, total)
+        self.started_at = time.monotonic()
+
+    @property
+    def enabled(self) -> bool:
+        return self.total_seconds > 0
+
+    def elapsed(self) -> float:
+        return max(0.0, time.monotonic() - self.started_at)
+
+    def remaining(self) -> float:
+        if not self.enabled:
+            return float("inf")
+        return max(0.0, self.total_seconds - self.elapsed())
+
+    def exhausted(self) -> bool:
+        return self.enabled and self.remaining() <= 0
+
+
 class BaseFetcher(ABC):
     """
     数据源抽象基类
@@ -340,6 +382,46 @@ class BaseFetcher(ABC):
     name: str = "BaseFetcher"
     priority: int = 99  # 优先级数字越小越优先
     allow_empty_daily_data: bool = False
+
+    # 能力声明：能力名 -> 需要实现的 Fetcher 方法名。
+    # 降级链在真正调用前用 supports_capability() 判断，缺少实现的源直接跳过，
+    # 而不是在调用时抛 AttributeError 打断整条链（例如 Baostock 不提供实时行情）。
+    _CAPABILITY_METHODS: Dict[str, str] = {
+        "realtime_quote": "get_realtime_quote",
+        "daily_data": "get_daily_data",
+        "daily_prefetch": "prefetch_daily_klines",
+        "stock_name": "get_stock_name",
+        "stock_list": "get_stock_list",
+        "chip_distribution": "get_chip_distribution",
+    }
+
+    @classmethod
+    def resolve_capability_method(cls, capability: str) -> str:
+        """Map a capability name to the method a Fetcher must implement."""
+        if not capability:
+            return ""
+        return cls._CAPABILITY_METHODS.get(str(capability), str(capability))
+
+    @classmethod
+    def supported_capabilities(cls) -> frozenset:
+        """Return the capabilities implemented by this Fetcher class."""
+        return frozenset(
+            capability
+            for capability, method_name in cls._CAPABILITY_METHODS.items()
+            if callable(getattr(cls, method_name, None))
+        )
+
+    def supports_capability(self, capability: str) -> bool:
+        """Declare whether this Fetcher can serve *capability*.
+
+        Unknown capability names fall back to checking a method with the same
+        name, so third-party fetchers keep working without edits.
+        """
+        method_name = type(self).resolve_capability_method(capability)
+        if not method_name:
+            return True
+        return callable(getattr(self, method_name, None))
+
     
     @abstractmethod
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -694,9 +776,35 @@ class DataFetcherManager:
                 fetcher = self._fetchers_by_name.get(fetcher_name)
         if fetcher is None:
             return None
+        if not self._fetcher_supports_capability(fetcher, capability):
+            logger.info(
+                "[数据源路由] %s 不支持 %s，在本次降级链中跳过",
+                fetcher.name,
+                capability,
+            )
+            return None
         if not self._is_fetcher_available(fetcher, capability=capability):
             return None
         return fetcher
+
+    @staticmethod
+    def _fetcher_supports_capability(fetcher: BaseFetcher, capability: str) -> bool:
+        """Check a Fetcher capability declaration without trusting custom objects."""
+        if not capability:
+            return True
+        probe = getattr(fetcher, "supports_capability", None)
+        if callable(probe):
+            try:
+                return bool(probe(capability))
+            except Exception as exc:
+                logger.debug(
+                    "[数据源能力] %s.supports_capability(%s) 检查失败，回退为按方法判断: %s",
+                    getattr(fetcher, "name", fetcher),
+                    capability,
+                    exc,
+                )
+        method_name = BaseFetcher.resolve_capability_method(capability)
+        return callable(getattr(fetcher, method_name, None))
 
     @staticmethod
     def _call_availability_probe(fetcher: BaseFetcher, probe_name: str, capability: str) -> Optional[bool]:
@@ -743,6 +851,95 @@ class DataFetcherManager:
         with self._get_fetcher_call_lock(fetcher):
             return method(*args, **kwargs)
 
+    @staticmethod
+    def _resolve_budget_seconds(config, field_name: str, default: float) -> float:
+        """Read a budget value from config with a safe fallback for test stubs."""
+        raw = getattr(config, field_name, default) if config is not None else default
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = float(default)
+        return max(0.0, value)
+
+    @classmethod
+    def _build_fallback_budget(
+        cls,
+        config,
+        field_name: str,
+        default: float,
+        *,
+        chain: str,
+    ) -> FallbackBudget:
+        return FallbackBudget(
+            cls._resolve_budget_seconds(config, field_name, default),
+            chain=chain,
+        )
+
+    def _run_fetcher_call_with_budget(
+        self,
+        fetcher: BaseFetcher,
+        method_name: str,
+        budget: FallbackBudget,
+        *args,
+        **kwargs,
+    ):
+        """Call one Fetcher method under the chain-wide wall-clock budget.
+
+        The call runs in a short-lived daemon thread so that a hung upstream
+        (some libraries use requests without a timeout) cannot extend the whole
+        chain beyond its budget. Python threads cannot be killed, so an abandoned
+        worker may finish in the background after we return; the same trade-off
+        is already used by ``_run_with_timeout`` and efinance's call timeout.
+        """
+        method = getattr(fetcher, method_name, None)
+        if not callable(method):
+            raise DataSourceUnavailableError(
+                f"[{fetcher.name}] 未实现 {method_name}，跳过该数据源"
+            )
+        if not budget.enabled:
+            # 预算关闭时完全保持旧行为（同步调用、无线程）。
+            return self._call_fetcher_method(fetcher, method_name, *args, **kwargs)
+        remaining = budget.remaining()
+        if remaining <= 0:
+            raise DataSourceUnavailableError(
+                f"[{fetcher.name}] 降级链预算已耗尽，跳过该数据源"
+            )
+
+        lock = self._get_fetcher_call_lock(fetcher)
+        # 正常情况下锁是空闲的；若上一次调用被预算放弃后仍在跑，最多等 5s，
+        # 真正的整体时限仍由下面的 join timeout 保证。
+        lock_wait = min(remaining, 5.0)
+        holder: Dict[str, Any] = {}
+
+        def _invoke() -> None:
+            if not lock.acquire(timeout=max(0.0, lock_wait)):
+                holder["error"] = DataSourceUnavailableError(
+                    f"[{fetcher.name}] 上一次调用尚未结束，按预算跳过"
+                )
+                return
+            try:
+                holder["value"] = method(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - re-raised on the caller thread
+                holder["error"] = exc
+            finally:
+                lock.release()
+
+        worker = Thread(
+            target=_invoke,
+            name=f"fallback-{getattr(fetcher, 'name', method_name)}",
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=remaining)
+        if worker.is_alive():
+            raise DataSourceUnavailableError(
+                f"[{fetcher.name}] 降级链预算耗尽（已用 {budget.elapsed():.2f}s / 上限 {budget.total_seconds:.2f}s）"
+            )
+        error = holder.get("error")
+        if error is not None:
+            raise error
+        return holder.get("value")
+
     @classmethod
     def _filter_daily_fetchers_for_market(
         cls,
@@ -777,13 +974,23 @@ class DataFetcherManager:
         """Skip request-time unavailable fetchers before entering route-specific loops."""
         kept: List[BaseFetcher] = []
         skipped: List[str] = []
+        unsupported: List[str] = []
 
         for fetcher in fetchers:
+            if not cls._fetcher_supports_capability(fetcher, capability):
+                unsupported.append(fetcher.name)
+                continue
             if cls._is_fetcher_available(fetcher, capability=capability):
                 kept.append(fetcher)
             else:
                 skipped.append(fetcher.name)
 
+        if unsupported:
+            logger.info(
+                "[数据源路由] %s 跳过不支持的数据源: %s",
+                capability or "request",
+                ", ".join(unsupported),
+            )
         if skipped:
             logger.info(
                 "[数据源路由] %s 跳过暂不可用的数据源: %s",
@@ -1268,6 +1475,7 @@ class DataFetcherManager:
             DataFetchError: 所有数据源都失败时抛出
         """
         from .us_index_mapping import is_us_index_code, is_us_stock_code
+        from src.config import get_config
 
         # Normalize code (strip SH/SZ prefix etc.)
         stock_code = normalize_stock_code(stock_code)
@@ -1275,6 +1483,15 @@ class DataFetcherManager:
         fetchers = self._get_fetchers_snapshot()
         errors = []
         request_start = time.time()
+        # 整条降级链共用一份预算：所有源串行失败时必须在有限时间内返回，
+        # 不能每个源各等各的超时（离线实测 /history 87s）。
+        history_budget = self._build_fallback_budget(
+            get_config(),
+            "history_data_budget_seconds",
+            DEFAULT_HISTORY_DATA_BUDGET_SECONDS,
+            chain="daily_data",
+        )
+        skipped_by_budget: List[str] = []
 
         # 快速路径：美股使用专用数据源路由；港股先过滤不支持港股日线的数据源
         #   - 配置长桥凭据后: Longbridge 为首选, YFinance/AkShare 兜底
@@ -1313,6 +1530,9 @@ class DataFetcherManager:
             market_label = "美股指数" if is_us_index else "美股"
 
             for order_index, src_name in enumerate(source_order):
+                if history_budget.exhausted():
+                    skipped_by_budget.extend(source_order[order_index:])
+                    break
                 fallback_to = (
                     source_order[order_index + 1]
                     if order_index + 1 < len(source_order)
@@ -1321,6 +1541,9 @@ class DataFetcherManager:
                 for attempt, fetcher in enumerate(fetchers, start=1):
                     if fetcher.name != src_name:
                         continue
+                    if history_budget.exhausted():
+                        skipped_by_budget.extend(source_order[order_index:])
+                        break
                     if not self._is_daily_source_available(fetcher, market):
                         errors.append(self._daily_source_unavailable_error(fetcher))
                         break
@@ -1336,9 +1559,10 @@ class DataFetcherManager:
                             provider=fetcher.name,
                             operation="get_daily_data",
                         )
-                        df = self._call_fetcher_method(
+                        df = self._run_fetcher_call_with_budget(
                             fetcher,
                             "get_daily_data",
+                            history_budget,
                             stock_code=stock_code,
                             start_date=start_date,
                             end_date=end_date,
@@ -1397,12 +1621,27 @@ class DataFetcherManager:
                         errors.append(error_msg)
                     break
 
+            if skipped_by_budget:
+                logger.info(
+                    "[数据源] %s %s 历史行情降级链预算耗尽: elapsed=%.2fs budget=%.2fs skipped=%s",
+                    market_label,
+                    stock_code,
+                    history_budget.elapsed(),
+                    history_budget.total_seconds,
+                    ", ".join(skipped_by_budget),
+                )
+                errors.append(
+                    f"(BudgetExhausted) 因预算耗尽跳过: {', '.join(skipped_by_budget)}"
+                )
             error_summary = f"{market_label} {stock_code} 获取失败:\n" + "\n".join(errors)
             elapsed = time.time() - request_start
             logger.error(f"[数据源终止] {stock_code} 获取失败: elapsed={elapsed:.2f}s\n{error_summary}")
             raise DataFetchError(error_summary)
 
         for attempt, fetcher in enumerate(fetchers, start=1):
+            if history_budget.exhausted():
+                skipped_by_budget = [item.name for item in fetchers[attempt - 1:]]
+                break
             if not self._is_daily_source_available(fetcher, market):
                 errors.append(self._daily_source_unavailable_error(fetcher))
                 continue
@@ -1415,9 +1654,10 @@ class DataFetcherManager:
                     provider=fetcher.name,
                     operation="get_daily_data",
                 )
-                df = self._call_fetcher_method(
+                df = self._run_fetcher_call_with_budget(
                     fetcher,
                     "get_daily_data",
+                    history_budget,
                     stock_code=stock_code,
                     start_date=start_date,
                     end_date=end_date,
@@ -1483,6 +1723,17 @@ class DataFetcherManager:
                 continue
         
         # 所有数据源都失败
+        if skipped_by_budget:
+            logger.info(
+                "[数据源] %s 历史行情降级链预算耗尽: elapsed=%.2fs budget=%.2fs skipped=%s",
+                stock_code,
+                history_budget.elapsed(),
+                history_budget.total_seconds,
+                ", ".join(skipped_by_budget),
+            )
+            errors.append(
+                f"(BudgetExhausted) 因预算耗尽跳过: {', '.join(skipped_by_budget)}"
+            )
         error_summary = f"所有数据源获取 {stock_code} 失败:\n" + "\n".join(errors)
         elapsed = time.time() - request_start
         logger.error(f"[数据源终止] {stock_code} 获取失败: elapsed={elapsed:.2f}s\n{error_summary}")
@@ -1627,7 +1878,7 @@ class DataFetcherManager:
 
     def prefetch_daily_klines(self, stock_codes: List[str], days: int = 30) -> int:
         """Batch-prefetch TickFlow daily K-lines without changing per-stock callers."""
-        fetcher = self._get_fetcher_by_name("TickFlowFetcher", capability="daily_data")
+        fetcher = self._get_fetcher_by_name("TickFlowFetcher", capability="daily_prefetch")
         if fetcher is None or not hasattr(fetcher, "prefetch_daily_klines"):
             return 0
 
@@ -1752,6 +2003,15 @@ class DataFetcherManager:
             logger.debug(f"[实时行情] 功能已禁用，跳过 {stock_code}")
             return None
 
+        # 整条降级链共用一份预算：上游不可达时必须在有限时间内返回，
+        # 不能每个源各等各的超时（实测离线报价单请求 35s）。
+        quote_budget = self._build_fallback_budget(
+            config,
+            "realtime_quote_budget_seconds",
+            DEFAULT_REALTIME_QUOTE_BUDGET_SECONDS,
+            chain="realtime_quote",
+        )
+
         # ----------------------------------------------------------
         # 美股 (指数 + 个股) / 港股 — 专用双源路由
         #   配置长桥后: Longbridge 首选, YFinance/AkShare 补充
@@ -1767,7 +2027,7 @@ class DataFetcherManager:
 
         if is_jp or is_kr or is_tw:
             market_label = "日股" if is_jp else "韩股" if is_kr else "台股"
-            quote = self._try_fetcher_quote(stock_code, "YfinanceFetcher")
+            quote = self._try_fetcher_quote(stock_code, "YfinanceFetcher", budget=quote_budget)
             if quote is not None:
                 logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: YfinanceFetcher)")
                 return self._enrich_realtime_quote(
@@ -1794,19 +2054,37 @@ class DataFetcherManager:
                 secondary_kw = {"source": "hk"} if secondary_src == "AkshareFetcher" else {}
 
             primary_token = self._realtime_fetcher_token(primary_src, **primary_kw)
-            primary_quote = self._try_fetcher_quote(stock_code, primary_src, **primary_kw)
+            primary_quote = self._try_fetcher_quote(
+                stock_code, primary_src, budget=quote_budget, **primary_kw,
+            )
             fallback_from = primary_token if primary_quote is None else None
+            skipped_by_budget: List[str] = []
             if primary_quote is not None:
                 logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: {primary_src})")
-            primary_quote = self._supplement_quote(
-                stock_code, primary_quote, secondary_src, **secondary_kw,
-            )
+            if quote_budget.exhausted():
+                skipped_by_budget.append(secondary_src)
+            else:
+                primary_quote = self._supplement_quote(
+                    stock_code, primary_quote, secondary_src, budget=quote_budget, **secondary_kw,
+                )
             # 美股个股（非指数）尝试从 Finnhub/AlphaVantage 补充缺失字段
             if is_us and not is_us_index and primary_quote is not None:
                 for extra_src in ["FinnhubFetcher", "AlphaVantageFetcher"]:
+                    if quote_budget.exhausted():
+                        skipped_by_budget.append(extra_src)
+                        continue
                     primary_quote = self._supplement_quote(
-                        stock_code, primary_quote, extra_src,
+                        stock_code, primary_quote, extra_src, budget=quote_budget,
                     )
+            if skipped_by_budget:
+                logger.info(
+                    "[实时行情] %s %s 降级链预算耗尽: elapsed=%.2fs budget=%.2fs skipped=%s",
+                    market_label,
+                    stock_code,
+                    quote_budget.elapsed(),
+                    quote_budget.total_seconds,
+                    ", ".join(skipped_by_budget),
+                )
             if primary_quote is not None:
                 return self._enrich_realtime_quote(
                     primary_quote,
@@ -1826,12 +2104,26 @@ class DataFetcherManager:
         
         errors = []
         failed_sources: List[str] = []
+        skipped_by_budget: List[str] = []
         # primary_quote holds the first successful result; we may supplement
         # missing fields (volume_ratio, turnover_rate, etc.) from later sources.
         primary_quote = None
         primary_fallback_from: Optional[str] = None
-        
+
+        def _call_quote_with_budget(fetcher, *call_args, **call_kwargs):
+            return self._run_fetcher_call_with_budget(
+                fetcher,
+                "get_realtime_quote",
+                quote_budget,
+                *call_args,
+                **call_kwargs,
+            )
+
         for source_index, source in enumerate(source_priority):
+            if quote_budget.exhausted():
+                # 预算耗尽：立刻返回当前最好结果，并记录还跳过了哪些源。
+                skipped_by_budget = source_priority[source_index:]
+                break
             attempt_start = time.time()
             fallback_to = source_priority[source_index + 1] if source_index + 1 < len(source_priority) else None
             fetcher = None
@@ -1846,7 +2138,7 @@ class DataFetcherManager:
                             provider=fetcher.name,
                             operation="get_realtime_quote",
                         )
-                        quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', stock_code)
+                        quote = _call_quote_with_budget(fetcher, stock_code)
                 
                 elif source == "akshare_em":
                     fetcher = self._get_fetcher_by_name("AkshareFetcher", capability="realtime_quote")
@@ -1856,7 +2148,7 @@ class DataFetcherManager:
                             provider=fetcher.name,
                             operation="get_realtime_quote",
                         )
-                        quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', stock_code, source="em")
+                        quote = _call_quote_with_budget(fetcher, stock_code, source="em")
                 
                 elif source == "akshare_sina":
                     fetcher = self._get_fetcher_by_name("AkshareFetcher", capability="realtime_quote")
@@ -1866,7 +2158,7 @@ class DataFetcherManager:
                             provider=fetcher.name,
                             operation="get_realtime_quote",
                         )
-                        quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', stock_code, source="sina")
+                        quote = _call_quote_with_budget(fetcher, stock_code, source="sina")
                 
                 elif source in ("tencent", "akshare_qq"):
                     fetcher = self._get_fetcher_by_name("AkshareFetcher", capability="realtime_quote")
@@ -1876,7 +2168,7 @@ class DataFetcherManager:
                             provider=fetcher.name,
                             operation="get_realtime_quote",
                         )
-                        quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', stock_code, source="tencent")
+                        quote = _call_quote_with_budget(fetcher, stock_code, source="tencent")
                 
                 elif source == "tushare":
                     fetcher = self._get_fetcher_by_name("TushareFetcher", capability="realtime_quote")
@@ -1886,7 +2178,7 @@ class DataFetcherManager:
                             provider=fetcher.name,
                             operation="get_realtime_quote",
                         )
-                        quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', raw_stock_code or stock_code)
+                        quote = _call_quote_with_budget(fetcher, raw_stock_code or stock_code)
 
                 elif source == "tickflow":
                     fetcher = self._get_fetcher_by_name("TickFlowFetcher", capability="realtime_quote")
@@ -1896,7 +2188,7 @@ class DataFetcherManager:
                             provider=fetcher.name,
                             operation="get_realtime_quote",
                         )
-                        quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', raw_stock_code or stock_code)
+                        quote = _call_quote_with_budget(fetcher, raw_stock_code or stock_code)
 
                 provider_name = fetcher.name if fetcher is not None else source
                 
@@ -1970,7 +2262,16 @@ class DataFetcherManager:
                 if primary_quote is None:
                     failed_sources.append(source)
                 continue
-        
+
+        if skipped_by_budget:
+            logger.info(
+                "[实时行情] %s 降级链预算耗尽: elapsed=%.2fs budget=%.2fs skipped=%s",
+                stock_code,
+                quote_budget.elapsed(),
+                quote_budget.total_seconds,
+                ", ".join(skipped_by_budget),
+            )
+
         # Return primary even if some fields are still missing
         if primary_quote is not None:
             return self._enrich_realtime_quote(
@@ -2030,7 +2331,14 @@ class DataFetcherManager:
             capability=capability,
         ) is not None
 
-    def _try_fetcher_quote(self, stock_code: str, fetcher_name: str, **kw):
+    def _try_fetcher_quote(
+        self,
+        stock_code: str,
+        fetcher_name: str,
+        *,
+        budget: Optional[FallbackBudget] = None,
+        **kw,
+    ):
         """Try to get a realtime quote from a named fetcher; returns quote or None."""
         fetcher = self._get_fetcher_by_name(fetcher_name, capability="realtime_quote")
         if fetcher is None or not hasattr(fetcher, 'get_realtime_quote'):
@@ -2050,7 +2358,12 @@ class DataFetcherManager:
                 provider=fetcher.name,
                 operation="get_realtime_quote",
             )
-            q = self._call_fetcher_method(fetcher, 'get_realtime_quote', stock_code, **kw)
+            if budget is not None:
+                q = self._run_fetcher_call_with_budget(
+                    fetcher, 'get_realtime_quote', budget, stock_code, **kw,
+                )
+            else:
+                q = self._call_fetcher_method(fetcher, 'get_realtime_quote', stock_code, **kw)
             if q is not None and q.has_basic_data():
                 record_provider_run(
                     data_type="realtime_quote",
@@ -2085,7 +2398,15 @@ class DataFetcherManager:
             logger.debug(f"[实时行情] {stock_code} {fetcher_name} 获取失败: {e}")
         return None
 
-    def _supplement_quote(self, stock_code: str, primary_quote, fetcher_name: str, **kw):
+    def _supplement_quote(
+        self,
+        stock_code: str,
+        primary_quote,
+        fetcher_name: str,
+        *,
+        budget: Optional[FallbackBudget] = None,
+        **kw,
+    ):
         """Supplement *primary_quote* with data from *fetcher_name*.
 
         If *primary_quote* is None, try *fetcher_name* as the sole source.
@@ -2095,7 +2416,7 @@ class DataFetcherManager:
             if not self._quote_needs_supplement(primary_quote):
                 return primary_quote
             try:
-                secondary = self._try_fetcher_quote(stock_code, fetcher_name, **kw)
+                secondary = self._try_fetcher_quote(stock_code, fetcher_name, budget=budget, **kw)
                 if secondary is not None:
                     filled = self._merge_quote_fields(primary_quote, secondary)
                     if filled:
@@ -2104,7 +2425,7 @@ class DataFetcherManager:
                 logger.debug(f"[实时行情] {stock_code} {fetcher_name} 补充失败: {e}")
             return primary_quote
 
-        q = self._try_fetcher_quote(stock_code, fetcher_name, **kw)
+        q = self._try_fetcher_quote(stock_code, fetcher_name, budget=budget, **kw)
         if q is not None:
             logger.info(f"[实时行情] {stock_code} 从 {fetcher_name} 获取成功 (独立数据源)")
         return q

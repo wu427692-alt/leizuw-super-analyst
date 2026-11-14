@@ -39,6 +39,7 @@ from src.services.financial_data_service import (
     TushareGatewayService,
 )
 from src.services.zsxq_mcp_sync_service import ZsxqMcpSyncError, ZsxqMcpSyncService, ZsxqMcpSyncWorker
+from src.services.cninfo_announcement_service import CninfoAnnouncementError
 from src.services.data_storage_service import DataStorageMaintenanceWorker, DataStorageService
 from src.services.research_note_media_task_service import (
     ResearchNoteMediaTaskError,
@@ -173,6 +174,32 @@ def _upstream_error(exc: Exception) -> HTTPException:
     return HTTPException(
         status_code=502,
         detail={"error": "upstream_error", "message": str(exc)},
+    )
+
+
+def _upstream_unavailable(exc: Exception) -> HTTPException:
+    """上游连不上（连接/超时/DNS/代理失败）时用 503，避免前端误判为服务端崩溃。"""
+    logger.warning("Financial-data upstream is unreachable: %s", exc)
+    return HTTPException(
+        status_code=503,
+        detail={"error": "upstream_unavailable", "message": f"上游数据源暂时不可达：{exc}"},
+        headers={"Retry-After": "30"},
+    )
+
+
+def _cninfo_upstream_error(exc: CninfoAnnouncementError) -> HTTPException:
+    """区分「巨潮不可达」与「巨潮返回错误」：前者 503，后者 502。"""
+    if getattr(exc, "status_code", None) is None:
+        return _upstream_unavailable(exc)
+    logger.warning("CNINFO request failed: %s", exc)
+    headers = {}
+    retry_after = getattr(exc, "retry_after_seconds", None)
+    if retry_after:
+        headers["Retry-After"] = str(max(1, int(retry_after)))
+    return HTTPException(
+        status_code=502,
+        detail={"error": "upstream_error", "message": str(exc)},
+        headers=headers or None,
     )
 
 
@@ -676,8 +703,14 @@ def stop_zsxq_sync_worker():
     return ZsxqMcpSyncWorker.get_instance().stop()
 
 
+_SUPPORTED_MEDIA_KINDS = frozenset({"images", "files"})
+
+
 @router.get("/research-notes/{topic_id}/media/{kind}/{asset_id}", summary="按需获取纪要图片/附件远端链接")
 def research_note_media(topic_id: str, kind: str, asset_id: str):
+    # 不支持的 kind 是客户端参数错误，必须在调用上游前拒绝（否则会被误报成 502 上游故障）。
+    if kind not in _SUPPORTED_MEDIA_KINDS:
+        raise _bad_request(ValueError(f"不支持的附件类型：{kind}（仅支持 images / files）"))
     try:
         url = ZsxqMcpSyncService().resolve_media_url_sync(topic_id, kind, asset_id)
         return RedirectResponse(url=url, status_code=307, headers={"Cache-Control": "no-store"})
@@ -735,16 +768,21 @@ def annual_report(
     """Resolve the latest (or a given year's) annual report from CNINFO."""
     from src.services.annual_report_service import AnnualReportService
 
-    service = AnnualReportService()
-    if report_type == "all" or years > 1:
-        types = ["annual", "semi", "q1", "q3"] if report_type == "all" else [report_type]
-        return service.package_periodic(symbol, types, years)
-    if download:
-        result = service.download(symbol, year, report_type)
-        if not result.get("ok"):
-            raise HTTPException(status_code=404, detail=result)
-        return result
-    result = service.find(symbol, year, report_type)
+    try:
+        service = AnnualReportService()
+        if report_type == "all" or years > 1:
+            types = ["annual", "semi", "q1", "q3"] if report_type == "all" else [report_type]
+            return service.package_periodic(symbol, types, years)
+        if download:
+            result = service.download(symbol, year, report_type)
+            if not result.get("ok"):
+                raise HTTPException(status_code=404, detail=result)
+            return result
+        result = service.find(symbol, year, report_type)
+    except CninfoAnnouncementError as exc:
+        raise _cninfo_upstream_error(exc) from exc
+    except requests.RequestException as exc:
+        raise _upstream_unavailable(exc) from exc
     if not result:
         raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"未找到 {symbol} 的年报"})
     return result
@@ -752,8 +790,10 @@ def annual_report(
 
 @router.get("/annual-report/file/{filename}", summary="下载已保存的年报 PDF")
 def annual_report_file(filename: str):
+    from src.services.annual_report_service import DOWNLOAD_DIR as ANNUAL_REPORT_DOWNLOAD_DIR
+
     safe_name = Path(filename).name
-    path = Path("/app/data/annual_reports") / safe_name
+    path = Path(ANNUAL_REPORT_DOWNLOAD_DIR) / safe_name
     if not path.is_file():
         raise HTTPException(status_code=404, detail={"error": "not_found", "message": "年报文件不存在"})
     return FileResponse(path, media_type="application/pdf", filename=safe_name)
@@ -863,11 +903,16 @@ def list_announcements(
 ):
     from src.services.annual_report_service import AnnualReportService
 
-    service = AnnualReportService()
-    items = service.list_announcements(symbol, days, category, limit)
-    if download:
-        package = service.package_announcements(symbol, days, limit, category)
-        return {"items": items, "count": len(items), "package": package}
+    try:
+        service = AnnualReportService()
+        items = service.list_announcements(symbol, days, category, limit)
+        if download:
+            package = service.package_announcements(symbol, days, limit, category)
+            return {"items": items, "count": len(items), "package": package}
+    except CninfoAnnouncementError as exc:
+        raise _cninfo_upstream_error(exc) from exc
+    except requests.RequestException as exc:
+        raise _upstream_unavailable(exc) from exc
     return {"items": items, "count": len(items)}
 
 

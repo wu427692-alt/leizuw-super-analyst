@@ -4,6 +4,7 @@
     "API 全量冒烟策略。tests/test_api_endpoint_smoke.py 与 scripts/list_api_endpoints.py --check-coverage 共用这份文件。",
     "not_invoked：离线冒烟不真正调用 handler 的端点（每条必须写明原因，且端点必须存在于 tests/fixtures/api_endpoints.json）。",
     "known_issues：已确认但尚未修复的端点行为问题。测试会以 xfail 记录（不阻断发布），修好或状态变化后 xfail 消息会提示从本文件移除。",
+    "environment_dependent：离线冒烟下行为由环境决定、但**已经有明确契约**的端点。测试把它们当硬断言（必须返回 expected_status），不再用 xfail；它与 known_issues 的区别是「预期行为正确、只是不是 2xx」，不是待修缺陷。",
     "写接口（非 GET/HEAD）只要没有必填请求体字段，一律不调用，避免冒烟在真实部署上误改数据；这属于机械规则，不写进本文件。"
   ],
   "not_invoked": [
@@ -33,30 +34,22 @@
       "reason": "离线时数据源重试导致单次请求约 87s；历史行情链路由 test_market_data_* 用 mock 数据源覆盖"
     }
   ],
-  "known_issues": [
+  "known_issues": [],
+  "environment_dependent": [
     {
       "endpoint": "GET /api/v1/financial-data/announcements",
-      "expected_status": 500,
-      "title": "上游不可用时 500 而非 503",
-      "detail": "AnnualReportService.list_announcements -> cninfo.fetch 直接抛 requests.ConnectionError，端点未捕获，上游（cninfo）不可达时返回 500 internal_error。"
+      "expected_status": 503,
+      "reason": "冒烟夹具在 socket 层拦截所有外网，巨潮上游必然不可达；端点按契约返回 503 upstream_unavailable（修复前是 500）。上游不可达与上游 HTTP 错误的区分由 tests/test_api_contract.py::test_cninfo_unreachable_maps_to_503 / test_cninfo_upstream_http_error_maps_to_502 覆盖。"
     },
     {
       "endpoint": "GET /api/v1/financial-data/annual-report",
-      "expected_status": 500,
-      "title": "上游不可用时 500 而非 503",
-      "detail": "AnnualReportService.find -> cninfo.fetch 直接抛 requests.ConnectionError，端点未捕获，上游不可达时返回 500 internal_error。"
+      "expected_status": 503,
+      "reason": "同上：离线冒烟下巨潮不可达是预期环境，端点返回 503 upstream_unavailable；年报成功路径由 mock 数据的专项测试覆盖。"
     },
     {
       "endpoint": "GET /api/v1/investment-monitor/dragon-tiger/daily",
-      "expected_status": 500,
-      "title": "TUSHARE_TOKEN 未配置时 500 而非明确的配置错误",
-      "detail": "financial_data_service.query 抛 FinancialDataValidationError(\"TUSHARE_TOKEN is not configured\")，dragon_tiger_daily 只捕获 InvestmentMonitorError，导致 500 internal_error。"
-    },
-    {
-      "endpoint": "GET /api/v1/financial-data/research-notes/{topic_id}/media/{kind}/{asset_id}",
-      "expected_status": 502,
-      "title": "参数/类型校验错误被映射成 502 upstream_error",
-      "detail": "不支持的附件类型属于客户端参数错误，应返回 400/415，而不是 502 upstream_error（会让前端误判为上游故障）。"
+      "expected_status": 503,
+      "reason": "冒烟环境没有 TUSHARE_TOKEN 且外网被拦截：缺少依赖返回 503 dependency_not_configured，配置了 token 时上游不可达返回 503 upstream_unavailable（修复前两种情况都可能 500）。具体错误码由 tests/test_api_contract.py::test_dragon_tiger_missing_tushare_token_maps_to_503 覆盖。"
     }
   ]
 }

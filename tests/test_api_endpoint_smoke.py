@@ -30,6 +30,8 @@
 
 已知问题：端点当前确实会 5xx 的，记录在策略文件 ``known_issues`` 里，用 ``xfail``
 标记（不阻断发布），修好或状态变化后 xfail 消息会提示从策略文件移除。
+离线环境下「上游必然不可达 / 依赖未配置」但契约明确（如 503 upstream_unavailable）
+的端点记录在 ``environment_dependent``，按硬断言校验期望状态，不用 xfail 掩盖。
 详见 ``docs/api-endpoints.md`` 与 ``scripts/list_api_endpoints.py --check-coverage``。
 """
 
@@ -55,6 +57,9 @@ ENDPOINTS = BASELINE["endpoints"]
 SMOKE = policy_mod.summarize(ENDPOINTS, POLICY)
 INVOKED_ENDPOINTS = SMOKE["invoked"]
 KNOWN_ISSUES = {entry["endpoint"]: entry for entry in POLICY.get("known_issues", [])}
+ENVIRONMENT_DEPENDENT = {
+    entry["endpoint"]: entry for entry in POLICY.get("environment_dependent", [])
+}
 
 ENDPOINT_IDS = [policy_mod.endpoint_key(endpoint) for endpoint in ENDPOINTS]
 INVOKED_IDS = [policy_mod.endpoint_key(endpoint) for endpoint in INVOKED_ENDPOINTS]
@@ -103,8 +108,9 @@ def _isolate_runtime_paths(monkeypatch, tmp):
 
     这些模块在 import 时就把 ``os.getenv(...)`` 读进模块常量（生产只 import 一次，
     所以没问题）。但 pytest 收集阶段会 import 一堆测试模块，其中有的会顺带 import
-    这些服务，于是常量可能已经固化成本机 /app/data；任何 500 都会变成跑测试顺序的
-    函数。冒烟要可重复，这里统一改到 tmp（该默认值问题另行记录，不在测试里修）。
+    这些服务，于是常量可能已经固化到本机数据目录；任何 500 都会变成跑测试顺序的
+    函数。冒烟要可重复，这里统一改到 tmp（生产默认值现在由 ``DATABASE_PATH`` 推导，
+    不再硬编码 ``/app/data``）。
     """
     import importlib
 
@@ -131,8 +137,8 @@ def api(tmp_path_factory):
     monkeypatch.setenv("ENV_FILE", str(tmp / "unused.env"))  # 不读本机 .env 的配置
     monkeypatch.setenv("DATABASE_PATH", str(tmp / "smoke.db"))
     monkeypatch.setenv("USER_ACCESS_ENABLED", "false")
-    # 报告/年包/下载目录在部分服务里默认是 Docker 的 /app/data，非容器环境不可写；
-    # 冒烟要跨环境可重复，统一指到 tmp（该默认值问题见交付报告，不在本文件修复）。
+    # 报告/年包/下载目录默认跟随 DATABASE_PATH；冒烟仍显式指到 tmp，避免测试往
+    # 数据目录写文件（保证只读、可重复）。
     monkeypatch.setenv("ANNUAL_REPORT_DIR", str(tmp / "annual_reports"))
     monkeypatch.setenv("REPORT_DOWNLOAD_DIR", str(tmp / "downloads"))
     monkeypatch.setenv("REPORT_CACHE_DIR", str(tmp / "report_cache"))
@@ -308,6 +314,12 @@ def test_smoke_policy_entries_reference_existing_endpoints():
         assert entry["endpoint"] not in {item["endpoint"] for item in POLICY.get("not_invoked", [])}, (
             f"{entry['endpoint']} 同时出现在 not_invoked 和 known_issues"
         )
+    for entry in POLICY.get("environment_dependent", []):
+        assert entry["endpoint"] in baseline_keys, f"environment_dependent 端点不存在：{entry['endpoint']}"
+        assert isinstance(entry.get("expected_status"), int), f"{entry['endpoint']} 缺少 expected_status"
+        assert entry.get("reason"), f"{entry['endpoint']} 缺少 reason"
+        reserved = {item["endpoint"] for item in POLICY.get("not_invoked", [])} | set(KNOWN_ISSUES)
+        assert entry["endpoint"] not in reserved, f"{entry['endpoint']} 同时出现在多个策略段"
 
 
 def test_smoke_coverage_is_wide_enough():
@@ -391,6 +403,18 @@ def test_unauthenticated_requests_are_rejected(api, endpoint, monkeypatch):
 def test_authenticated_endpoint_does_not_return_5xx(api, endpoint):
     key = policy_mod.endpoint_key(endpoint)
     response = _request(api.client, endpoint)
+
+    # 环境决定但契约明确的端点（离线冒烟下上游必然不可达 / 依赖未配置）：
+    # 这是正确行为而不是故障，硬断言就是期望状态，不再用 xfail 掩盖。
+    dependent = ENVIRONMENT_DEPENDENT.get(key)
+    if dependent is not None:
+        expected = dependent["expected_status"]
+        assert response.status_code == expected, (
+            f"{key} 离线冒烟期望 {expected}（{dependent['reason'][:120]}），"
+            f"实际 {response.status_code}：{response.text[:300]}"
+        )
+        _assert_serializable_json(response, key)
+        return
 
     issue = KNOWN_ISSUES.get(key)
     if issue is not None:

@@ -41,7 +41,7 @@
   - 关键业务端点契约（`/api/v1/agent/chat/*`、`/api/v1/investment-monitor/*`、`/api/v1/stocks/*`、`/api/v1/user-auth/*`、`/api/v1/home-dashboard`、`/api/v1/system/*`）。
 - 不覆盖：真实外部数据源、真实网络、LLM 真实调用（这些在 `network-smoke.yml` 观测项里，不在发布门禁里跑）。
 - **后台 worker 隔离**：本机 `.env` 常常连着真实数据源，`app_lifespan` 会把十几个后台 worker（行情/纪要/MCP/监控/RSS…）一起拉起来，lifespan 测试就变成真实抓取，容易「卡十几分钟不结束」。门禁默认在 pytest 进程里把 `*_AUTO_START` 全部设为 `false`，保证结果可复现；想验证真实启动链路时设 `RELEASE_GATE_ALLOW_WORKERS=1`（此时可能很慢）。
-- **xfail 单列**：用 `pytest.mark.xfail` 标记的已知未修问题（当前 6 条）会在报告「已知 xfail」一节单独列出，**既不算通过也不算失败**；它们都是已定位根因、但还没修的后端问题（详见 4.5）。
+- **xfail 单列**：用 `pytest.mark.xfail` 标记的已知未修问题（当前 0 条）会在报告「已知 xfail」一节单独列出，**既不算通过也不算失败**；它们都是已定位根因、但还没修的后端问题（详见 4.5）。
 - 端点清单脚本 `scripts/list_api_endpoints.py` 存在时会额外跑两条**提示项（不阻断）**：
   - `--check`：端点基线 `tests/fixtures/api_endpoints.json` 是否与 `openapi()` 漂移（路由增删后需要重新生成）；
   - `--check-coverage`：两层覆盖口径（冒烟实际调用的端点 / 专项测试引用过的端点、真空端点数量）。
@@ -178,26 +178,31 @@ E2E 失败、`flake8` 未安装、覆盖率提示项都不会让退出码变 1�
 | 用例 | 为什么暂时可以忽略 | 什么时候必须修 |
 | --- | --- | --- |
 | `tests/test_financial_data_service.py` 的 `test_import_is_idempotent_searchable_and_strips_signed_urls`、`test_audio_assets_are_searchable_downloadable_metadata_and_never_claimed_for_ai` | 当前工作区 `src/repositories/research_note_repo.py` 有未提交的 FTS5 检索改造，中文关键词检索命中 0（关掉 FTS 走 LIKE 时通过）；该文件不在本任务写入范围 | 检索改造合入前必须复跑；改造方修好中文检索后立刻删除此条 |
-| `tests/test_api_endpoint_smoke.py::test_authenticated_endpoint_does_not_return_5xx[GET /api/v1/financial-data/reports/package/tasks/{task_id}]` | **真实 bug**：新增的全量端点冒烟发现该 GET 在参数合法时抛未处理异常返回 500（应为 404/422） | 修后端错误处理后删除此条；这是发布阻断项，白名单只是让门禁能跑完其余层并把它单独暴露出来 |
+| ~~`tests/test_api_endpoint_smoke.py::...[reports/package/tasks]`~~ | 已修复（`runtime_data_directory()`），**真实 bug**：新增的全量端点冒烟发现该 GET 在参数合法时抛未处理异常返回 500（应为 404/422） | 修后端错误处理后删除此条；这是发布阻断项，白名单只是让门禁能跑完其余层并把它单独暴露出来 |
 
 ### 4.4 前端（层 3 / 层 4）
 
 | 用例 | 为什么暂时可以忽略 | 什么时候必须修 |
 | --- | --- | --- |
 | `src/pages/__tests__/ChatPage.test.tsx` 的 22 条 placeholder 断言 | 断言的是旧占位文案（`例如：分析 600519`），UI 已改为「输入研究问题」；按约定不为让测试通过而回退 UI | ChatPage 测试整体迁移到新文案的同一 PR 内移除本条 |
-| `apps/dsa-web/tests/ui_governance.test.ts` 的「原生 title」1 条 | 业务代码 `src/components/common/InlineViz.tsx` 里 `title={segment.label}` 违反治理断言；属于组件层改动，不在门禁任务范围内 | 组件负责人替换为 `Tooltip`/`aria-label` 后移除本条 |
+| ~~`apps/dsa-web/tests/ui_governance.test.ts` 的「原生 title」1 条~~ | 已修复：`InlineViz` 的 `ShareBar` 段移除原生 `title`，改由外层 `aria-label` 承担语义；该白名单条目已删除，任务范围内 | 组件负责人替换为 `Tooltip`/`aria-label` 后移除本条 |
 
 ### 4.5 已知 xfail（不参与判定，但必须可见）
 
 用 `@pytest.mark.xfail` 标记的后端已知未修问题，门禁把它们**单列**在报告「已知 xfail」一节，不计入通过/失败。
-当前 6 条（由 `tests/api_smoke_policy.py` + `tests/fixtures/api_endpoint_smoke_policy.json` 管理）：
 
-| 用例 | 根因 | 什么时候必须修 |
-| --- | --- | --- |
-| `financial-data/reports/package/tasks/*` 等 4 个端点冒烟 | 非 Docker 部署下代码里硬编码 `/app/data` 路径，缺目录时抛 500（应为 404/503） | 路径改为配置项后移除 xfail |
-| 公告/年报端点冒烟 | 上游不可达时返回 500，语义应为 503 | 上游异常映射统一后移除 |
-| `dragon-tiger/daily` 冒烟 | 未配置 `TUSHARE_TOKEN` 时 500（应为 503/400 并给提示） | 缺配置分支补齐后移除 |
-| logo 404 冒烟（自定义头） | `HTTPException(headers=...)` 的自定义头被统一 error_handler 丢弃，`Cache-Control: no-store` 不生效 | error_handler 透传 headers 后移除 |
+**当前 0 条。** 2026-11 这一批 6 条已全部修复：
+
+| 原问题 | 修复方式 |
+| --- | --- |
+| `financial-data/reports/package/tasks/*` 等 4 个端点硬编码 `/app/data`，非 Docker 部署 500 | 统一到 `src/config.py: runtime_data_directory()`，以 `DATABASE_PATH` 父目录为准；Docker 下仍是 `/app/data` |
+| 公告/年报端点上游不可达返回 500 | 端点捕获上游异常：不可达 → 503 `upstream_unavailable`，上游返回 HTTP 错误 → 502 `upstream_error` |
+| `dragon-tiger/daily` 缺 `TUSHARE_TOKEN` 时 500 | 映射为 503 `dependency_not_configured`，message 说明缺什么配置 |
+| logo 404 的自定义头被丢弃 | `error_handler` 两个分支都透传 `exc.headers`，`Cache-Control: no-store` 恢复生效 |
+| 不支持 `kind` 返回 502 | 参数校验前置：`kind ∉ {images, files}` → 400 `validation_error` |
+| 行情接口离线 35s/87s | 降级链加整体时间预算；不支持的源按能力声明跳过；pytdx 连接尝试设上限 |
+
+新增 xfail 时：策略写在 `tests/fixtures/api_endpoint_smoke_policy.json`，**必须同时在上表登记根因和修复条件**，修好即删。
 
 ### 4.6 全量运行时被前序用例干扰（测试隔离问题）
 

@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from api.v1.schemas.investment_monitor import AnnouncementPackageRequest, AnnouncementSyncRequest, DragonTigerSyncRequest, ExternalEventBatch, MonitorSyncRequest, MonitoringSourceCreate
+from src.services.financial_data_service import FinancialDataUpstreamError, FinancialDataValidationError
 from src.services.investment_monitor_service import InvestmentMonitorError, InvestmentMonitorService
 from src.services.ttl_cache import cached
 from src.services.investment_monitor_worker import InvestmentMonitorWorker
@@ -27,6 +28,23 @@ router = APIRouter()
 
 def _error(exc: Exception, status_code: int = 400) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error": "investment_monitor_error", "message": str(exc)[:500]})
+
+
+def _dependency_error(exc: Exception) -> HTTPException:
+    """数据源依赖未配置（如 TUSHARE_TOKEN）时返回 503，并说明缺的是什么配置。"""
+    return HTTPException(
+        status_code=503,
+        detail={"error": "dependency_not_configured", "message": f"数据源依赖未配置：{str(exc)[:500]}"},
+    )
+
+
+def _upstream_unavailable(exc: Exception) -> HTTPException:
+    """上游连不上时返回 503，而不是伪装成 500 服务端崩溃。"""
+    return HTTPException(
+        status_code=503,
+        detail={"error": "upstream_unavailable", "message": f"上游数据源暂时不可达：{str(exc)[:500]}"},
+        headers={"Retry-After": "30"},
+    )
 
 
 def _public_watchdog_state(payload):
@@ -127,6 +145,10 @@ def dragon_tiger_daily(
 ):
     try:
         return InvestmentMonitorService().dragon_tiger_daily(trade_date=trade_date, refresh=refresh)
+    except FinancialDataValidationError as exc:
+        raise _dependency_error(exc) from exc
+    except FinancialDataUpstreamError as exc:
+        raise _upstream_unavailable(exc) from exc
     except InvestmentMonitorError as exc:
         raise _error(exc, 502 if "获取失败" in str(exc) else 400)
 
@@ -152,6 +174,10 @@ def sync_dragon_tiger(request: DragonTigerSyncRequest):
         return InvestmentMonitorService().sync_dragon_tiger_range(
             request.start_date, request.end_date,
         )
+    except FinancialDataValidationError as exc:
+        raise _dependency_error(exc) from exc
+    except FinancialDataUpstreamError as exc:
+        raise _upstream_unavailable(exc) from exc
     except InvestmentMonitorError as exc:
         raise _error(exc, 502 if "获取失败" in str(exc) else 400)
 

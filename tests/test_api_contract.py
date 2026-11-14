@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,8 +47,9 @@ def _isolate_runtime_paths(monkeypatch, tmp):
 
     这些模块在 import 时就把 ``os.getenv(...)`` 读进模块常量（生产只 import 一次，
     所以没问题）。但 pytest 收集阶段会 import 一堆测试模块，其中有的会顺带 import
-    这些服务，于是常量可能已经固化成本机 /app/data；任何 500 都会变成跑测试顺序的
-    函数。冒烟要可重复，这里统一改到 tmp（该默认值问题另行记录，不在测试里修）。
+    这些服务，于是常量可能已经固化到本机数据目录；任何 500 都会变成跑测试顺序的
+    函数。冒烟要可重复，这里统一改到 tmp（生产默认值现在由 ``DATABASE_PATH`` 推导，
+    不再硬编码 ``/app/data``）。
     """
     import importlib
 
@@ -582,13 +585,6 @@ def test_stock_logo_contract_returns_404_for_non_a_share_and_failure(api, monkey
     assert _json(response, "stocks.logo.failure")["error"] == "logo_not_found"
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "已知问题：api/middlewares/error_handler.py 的 HTTPException 处理器重新构造 JSONResponse 时"
-        "丢弃了 exc.headers，导致 logo 等端点显式设置的 Cache-Control: no-store 不生效（404 可能被浏览器缓存）。"
-    ),
-)
 def test_http_exception_headers_are_preserved(api):
     """HTTPException(headers=...) 应原样出现在响应里。"""
     response = api.client.get("/api/v1/stocks/AAPL/logo")
@@ -790,19 +786,20 @@ def test_validation_error_contract(api):
 
 
 # ---------------------------------------------------------------------------
-# 已知问题（xfail 记录，不阻断发布；修复后本测试会 XPASS，提示清理）
+# 已修复缺陷的回归测试
+#
+# 这些用例原本是 xfail（tests/fixtures/api_endpoint_smoke_policy.json 的 known_issues
+# 或本文件的 xfail 装饰器）。缺陷修好后转正，防止错误码/路径语义再次退化：
+#   1. 报告服务默认目录硬编码 /app/data → 统一走运行时数据目录
+#   2. 巨潮上游不可达 → 503 upstream_unavailable（不是 500）
+#   3. TUSHARE_TOKEN 未配置 → 503 dependency_not_configured（不是 500）
+#   4. 不支持的附件 kind → 400（不是 502，前端才不会误判上游故障）
+#   5. HTTPException(headers=...) 的自定义头必须透传到响应
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "已知问题：ReportPackService / AnnualReportService 的下载、缓存目录默认硬编码为 "
-        "/app/data/...（Docker 路径）。非 Docker 部署（本机 / 桌面端）首次请求 mkdir 失败，"
-        "financial-data 的公告/年报/研报打包接口直接 500。"
-    ),
-)
 def test_report_service_default_dirs_are_portable():
+    """两个报告服务的默认目录不能写死 Docker 的 /app/data，必须走统一解析函数。"""
     import src.services.annual_report_service as annual_report_service
     import src.services.report_pack_service as report_pack_service
 
@@ -811,7 +808,139 @@ def test_report_service_default_dirs_are_portable():
         source = inspect.getsource(module)
         if '"/app/data' in source or "'/app/data" in source:
             offenders.append(module.__name__)
+        assert "runtime_data_directory" in source, f"{module.__name__} 没有复用统一的运行时数据目录解析"
     assert not offenders, f"默认目录仍硬编码 /app/data：{offenders}"
+
+
+def test_runtime_data_directory_follows_database_path(monkeypatch, tmp_path):
+    """数据目录 = DATABASE_PATH 的父目录；默认是 ./data，而不是 Docker 的 /app/data。"""
+    from src.config import runtime_data_directory
+
+    db_path = tmp_path / "runtime" / "stock_analysis.db"
+    monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    assert runtime_data_directory() == db_path.parent.resolve()
+
+    monkeypatch.delenv("DATABASE_PATH", raising=False)
+    default_dir = runtime_data_directory()
+    assert default_dir.name == "data"
+    assert str(default_dir) != "/app/data"
+
+
+def test_report_services_instantiate_without_writable_app_dir(tmp_path):
+    """非 Docker 部署（未配置 ANNUAL_REPORT_DIR / REPORT_*）实例化服务不应失败。
+
+    目录常量在 import 时求值，所以用独立子进程验证「干净环境下的首次 import」，
+    避免 pytest 进程里已被其它用例 patch 过的常量掩盖问题。
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"ANNUAL_REPORT_DIR", "REPORT_DOWNLOAD_DIR", "REPORT_CACHE_DIR"}
+    }
+    env.update({
+        "DATABASE_PATH": str(tmp_path / "data" / "stock_analysis.db"),
+        "PYTHONPATH": str(ROOT),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    })
+    script = (
+        "import json\n"
+        "from src.services.annual_report_service import AnnualReportService, DOWNLOAD_DIR as annual_dir\n"
+        "from src.services.report_pack_service import ReportPackService, DOWNLOAD_DIR, CACHE_DIR\n"
+        "AnnualReportService()\n"
+        "ReportPackService()\n"
+        "print(json.dumps({'annual': str(annual_dir), 'downloads': str(DOWNLOAD_DIR), 'cache': str(CACHE_DIR)}))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert completed.returncode == 0, f"服务实例化失败（非 Docker 环境）：{completed.stderr[-2000:]}"
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    data_dir = (tmp_path / "data").resolve()
+    assert payload["annual"] == str(data_dir / "annual_reports")
+    assert payload["downloads"] == str(data_dir / "downloads")
+    assert payload["cache"] == str(data_dir / "report_cache")
+
+
+def test_annual_report_file_reads_from_configured_download_dir(api, monkeypatch, tmp_path):
+    """年报文件下载必须落在服务实际使用的下载目录，而不是写死的 /app/data。"""
+    import src.services.annual_report_service as annual_report_service
+
+    target = tmp_path / "annual_reports"
+    target.mkdir()
+    (target / "600519-annual-2024-test.pdf").write_bytes(b"%PDF-1.4\n%contract-test\n")
+    monkeypatch.setattr(annual_report_service, "DOWNLOAD_DIR", target)
+
+    response = api.client.get("/api/v1/financial-data/annual-report/file/600519-annual-2024-test.pdf")
+    assert response.status_code == 200, response.text
+    assert response.headers.get("content-type", "").startswith("application/pdf")
+
+    missing = api.client.get("/api/v1/financial-data/annual-report/file/no-such-file.pdf")
+    assert missing.status_code == 404
+
+
+def test_cninfo_unreachable_maps_to_503(api, monkeypatch):
+    """上游不可达（连接/超时/DNS，没有 HTTP 状态码）→ 503 upstream_unavailable。"""
+    from src.services.cninfo_announcement_service import CninfoAnnouncementError, CninfoAnnouncementService
+
+    def unreachable(self, *_args, **_kwargs):
+        raise CninfoAnnouncementError("巨潮公告查询失败：ConnectionError（请求 3 次）")
+
+    monkeypatch.setattr(CninfoAnnouncementService, "_post_json", unreachable)
+    cases = (
+        ("/api/v1/financial-data/announcements", {"symbol": "600519"}),
+        ("/api/v1/financial-data/annual-report", {"symbol": "600519", "download": "false"}),
+    )
+    for path, params in cases:
+        response = api.client.get(path, params=params)
+        assert response.status_code == 503, f"{path} 上游不可达应 503，实际 {response.status_code}：{response.text[:300]}"
+        payload = _json(response, path)
+        assert payload["error"] == "upstream_unavailable", f"{path} 错误码：{payload}"
+        assert payload["message"], f"{path} 缺少可读的上游不可达说明"
+        assert response.headers.get("retry-after") == "30"
+
+
+def test_cninfo_upstream_http_error_maps_to_502(api, monkeypatch):
+    """上游返回了 HTTP 错误（拿到了状态码）→ 502，与「不可达」区分开。"""
+    from src.services.cninfo_announcement_service import CninfoAnnouncementError, CninfoAnnouncementService
+
+    def upstream_http_error(self, *_args, **_kwargs):
+        raise CninfoAnnouncementError("巨潮公告查询失败：HTTP 500（请求 1 次）", status_code=500)
+
+    monkeypatch.setattr(CninfoAnnouncementService, "_post_json", upstream_http_error)
+    response = api.client.get("/api/v1/financial-data/announcements", params={"symbol": "600519"})
+    assert response.status_code == 502, response.text
+    payload = _json(response, "announcements.upstream-http-error")
+    assert payload["error"] == "upstream_error"
+
+
+def test_dragon_tiger_missing_tushare_token_maps_to_503(api, monkeypatch):
+    """依赖未配置（TUSHARE_TOKEN 缺失）→ 503 dependency_not_configured，而不是 500。"""
+    from src.services.financial_data_service import FinancialDataValidationError
+    from src.services.investment_monitor_service import InvestmentMonitorService
+
+    def missing_token(self, **_kwargs):
+        raise FinancialDataValidationError("TUSHARE_TOKEN is not configured")
+
+    monkeypatch.setattr(InvestmentMonitorService, "dragon_tiger_daily", missing_token)
+    response = api.client.get("/api/v1/investment-monitor/dragon-tiger/daily")
+    assert response.status_code == 503, response.text
+    payload = _json(response, "dragon-tiger.daily.503")
+    assert payload["error"] == "dependency_not_configured"
+    assert "TUSHARE_TOKEN" in payload["message"]
+
+
+def test_unsupported_media_kind_is_client_error_not_upstream_error(api):
+    """不支持的附件 kind 是客户端参数错误 → 400，不能伪装成 502 上游故障。"""
+    response = api.client.get("/api/v1/financial-data/research-notes/topic-1/media/audio/asset-1")
+    assert response.status_code == 400, response.text
+    payload = _json(response, "research-note-media.400")
+    assert payload["error"] == "validation_error"
+    assert "audio" in payload["message"]
 
 
 def test_endpoint_count_snapshot_is_serializable():
