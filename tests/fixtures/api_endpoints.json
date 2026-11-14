@@ -1,0 +1,5569 @@
+{
+  "generated_by": "scripts/list_api_endpoints.py",
+  "source": "api.app.app.openapi()",
+  "totals": {
+    "paths": 280,
+    "endpoints": 302,
+    "tags": 25
+  },
+  "auth_counts": {
+    "admin": 57,
+    "public": 9,
+    "user": 236
+  },
+  "tags": [
+    "AINews",
+    "Agent",
+    "Alerts",
+    "AlphaSift",
+    "Analysis",
+    "Auth",
+    "Backtest",
+    "Command",
+    "ConceptThemes",
+    "DataAcquisition",
+    "DecisionSignals",
+    "EssayQuant",
+    "EssayRadar",
+    "FinancialData",
+    "Health",
+    "History",
+    "HomeDashboard",
+    "IndustryResearch",
+    "Intelligence",
+    "InvestmentMonitor",
+    "Portfolio",
+    "Stocks",
+    "SystemConfig",
+    "Usage",
+    "UserAuth"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/chat",
+      "tag": "Agent",
+      "operation_id": "agent_chat_api_v1_agent_chat_post",
+      "summary": "Agent Chat",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "message"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/chat/send",
+      "tag": "Agent",
+      "operation_id": "send_chat_to_notification_api_v1_agent_chat_send_post",
+      "summary": "Send Chat To Notification",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "content"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/chat/sessions",
+      "tag": "Agent",
+      "operation_id": "list_chat_sessions_api_v1_agent_chat_sessions_get",
+      "summary": "List Chat Sessions",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/chat/sessions/{session_id}",
+      "tag": "Agent",
+      "operation_id": "get_chat_session_messages_api_v1_agent_chat_sessions__session_id__get",
+      "summary": "Get Chat Session Messages",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "session_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "session_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/agent/chat/sessions/{session_id}",
+      "tag": "Agent",
+      "operation_id": "delete_chat_session_api_v1_agent_chat_sessions__session_id__delete",
+      "summary": "Delete Chat Session",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "session_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "session_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/chat/stream",
+      "tag": "Agent",
+      "operation_id": "agent_chat_stream_api_v1_agent_chat_stream_post",
+      "summary": "Agent Chat Stream",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "message"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/models",
+      "tag": "Agent",
+      "operation_id": "get_agent_models_api_v1_agent_models_get",
+      "summary": "Get Agent Models",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/agent/research",
+      "tag": "Agent",
+      "operation_id": "agent_research_api_v1_agent_research_post",
+      "summary": "Agent Research",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "question"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/agent/skills",
+      "tag": "Agent",
+      "operation_id": "get_skills_api_v1_agent_skills_get",
+      "summary": "Get Skills",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ai-news/feed",
+      "tag": "AINews",
+      "operation_id": "feed_api_v1_ai_news_feed_get",
+      "summary": "Feed",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alerts/notifications",
+      "tag": "Alerts",
+      "operation_id": "list_notifications_api_v1_alerts_notifications_get",
+      "summary": "List alert notification attempts",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alerts/rules",
+      "tag": "Alerts",
+      "operation_id": "list_rules_api_v1_alerts_rules_get",
+      "summary": "List alert rules",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/alerts/rules",
+      "tag": "Alerts",
+      "operation_id": "create_rule_api_v1_alerts_rules_post",
+      "summary": "Create alert rule",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "alert_type",
+        "target"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alerts/rules/{rule_id}",
+      "tag": "Alerts",
+      "operation_id": "get_rule_api_v1_alerts_rules__rule_id__get",
+      "summary": "Get alert rule",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "rule_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "rule_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/alerts/rules/{rule_id}",
+      "tag": "Alerts",
+      "operation_id": "update_rule_api_v1_alerts_rules__rule_id__patch",
+      "summary": "Update alert rule",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "rule_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "rule_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/alerts/rules/{rule_id}",
+      "tag": "Alerts",
+      "operation_id": "delete_rule_api_v1_alerts_rules__rule_id__delete",
+      "summary": "Delete alert rule",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "rule_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "rule_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/alerts/rules/{rule_id}/disable",
+      "tag": "Alerts",
+      "operation_id": "disable_rule_api_v1_alerts_rules__rule_id__disable_post",
+      "summary": "Disable alert rule",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "rule_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "rule_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/alerts/rules/{rule_id}/enable",
+      "tag": "Alerts",
+      "operation_id": "enable_rule_api_v1_alerts_rules__rule_id__enable_post",
+      "summary": "Enable alert rule",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "rule_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "rule_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/alerts/rules/{rule_id}/test",
+      "tag": "Alerts",
+      "operation_id": "test_rule_api_v1_alerts_rules__rule_id__test_post",
+      "summary": "Dry-run alert rule",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "rule_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "rule_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alerts/triggers",
+      "tag": "Alerts",
+      "operation_id": "list_triggers_api_v1_alerts_triggers_get",
+      "summary": "List alert trigger history",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alphasift/hotspots",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_hotspots_api_v1_alphasift_hotspots_get",
+      "summary": "Alphasift Hotspots",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alphasift/hotspots/{topic}",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_hotspot_detail_api_v1_alphasift_hotspots__topic__get",
+      "summary": "Alphasift Hotspot Detail",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "topic",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "topic",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/alphasift/install",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_install_api_v1_alphasift_install_post",
+      "summary": "Alphasift Install",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/alphasift/screen",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_screen_api_v1_alphasift_screen_post",
+      "summary": "Alphasift Screen",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/alphasift/screen/tasks",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_start_screen_task_api_v1_alphasift_screen_tasks_post",
+      "summary": "Alphasift Start Screen Task",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alphasift/screen/tasks/{task_id}",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_screen_task_status_api_v1_alphasift_screen_tasks__task_id__get",
+      "summary": "Alphasift Screen Task Status",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alphasift/status",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_status_api_v1_alphasift_status_get",
+      "summary": "Alphasift Status",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/alphasift/strategies",
+      "tag": "AlphaSift",
+      "operation_id": "alphasift_strategies_api_v1_alphasift_strategies_get",
+      "summary": "Alphasift Strategies",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/analysis/analyze",
+      "tag": "Analysis",
+      "operation_id": "trigger_analysis_api_v1_analysis_analyze_post",
+      "summary": "触发股票分析",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/analysis/market-review",
+      "tag": "Analysis",
+      "operation_id": "trigger_market_review_api_v1_analysis_market_review_post",
+      "summary": "触发大盘复盘",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analysis/status/{task_id}",
+      "tag": "Analysis",
+      "operation_id": "get_analysis_status_api_v1_analysis_status__task_id__get",
+      "summary": "查询分析任务状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analysis/tasks",
+      "tag": "Analysis",
+      "operation_id": "get_task_list_api_v1_analysis_tasks_get",
+      "summary": "获取分析任务列表",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analysis/tasks/stream",
+      "tag": "Analysis",
+      "operation_id": "task_stream_api_v1_analysis_tasks_stream_get",
+      "summary": "任务状态 SSE 流",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analysis/tasks/{task_id}/flow",
+      "tag": "Analysis",
+      "operation_id": "get_task_run_flow_api_v1_analysis_tasks__task_id__flow_get",
+      "summary": "获取分析任务运行流",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/change-password",
+      "tag": "Auth",
+      "operation_id": "auth_change_password_api_v1_auth_change_password_post",
+      "summary": "Change password",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "tag": "Auth",
+      "operation_id": "auth_login_api_v1_auth_login_post",
+      "summary": "Login or set initial password",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "tag": "Auth",
+      "operation_id": "auth_logout_api_v1_auth_logout_post",
+      "summary": "Logout",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/settings",
+      "tag": "Auth",
+      "operation_id": "auth_update_settings_api_v1_auth_settings_post",
+      "summary": "Update auth settings",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "authEnabled"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/status",
+      "tag": "Auth",
+      "operation_id": "auth_status_api_v1_auth_status_get",
+      "summary": "Get auth status",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/backtest/performance",
+      "tag": "Backtest",
+      "operation_id": "get_overall_performance_api_v1_backtest_performance_get",
+      "summary": "获取整体回测表现",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/backtest/performance/{code}",
+      "tag": "Backtest",
+      "operation_id": "get_stock_performance_api_v1_backtest_performance__code__get",
+      "summary": "获取单股回测表现",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/backtest/results",
+      "tag": "Backtest",
+      "operation_id": "get_backtest_results_api_v1_backtest_results_get",
+      "summary": "获取回测结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/backtest/run",
+      "tag": "Backtest",
+      "operation_id": "run_backtest_api_v1_backtest_run_post",
+      "summary": "触发回测",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/command/catalog",
+      "tag": "Command",
+      "operation_id": "command_catalog_api_v1_command_catalog_get",
+      "summary": "Command Catalog",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/command/chat",
+      "tag": "Command",
+      "operation_id": "command_chat_api_v1_command_chat_post",
+      "summary": "Command Chat",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "messages"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/command/chat/stream",
+      "tag": "Command",
+      "operation_id": "command_chat_stream_api_v1_command_chat_stream_post",
+      "summary": "Command Chat Stream",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "messages"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/command/clarifications/{question_id}",
+      "tag": "Command",
+      "operation_id": "command_clarification_api_v1_command_clarifications__question_id__get",
+      "summary": "Command Clarification",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "question_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "question_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/command/pause",
+      "tag": "Command",
+      "operation_id": "command_pause_api_v1_command_pause_post",
+      "summary": "Command Pause",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "paused",
+        "session_id"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/command/task",
+      "tag": "Command",
+      "operation_id": "command_task_api_v1_command_task_get",
+      "summary": "Command Task",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "task_id"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/cluster-detail",
+      "tag": "ConceptThemes",
+      "operation_id": "cluster_detail_api_v1_concept_themes_cluster_detail_get",
+      "summary": "读取二级题材簇的聚合成分",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "family",
+        "cluster"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/institution-radar",
+      "tag": "ConceptThemes",
+      "operation_id": "institution_radar_api_v1_concept_themes_institution_radar_get",
+      "summary": "从机构语料发现新兴题材与股票线索",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/leaders",
+      "tag": "ConceptThemes",
+      "operation_id": "leaders_api_v1_concept_themes_leaders_get",
+      "summary": "读取跨题材市场共识股票雷达",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/lifecycle",
+      "tag": "ConceptThemes",
+      "operation_id": "lifecycle_api_v1_concept_themes_lifecycle_get",
+      "summary": "交叉分析题材市场轮动与机构语料生命周期",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/membership-changes",
+      "tag": "ConceptThemes",
+      "operation_id": "membership_changes_api_v1_concept_themes_membership_changes_get",
+      "summary": "读取供应商题材成分新增与退出账本",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/overview",
+      "tag": "ConceptThemes",
+      "operation_id": "overview_api_v1_concept_themes_overview_get",
+      "summary": "读取分层概念题材总览",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/rotation",
+      "tag": "ConceptThemes",
+      "operation_id": "rotation_api_v1_concept_themes_rotation_get",
+      "summary": "读取多源题材轮动强弱",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/status",
+      "tag": "ConceptThemes",
+      "operation_id": "status_api_v1_concept_themes_status_get",
+      "summary": "读取题材库同步状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/stocks/{ts_code}",
+      "tag": "ConceptThemes",
+      "operation_id": "stock_lens_api_v1_concept_themes_stocks__ts_code__get",
+      "summary": "读取个股题材暴露与独特Alpha证据",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "ts_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "ts_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/stocks/{ts_code}/export.csv",
+      "tag": "ConceptThemes",
+      "operation_id": "export_stock_lens_csv_api_v1_concept_themes_stocks__ts_code__export_csv_get",
+      "summary": "导出个股题材画像与归因",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "ts_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "ts_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/concept-themes/stocks/{ts_code}/refresh",
+      "tag": "ConceptThemes",
+      "operation_id": "refresh_stock_api_v1_concept_themes_stocks__ts_code__refresh_post",
+      "summary": "直接更新单股题材与归因",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "ts_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "ts_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/concept-themes/sync/catalog",
+      "tag": "ConceptThemes",
+      "operation_id": "wake_catalog_sync_api_v1_concept_themes_sync_catalog_post",
+      "summary": "唤醒题材库后台更新",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/themes/{theme_id}",
+      "tag": "ConceptThemes",
+      "operation_id": "theme_detail_api_v1_concept_themes_themes__theme_id__get",
+      "summary": "读取题材成分、权重及Beta/Alpha",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "theme_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "theme_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/themes/{theme_id}/export.csv",
+      "tag": "ConceptThemes",
+      "operation_id": "export_theme_csv_api_v1_concept_themes_themes__theme_id__export_csv_get",
+      "summary": "导出题材成分、权重与归因结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "theme_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "theme_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/concept-themes/themes/{theme_id}/refresh",
+      "tag": "ConceptThemes",
+      "operation_id": "refresh_theme_api_v1_concept_themes_themes__theme_id__refresh_post",
+      "summary": "直接更新单一题材及归因",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "theme_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "theme_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/watchlist-map",
+      "tag": "ConceptThemes",
+      "operation_id": "watchlist_map_api_v1_concept_themes_watchlist_map_get",
+      "summary": "读取当前用户自选股的题材暴露地图",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/concept-themes/watchlist-map/export.csv",
+      "tag": "ConceptThemes",
+      "operation_id": "export_watchlist_map_csv_api_v1_concept_themes_watchlist_map_export_csv_get",
+      "summary": "导出当前用户自选股题材暴露",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/capabilities",
+      "tag": "DataAcquisition",
+      "operation_id": "capabilities_api_v1_data_acquisition_capabilities_get",
+      "summary": "列出一站式取数可用渠道与能力",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/jobs",
+      "tag": "DataAcquisition",
+      "operation_id": "jobs_api_v1_data_acquisition_jobs_get",
+      "summary": "列出最近生成的数据包",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/jobs/{job_id}",
+      "tag": "DataAcquisition",
+      "operation_id": "job_api_v1_data_acquisition_jobs__job_id__get",
+      "summary": "读取数据包来源清单与执行结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "job_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "job_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/jobs/{job_id}/download",
+      "tag": "DataAcquisition",
+      "operation_id": "download_api_v1_data_acquisition_jobs__job_id__download_get",
+      "summary": "下载包含 JSON、CSV、Excel 和来源清单的 ZIP",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "job_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "job_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "HEAD",
+      "path": "/api/v1/data-acquisition/jobs/{job_id}/download",
+      "tag": "DataAcquisition",
+      "operation_id": "download_api_v1_data_acquisition_jobs__job_id__download_head",
+      "summary": "读取数据包长度与续传校验标识",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "job_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "job_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-acquisition/plan",
+      "tag": "DataAcquisition",
+      "operation_id": "plan_api_v1_data_acquisition_plan_post",
+      "summary": "由大模型把自然语言需求拆成可审计取数计划",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "request"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-acquisition/research-reports/export-selected",
+      "tag": "DataAcquisition",
+      "operation_id": "export_selected_research_reports_api_v1_data_acquisition_research_reports_export_selected_post",
+      "summary": "导出人工勾选研报及PDF链接Excel",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "ids"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/research-reports/facets",
+      "tag": "DataAcquisition",
+      "operation_id": "research_report_facets_api_v1_data_acquisition_research_reports_facets_get",
+      "summary": "读取研报本地库可人工筛选标签",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/research-reports/search",
+      "tag": "DataAcquisition",
+      "operation_id": "search_research_reports_api_v1_data_acquisition_research_reports_search_get",
+      "summary": "只从本地SQLite研报库执行人工条件检索",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/research-reports/status",
+      "tag": "DataAcquisition",
+      "operation_id": "research_report_status_api_v1_data_acquisition_research_reports_status_get",
+      "summary": "读取本地研报库覆盖范围与后台同步进度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-acquisition/research-reports/sync",
+      "tag": "DataAcquisition",
+      "operation_id": "sync_research_reports_api_v1_data_acquisition_research_reports_sync_post",
+      "summary": "后台补齐最近两年研报元数据与PDF链接",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-acquisition/run",
+      "tag": "DataAcquisition",
+      "operation_id": "run_api_v1_data_acquisition_run_post",
+      "summary": "执行确认后的多渠道取数计划并生成统一数据包",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "request"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-acquisition/run-async",
+      "tag": "DataAcquisition",
+      "operation_id": "run_async_api_v1_data_acquisition_run_async_post",
+      "summary": "提交后台取数任务并返回真实进度编号",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "request"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/tasks",
+      "tag": "DataAcquisition",
+      "operation_id": "tasks_api_v1_data_acquisition_tasks_get",
+      "summary": "列出当前用户的一站式取数后台任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/data-acquisition/tasks/{task_id}",
+      "tag": "DataAcquisition",
+      "operation_id": "task_api_v1_data_acquisition_tasks__task_id__get",
+      "summary": "读取后台取数任务的真实渠道与打包进度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-acquisition/tasks/{task_id}/resume",
+      "tag": "DataAcquisition",
+      "operation_id": "resume_task_api_v1_data_acquisition_tasks__task_id__resume_post",
+      "summary": "在原任务内从文件断点继续，不重建数据包",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/data-acquisition/validate-plan",
+      "tag": "DataAcquisition",
+      "operation_id": "validate_plan_api_v1_data_acquisition_validate_plan_post",
+      "summary": "无AI调用地复核公司代码、候选选择和各渠道执行条件",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "request"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/decision-signals",
+      "tag": "DecisionSignals",
+      "operation_id": "listDecisionSignals",
+      "summary": "查询决策信号列表",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/decision-signals",
+      "tag": "DecisionSignals",
+      "operation_id": "createDecisionSignal",
+      "summary": "创建或去重决策信号",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "action",
+        "market",
+        "source_type",
+        "stock_code",
+        "trigger_source"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/decision-signals/latest/{stock_code}",
+      "tag": "DecisionSignals",
+      "operation_id": "getLatestDecisionSignals",
+      "summary": "查询股票最新 active 决策信号",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "stock_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "stock_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/decision-signals/outcomes",
+      "tag": "DecisionSignals",
+      "operation_id": "listDecisionSignalOutcomes",
+      "summary": "查询决策信号后验结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/decision-signals/outcomes/run",
+      "tag": "DecisionSignals",
+      "operation_id": "runDecisionSignalOutcomes",
+      "summary": "触发决策信号后验评估",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/decision-signals/outcomes/stats",
+      "tag": "DecisionSignals",
+      "operation_id": "getDecisionSignalOutcomeStats",
+      "summary": "查询决策信号后验统计",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/decision-signals/{signal_id}",
+      "tag": "DecisionSignals",
+      "operation_id": "getDecisionSignal",
+      "summary": "查询单条决策信号",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "signal_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "signal_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/decision-signals/{signal_id}/feedback",
+      "tag": "DecisionSignals",
+      "operation_id": "getDecisionSignalFeedback",
+      "summary": "查询决策信号用户反馈",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "signal_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "signal_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/decision-signals/{signal_id}/feedback",
+      "tag": "DecisionSignals",
+      "operation_id": "putDecisionSignalFeedback",
+      "summary": "写入决策信号用户反馈",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "feedback_value"
+      ],
+      "path_params": [
+        {
+          "name": "signal_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "signal_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/decision-signals/{signal_id}/outcomes",
+      "tag": "DecisionSignals",
+      "operation_id": "listDecisionSignalOutcomesBySignal",
+      "summary": "查询单个决策信号后验结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "signal_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "signal_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/decision-signals/{signal_id}/status",
+      "tag": "DecisionSignals",
+      "operation_id": "updateDecisionSignalStatus",
+      "summary": "更新决策信号状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "status"
+      ],
+      "path_params": [
+        {
+          "name": "signal_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "signal_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/dashboard",
+      "tag": "EssayQuant",
+      "operation_id": "dashboard_api_v1_essay_quant_dashboard_get",
+      "summary": "读取最近一次小作文量化回测结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/institution-dashboard",
+      "tag": "EssayQuant",
+      "operation_id": "institution_dashboard_api_v1_essay_quant_institution_dashboard_get",
+      "summary": "读取后台全机构小作文量化基线",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-quant/natural-language/execute",
+      "tag": "EssayQuant",
+      "operation_id": "natural_language_execute_api_v1_essay_quant_natural_language_execute_post",
+      "summary": "确认并执行已校验的自然语言研究方案",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "rule"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-quant/natural-language/plan",
+      "tag": "EssayQuant",
+      "operation_id": "natural_language_plan_api_v1_essay_quant_natural_language_plan_post",
+      "summary": "用大模型生成受约束量化研究方案与模板代码",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "prompt"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-quant/precompute/run",
+      "tag": "EssayQuant",
+      "operation_id": "precompute_run_api_v1_essay_quant_precompute_run_post",
+      "summary": "立即后台预计算全量机构排名",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/precompute/status",
+      "tag": "EssayQuant",
+      "operation_id": "precompute_status_api_v1_essay_quant_precompute_status_get",
+      "summary": "读取机构排名后台预计算状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/research-catalog",
+      "tag": "EssayQuant",
+      "operation_id": "research_catalog_api_v1_essay_quant_research_catalog_get",
+      "summary": "读取量化研究方法与真实本地数据资产",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/rules",
+      "tag": "EssayQuant",
+      "operation_id": "list_rules_api_v1_essay_quant_rules_get",
+      "summary": "读取自定义小作文量化规则",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-quant/rules",
+      "tag": "EssayQuant",
+      "operation_id": "create_rule_api_v1_essay_quant_rules_post",
+      "summary": "保存自定义小作文量化规则",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/essay-quant/rules/{rule_id}",
+      "tag": "EssayQuant",
+      "operation_id": "update_rule_api_v1_essay_quant_rules__rule_id__put",
+      "summary": "更新自定义小作文量化规则",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "rule_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "rule_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-quant/run",
+      "tag": "EssayQuant",
+      "operation_id": "run_api_v1_essay_quant_run_post",
+      "summary": "运行并保存小作文事件研究与组合回测",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/runs",
+      "tag": "EssayQuant",
+      "operation_id": "runs_api_v1_essay_quant_runs_get",
+      "summary": "读取量化研究运行历史",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/runs/{run_id}",
+      "tag": "EssayQuant",
+      "operation_id": "run_result_api_v1_essay_quant_runs__run_id__get",
+      "summary": "读取本人一次已完成的量化运行结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "run_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/tasks",
+      "tag": "EssayQuant",
+      "operation_id": "list_tasks_api_v1_essay_quant_tasks_get",
+      "summary": "读取本人量化后台任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-quant/tasks",
+      "tag": "EssayQuant",
+      "operation_id": "create_task_api_v1_essay_quant_tasks_post",
+      "summary": "提交本人量化后台任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-quant/tasks/{task_id}",
+      "tag": "EssayQuant",
+      "operation_id": "task_status_api_v1_essay_quant_tasks__task_id__get",
+      "summary": "读取本人量化后台任务状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/analyses",
+      "tag": "EssayRadar",
+      "operation_id": "list_analyses_api_v1_essay_radar_analyses_get",
+      "summary": "筛选和分页读取小作文分析结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/analyses/{topic_id}",
+      "tag": "EssayRadar",
+      "operation_id": "get_analysis_api_v1_essay_radar_analyses__topic_id__get",
+      "summary": "读取单篇小作文分析详情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "topic_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "topic_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/backfill",
+      "tag": "EssayRadar",
+      "operation_id": "backfill_api_v1_essay_radar_backfill_post",
+      "summary": "将指定天数内纪要加入分析队列",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/backfill-count",
+      "tag": "EssayRadar",
+      "operation_id": "backfill_count_api_v1_essay_radar_backfill_count_post",
+      "summary": "按篇数选择尚未入队的历史小作文进行 AI 分析",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/daily-reports",
+      "tag": "EssayRadar",
+      "operation_id": "daily_reports_api_v1_essay_radar_daily_reports_get",
+      "summary": "读取各模型的前一日小作文日报",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/daily-reports/run",
+      "tag": "EssayRadar",
+      "operation_id": "run_daily_reports_api_v1_essay_radar_daily_reports_run_post",
+      "summary": "立即生成指定日期的多模型小作文日报",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/daily-reports/worker/start",
+      "tag": "EssayRadar",
+      "operation_id": "start_daily_report_worker_api_v1_essay_radar_daily_reports_worker_start_post",
+      "summary": "启动每日多模型报告任务",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/daily-reports/worker/stop",
+      "tag": "EssayRadar",
+      "operation_id": "stop_daily_report_worker_api_v1_essay_radar_daily_reports_worker_stop_post",
+      "summary": "停止每日多模型报告任务",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/dashboard",
+      "tag": "EssayRadar",
+      "operation_id": "dashboard_api_v1_essay_radar_dashboard_get",
+      "summary": "获取小作文标签和股票热度看板",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/deep-insights",
+      "tag": "EssayRadar",
+      "operation_id": "deep_insights_api_v1_essay_radar_deep_insights_get",
+      "summary": "按研究窗口获取小作文主题、标的与行情验证洞察",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/deep-insights/market-interpretation",
+      "tag": "EssayRadar",
+      "operation_id": "market_interpretation_api_v1_essay_radar_deep_insights_market_interpretation_post",
+      "summary": "用大模型解释可复核的小作文与行情统计",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "ts_code"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/feed",
+      "tag": "EssayRadar",
+      "operation_id": "list_feed_api_v1_essay_radar_feed_get",
+      "summary": "检索全部已入库小作文，可选关联 AI 分析结果",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/feed/export",
+      "tag": "EssayRadar",
+      "operation_id": "export_feed_api_v1_essay_radar_feed_export_get",
+      "summary": "按当前信息流筛选条件导出分析标签与完整原文 Excel",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/feed/export-selected",
+      "tag": "EssayRadar",
+      "operation_id": "export_selected_feed_api_v1_essay_radar_feed_export_selected_post",
+      "summary": "导出勾选小作文的分析标签与完整原文 Excel",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "topic_ids"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/historical-backlog",
+      "tag": "EssayRadar",
+      "operation_id": "historical_backlog_api_v1_essay_radar_historical_backlog_get",
+      "summary": "读取全部已入库小作文的 AI 分析与未入队数量",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/insights",
+      "tag": "EssayRadar",
+      "operation_id": "insights_api_v1_essay_radar_insights_get",
+      "summary": "获取小作文趋势、证据质量、模型共识与关注股洞察",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/retry-failed",
+      "tag": "EssayRadar",
+      "operation_id": "retry_failed_api_v1_essay_radar_retry_failed_post",
+      "summary": "重置失败任务并可立即启动后台任务",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/status",
+      "tag": "EssayRadar",
+      "operation_id": "status_api_v1_essay_radar_status_get",
+      "summary": "读取近 30 天分析进度与后台任务状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/essay-radar/word-cloud",
+      "tag": "EssayRadar",
+      "operation_id": "word_cloud_api_v1_essay_radar_word_cloud_get",
+      "summary": "获取日、周、月股票/标签/主题词云",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/worker/start",
+      "tag": "EssayRadar",
+      "operation_id": "start_worker_api_v1_essay_radar_worker_start_post",
+      "summary": "启动实时 DeepSeek 分析任务",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/essay-radar/worker/stop",
+      "tag": "EssayRadar",
+      "operation_id": "stop_worker_api_v1_essay_radar_worker_stop_post",
+      "summary": "停止实时 DeepSeek 分析任务",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/announcements",
+      "tag": "FinancialData",
+      "operation_id": "list_announcements_api_v1_financial_data_announcements_get",
+      "summary": "查询 A 股公告列表",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "symbol"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/annual-report",
+      "tag": "FinancialData",
+      "operation_id": "annual_report_api_v1_financial_data_annual_report_get",
+      "summary": "查询或下载 A 股年报 PDF",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "symbol"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/annual-report/file/{filename}",
+      "tag": "FinancialData",
+      "operation_id": "annual_report_file_api_v1_financial_data_annual_report_file__filename__get",
+      "summary": "下载已保存的年报 PDF",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "filename",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "filename",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/documents/download",
+      "tag": "FinancialData",
+      "operation_id": "download_document_api_v1_financial_data_documents_download_get",
+      "summary": "下载公告/PDF 全文",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "url"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/downloads/{filename}",
+      "tag": "FinancialData",
+      "operation_id": "download_report_package_api_v1_financial_data_downloads__filename__get",
+      "summary": "下载已打包的研报 ZIP",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "filename",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "filename",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/downloads/{workspace}/{filename}",
+      "tag": "FinancialData",
+      "operation_id": "download_workspace_file_api_v1_financial_data_downloads__workspace___filename__get",
+      "summary": "下载工作区文件",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "workspace",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "filename",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "workspace",
+          "type": "string"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/essays/package/tasks",
+      "tag": "FinancialData",
+      "operation_id": "list_essay_exports_api_v1_financial_data_essays_package_tasks_get",
+      "summary": "当前账号的持久小作文导出任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/essays/package/tasks",
+      "tag": "FinancialData",
+      "operation_id": "create_essay_export_api_v1_financial_data_essays_package_tasks_post",
+      "summary": "后台导出全部匹配小作文，持久保存进度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/essays/package/tasks/{task_id}",
+      "tag": "FinancialData",
+      "operation_id": "get_essay_export_api_v1_financial_data_essays_package_tasks__task_id__get",
+      "summary": "真实导出进度、数量、字节与断点",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/essays/package/tasks/{task_id}/download",
+      "tag": "FinancialData",
+      "operation_id": "download_essay_export_api_v1_financial_data_essays_package_tasks__task_id__download_get",
+      "summary": "下载已完成校验的小作文 ZIP",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/essays/package/tasks/{task_id}/focus-review",
+      "tag": "FinancialData",
+      "operation_id": "essay_focus_reviews_api_v1_financial_data_essays_package_tasks__task_id__focus_review_get",
+      "summary": "查看逐篇全文主旨判断与原文证据",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/essays/package/tasks/{task_id}/resume",
+      "tag": "FinancialData",
+      "operation_id": "resume_essay_export_api_v1_financial_data_essays_package_tasks__task_id__resume_post",
+      "summary": "从已保存的断点继续同一导出任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/query",
+      "tag": "FinancialData",
+      "operation_id": "query_financial_data_api_v1_financial_data_query_post",
+      "summary": "统一查询 Tushare、知识星球、巨潮、天眼查或监控事件",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "resource",
+        "source"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/reports/package",
+      "tag": "FinancialData",
+      "operation_id": "package_research_reports_api_v1_financial_data_reports_package_post",
+      "summary": "把研报 PDF 打包成 ZIP",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/reports/package/tasks/{task_id}",
+      "tag": "FinancialData",
+      "operation_id": "report_package_task_api_v1_financial_data_reports_package_tasks__task_id__get",
+      "summary": "查询研报打包任务进度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes",
+      "tag": "FinancialData",
+      "operation_id": "list_research_notes_api_v1_financial_data_research_notes_get",
+      "summary": "检索已通过 MCP 同步的调研纪要",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/capability",
+      "tag": "FinancialData",
+      "operation_id": "research_note_audio_analysis_capability_api_v1_financial_data_research_notes_audio_analysis_capability_get",
+      "summary": "查看录音转写与纪要分析能力是否已配置",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/tasks",
+      "tag": "FinancialData",
+      "operation_id": "list_research_note_audio_analysis_tasks_api_v1_financial_data_research_notes_audio_analysis_tasks_get",
+      "summary": "读取当前用户的录音纪要后台任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/tasks",
+      "tag": "FinancialData",
+      "operation_id": "create_research_note_audio_analysis_task_api_v1_financial_data_research_notes_audio_analysis_tasks_post",
+      "summary": "提交所选录音的后台转写与 AI 纪要任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "items"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}",
+      "tag": "FinancialData",
+      "operation_id": "get_research_note_audio_analysis_task_api_v1_financial_data_research_notes_audio_analysis_tasks__task_id__get",
+      "summary": "读取录音转写与纪要生成进度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/download",
+      "tag": "FinancialData",
+      "operation_id": "download_research_note_audio_analysis_task_api_v1_financial_data_research_notes_audio_analysis_tasks__task_id__download_get",
+      "summary": "下载录音纪要 Markdown、Word、JSON 或完整 ZIP",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/retry",
+      "tag": "FinancialData",
+      "operation_id": "retry_research_note_audio_analysis_task_api_v1_financial_data_research_notes_audio_analysis_tasks__task_id__retry_post",
+      "summary": "重试失败或中断的录音纪要任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/transcripts/{file_id}",
+      "tag": "FinancialData",
+      "operation_id": "get_research_note_audio_analysis_transcript_api_v1_financial_data_research_notes_audio_analysis_tasks__task_id__transcripts__file_id__get",
+      "summary": "读取一个录音的带时间戳逐字稿",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "file_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        },
+        {
+          "name": "file_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-analysis/tasks/{task_id}/transcripts/{file_id}/download",
+      "tag": "FinancialData",
+      "operation_id": "download_research_note_audio_analysis_transcript_api_v1_financial_data_research_notes_audio_analysis_tasks__task_id__transcripts__file_id__download_get",
+      "summary": "只下载一个录音转写后的原文字稿 TXT",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "file_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        },
+        {
+          "name": "file_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-files",
+      "tag": "FinancialData",
+      "operation_id": "list_research_note_audio_files_api_v1_financial_data_research_notes_audio_files_get",
+      "summary": "按录音文件而非帖子检索知识星球附件",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/research-notes/audio-files/batch-download",
+      "tag": "FinancialData",
+      "operation_id": "batch_download_research_note_audio_api_v1_financial_data_research_notes_audio_files_batch_download_post",
+      "summary": "将勾选录音源文件临时打包为 ZIP",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "items"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-files/batch-download-tasks",
+      "tag": "FinancialData",
+      "operation_id": "list_research_note_audio_package_tasks_api_v1_financial_data_research_notes_audio_files_batch_download_tasks_get",
+      "summary": "列出当前用户的录音后台打包任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/research-notes/audio-files/batch-download-tasks",
+      "tag": "FinancialData",
+      "operation_id": "create_research_note_audio_package_task_api_v1_financial_data_research_notes_audio_files_batch_download_tasks_post",
+      "summary": "提交录音源文件后台打包任务",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "items"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}",
+      "tag": "FinancialData",
+      "operation_id": "get_research_note_audio_package_task_api_v1_financial_data_research_notes_audio_files_batch_download_tasks__task_id__get",
+      "summary": "读取录音源文件后台下载与打包进度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/audio-files/batch-download-tasks/{task_id}/download",
+      "tag": "FinancialData",
+      "operation_id": "download_research_note_audio_package_api_v1_financial_data_research_notes_audio_files_batch_download_tasks__task_id__download_get",
+      "summary": "下载已完成的录音 ZIP",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "task_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "task_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/research-notes/audio-files/transcripts/batch-download",
+      "tag": "FinancialData",
+      "operation_id": "batch_download_research_note_audio_transcripts_api_v1_financial_data_research_notes_audio_files_transcripts_batch_download_post",
+      "summary": "只打包下载已转写录音的原文字稿",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "items"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/{topic_id}",
+      "tag": "FinancialData",
+      "operation_id": "get_research_note_api_v1_financial_data_research_notes__topic_id__get",
+      "summary": "读取单篇调研纪要详情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "topic_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "topic_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/{topic_id}/media/{kind}/{asset_id}",
+      "tag": "FinancialData",
+      "operation_id": "research_note_media_api_v1_financial_data_research_notes__topic_id__media__kind___asset_id__get",
+      "summary": "按需获取纪要图片/附件远端链接",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "topic_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "asset_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "topic_id",
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "asset_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/research-notes/{topic_id}/media/{kind}/{asset_id}/download",
+      "tag": "FinancialData",
+      "operation_id": "download_research_note_media_api_v1_financial_data_research_notes__topic_id__media__kind___asset_id__download_get",
+      "summary": "按需流式下载知识星球源文件（服务器不落盘）",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "topic_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "asset_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "topic_id",
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "asset_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/sources",
+      "tag": "FinancialData",
+      "operation_id": "list_sources_api_v1_financial_data_sources_get",
+      "summary": "列出统一财经数据源状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/storage/optimize",
+      "tag": "FinancialData",
+      "operation_id": "optimize_storage_api_v1_financial_data_storage_optimize_post",
+      "summary": "安全优化 SQLite 查询计划并执行非阻塞 WAL 检查点",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/storage/status",
+      "tag": "FinancialData",
+      "operation_id": "storage_status_api_v1_financial_data_storage_status_get",
+      "summary": "查看统一财经事实库、逻辑数据域和新鲜度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/tushare/{api_name}",
+      "tag": "FinancialData",
+      "operation_id": "query_tushare_api_v1_financial_data_tushare__api_name__post",
+      "summary": "调用任意 Tushare Pro 接口",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "api_name",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "api_name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/workspace-files",
+      "tag": "FinancialData",
+      "operation_id": "list_workspace_files_api_v1_financial_data_workspace_files_get",
+      "summary": "按工作区列出已生成文件",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "workspace"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/zsxq/history/backfill",
+      "tag": "FinancialData",
+      "operation_id": "zsxq_history_backfill_api_v1_financial_data_zsxq_history_backfill_post",
+      "summary": "后台同步近 1 年或 2 年知识星球历史纪要，默认不做 AI 分析",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/zsxq/import",
+      "tag": "FinancialData",
+      "operation_id": "import_zsxq_topics_api_v1_financial_data_zsxq_import_post",
+      "summary": "导入知识星球 MCP 主题页或标准主题数组",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/zsxq/sync",
+      "tag": "FinancialData",
+      "operation_id": "zsxq_sync_now_api_v1_financial_data_zsxq_sync_post",
+      "summary": "立即从知识星球 MCP 增量同步到本地 SQLite",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/financial-data/zsxq/sync/status",
+      "tag": "FinancialData",
+      "operation_id": "zsxq_sync_status_api_v1_financial_data_zsxq_sync_status_get",
+      "summary": "知识星球 MCP 增量同步游标与健康状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/zsxq/sync/worker/start",
+      "tag": "FinancialData",
+      "operation_id": "start_zsxq_sync_worker_api_v1_financial_data_zsxq_sync_worker_start_post",
+      "summary": "启动知识星球 MCP 近实时增量同步",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/financial-data/zsxq/sync/worker/stop",
+      "tag": "FinancialData",
+      "operation_id": "stop_zsxq_sync_worker_api_v1_financial_data_zsxq_sync_worker_stop_post",
+      "summary": "停止知识星球 MCP 增量同步",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/health",
+      "tag": "Health",
+      "operation_id": "health_check_api_v1_health_get",
+      "summary": "Health Check",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/history",
+      "tag": "History",
+      "operation_id": "get_history_list_api_v1_history_get",
+      "summary": "获取历史分析列表",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/history",
+      "tag": "History",
+      "operation_id": "delete_history_records_api_v1_history_delete",
+      "summary": "删除历史分析记录",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/history/by-code/{stock_code}",
+      "tag": "History",
+      "operation_id": "delete_history_by_code_api_v1_history_by_code__stock_code__delete",
+      "summary": "按股票代码删除历史分析记录",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "stock_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "stock_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/history/stocks",
+      "tag": "History",
+      "operation_id": "get_stock_bar_api_v1_history_stocks_get",
+      "summary": "获取不重复个股列表",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/history/{record_id}",
+      "tag": "History",
+      "operation_id": "get_history_detail_api_v1_history__record_id__get",
+      "summary": "获取历史报告详情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "record_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "record_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/history/{record_id}/diagnostics",
+      "tag": "History",
+      "operation_id": "get_history_diagnostics_api_v1_history__record_id__diagnostics_get",
+      "summary": "获取历史报告运行诊断摘要",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "record_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "record_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/history/{record_id}/flow",
+      "tag": "History",
+      "operation_id": "get_history_run_flow_api_v1_history__record_id__flow_get",
+      "summary": "获取历史报告运行流",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "record_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "record_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/history/{record_id}/markdown",
+      "tag": "History",
+      "operation_id": "get_history_markdown_api_v1_history__record_id__markdown_get",
+      "summary": "获取历史报告 Markdown 格式",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "record_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "record_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/history/{record_id}/news",
+      "tag": "History",
+      "operation_id": "get_history_news_api_v1_history__record_id__news_get",
+      "summary": "获取历史报告关联新闻",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "record_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "record_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/home-dashboard",
+      "tag": "HomeDashboard",
+      "operation_id": "dashboard_api_v1_home_dashboard_get",
+      "summary": "聚合A股、海外市场、自选股和投资情报首页大看板",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/industry-research/blueprint",
+      "tag": "IndustryResearch",
+      "operation_id": "blueprint_api_v1_industry_research_blueprint_get",
+      "summary": "从本地全渠道数据生成课题证据蓝图",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "topic"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/industry-research/methodology",
+      "tag": "IndustryResearch",
+      "operation_id": "methodology_api_v1_industry_research_methodology_get",
+      "summary": "读取极速行业调研方法",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/industry-research/projects",
+      "tag": "IndustryResearch",
+      "operation_id": "list_projects_api_v1_industry_research_projects_get",
+      "summary": "读取本人行业调研课题",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/industry-research/projects",
+      "tag": "IndustryResearch",
+      "operation_id": "create_project_api_v1_industry_research_projects_post",
+      "summary": "创建本人后台行业调研课题",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "topic"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/industry-research/projects/{project_id}",
+      "tag": "IndustryResearch",
+      "operation_id": "project_detail_api_v1_industry_research_projects__project_id__get",
+      "summary": "读取本人行业调研课题详情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "project_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "project_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/industry-research/projects/{project_id}/download",
+      "tag": "IndustryResearch",
+      "operation_id": "project_download_api_v1_industry_research_projects__project_id__download_get",
+      "summary": "下载本人行业或公司调研报告",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "project_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "project_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/intelligence/items",
+      "tag": "Intelligence",
+      "operation_id": "list_items_api_v1_intelligence_items_get",
+      "summary": "List persisted intelligence items",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/intelligence/sources",
+      "tag": "Intelligence",
+      "operation_id": "list_sources_api_v1_intelligence_sources_get",
+      "summary": "List intelligence sources",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/intelligence/sources",
+      "tag": "Intelligence",
+      "operation_id": "create_source_api_v1_intelligence_sources_post",
+      "summary": "Create intelligence source",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "name",
+        "url"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/intelligence/sources/defaults",
+      "tag": "Intelligence",
+      "operation_id": "create_default_sources_api_v1_intelligence_sources_defaults_post",
+      "summary": "Create built-in default intelligence sources",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/intelligence/sources/fetch-enabled",
+      "tag": "Intelligence",
+      "operation_id": "fetch_enabled_sources_api_v1_intelligence_sources_fetch_enabled_post",
+      "summary": "Fetch all enabled intelligence sources with fail-open semantics",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/intelligence/sources/templates",
+      "tag": "Intelligence",
+      "operation_id": "list_source_templates_api_v1_intelligence_sources_templates_get",
+      "summary": "List built-in intelligence source templates",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/intelligence/sources/templates/{template_id}",
+      "tag": "Intelligence",
+      "operation_id": "create_source_from_template_api_v1_intelligence_sources_templates__template_id__post",
+      "summary": "Create intelligence source from a built-in template",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "template_id",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "template_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/intelligence/sources/test",
+      "tag": "Intelligence",
+      "operation_id": "test_source_payload_api_v1_intelligence_sources_test_post",
+      "summary": "Dry-run an intelligence source payload",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "name",
+        "url"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/intelligence/sources/{source_id}/fetch",
+      "tag": "Intelligence",
+      "operation_id": "fetch_source_api_v1_intelligence_sources__source_id__fetch_post",
+      "summary": "Fetch one intelligence source",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "source_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "source_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/announcements",
+      "tag": "InvestmentMonitor",
+      "operation_id": "announcements_api_v1_investment_monitor_announcements_get",
+      "summary": "查询已入库上市公司公告",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/announcements/categories",
+      "tag": "InvestmentMonitor",
+      "operation_id": "announcement_categories_api_v1_investment_monitor_announcements_categories_get",
+      "summary": "巨潮资讯公告分类",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/announcements/export",
+      "tag": "InvestmentMonitor",
+      "operation_id": "export_announcements_api_v1_investment_monitor_announcements_export_get",
+      "summary": "从已入库公告导出 Excel 索引",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/announcements/package",
+      "tag": "InvestmentMonitor",
+      "operation_id": "package_announcements_api_v1_investment_monitor_announcements_package_post",
+      "summary": "从已入库公告下载并打包 PDF 与 TXT",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "event_ids"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/announcements/sync",
+      "tag": "InvestmentMonitor",
+      "operation_id": "sync_announcements_api_v1_investment_monitor_announcements_sync_post",
+      "summary": "按日期、个股、分类或关键词抓取巨潮公告",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "end_date",
+        "start_date"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/announcements/watchlist-sync/status",
+      "tag": "InvestmentMonitor",
+      "operation_id": "announcement_watchlist_sync_status_api_v1_investment_monitor_announcements_watchlist_sync_status_get",
+      "summary": "查看本人自选股公告实时与历史回补状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/cloud/snapshot",
+      "tag": "InvestmentMonitor",
+      "operation_id": "cloud_snapshot_api_v1_investment_monitor_cloud_snapshot_post",
+      "summary": "立即生成一致性 iCloud 知识库快照",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/cloud/snapshots/{filename}/verify",
+      "tag": "InvestmentMonitor",
+      "operation_id": "verify_cloud_snapshot_api_v1_investment_monitor_cloud_snapshots__filename__verify_get",
+      "summary": "校验云端知识库完整性",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "filename",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "filename",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/cloud/status",
+      "tag": "InvestmentMonitor",
+      "operation_id": "cloud_status_api_v1_investment_monitor_cloud_status_get",
+      "summary": "iCloud 云端知识库状态与版本清单",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/cloud/worker/start",
+      "tag": "InvestmentMonitor",
+      "operation_id": "start_cloud_worker_api_v1_investment_monitor_cloud_worker_start_post",
+      "summary": "启动 iCloud 知识库定时同步",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/cloud/worker/stop",
+      "tag": "InvestmentMonitor",
+      "operation_id": "stop_cloud_worker_api_v1_investment_monitor_cloud_worker_stop_post",
+      "summary": "停止 iCloud 知识库定时同步",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/dashboard",
+      "tag": "InvestmentMonitor",
+      "operation_id": "dashboard_api_v1_investment_monitor_dashboard_get",
+      "summary": "自选股三视角投资情报总览",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/dragon-tiger/daily",
+      "tag": "InvestmentMonitor",
+      "operation_id": "dragon_tiger_daily_api_v1_investment_monitor_dragon_tiger_daily_get",
+      "summary": "龙虎榜单日全市场明细与营业部席位",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/dragon-tiger/history",
+      "tag": "InvestmentMonitor",
+      "operation_id": "dragon_tiger_history_api_v1_investment_monitor_dragon_tiger_history_get",
+      "summary": "查询本地龙虎榜历史库",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "start_date",
+        "end_date"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/dragon-tiger/sync",
+      "tag": "InvestmentMonitor",
+      "operation_id": "sync_dragon_tiger_api_v1_investment_monitor_dragon_tiger_sync_post",
+      "summary": "按交易日历补齐龙虎榜历史摘要",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "end_date",
+        "start_date"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/events",
+      "tag": "InvestmentMonitor",
+      "operation_id": "events_api_v1_investment_monitor_events_get",
+      "summary": "筛选统一消息事件流",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/events/{event_id}",
+      "tag": "InvestmentMonitor",
+      "operation_id": "event_detail_api_v1_investment_monitor_events__event_id__get",
+      "summary": "读取单条情报事件已保存内容与来源信息",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "event_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "event_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/events/{event_id}/content",
+      "tag": "InvestmentMonitor",
+      "operation_id": "event_content_api_v1_investment_monitor_events__event_id__content_get",
+      "summary": "读取单条快讯正文，缺失时按需抓取原文并缓存",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "event_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "event_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/intelligence-dashboard",
+      "tag": "InvestmentMonitor",
+      "operation_id": "intelligence_dashboard_api_v1_investment_monitor_intelligence_dashboard_get",
+      "summary": "投资情报台决策看板聚合",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/research-center",
+      "tag": "InvestmentMonitor",
+      "operation_id": "research_center_api_v1_investment_monitor_research_center_get",
+      "summary": "功能能力、数据健康与自选股证据决策工作台",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/source-bi",
+      "tag": "InvestmentMonitor",
+      "operation_id": "source_bi_api_v1_investment_monitor_source_bi_get",
+      "summary": "全部数据源存量、增量、时效与可调用能力 BI",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/sources",
+      "tag": "InvestmentMonitor",
+      "operation_id": "sources_api_v1_investment_monitor_sources_get",
+      "summary": "列出内置和外部消息源",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/sources",
+      "tag": "InvestmentMonitor",
+      "operation_id": "create_source_api_v1_investment_monitor_sources_post",
+      "summary": "注册可扩展 API、Webhook 或 MCP 消息源",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "name",
+        "source_key"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/sources/{source_key}/events",
+      "tag": "InvestmentMonitor",
+      "operation_id": "ingest_events_api_v1_investment_monitor_sources__source_key__events_post",
+      "summary": "批量注入外部消息并幂等去重",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "events"
+      ],
+      "path_params": [
+        {
+          "name": "source_key",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "source_key",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/sources/{source_key}/sync",
+      "tag": "InvestmentMonitor",
+      "operation_id": "sync_source_api_v1_investment_monitor_sources__source_key__sync_post",
+      "summary": "立即同步单个消息源",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "source_key",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "source_key",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/status",
+      "tag": "InvestmentMonitor",
+      "operation_id": "status_api_v1_investment_monitor_status_get",
+      "summary": "监控任务与全部消息源健康状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/stock-workspace/{symbol}",
+      "tag": "InvestmentMonitor",
+      "operation_id": "stock_workspace_api_v1_investment_monitor_stock_workspace__symbol__get",
+      "summary": "自选看板、问股与研究共用的个股事实和资料",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/super-watchlist",
+      "tag": "InvestmentMonitor",
+      "operation_id": "super_watchlist_api_v1_investment_monitor_super_watchlist_get",
+      "summary": "动态自选股全渠道证据工作台",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/super-watchlist/refresh",
+      "tag": "InvestmentMonitor",
+      "operation_id": "refresh_super_watchlist_api_v1_investment_monitor_super_watchlist_refresh_post",
+      "summary": "刷新共享行情并唤醒到期情报源",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/super-watchlist/{symbol}/backfill",
+      "tag": "InvestmentMonitor",
+      "operation_id": "backfill_watchlist_symbol_api_v1_investment_monitor_super_watchlist__symbol__backfill_post",
+      "summary": "按选定范围回补自选股渠道数据，最多两年",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/super-watchlist/{symbol}/essay-consensus",
+      "tag": "InvestmentMonitor",
+      "operation_id": "essay_consensus_api_v1_investment_monitor_super_watchlist__symbol__essay_consensus_get",
+      "summary": "读取最近20篇小作文的独立 AI 一致预期快照",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/super-watchlist/{symbol}/essay-consensus/analyze",
+      "tag": "InvestmentMonitor",
+      "operation_id": "analyze_essay_consensus_api_v1_investment_monitor_super_watchlist__symbol__essay_consensus_analyze_post",
+      "summary": "重新分析该股票最近20篇匹配小作文",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/investment-monitor/symbols/{symbol}",
+      "tag": "InvestmentMonitor",
+      "operation_id": "symbol_detail_api_v1_investment_monitor_symbols__symbol__get",
+      "summary": "单只自选股的三视角证据和评分",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/sync",
+      "tag": "InvestmentMonitor",
+      "operation_id": "sync_api_v1_investment_monitor_sync_post",
+      "summary": "立即同步全部或指定类别消息源",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/watchdog/audit",
+      "tag": "InvestmentMonitor",
+      "operation_id": "audit_sync_watchdog_api_v1_investment_monitor_watchdog_audit_post",
+      "summary": "立即检查同步心跳并自动修复",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/worker/start",
+      "tag": "InvestmentMonitor",
+      "operation_id": "start_worker_api_v1_investment_monitor_worker_start_post",
+      "summary": "启动实时监控轮询",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/investment-monitor/worker/stop",
+      "tag": "InvestmentMonitor",
+      "operation_id": "stop_worker_api_v1_investment_monitor_worker_stop_post",
+      "summary": "停止实时监控轮询",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/portfolio/accounts",
+      "tag": "Portfolio",
+      "operation_id": "list_accounts_api_v1_portfolio_accounts_get",
+      "summary": "List portfolio accounts",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/accounts",
+      "tag": "Portfolio",
+      "operation_id": "create_account_api_v1_portfolio_accounts_post",
+      "summary": "Create portfolio account",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "name"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/portfolio/accounts/{account_id}",
+      "tag": "Portfolio",
+      "operation_id": "update_account_api_v1_portfolio_accounts__account_id__put",
+      "summary": "Update portfolio account",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "account_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "account_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/portfolio/accounts/{account_id}",
+      "tag": "Portfolio",
+      "operation_id": "delete_account_api_v1_portfolio_accounts__account_id__delete",
+      "summary": "Deactivate portfolio account",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "account_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "account_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/portfolio/cash-ledger",
+      "tag": "Portfolio",
+      "operation_id": "list_cash_ledger_api_v1_portfolio_cash_ledger_get",
+      "summary": "List cash ledger events",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/cash-ledger",
+      "tag": "Portfolio",
+      "operation_id": "create_cash_ledger_api_v1_portfolio_cash_ledger_post",
+      "summary": "Record cash event",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "account_id",
+        "amount",
+        "direction",
+        "event_date"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/portfolio/cash-ledger/{entry_id}",
+      "tag": "Portfolio",
+      "operation_id": "delete_cash_ledger_api_v1_portfolio_cash_ledger__entry_id__delete",
+      "summary": "Delete cash ledger event",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "entry_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "entry_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/portfolio/corporate-actions",
+      "tag": "Portfolio",
+      "operation_id": "list_corporate_actions_api_v1_portfolio_corporate_actions_get",
+      "summary": "List corporate action events",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/corporate-actions",
+      "tag": "Portfolio",
+      "operation_id": "create_corporate_action_api_v1_portfolio_corporate_actions_post",
+      "summary": "Record corporate action event",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "account_id",
+        "action_type",
+        "effective_date",
+        "symbol"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/portfolio/corporate-actions/{action_id}",
+      "tag": "Portfolio",
+      "operation_id": "delete_corporate_action_api_v1_portfolio_corporate_actions__action_id__delete",
+      "summary": "Delete corporate action event",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "action_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "action_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/fx/refresh",
+      "tag": "Portfolio",
+      "operation_id": "refresh_fx_rates_api_v1_portfolio_fx_refresh_post",
+      "summary": "Refresh FX cache online with stale fallback",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/portfolio/imports/csv/brokers",
+      "tag": "Portfolio",
+      "operation_id": "list_csv_brokers_api_v1_portfolio_imports_csv_brokers_get",
+      "summary": "List supported broker CSV parsers",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/imports/csv/commit",
+      "tag": "Portfolio",
+      "operation_id": "commit_csv_import_api_v1_portfolio_imports_csv_commit_post",
+      "summary": "Parse and commit broker CSV with dedup",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "account_id",
+        "broker",
+        "file"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/imports/csv/parse",
+      "tag": "Portfolio",
+      "operation_id": "parse_csv_import_api_v1_portfolio_imports_csv_parse_post",
+      "summary": "Parse broker CSV into normalized trade records",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "broker",
+        "file"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/positions/{symbol}/analysis",
+      "tag": "Portfolio",
+      "operation_id": "analyze_position_api_v1_portfolio_positions__symbol__analysis_post",
+      "summary": "Submit manual analysis for a held portfolio position",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/portfolio/risk",
+      "tag": "Portfolio",
+      "operation_id": "get_risk_report_api_v1_portfolio_risk_get",
+      "summary": "Get portfolio risk report",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/portfolio/snapshot",
+      "tag": "Portfolio",
+      "operation_id": "get_snapshot_api_v1_portfolio_snapshot_get",
+      "summary": "Get portfolio snapshot",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/portfolio/trades",
+      "tag": "Portfolio",
+      "operation_id": "list_trades_api_v1_portfolio_trades_get",
+      "summary": "List trade events",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/portfolio/trades",
+      "tag": "Portfolio",
+      "operation_id": "create_trade_api_v1_portfolio_trades_post",
+      "summary": "Record trade event",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "account_id",
+        "price",
+        "quantity",
+        "side",
+        "symbol",
+        "trade_date"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/portfolio/trades/{trade_id}",
+      "tag": "Portfolio",
+      "operation_id": "delete_trade_api_v1_portfolio_trades__trade_id__delete",
+      "summary": "Delete trade event",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "trade_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "trade_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/stocks/extract-from-image",
+      "tag": "Stocks",
+      "operation_id": "extract_from_image_api_v1_stocks_extract_from_image_post",
+      "summary": "从图片提取股票代码",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/market-data/index/{symbol}",
+      "tag": "Stocks",
+      "operation_id": "get_index_market_data_api_v1_stocks_market_data_index__symbol__get",
+      "summary": "获取本地优先的指数多周期行情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/market-data/realtime",
+      "tag": "Stocks",
+      "operation_id": "get_realtime_market_data_api_v1_stocks_market_data_realtime_get",
+      "summary": "批量读取本地秒级最新行情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [
+        "symbols"
+      ],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/market-data/realtime-indices",
+      "tag": "Stocks",
+      "operation_id": "get_realtime_indices_api_v1_stocks_market_data_realtime_indices_get",
+      "summary": "批量读取本地秒级指数行情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/stocks/market-data/refresh",
+      "tag": "Stocks",
+      "operation_id": "refresh_market_data_api_v1_stocks_market_data_refresh_post",
+      "summary": "立即采集自选股分钟行情到 SQLite",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/market-data/status",
+      "tag": "Stocks",
+      "operation_id": "market_data_status_api_v1_stocks_market_data_status_get",
+      "summary": "查看本地行情数据库与分钟采集状态",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/stocks/parse-import",
+      "tag": "Stocks",
+      "operation_id": "parse_import_api_v1_stocks_parse_import_post",
+      "summary": "解析 CSV/Excel/剪贴板",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/watchlist",
+      "tag": "Stocks",
+      "operation_id": "get_watchlist_api_v1_stocks_watchlist_get",
+      "summary": "获取自选队列",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/stocks/watchlist/add",
+      "tag": "Stocks",
+      "operation_id": "add_to_watchlist_api_v1_stocks_watchlist_add_post",
+      "summary": "加入自选队列",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "stock_code"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/stocks/watchlist/remove",
+      "tag": "Stocks",
+      "operation_id": "remove_from_watchlist_api_v1_stocks_watchlist_remove_post",
+      "summary": "从自选队列删除",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "stock_code"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/{stock_code}/history",
+      "tag": "Stocks",
+      "operation_id": "get_stock_history_api_v1_stocks__stock_code__history_get",
+      "summary": "获取股票历史行情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "stock_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "stock_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/{stock_code}/logo",
+      "tag": "Stocks",
+      "operation_id": "get_stock_logo_api_v1_stocks__stock_code__logo_get",
+      "summary": "获取股票公司 logo",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "stock_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "stock_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stocks/{stock_code}/quote",
+      "tag": "Stocks",
+      "operation_id": "get_stock_quote_api_v1_stocks__stock_code__quote_get",
+      "summary": "获取股票实时行情",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "stock_code",
+          "in": "path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "stock_code",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/system/config",
+      "tag": "SystemConfig",
+      "operation_id": "get_system_config_api_v1_system_config_get",
+      "summary": "Get system configuration",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/system/config",
+      "tag": "SystemConfig",
+      "operation_id": "update_system_config_api_v1_system_config_put",
+      "summary": "Update system configuration",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "config_version",
+        "items"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/system/config/export",
+      "tag": "SystemConfig",
+      "operation_id": "export_system_config_api_v1_system_config_export_get",
+      "summary": "Export env backup",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/system/config/import",
+      "tag": "SystemConfig",
+      "operation_id": "import_system_config_api_v1_system_config_import_post",
+      "summary": "Import env backup",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "config_version",
+        "content"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/system/config/llm/discover-models",
+      "tag": "SystemConfig",
+      "operation_id": "discover_llm_channel_models_api_v1_system_config_llm_discover_models_post",
+      "summary": "Discover models for one LLM channel",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/system/config/llm/test-channel",
+      "tag": "SystemConfig",
+      "operation_id": "test_llm_channel_api_v1_system_config_llm_test_channel_post",
+      "summary": "Test one LLM channel",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/system/config/notification/test-channel",
+      "tag": "SystemConfig",
+      "operation_id": "test_notification_channel_api_v1_system_config_notification_test_channel_post",
+      "summary": "Test one notification channel",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "channel"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/system/config/schema",
+      "tag": "SystemConfig",
+      "operation_id": "get_system_config_schema_api_v1_system_config_schema_get",
+      "summary": "Get system configuration schema",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/system/config/setup/status",
+      "tag": "SystemConfig",
+      "operation_id": "get_setup_status_api_v1_system_config_setup_status_get",
+      "summary": "Get first-run setup status",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/system/config/validate",
+      "tag": "SystemConfig",
+      "operation_id": "validate_system_config_api_v1_system_config_validate_post",
+      "summary": "Validate system configuration",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "items"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/system/scheduler/run-now",
+      "tag": "SystemConfig",
+      "operation_id": "run_scheduler_now_api_v1_system_scheduler_run_now_post",
+      "summary": "Run scheduled analysis now",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/system/scheduler/status",
+      "tag": "SystemConfig",
+      "operation_id": "get_scheduler_status_api_v1_system_scheduler_status_get",
+      "summary": "Get runtime scheduler status",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/usage/dashboard",
+      "tag": "Usage",
+      "operation_id": "get_usage_dashboard_api_v1_usage_dashboard_get",
+      "summary": "LLM token usage monitoring dashboard",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/usage/summary",
+      "tag": "Usage",
+      "operation_id": "get_usage_summary_api_v1_usage_summary_get",
+      "summary": "LLM token usage summary",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/user-auth/admin/quota/requests",
+      "tag": "UserAuth",
+      "operation_id": "admin_quota_requests_api_v1_user_auth_admin_quota_requests_get",
+      "summary": "管理员查看额度申请",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/admin/quota/requests/{request_id}/approve",
+      "tag": "UserAuth",
+      "operation_id": "admin_quota_approve_api_v1_user_auth_admin_quota_requests__request_id__approve_post",
+      "summary": "管理员批准额度申请",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "request_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "request_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/admin/quota/requests/{request_id}/reject",
+      "tag": "UserAuth",
+      "operation_id": "admin_quota_reject_api_v1_user_auth_admin_quota_requests__request_id__reject_post",
+      "summary": "管理员拒绝额度申请",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "request_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "request_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/user-auth/admin/users",
+      "tag": "UserAuth",
+      "operation_id": "list_users_api_v1_user_auth_admin_users_get",
+      "summary": "管理员查看用户申请",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/admin/users/{user_id}/approve",
+      "tag": "UserAuth",
+      "operation_id": "approve_user_api_v1_user_auth_admin_users__user_id__approve_post",
+      "summary": "管理员批准用户",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "user_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "user_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/admin/users/{user_id}/disable",
+      "tag": "UserAuth",
+      "operation_id": "disable_user_api_v1_user_auth_admin_users__user_id__disable_post",
+      "summary": "管理员停用用户",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "user_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "user_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/admin/users/{user_id}/reject",
+      "tag": "UserAuth",
+      "operation_id": "reject_user_api_v1_user_auth_admin_users__user_id__reject_post",
+      "summary": "管理员拒绝用户",
+      "auth": "admin",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [
+        {
+          "name": "user_id",
+          "in": "path",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "query_required": [],
+      "path_param_specs": [
+        {
+          "name": "user_id",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/login",
+      "tag": "UserAuth",
+      "operation_id": "login_api_v1_user_auth_login_post",
+      "summary": "普通用户密码登录并信任当前 IP",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "name",
+        "password"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/logout",
+      "tag": "UserAuth",
+      "operation_id": "logout_api_v1_user_auth_logout_post",
+      "summary": "退出普通用户会话",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/user-auth/quota",
+      "tag": "UserAuth",
+      "operation_id": "quota_status_api_v1_user_auth_quota_get",
+      "summary": "读取当前用户今日额度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/quota/request",
+      "tag": "UserAuth",
+      "operation_id": "quota_request_api_v1_user_auth_quota_request_post",
+      "summary": "申请增加今日额度",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "amount",
+        "feature"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/register",
+      "tag": "UserAuth",
+      "operation_id": "register_api_v1_user_auth_register_post",
+      "summary": "提交姓名与密码注册申请",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "name",
+        "password"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/sms/bind",
+      "tag": "UserAuth",
+      "operation_id": "bind_sms_api_v1_user_auth_sms_bind_post",
+      "summary": "为原账号绑定已验证手机号",
+      "auth": "user",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "challengeId",
+        "code",
+        "currentPassword",
+        "phone"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/sms/login",
+      "tag": "UserAuth",
+      "operation_id": "sms_login_api_v1_user_auth_sms_login_post",
+      "summary": "手机号验证码登录或自助注册",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "challengeId",
+        "code",
+        "phone"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/user-auth/sms/send",
+      "tag": "UserAuth",
+      "operation_id": "send_sms_api_v1_user_auth_sms_send_post",
+      "summary": "发送手机号登录或绑定验证码",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": true,
+      "body_required_fields": [
+        "phone"
+      ],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/user-auth/status",
+      "tag": "UserAuth",
+      "operation_id": "status_api_v1_user_auth_status_get",
+      "summary": "读取普通用户访问状态",
+      "auth": "public",
+      "deprecated": false,
+      "has_body": false,
+      "body_required_fields": [],
+      "path_params": [],
+      "query_required": [],
+      "path_param_specs": []
+    }
+  ]
+}

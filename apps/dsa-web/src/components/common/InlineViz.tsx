@@ -167,7 +167,9 @@ export const ShareBar: React.FC<ShareBarProps> = ({ segments, height = 3, classN
             width: `${((segment.value / total) * 100).toFixed(2)}%`,
             background: segment.color ?? `var(--chart-${Math.min(index + 1, 5)})`,
           }}
-          title={segment.label}
+          // 治理规则禁止原生 title（触屏无 tooltip、且不可键盘访问）；
+          // 段的语义已经由外层 ShareBar 的 aria-label 与图例文字承担。
+          aria-hidden="true"
         />
       ))}
     </span>

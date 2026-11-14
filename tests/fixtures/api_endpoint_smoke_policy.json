@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "note": [
+    "API 全量冒烟策略。tests/test_api_endpoint_smoke.py 与 scripts/list_api_endpoints.py --check-coverage 共用这份文件。",
+    "not_invoked：离线冒烟不真正调用 handler 的端点（每条必须写明原因，且端点必须存在于 tests/fixtures/api_endpoints.json）。",
+    "known_issues：已确认但尚未修复的端点行为问题。测试会以 xfail 记录（不阻断发布），修好或状态变化后 xfail 消息会提示从本文件移除。",
+    "写接口（非 GET/HEAD）只要没有必填请求体字段，一律不调用，避免冒烟在真实部署上误改数据；这属于机械规则，不写进本文件。"
+  ],
+  "not_invoked": [
+    {
+      "endpoint": "GET /api/v1/analysis/tasks/stream",
+      "category": "streaming",
+      "reason": "SSE 长连接，客户端会一直等不到响应结束；流式链路由 test_agent_sse_* 等专项测试覆盖"
+    },
+    {
+      "endpoint": "POST /api/v1/agent/chat/stream",
+      "category": "streaming",
+      "reason": "SSE 长连接，请求不会自行结束；流式链路由 test_agent_chat_transport / test_agent_sse_cleanup 覆盖"
+    },
+    {
+      "endpoint": "POST /api/v1/command/chat/stream",
+      "category": "streaming",
+      "reason": "SSE 长连接，请求不会自行结束；命令流式链路由 test_command_* 专项测试覆盖"
+    },
+    {
+      "endpoint": "GET /api/v1/stocks/{stock_code}/quote",
+      "category": "network_dependent",
+      "reason": "离线时数据源重试导致单次请求约 35s；行情链路由 test_market_data_* / test_stock_quote_* 用 mock 数据源覆盖"
+    },
+    {
+      "endpoint": "GET /api/v1/stocks/{stock_code}/history",
+      "category": "network_dependent",
+      "reason": "离线时数据源重试导致单次请求约 87s；历史行情链路由 test_market_data_* 用 mock 数据源覆盖"
+    }
+  ],
+  "known_issues": [
+    {
+      "endpoint": "GET /api/v1/financial-data/announcements",
+      "expected_status": 500,
+      "title": "上游不可用时 500 而非 503",
+      "detail": "AnnualReportService.list_announcements -> cninfo.fetch 直接抛 requests.ConnectionError，端点未捕获，上游（cninfo）不可达时返回 500 internal_error。"
+    },
+    {
+      "endpoint": "GET /api/v1/financial-data/annual-report",
+      "expected_status": 500,
+      "title": "上游不可用时 500 而非 503",
+      "detail": "AnnualReportService.find -> cninfo.fetch 直接抛 requests.ConnectionError，端点未捕获，上游不可达时返回 500 internal_error。"
+    },
+    {
+      "endpoint": "GET /api/v1/investment-monitor/dragon-tiger/daily",
+      "expected_status": 500,
+      "title": "TUSHARE_TOKEN 未配置时 500 而非明确的配置错误",
+      "detail": "financial_data_service.query 抛 FinancialDataValidationError(\"TUSHARE_TOKEN is not configured\")，dragon_tiger_daily 只捕获 InvestmentMonitorError，导致 500 internal_error。"
+    },
+    {
+      "endpoint": "GET /api/v1/financial-data/research-notes/{topic_id}/media/{kind}/{asset_id}",
+      "expected_status": 502,
+      "title": "参数/类型校验错误被映射成 502 upstream_error",
+      "detail": "不支持的附件类型属于客户端参数错误，应返回 400/415，而不是 502 upstream_error（会让前端误判为上游故障）。"
+    }
+  ]
+}

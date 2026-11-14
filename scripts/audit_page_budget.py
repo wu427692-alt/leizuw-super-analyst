@@ -54,6 +54,8 @@ KNOWN_UNROUTED = {
     "PortfolioPage",        # /portfolio        -> Navigate to /app
     "HomePage",             # /app 实际渲染 MarketDashboardPage，此文件无人引用
     "ResearchCenterPage",   # /research-center  -> Navigate to /super-watchlist?view=decision
+    "InvestmentMonitorBIPage",        # 无任何生产 import / 路由
+    "InvestmentMonitorOverviewPage",  # 无任何生产 import / 路由
 }
 
 # 除 Tab 之外的合法切分：侧栏、抽屉、折叠区都能降低单屏内容量（§10 允许）

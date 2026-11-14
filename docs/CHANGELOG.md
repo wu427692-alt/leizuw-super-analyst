@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+- [测试] 新增一键发布门禁 `scripts/release_gate.sh`：把静态检查、后端全量 pytest、前端全量 vitest、界面规范（页面预算 + UI 治理断言）、构建、E2E 串成六层，支持 `--fast`（1+4+5）/`--full`（1–6）/`--layer=N`（单层调试）；失败打印失败用例名与单条复现命令，产出 `release-gate-report.md`，历史遗留失败白名单单列不阻断，E2E 无密码时跳过不报错。
+- [测试] 新增 E2E 主流程 `apps/dsa-web/e2e/user-flows.spec.ts`：桌面端登录→总览切 Tab→点快讯抽屉看正文且不跳路由、主要页面无横向溢出且可见文本 ≥12px；手机端 390×844 下 `/meeting` 渲染团队条与对话输入框、`/chat` 重定向保留 query、主要可点热区 ≥44×44。
+- [文档] 新增 `docs/testing.md`：说明六层分别覆盖/不覆盖什么、`--fast`/`--full`/`--layer=N` 三种用法、环境要求、已知遗留失败白名单及修复条件、新增功能补测试 checklist。
 - [改进] 手机端对话版式重做（按 `docs/ui-design-system.md` §15，参照 ChatGPT 移动端与 GAIA Mobile Chat Standards）：**AI 回答去掉气泡/边框/背景、正文全宽铺底色**，手机端不再显示头像，删除每条 AI 消息上方的「AI 问股/AI 研究小组」角色标签（改为会话顶部一次性上下文）；正文字号 13.5–14px、行高 1.5–1.55，用户气泡 max-width 82% 圆角 16，消息间距 user→AI 16px/同角色 6px，输入框 40px、发送按钮 34px。
 - [修复] 对话断点错配：`useIsMobile()` 用 1023px 但 chat 手机样式只写在 640px，导致 641–1023（平板/横屏）拿到手机逻辑却配桌面样式，且旧 640px 规则用更高优先级把 textarea 字号顶回 16px（「字太大」的直接原因之一）。现统一到 1023px，<768 再收紧一档。
 - [修复] 消息区改定高 flex 列后子项被压缩导致用户气泡掉字（实测 58.5px 被压到 26px），已加 `flex: none` 兜底。

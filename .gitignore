@@ -92,3 +92,5 @@ node_modules/
 docs/specs/
 # 临时媒体产物（无代码引用，勿入库）
 aliyun-media/
+# 发布门禁运行时产物（每次都重新生成，不入库）
+release-gate-report.md
