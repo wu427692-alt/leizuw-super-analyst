@@ -1,0 +1,66 @@
+/* 「我的」：账号、同步状态、设置入口。手机为主，桌面端也成立（居中单列）。 */
+.me-page { display: flex; flex-direction: column; gap: 24px; max-width: 560px; }
+
+.me-account {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 72px; padding: 12px 16px;
+  border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1);
+  text-align: left;
+}
+.me-account__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.me-account__main strong { color: var(--text-1); font-size: var(--fs-h3); font-weight: 500; }
+.me-account__main small { color: var(--text-3); font-size: var(--fs-sm); }
+.me-chev { width: 16px; height: 16px; color: var(--text-3); flex: none; }
+
+.me-sync {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1);
+}
+.me-sync__icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--brand); color: var(--brand-on); flex: none; }
+.me-sync__icon svg { width: 20px; height: 20px; }
+.me-sync__main { display: flex; flex-direction: column; gap: 2px; }
+.me-sync__main strong { color: var(--text-1); font-size: var(--fs-h3); font-weight: 500; }
+.me-sync__main small { color: var(--text-3); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+
+.me-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1);
+  padding: 14px 0;
+}
+.me-stats > div { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.me-stats > div + div { border-left: 1px solid var(--line-1); }
+.me-stats span { color: var(--text-3); font-size: var(--fs-sm); }
+.me-stats b { color: var(--text-1); font-size: var(--fs-num-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.me-links { border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1); overflow: hidden; }
+.me-links button {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr) 16px; align-items: center; gap: 12px;
+  width: 100%; min-height: 64px; padding: 10px 16px;
+  border-bottom: 1px solid var(--line-1); text-align: left;
+}
+.me-links button:last-child { border-bottom: 0; }
+.me-links button > svg { width: 20px; height: 20px; color: var(--text-2); justify-self: center; }
+.me-links__icon-text {
+  display: grid; place-items: center; width: 20px; height: 20px; justify-self: center;
+  color: var(--text-2); font-size: var(--fs-body); font-weight: 600;
+}
+.me-links button > span:not(.me-links__icon-text) { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.me-links strong { color: var(--text-1); font-size: var(--fs-body); font-weight: 500; }
+.me-links small { color: var(--text-3); font-size: var(--fs-sm); }
+
+.me-brand { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 16px 0 24px; }
+.me-brand span { color: var(--brand); font-size: 20px; }
+.me-brand strong { color: var(--text-2); font-size: var(--fs-body); font-weight: 500; }
+.me-brand small { color: var(--text-3); font-size: var(--fs-caption); }
+
+.me-page__title {
+  display: none;
+  margin: 0;
+  font-size: var(--fs-h1);
+  line-height: var(--lh-h1);
+  font-weight: 600;
+  color: var(--text-1);
+}
+@media (min-width: 1024px) {
+  .me-page__title { display: block; }
+}

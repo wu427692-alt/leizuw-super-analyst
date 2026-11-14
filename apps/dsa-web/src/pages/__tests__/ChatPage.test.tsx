@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createParsedApiError, type ParsedApiError } from '../../api/error';
 import { historyApi } from '../../api/history';
 import type { Message, ProgressStep } from '../../stores/agentChatStore';
@@ -1734,6 +1734,130 @@ describe('ChatPage', () => {
   });
 });
 
+describe('ChatPage mobile conversation layout', () => {
+  const createMatchMedia = (mobile: boolean) => (query: string) => ({
+    matches: mobile ? query === '(max-width: 1023px)' : query === '(prefers-color-scheme: dark)',
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  });
+
+  const setViewport = (mobile: boolean) => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation(createMatchMedia(mobile)),
+    });
+  };
+
+  const getMessageRow = (text: string) => {
+    const row = screen.getByText(text).closest('[data-chat-row="message"]');
+    expect(row).not.toBeNull();
+    return row as HTMLElement;
+  };
+
+  afterEach(() => {
+    setViewport(false);
+  });
+
+  it('drops the AI bubble, avatar and per-message role label on mobile', async () => {
+    setViewport(true);
+    mockStoreState.messages = [
+      { id: 'user-1', role: 'user', content: '请分析 600519' },
+      { id: 'assistant-1', role: 'assistant', content: '趋势偏强', skillName: '趋势分析' },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const assistantRow = getMessageRow('趋势偏强');
+    expect(assistantRow).toHaveAttribute('data-role', 'assistant');
+    // 手机端 AI 回答没有气泡类、没有背景容器、没有头像、没有每条消息的角色标签，
+    // 也不再带 48rem 的桌面宽度上限（正文全宽可读）。
+    expect(assistantRow.querySelector('.chat-bubble-ai')).toBeNull();
+    expect(assistantRow.querySelector('.chat-message-plain')).not.toBeNull();
+    expect(assistantRow.querySelector('.chat-message-avatar')).toBeNull();
+    expect(assistantRow.querySelector('.chat-role-label')).toBeNull();
+    const assistantBubble = assistantRow.querySelector('.chat-message-bubble');
+    expect(assistantBubble).not.toBeNull();
+    expect(assistantBubble?.className ?? '').not.toMatch(/max-w-/);
+    // 手机端消息区走 16px 页边 + 自控行间距的版式，不再使用桌面的 space-y-4
+    expect(screen.getByTestId('chat-message-scroll')).toHaveClass('chat-message-list--mobile');
+    expect(screen.getByTestId('chat-message-scroll')).not.toHaveClass('space-y-4');
+
+    // 用户消息仍然保留气泡与右对齐容器
+    const userRow = getMessageRow('请分析 600519');
+    expect(userRow).toHaveAttribute('data-role', 'user');
+    expect(userRow.querySelector('.chat-bubble-user')).not.toBeNull();
+    expect(userRow.querySelector('.chat-message-avatar')).toBeNull();
+  });
+
+  it('shows the assistant context once at the top instead of on every message', async () => {
+    setViewport(true);
+    mockStoreState.messages = [
+      { id: 'user-1', role: 'user', content: '请分析 600519' },
+      { id: 'assistant-1', role: 'assistant', content: '趋势偏强' },
+      { id: 'user-2', role: 'user', content: '再看宁德时代' },
+      { id: 'assistant-2', role: 'assistant', content: '宁德时代也偏强' },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const context = await screen.findByTestId('chat-conversation-context');
+    expect(context).toHaveTextContent('AI 问股');
+    expect(screen.getAllByTestId('chat-conversation-context')).toHaveLength(1);
+    expect(screen.queryByText('AI 问股', { selector: '.chat-role-label span' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the research topic in the single mobile context line', async () => {
+    setViewport(true);
+    mockStoreState.messages = [
+      { id: 'user-1', role: 'user', content: '请分析 600519' },
+      { id: 'assistant-1', role: 'assistant', content: '趋势偏强' },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat?from=meeting&topic=白酒周期']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const context = await screen.findByTestId('chat-conversation-context');
+    expect(context).toHaveTextContent('AI 研究小组');
+    expect(context).toHaveTextContent('白酒周期');
+    expect(screen.getAllByTestId('chat-conversation-context')).toHaveLength(1);
+  });
+
+  it('keeps the desktop avatar and AI bubble outside the mobile breakpoint', async () => {
+    setViewport(false);
+    mockStoreState.messages = [
+      { id: 'user-1', role: 'user', content: '请分析 600519' },
+      { id: 'assistant-1', role: 'assistant', content: '趋势偏强' },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    const assistantRow = getMessageRow('趋势偏强');
+    expect(assistantRow.querySelector('.chat-bubble-ai')).not.toBeNull();
+    expect(assistantRow.querySelector('.chat-message-avatar')).not.toBeNull();
+    expect(screen.queryByTestId('chat-conversation-context')).not.toBeInTheDocument();
+  });
+});
+
 describe('extractStockCodeFromMessage', () => {
   it('returns 6-digit A-share code', () => {
     expect(extractStockCodeFromMessage('分析 600519 趋势')).toBe('600519');
@@ -1908,5 +2032,61 @@ describe('watchlist button with code variants', () => {
       expect(mockRemoveFromWatchlist).toHaveBeenCalledWith('00700');
     });
     expect(mockAddToWatchlist).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChatPage research-topic sessions', () => {
+  it('presents the research topic instead of the generic 问股 header', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat?from=meeting&topic=%E5%AE%81%E5%BE%B7%E6%97%B6%E4%BB%A3%E4%B8%AD%E7%BA%BF%E6%80%8E%E4%B9%88%E7%9C%8B&session=session-1']}>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+
+    const banner = await screen.findByTestId('chat-meeting-topic');
+    expect(banner).toHaveTextContent('本次研究议题');
+    expect(banner).toHaveTextContent('宁德时代中线怎么看');
+    expect(screen.getByRole('button', { name: '返回研究议题' })).toBeInTheDocument();
+    expect(document.title).toContain('研究议题');
+    expect(document.title).toContain('宁德时代中线怎么看');
+  });
+
+  it('keeps the 问股 header and title for normal chat entries', async () => {
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('向 AI 询问个股分析，获取基于技能视角的交易建议与实时决策报告。')).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-meeting-topic')).not.toBeInTheDocument();
+    expect(document.title).toBe('问股 - 乐子乌智能投研平台');
+  });
+
+  it('drops the research topic header when switching to another session', async () => {
+    mockStoreState.sessions = [
+      ...mockStoreState.sessions,
+      {
+        session_id: 'session-2',
+        title: '旧会话',
+        message_count: 1,
+        created_at: '2026-03-16T09:00:00Z',
+        last_active: '2026-03-16T09:05:00Z',
+      },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat?from=meeting&topic=%E5%AE%81%E5%BE%B7%E6%97%B6%E4%BB%A3&session=session-1']}>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('chat-meeting-topic')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '切换到对话 旧会话' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('chat-meeting-topic')).not.toBeInTheDocument();
+    });
+    expect(document.title).toBe('问股 - 乐子乌智能投研平台');
   });
 });

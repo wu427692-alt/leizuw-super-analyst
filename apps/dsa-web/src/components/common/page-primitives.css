@@ -1,0 +1,249 @@
+/* 页面级组件样式：PageTabs / Metric / InlineViz
+ * 规范见 docs/ui-design-system.md §10–§13。
+ * 只允许引用 var(--*) 令牌，不写十六进制或 rgb 字面量。
+ */
+
+/* ---------------------------------------------------------------- PageTabs */
+.page-tabs {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  border-bottom: 1px solid var(--line-1);
+  margin-bottom: var(--gap-lg);
+}
+
+.page-tabs__list {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--gap-lg);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.page-tabs__list::-webkit-scrollbar {
+  display: none;
+}
+
+.page-tabs__item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 10px;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease;
+}
+
+.page-tabs__item::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: transparent;
+  border-radius: 1px 1px 0 0;
+}
+
+.page-tabs__item:hover:not(:disabled) {
+  color: var(--text-2);
+}
+
+.page-tabs__item.is-active {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.page-tabs__item.is-active::after {
+  background: var(--brand);
+}
+
+.page-tabs__item:disabled {
+  color: var(--text-4);
+  cursor: not-allowed;
+}
+
+.page-tabs__badge {
+  font-size: var(--fs-caption);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.page-tabs__item.is-active .page-tabs__badge {
+  color: var(--text-2);
+}
+
+.page-tabs__extra {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding-bottom: 6px;
+}
+
+/* ------------------------------------------------------------------ Metric */
+.metric {
+  display: flex;
+  min-width: 0;
+}
+
+.metric--block {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.metric--inline {
+  flex-direction: column;
+  gap: 1px;
+}
+
+.metric__label {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric__value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.metric__value b {
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.metric--inline .metric__value b {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.metric__value em {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.metric--inline .metric__value em {
+  font-size: var(--fs-caption);
+}
+
+.metric__viz {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.metric__hint {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric.is-empty .metric__value b {
+  color: var(--text-4);
+  font-weight: 500;
+}
+
+.metric-row {
+  display: grid;
+  gap: var(--gap-md) var(--gap-lg);
+}
+
+.metric-row--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.metric-row--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.metric-row--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+@media (max-width: 768px) {
+  .metric-row--3,
+  .metric-row--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* --------------------------------------------------------------- InlineViz */
+.viz-sparkline {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.viz-barmeter {
+  display: block;
+  width: 100%;
+  background: var(--bg-3);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.viz-barmeter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 160ms ease;
+}
+
+/* 有符号数据的零轴基线：负值从右端向左生长，正值从左端向右。
+   调用方不必再自己取 abs 并覆盖颜色（§11）。 */
+.viz-barmeter--center {
+  position: relative;
+}
+
+.viz-barmeter--center::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-2);
+  z-index: 1;
+}
+
+.viz-barmeter--center > span.is-negative {
+  margin-left: auto;
+}
+
+.viz-sharebar {
+  display: flex;
+  width: 100%;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.viz-sharebar > span {
+  display: block;
+  height: 100%;
+}
+
+.viz-heatcell {
+  display: inline-block;
+  border-radius: 2px;
+}
+
+.viz-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-caption);
+  color: var(--text-4);
+}

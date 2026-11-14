@@ -101,6 +101,7 @@ describe('一站式取数后台生命周期', () => {
     // JSDOM has no layout/scroll API; keep this DOM-only stub scoped to the
     // mounted detail anchor, not the production scroll behavior.
     Object.defineProperty(document.getElementById('acquisition-task-detail'), 'scrollIntoView', { value: vi.fn() });
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getAllByRole('button', { name: '查看渠道结果' })[1]); await flush();
     expect(screen.getByText('单独查看的历史包 · job-preview')).toBeVisible();
     fireEvent.click(screen.getByText('测试切换任务')); await flush();
@@ -194,6 +195,7 @@ describe('一站式取数后台生命周期', () => {
       stockDirectory: { source: '证券目录种子', lastSuccessAt: null, refreshing: true, stale: true, entryCount: 5500 },
     });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /数据覆盖/ })); await flush();
     const directory = screen.getByLabelText('股票目录同步状态');
     expect(directory).toHaveTextContent('证券目录种子');
     expect(directory).toHaveTextContent('最近成功同步：未核验');
@@ -250,6 +252,7 @@ describe('一站式取数后台生命周期', () => {
   it('首次列表失败不是零条；后台刷新不抹去操作错误，重试只请求本渠道', async () => {
     vi.mocked(dataAcquisitionApi.jobs).mockRejectedValueOnce(new Error('timeout')).mockResolvedValue({ items: [job], total: 1 });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     expect(screen.getByText('数据包记录尚未读取成功')).toBeVisible();
     expect(screen.queryByText('还没有数据包')).not.toBeInTheDocument();
     const sourceCalls = vi.mocked(dataAcquisitionApi.capabilities).mock.calls.length;
@@ -266,6 +269,7 @@ describe('一站式取数后台生命周期', () => {
       return new Promise((_resolve, reject) => { fail = reject; });
     }).mockResolvedValue(new Blob(['zip']));
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getAllByRole('button', { name: '下载' })[0]); await flush();
     expect(screen.getByRole('button', { name: '下载' })).toBeDisabled();
     await act(async () => { fail(new Error('连接中断')); });
@@ -283,6 +287,7 @@ describe('一站式取数后台生命周期', () => {
       handedOff = { href: this.href, filename: this.download };
     });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '浏览器下载' })); await flush();
     expect(handedOff).toEqual({ href: `${window.location.origin}/api/v1/data-acquisition/jobs/${encodeURIComponent(opaqueId)}/download`, filename: `财经数据包_${opaqueId}.zip` });
     expect(new URL(handedOff!.href).origin).toBe(window.location.origin);
@@ -299,6 +304,7 @@ describe('一站式取数后台生命周期', () => {
     let finish!: (blob: Blob) => void;
     vi.mocked(dataAcquisitionApi.download).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const page = render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '下载' })); await flush();
     page.unmount();
     const blob = new Blob(['complete-authorized-archive']);
@@ -312,6 +318,7 @@ describe('一站式取数后台生命周期', () => {
     vi.mocked(dataAcquisitionApi.jobs).mockResolvedValue({ items: [job], total: 1 });
     vi.mocked(HTMLAnchorElement.prototype.click).mockImplementation(() => { throw new Error('blocked'); });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '浏览器下载' })); await flush();
     expect(screen.getByText('浏览器暂未接收下载，请使用旁边的下载按钮重试。')).toBeVisible();
     expect(screen.queryByText('已交给浏览器，请在下载列表查看进度')).not.toBeInTheDocument();
@@ -324,6 +331,7 @@ describe('一站式取数后台生命周期', () => {
     let finish!: (blob: Blob) => void;
     vi.mocked(dataAcquisitionApi.download).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const page = render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '下载' })); await flush();
     clearRequestCache();
     vi.mocked(useUserAccess).mockReturnValue(mode === 'logout'
@@ -344,6 +352,7 @@ describe('一站式取数后台生命周期', () => {
       notify = progress!; return new Promise(() => {});
     });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '下载' })); await flush();
     clock.mockReturnValue(2000);
     act(() => notify({ loaded: 1024, total: 4096, percent: 25 }));
@@ -365,6 +374,7 @@ describe('一站式取数后台生命周期', () => {
       notify = progress!; return new Promise(() => {});
     });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '下载' })); await flush();
     act(() => notify({ loaded: 0, bytesPerSecond: 0, estimatedSecondsRemaining: Infinity }));
     expect(screen.getByLabelText('下载传输情况')).not.toHaveTextContent(/剩余|NaN|Infinity/);
@@ -386,6 +396,7 @@ describe('一站式取数后台生命周期', () => {
       return new Promise(resolve => { finish = resolve; });
     });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '下载' })); await flush();
     expect(screen.getByRole('progressbar', { name: '数据包下载进度' })).toHaveAttribute('aria-valuenow', '99');
     expect(screen.getByText('正在校验完整文件')).toBeVisible();
@@ -403,6 +414,7 @@ describe('一站式取数后台生命周期', () => {
     let finish!: (value: Blob) => void;
     vi.mocked(dataAcquisitionApi.download).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     render(fixture('/data-acquisition?task=acq-a')); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /下载记录/ })); await flush();
     fireEvent.click(screen.getByRole('button', { name: '下载' })); await flush();
     const jobsCalls = vi.mocked(dataAcquisitionApi.jobs).mock.calls.length;
     const sourceCalls = vi.mocked(dataAcquisitionApi.capabilities).mock.calls.length;

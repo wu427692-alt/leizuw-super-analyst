@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Archive, ArrowUpRight, BrainCircuit, CalendarClock, ChevronDown, ExternalLink, FileText, Image as ImageIcon, Layers3, Plus, RefreshCw, ShieldCheck, Sparkles, Star, Trash2 } from 'lucide-react';
+import { Archive, ArrowUpRight, BrainCircuit, CalendarClock, ChevronDown, ChevronRight, ExternalLink, FileText, Image as ImageIcon, Layers3, Plus, RefreshCw, ShieldCheck, Sparkles, Star, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { essayRadarApi } from '../api/essayRadar';
 import { investmentMonitorApi } from '../api/investmentMonitor';
 import { systemConfigApi } from '../api/systemConfig';
-import { AppPage, ConfirmDialog, Drawer, EmptyState } from '../components/common';
+import { AppPage, BarMeter, ConfirmDialog, Drawer, EmptyState, PageTabs, Sparkline } from '../components/common';
 import { MarketTimeframeChart } from '../components/market';
 import { SourceRecordDrawer, type FinancialRecordSection } from '../components/investmentMonitor/SourceRecordDrawer';
 import { evidenceTime, researchInstant, researchTime, sourceRecordUrl } from '../components/investmentMonitor/investmentMonitorMeta';
@@ -15,13 +15,13 @@ import { useRealtimeQuotes } from '../hooks/useRealtimeQuotes';
 import { useStockIndex } from '../hooks/useStockIndex';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import { useWatchlistNavigation, SECTIONS, PRIMARY_SECTIONS, MATERIAL_FILTERS, MESSAGE_FILTERS } from '../hooks/useWatchlistNavigation';
-import type { Section, MaterialFilter, MessageFilter } from '../hooks/useWatchlistNavigation';
+import type { Section, MaterialFilter, MessageFilter, PrimarySection } from '../hooks/useWatchlistNavigation';
 import type { RealtimeQuote } from '../api/realtimeQuotes';
 import type { ResearchNoteDetail } from '../types/essayRadar';
 import { formatMarketQuoteTimestamp, quoteDateKey, shouldPreferQuote } from '../utils/marketQuoteDate';
 import { directResearchFirst, RESEARCH_MATCH_FIELDS, RESEARCH_RELATION_LABELS, stockResearchRelation } from '../utils/stockResearchRelation';
-import { MobileGroup, MobileListRow, MobileSkeleton } from '../components/mobile/MobilePrimitives';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { MobileWatchlist } from '../components/mobile/MobileWatchlist';
+import { useIsMobile, useIsPhone } from '../hooks/useIsMobile';
 import './SuperWatchlistPage.css';
 
 type WorkspaceView = 'overview' | 'full';
@@ -134,7 +134,7 @@ function marketPresentation(market: SuperWatchlistStock['market']) {
   const label = !hasPrice ? '行情尚未取得' : !asOf ? '报价时间未标注'
     : `${market.quoteKind === 'daily_close' ? '收盘行情' : market.isStale ? '历史行情快照' : '行情快照'} · ${asOf}`;
   return {
-    label, price: hasPrice ? number(market.price) : '—', change: percent(changePct),
+    label, price: hasPrice ? (market.price as number).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—', change: percent(changePct),
     tone: typeof changePct === 'number' && Number.isFinite(changePct) ? Math.sign(changePct) : 0,
   };
 }
@@ -355,7 +355,7 @@ function OverviewFinancial({ stock, onOpen }: { stock: SuperWatchlistStock; onOp
     { label: 'PE(TTM)', value: capitalValue(stock.valuation.peTtm) === null ? '—' : `${number(stock.valuation.peTtm)} 倍`, date: stock.valuation.asOf, valuation: true },
   ];
   return <section className="super-brief-financial" aria-label="经营与估值摘要">
-    <div><h3>经营与估值</h3><p>金额、增长指标和估值分别标注日期</p></div>
+    <div><h3>经营与估值</h3></div>
     <button type="button" onClick={onOpen}>查看财务与资金 <ArrowUpRight size={14} /></button>
     <div className="super-brief-metrics">{metrics.map(metric => <section key={metric.label} className="super-business-metric" aria-label={metric.label}>
       <h4>{metric.label}</h4><strong>{metric.value}</strong>
@@ -379,7 +379,7 @@ function Overview({ stock, onSection, onEssayOpen, onForumOpen }: {
   const routes: Record<string, Section> = { announcements: 'institution', research: 'institution', opinions: 'essay', news: 'messages' };
   const groupMaterial = (key: string): MaterialFilter => key === 'announcements' ? 'announcements' : key === 'research' ? 'research' : 'all';
   return <section className="super-brief" aria-label="当前股票研究摘要">
-    <header className="super-section-heading"><div><h3>值得先看的资料</h3><p>近183天已入库预览 · 每类最多2条，本公司研报优先；不是全库清单。</p></div><button type="button" onClick={() => onSection('evidence')}>更多资料 <ArrowUpRight size={14} /></button></header>
+    <header className="super-section-heading"><div><h3>值得先看的资料</h3><p>近 183 天，每类最多 2 条</p></div><button type="button" onClick={() => onSection('evidence')}>更多资料 <ArrowUpRight size={14} /></button></header>
     <div className="super-brief-grid">{groups.map(group => <section key={group.key} className="super-brief-channel" aria-label={`${group.label}预览`}><header><h4>{group.label}</h4><button type="button" onClick={() => onSection(routes[group.key] ?? 'evidence', groupMaterial(group.key))} aria-label={`查看${group.label}`}>更多 <ArrowUpRight size={14} /></button></header><div className="super-brief-channel-items">{group.items.length ? (group.key === 'research' ? directResearchFirst(group.items, stock.symbol) : group.items).slice(0, 2).map(event => <EvidenceRow key={event.id} event={event} stockSymbol={stock.symbol} onEssayOpen={onEssayOpen} onForumOpen={onForumOpen} />) : <p className="super-quiet-empty">当前预览未载入</p>}</div></section>)}</div>
   </section>;
 }
@@ -766,7 +766,9 @@ function DetailSection({ section, stock, library, material, onMaterialChange, me
 
 export default function SuperWatchlistPage() {
   const isMobile = useIsMobile();
+  const isPhone = useIsPhone();
   const [editing, setEditing] = useState(false);
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [stockCache, setStockCache] = useState<Record<string, SuperWatchlistStock>>({});
   const [listReady, setListReady] = useState(false);
@@ -777,6 +779,8 @@ export default function SuperWatchlistPage() {
   const [refreshingShared, setRefreshingShared] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
   const [expandedChartSection, setExpandedChartSection] = useState<Section | null>(null);
+  const [mobileReading, setMobileReading] = useState<MonitorEvent | null>(null);
+  const [mobileChartPeriod, setMobileChartPeriod] = useState<'intraday' | 'daily' | 'weekly'>('intraday');
   const [selectedEssay, setSelectedEssay] = useState<MonitorEvent | null>(null);
   const [selectedForumPost, setSelectedForumPost] = useState<MonitorEvent | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ symbol: string; name: string } | null>(null);
@@ -799,7 +803,6 @@ export default function SuperWatchlistPage() {
   const workspaceRefreshQueued = useRef(new Set<string>());
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const sectionNavRef = useRef<HTMLElement>(null);
   const materialNavRef = useRef<HTMLElement>(null);
   const listRevision = useRef(0);
   const listInFlight = useRef<number | null>(null);
@@ -890,6 +893,11 @@ export default function SuperWatchlistPage() {
     const bareCode = symbol.split('.')[0].toUpperCase();
     const name = [cached?.name, quote?.stockName, resolveIndexedName(symbol)]
       .find(value => value?.trim() && ![symbol.toUpperCase(), bareCode].includes(value.trim().toUpperCase()));
+    // 行内可视化只使用已经载入的真实日线：没有工作台缓存时不画假趋势。
+    const closes = (cached?.history ?? [])
+      .map(row => row.close)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+      .slice(-20);
     return {
       symbol,
       name: name?.trim() || symbol,
@@ -897,14 +905,17 @@ export default function SuperWatchlistPage() {
         price: quote?.currentPrice, changePct: quote?.changePercent, updatedAt: quote?.updateTime,
         isStale: Boolean(quote?.isStale), quoteKind: 'snapshot',
       }),
+      closes,
+      amount: typeof resolved?.market.amount === 'number' && Number.isFinite(resolved.market.amount) ? resolved.market.amount : null,
     };
   }), [liveQuotes, quoteKey, resolveIndexedName, stockCache, symbols]);
+  const railAmountMax = useMemo(() => Math.max(...railStocks.map(stock => stock.amount ?? 0), 1), [railStocks]);
   const loadedDetail = stockCache[workspaceKey(activeSymbol, workspaceView)];
   const baseActive = loadedDetail ?? stockCache[workspaceKey(activeSymbol, 'overview')]
     ?? stockCache[workspaceKey(activeSymbol, 'full')];
   useEffect(() => {
     const revealSelected = () => {
-      for (const nav of [sectionNavRef.current, materialNavRef.current]) {
+      for (const nav of [materialNavRef.current]) {
         const selected = nav?.querySelector<HTMLElement>('[aria-pressed="true"]');
         if (!nav || !selected) continue;
         const bounds = nav.getBoundingClientRect();
@@ -1051,6 +1062,10 @@ export default function SuperWatchlistPage() {
     }
   };
   const activeMarket = marketPresentation(active?.market ?? {});
+  const activeCloses = useMemo(() => (active?.history ?? [])
+    .map(row => row.close)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    .slice(-20), [active?.history]);
   const openModel = () => {
     if (!active) return;
     const query = new URLSearchParams({
@@ -1060,32 +1075,39 @@ export default function SuperWatchlistPage() {
     navigate(`/chat?${query}`);
   };
   if (isMobile && !activeSymbol) {
+    const mobileUpdated = railStocks.map(stock => stock.display.label.split(' · ')[1]).find(Boolean);
     return <AppPage className="super-watchlist-page is-mobile-list">
-      <form onSubmit={addStock} className="mobile-watch-add">
-        <div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy || Boolean(deletingSymbol)} placeholder="添加股票：名称或代码" className="mobile-watch-add__input" /></div>
-        <button type="submit" disabled={busy || Boolean(deletingSymbol) || !newSymbol.trim()} aria-label="加入自选股"><Plus aria-hidden="true" /></button>
-      </form>
-      {error ? <p role="status" className="mobile-watch-error">{error}</p> : null}
-      {listError ? <p role="status" className="mobile-watch-error">自选列表暂未更新，<button type="button" onClick={() => void loadWatchlist()}>重试</button></p> : null}
-      <MobileGroup
-        title={`我的自选 ${symbols.length}`}
-        action={symbols.length ? <button type="button" onClick={() => setEditing(value => !value)}>{editing ? '完成' : '编辑'}</button> : undefined}
-      >
-        {!listReady ? <MobileSkeleton rows={4} /> : railStocks.length ? railStocks.map(stock => (
-          <MobileListRow
-            key={stock.symbol}
-            title={stock.name}
-            subtitle={stock.symbol}
-            value={stock.display.price}
-            valueNote={stock.display.change}
-            tone={stock.display.tone > 0 ? 'up' : stock.display.tone < 0 ? 'down' : 'flat'}
-            onClick={editing ? undefined : () => selectSymbol(stock.symbol)}
-            trailing={editing ? <button type="button" className="mobile-watch-delete" onClick={() => setPendingDelete(stock)} disabled={busy || Boolean(deletingSymbol)} aria-label={`删除自选股 ${stock.name}`}><Trash2 aria-hidden="true" /></button> : undefined}
-          />
-        )) : (
-          <div className="mobile-watch-empty"><Star aria-hidden="true" /><strong>还没有自选股</strong><span>在上方输入名称或代码，行情与研究资料会自动归档。</span></div>
-        )}
-      </MobileGroup>
+      <MobileWatchlist
+        stocks={railStocks.map(stock => ({
+          symbol: stock.symbol,
+          name: stock.name,
+          price: stock.display.price,
+          change: stock.display.change,
+          tone: stock.display.tone > 0 ? 'up' : stock.display.tone < 0 ? 'down' : 'flat',
+        }))}
+        ready={listReady}
+        editing={editing}
+        onToggleEdit={() => setEditing(value => !value)}
+        onOpen={symbol => selectSymbol(symbol)}
+        onDelete={symbol => { const found = railStocks.find(item => item.symbol === symbol); if (found) setPendingDelete(found); }}
+        deleteDisabled={busy || Boolean(deletingSymbol)}
+        addOpen={mobileAddOpen}
+        onToggleAdd={() => {
+          setMobileAddOpen(true);
+          const input = document.querySelector<HTMLInputElement>('.mobile-watch-add input');
+          input?.focus();
+          input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }}
+        updatedLabel={mobileUpdated ? mobileUpdated.slice(5) : undefined}
+        error={<>
+          {error ? <p role="status" className="mobile-watch-error">{error}</p> : null}
+          {listError ? <p role="status" className="mobile-watch-error">自选列表暂未更新，<button type="button" onClick={() => void loadWatchlist()}>重试</button></p> : null}
+        </>}
+        search={<form onSubmit={addStock} className="mobile-watch-add">
+          <div className="min-w-0 flex-1"><StockAutocomplete value={newSymbol} onChange={setNewSymbol} onSubmit={(symbol) => void submitStock(symbol)} disabled={busy || Boolean(deletingSymbol)} placeholder="搜索公司名称或证券代码" className="mobile-watch-add__input" /></div>
+          {mobileAddOpen || newSymbol.trim() ? <button type="submit" disabled={busy || Boolean(deletingSymbol) || !newSymbol.trim()} aria-label="加入自选股"><Plus aria-hidden="true" /></button> : null}
+        </form>}
+      />
       <ConfirmDialog
         isOpen={Boolean(pendingDelete)}
         title="删除自选股"
@@ -1100,8 +1122,92 @@ export default function SuperWatchlistPage() {
       />
     </AppPage>;
   }
+  if (isPhone && activeSymbol) {
+    const market = active?.market;
+    const tone = activeMarket.tone > 0 ? 'up' : activeMarket.tone < 0 ? 'down' : 'flat';
+    const changeAbs = typeof market?.change === 'number' && Number.isFinite(market.change) ? `${market.change > 0 ? '+' : ''}${market.change.toFixed(2)}` : '';
+    const latestAnnouncement = active ? [...active.company.announcements]
+      .sort((a, b) => (researchInstant(b.eventAt) || 0) - (researchInstant(a.eventAt) || 0))[0] : undefined;
+    const income = active ? financialSource(active.fundamentals, 'income') : undefined;
+    const indicator = active ? financialSource(active.fundamentals, 'indicator') : undefined;
+    const finPeriod = reportDate(income?.period ?? indicator?.period);
+    const chartTabs = [
+      { value: 'intraday' as const, label: '分时' },
+      { value: 'daily' as const, label: '日K' },
+      { value: 'weekly' as const, label: '周K' },
+    ];
+    return <AppPage className="super-watchlist-page is-mobile-detail">
+      <div className="lx-stock-detail">
+        <div className="lx-titlebar-action">
+          <button type="button" onClick={() => active && setPendingDelete(active)} aria-label={`${active?.name ?? activeSymbol} 已加入自选，点按移出`}>
+            <Star aria-hidden="true" size={16} fill="currentColor" /> 已加入自选
+          </button>
+        </div>
+        {workspaceError ? <div role="status" className="super-load-message"><span>数据更新暂未成功，正在展示上次读取的内容。</span><button type="button" onClick={() => void loadWorkspace(activeSymbol, true, workspaceView)}>重试</button></div> : null}
+        {active ? <>
+          <section className="lx-stock-price" aria-label="最新价格">
+            <h2 className="lx-stock-price__name">{active.name} <small>{active.symbol}</small></h2>
+            <div><span className="lx-stock-price__value">{activeMarket.price}</span> <span className="lx-stock-price__unit">元</span></div>
+            <div className={`lx-stock-price__change is-${tone}`}>
+              <span>{tone === 'up' ? '上涨' : tone === 'down' ? '下跌' : '平盘'}</span>
+              <span>{changeAbs} ({activeMarket.change})</span>
+            </div>
+            <p className="lx-stock-price__time">{activeMarket.label}</p>
+          </section>
+
+          <section className="lx-stock-chart" aria-label="行情走势">
+            <div className="lx-stock-chart__tabs" role="tablist">
+              {chartTabs.map(tab => <button key={tab.value} type="button" role="tab" aria-selected={mobileChartPeriod === tab.value} className={`lx-stock-chart__tab${mobileChartPeriod === tab.value ? ' is-active' : ''}`} onClick={() => setMobileChartPeriod(tab.value)}>{tab.label}</button>)}
+            </div>
+            <div className="lx-stock-chart__inner">
+              {/* compact：图表自带周期/时间范围工具条，这里已经有外层 tab，隐藏内部那排避免出现两套切换 */}
+              <MarketTimeframeChart key={`${active.symbol}:${mobileChartPeriod}`} symbol={active.symbol} compact initialPeriod={mobileChartPeriod} className="lx-stock-chart__canvas" />
+            </div>
+            <div className="lx-stock-chart__meta">
+              <div className="lx-stock-chart__meta-item"><span className="lx-stock-chart__meta-label">昨收</span><span className="lx-stock-chart__meta-value">{number(market?.prevClose)}</span></div>
+              <div className="lx-stock-chart__meta-item"><span className="lx-stock-chart__meta-label">成交额</span><span className="lx-stock-chart__meta-value">{capitalMoney(market?.amount)}</span></div>
+            </div>
+          </section>
+
+          <section className="lx-section lx-stock-announce" aria-label="公告">
+            <header className="lx-section__head"><h2>公告</h2>{active.company.announcementCount ? <div className="lx-section__meta">共 {active.company.announcementCount} 条</div> : null}</header>
+            <div className="lx-list">
+              {latestAnnouncement ? <button type="button" className="lx-list__row" onClick={() => setMobileReading(latestAnnouncement)}>
+                <span className="lx-list__icon"><FileText aria-hidden="true" /></span>
+                <span className="lx-list__main"><strong>{latestAnnouncement.title}</strong><small>{evidenceTime(latestAnnouncement)} · {latestAnnouncement.sourceName}</small></span>
+                <ChevronRight className="lx-list__chev" aria-hidden="true" />
+              </button> : <p className="lx-list__empty">近期暂无已载入公告</p>}
+            </div>
+          </section>
+
+          <section className="lx-section lx-stock-fin" aria-label="财务摘要">
+            <header className="lx-stock-fin__head"><h2>财务摘要</h2><span className="lx-stock-fin__period">{finPeriod}</span></header>
+            <div className="lx-stock-fin__grid">
+              <div className="lx-stock-fin__item"><span className="lx-stock-fin__label">营业收入</span><span className="lx-stock-fin__value">{capitalMoney(income?.selectionStatus === 'conflict' ? null : active.fundamentals.revenue)}</span></div>
+              <div className="lx-stock-fin__item"><span className="lx-stock-fin__label">毛利率</span><span className="lx-stock-fin__value">{ratioPercent(indicator?.selectionStatus === 'conflict' ? null : active.fundamentals.grossMargin)}</span></div>
+            </div>
+          </section>
+
+          <button type="button" className="lx-stock-ask" onClick={openModel}><Sparkles aria-hidden="true" />AI 问股</button>
+        </> : workspaceError ? null : <div role="status" className="lx-list__empty">正在读取 {activeSymbol}…</div>}
+      </div>
+      {mobileReading ? <SourceRecordDrawer event={mobileReading} onClose={() => setMobileReading(null)} /> : null}
+      <ConfirmDialog
+        isOpen={Boolean(pendingDelete)}
+        title="移出自选"
+        message={`确认将 ${pendingDelete?.name ?? ''}（${pendingDelete?.symbol ?? ''}）移出自选？已入库的研究资料会保留。`}
+        confirmText={deletingSymbol ? '移出中…' : '移出'}
+        cancelText="取消"
+        confirmDisabled={busy || Boolean(deletingSymbol)}
+        cancelDisabled={Boolean(deletingSymbol)}
+        isDanger
+        onConfirm={() => void removeStock()}
+        onCancel={() => setPendingDelete(null)}
+      />
+    </AppPage>;
+  }
   return <AppPage className={`super-watchlist-page max-w-[1900px]${isMobile && activeSymbol ? ' is-mobile-detail' : ''}`}><div className="super-watchlist-shell border border-[var(--line-1)] bg-white text-[var(--text-1)]">
-    <header className="super-watchlist-header"><div><h1>自选股超级看板</h1><p>关注的公司，放在一起研究。</p></div><div className="super-header-actions"><Link to="/tasks">我的研究任务 <ArrowUpRight size={14} /></Link><button onClick={() => void refreshShared()} disabled={refreshingShared} aria-label="刷新共享行情并唤醒到期数据源" className="super-refresh-button"><RefreshCw size={14} className={refreshingShared ? 'animate-spin' : ''} />{refreshingShared ? '正在更新' : '刷新'}</button></div></header>
+    <header className="super-watchlist-header"><div><h1>自选看板</h1><p>关注的公司，放在一起研究。</p></div><div className="super-header-actions"><Link to="/tasks">我的研究任务 <ArrowUpRight size={14} /></Link><button onClick={() => void refreshShared()} disabled={refreshingShared} aria-label="刷新共享行情并唤醒到期数据源" className="super-refresh-button"><RefreshCw size={14} className={refreshingShared ? 'animate-spin' : ''} />{refreshingShared ? '正在更新' : '刷新'}</button></div></header>
     {error ? <div className="border-b border-[var(--danger)] bg-[var(--brand-tint-08)] px-4 py-2 text-[12px] text-[var(--danger)]">{error}</div> : null}
     {listError ? <div role="status" className="super-load-message"><span>自选列表暂未更新，已有内容会保留。</span><button type="button" onClick={() => void loadWatchlist()}>重试列表</button></div> : null}
     <div className={`super-watchlist-grid grid grid-cols-1 ${section === 'consensus' ? 'is-consensus' : ''}`}>
@@ -1111,17 +1217,32 @@ export default function SuperWatchlistPage() {
           const selected = stock.symbol === activeSymbol;
           return <div key={stock.symbol} className={`super-watchlist-item flex border-b border-[var(--line-1)] ${selected ? 'is-selected bg-[var(--bg-1)]' : ''}`}>
             <button type="button" aria-pressed={selected} onClick={() => selectSymbol(stock.symbol)} className="super-watchlist-select min-w-0 flex-1 p-3 text-left hover:bg-white">
-              <div className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-bold">{stock.name}</span><span className={`shrink-0 font-mono text-[12px] font-bold ${stock.display.tone > 0 ? 'text-[var(--up)]' : stock.display.tone < 0 ? 'text-[var(--success)]' : ''}`}>{stock.display.price}</span></div>
-              <div className="mt-1 flex justify-between font-mono text-[12px] text-[var(--text-3)]"><span>{stock.symbol}</span><span>{stock.display.change}</span></div>
+              <div className="super-watch-row-main"><span className="truncate text-[13px] font-bold">{stock.name}</span><span className={`shrink-0 font-mono text-[12px] font-bold ${stock.display.tone > 0 ? 'text-[var(--up)]' : stock.display.tone < 0 ? 'text-[var(--success)]' : ''}`}>{stock.display.price}</span></div>
+              <div className="super-watch-row-meta"><span>{stock.symbol}</span>{stock.closes.length >= 2 ? <span className="super-watch-row-spark" aria-hidden="true"><Sparkline values={stock.closes} width={46} height={14} /></span> : null}<span>{stock.display.change}</span></div>
+              {stock.amount != null ? <span className="super-watch-row-meter" aria-hidden="true"><BarMeter value={stock.amount} max={railAmountMax} log height={2} tone="neutral" /></span> : null}
             </button>
             <button type="button" onClick={() => setPendingDelete(stock)} disabled={busy || Boolean(deletingSymbol)} aria-label={`删除自选股 ${stock.name}`} className="super-watchlist-delete m-2 ml-0 inline-flex w-8 shrink-0 items-center justify-center self-stretch rounded-lg text-[var(--text-3)] hover:bg-[var(--brand-tint-08)] hover:text-[var(--danger)] disabled:cursor-wait disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>;
         })}</div>
       </aside>
       <main className="super-watchlist-main min-w-0">{active ? <>
-        <section className="super-market-band"><div className="super-stock-identity"><h2>{active.name}</h2><span>{active.symbol}</span><p title={active.market.updatedAt ? `北京时间；数据源时间 ${active.market.updatedAt}` : undefined}>{activeMarket.label}</p></div><div className={`super-stock-price ${activeMarket.tone > 0 ? 'is-up' : activeMarket.tone < 0 ? 'is-down' : ''}`}><strong>{activeMarket.price}</strong><span>{activeMarket.change}</span></div><button onClick={openModel} className="super-ask-button"><Sparkles size={16} />问 AI 这只股票</button></section>
-        <nav ref={sectionNavRef} aria-label="个股信息栏目" className="super-detail-nav">{PRIMARY_SECTIONS.map(item => <button key={item.key} type="button" aria-pressed={primarySection.key === item.key} onClick={() => selectPrimary(item.key)}>{item.label}</button>)}</nav>
+        <section className="super-market-band">
+          <div className="super-stock-identity"><h2>{active.name}</h2><span>{active.symbol}</span></div>
+          <div className={`super-stock-price ${activeMarket.tone > 0 ? 'is-up' : activeMarket.tone < 0 ? 'is-down' : ''}`}><strong>{activeMarket.price}</strong><span>{activeMarket.change}</span></div>
+          <p className="super-stock-asof" title={active.market.updatedAt ? `北京时间；数据源时间 ${active.market.updatedAt}` : undefined}>{activeMarket.label}</p>
+          {activeCloses.length >= 2 ? <div className="super-market-spark" aria-hidden="true"><Sparkline values={activeCloses} width={96} height={20} /><small>近 20 日收盘</small></div> : null}
+          <button onClick={openModel} className="super-ask-button"><Sparkles size={16} />问 AI 这只股票</button>
+        </section>
+        <PageTabs
+          className="super-detail-tabs"
+          ariaLabel="个股信息栏目"
+          value={primarySection.key}
+          onChange={key => selectPrimary(key as PrimarySection)}
+          items={PRIMARY_SECTIONS.map(item => ({ key: item.key, label: item.label }))}
+        />
         {primarySection.members.length > 1 ? <div className="super-section-tools"><nav ref={materialNavRef} className="super-subnav" aria-label={primarySection.key === 'evidence' ? '资料类型' : '财务资金类型'}>{primarySection.members.map(key => SECTIONS.find(item => item.key === key)!).map(item => <button key={item.key} type="button" aria-pressed={section === item.key} onClick={() => selectSection(item.key)}>{item.label}</button>)}</nav><button className="super-chart-toggle" type="button" aria-expanded={expandedChartSection === section} onClick={() => setExpandedChartSection(previous => previous === section ? null : section)}>{expandedChartSection === section ? '收起行情图' : '展开行情图'}</button></div> : null}
+        {/* 手机端底部固定主按钮：详情很长，随时能问 AI */}
+        <div className="super-mobile-cta"><button type="button" onClick={openModel}><Sparkles size={16} aria-hidden="true" />AI 问股</button></div>
         {workspaceError ? <div role="status" className="super-load-message"><span>数据更新暂未成功，正在展示上次读取的内容。</span><button type="button" onClick={() => void loadWorkspace(activeSymbol, true, workspaceView)}>重试当前股票</button></div> : null}
         {section === 'overview' ? <OverviewFinancial stock={active} onOpen={() => openSection('fundamental')} /> : null}
         {section === 'overview' || expandedChartSection === section ? <section className="super-chart-panel">
@@ -1130,7 +1251,7 @@ export default function SuperWatchlistPage() {
         </section> : null}
         {section === 'overview' ? <Overview stock={active} onSection={openSection} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} /> : loadedDetail ? <DetailSection key={`${active.symbol}:${section}`} section={section} library={library} stock={activeForDetail ?? active} material={materialFilter} onMaterialChange={selectMaterial} message={messageFilter} onMessageChange={selectMessage} onEssayOpen={setSelectedEssay} onForumOpen={setSelectedForumPost} onAnalyzeConsensus={() => void analyzeConsensus()} analyzingConsensus={analyzingConsensus} consensusMessage={consensusMessage} /> : !workspaceError ? <div role="status" className="super-detail-loading">正在读取{primarySection.label}，行情和其他栏目仍可使用。</div> : null}
         <details className="super-data-notes"><summary>数据来源与使用说明</summary><p>行情来源：{active.market.source || '未注明'}；实际时间：{active.market.updatedAt || '未取得'}。财务指标期：{reportDate(financialSource(active.fundamentals, 'indicator')?.period)}。不同资料按各自披露日期展示；观点、预测不代表已实现业绩，也不构成买卖指令。</p><p>页面可见时自动更新。资料库展示当前已载入资料，完整原文检索请使用 <Link to={`/essay-radar/feed?query=${encodeURIComponent(active.name || active.symbol)}`}>检索{active.name || active.symbol}的机构段子与录音</Link> 或 <Link to="/data-acquisition">数据一站式获取</Link>。</p></details>
-      </> : workspaceError ? <section role="status" className="super-workspace-retry"><h2>当前股票暂未加载完成</h2><p>可以重试，或先切换其他股票；不会清空已读取的数据。</p><button type="button" onClick={() => void loadWorkspace(activeSymbol, true, workspaceView)}>重试当前股票</button><details><summary>查看原因</summary><p>{workspaceError}</p></details></section> : loading ? <div role="status" className="space-y-4 p-5" aria-label={`正在加载 ${activeSymbol || loadingSymbol || '自选股'} 数据`}><div className="h-16 animate-pulse rounded-xl bg-border/45" /><div className="h-[320px] animate-pulse rounded-xl bg-border/30" /><p className="text-center text-[12px] text-secondary-text">正在读取当前股票，其他股票不会阻塞本页。</p></div> : listError ? <EmptyState title="自选列表暂未读取" description="请点击上方“重试列表”，无需重新添加已有自选股。" /> : <EmptyState title="暂无自选股" description="输入股票名称或代码加入，行情与研究资料会自动归档。" />}</main>
+      </> : workspaceError ? <section role="status" className="super-workspace-retry"><h2>暂未加载</h2><button type="button" onClick={() => void loadWorkspace(activeSymbol, true, workspaceView)}>重试当前股票</button><details><summary>查看原因</summary><p>{workspaceError}</p></details></section> : loading ? <div role="status" className="space-y-4 p-5" aria-label={`正在加载 ${activeSymbol || loadingSymbol || '自选股'} 数据`}><div className="h-16 animate-pulse rounded-xl bg-border/45" /><div className="h-[320px] animate-pulse rounded-xl bg-border/30" /><p className="text-center text-[12px] text-secondary-text">正在读取当前股票，其他股票不会阻塞本页。</p></div> : listError ? <EmptyState title="自选列表暂未读取" description="请点击上方“重试列表”，无需重新添加已有自选股。" /> : <EmptyState title="暂无自选股" description="输入股票名称或代码加入，行情与研究资料会自动归档。" />}</main>
     </div>
     {selectedEssay ? <EssayOriginalDrawer key={selectedEssay.externalId} event={selectedEssay} onClose={() => setSelectedEssay(null)} /> : null}
     {selectedForumPost ? <ForumPostDrawer key={selectedForumPost.id} event={selectedForumPost} onClose={() => setSelectedForumPost(null)} /> : null}

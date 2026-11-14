@@ -1,13 +1,13 @@
 /* Personal task ledger: clear scope, quiet status and readable history. */
-.tasks-hub { --task-paper: var(--bg-1); --task-soft: var(--bg-1); --task-ink: var(--text-2); --task-muted: var(--text-3); --task-line: var(--line-1); --task-accent: var(--brand); min-height: 100svh; padding: 16px; color: var(--task-ink); background: transparent; font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", sans-serif; font-size: 13px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.tasks-hub { --task-paper: var(--bg-1); --task-soft: var(--bg-1); --task-ink: var(--text-2); --task-muted: var(--text-3); --task-line: var(--line-1); --task-accent: var(--brand); min-height: 100svh; padding: 16px; color: var(--task-ink); background: transparent; font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", sans-serif; font-size: var(--fs-sm); line-height: 1.6; font-variant-numeric: tabular-nums; }
 .dark .tasks-hub { --task-paper: var(--bg-2); --task-soft: var(--bg-2); --task-ink: var(--text-1); --task-muted: var(--text-3); --task-line: var(--line-2); }
-.tasks-hub :is(button, select) { font-family: inherit; font-size: 13px; }
+.tasks-hub :is(button, select) { font-family: inherit; font-size: var(--fs-sm); }
 .tasks-hub button { cursor: pointer; }
 .tasks-hub button:disabled { cursor: default; opacity: .5; }
 .tasks-hub :is(button, select, summary):focus-visible { outline: 2px solid var(--task-accent); outline-offset: 3px; }
 .tasks-hub__header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px 24px; border: 1px solid var(--task-line); background: var(--task-paper); }
-.tasks-hub__header h1 { font-size: 24px; font-weight: 700; line-height: 1.3; letter-spacing: -.035em; }
-.tasks-hub__header p { margin-top: 8px; max-width: 680px; color: var(--task-muted); font-size: 13px; }
+.tasks-hub__header h1 { font-size: var(--fs-h1); font-weight: 600; line-height: 1.3; letter-spacing: -.035em; }
+.tasks-hub__header p { margin-top: 8px; max-width: 680px; color: var(--task-muted); font-size: var(--fs-sm); }
 .tasks-hub__refresh, .tasks-hub__launch button, .tasks-hub__pages button, .tasks-hub__more { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 8px; min-height: 38px; border: 1px solid var(--task-line); border-radius: 4px; padding: 8px 12px; color: var(--task-ink); background: var(--task-paper); font-weight: 500; }
 .tasks-hub__refresh svg { width: 15px; height: 15px; }
 .tasks-hub__summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: solid var(--task-line); border-width: 0 1px 1px; background: var(--task-paper); }
@@ -16,12 +16,12 @@
 .tasks-hub__summary button.is-active { background: var(--task-soft); }
 .tasks-hub__summary button.is-active::after { position: absolute; inset: auto 0 0; height: 2px; content: ''; background: var(--task-accent); }
 .tasks-hub__summary svg { width: 17px; height: 17px; color: var(--task-muted); }
-.tasks-hub__summary span { color: var(--task-muted); font-size: 12px; }
-.tasks-hub__summary strong { font-size: 24px; font-weight: 600; }
-.tasks-hub__scope { padding: 8px 0; color: var(--task-muted); font-size: 12px; }
+.tasks-hub__summary span { color: var(--task-muted); font-size: var(--fs-sm); }
+.tasks-hub__summary strong { font-size: var(--fs-h1); font-weight: 600; }
+.tasks-hub__scope { padding: 8px 0; color: var(--task-muted); font-size: var(--fs-sm); }
 .tasks-hub__launch { display: flex; flex-wrap: wrap; gap: 8px; margin: 3px 0 16px; }
 .tasks-hub__launch button:first-child { border-color: var(--task-accent); color: var(--text-1); background: var(--task-accent); }
-.tasks-hub__notice { margin-bottom: 8px; border-left: 2px solid var(--task-accent); color: var(--task-muted); background: var(--task-soft); font-size: 12px; }
+.tasks-hub__notice { margin-bottom: 8px; border-left: 2px solid var(--task-accent); color: var(--task-muted); background: var(--task-soft); font-size: var(--fs-sm); }
 .tasks-hub__notice summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; padding: 8px 12px; cursor: pointer; list-style: none; }
 .tasks-hub__notice summary::-webkit-details-marker { display: none; }
 .tasks-hub__notice summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
@@ -30,7 +30,7 @@
 .tasks-hub__notice-channels > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--task-line); }
 .tasks-hub__notice-channels > div > span { min-width: 0; overflow-wrap: anywhere; }
 .tasks-hub__notice button { min-height: 34px; padding: 4px 8px; border: 1px solid var(--task-line); border-radius: 4px; color: var(--task-ink); }
-.tasks-hub__tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; color: var(--task-muted); font-size: 12px; }
+.tasks-hub__tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; color: var(--task-muted); font-size: var(--fs-sm); }
 .tasks-hub__tools label { display: flex; align-items: center; gap: 8px; }
 .tasks-hub__tools select { max-width: 230px; min-height: 38px; padding: 4px 32px 4px 8px; border: 1px solid var(--task-line); border-radius: 4px; color: var(--task-ink); background: var(--task-paper); }
 .tasks-hub__list { border: 1px solid var(--task-line); background: var(--task-paper); }
@@ -40,10 +40,10 @@
 .tasks-hub__task-icon { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--task-line); border-radius: 4px; color: var(--task-muted); }
 .tasks-hub__task-icon svg { width: 17px; height: 17px; }
 .tasks-hub__task-main { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.tasks-hub__task-main strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.tasks-hub__task-main strong { font-size: var(--fs-body); font-weight: 600; overflow-wrap: anywhere; }
 .tasks-hub__task-main > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.tasks-hub__task-main > span:last-child, .tasks-hub__task-meta { color: var(--task-muted); font-size: 12px; }
-.tasks-hub__status { justify-self: start; padding: 4px 8px; border: 1px solid var(--task-line); border-radius: 4px; font-size: 12px; white-space: nowrap; }
+.tasks-hub__task-main > span:last-child, .tasks-hub__task-meta { color: var(--task-muted); font-size: var(--fs-sm); }
+.tasks-hub__status { justify-self: start; padding: 4px 8px; border: 1px solid var(--task-line); border-radius: 4px; font-size: var(--fs-sm); white-space: nowrap; }
 .tasks-hub__status.is-running, .tasks-hub__status.is-queued { border-left: 2px solid var(--task-accent); }
 .tasks-hub__status.is-completed { color: var(--success); }
 .tasks-hub__status.is-failed { color: var(--danger); }
@@ -51,14 +51,14 @@
 .dark .tasks-hub__status.is-failed { color: var(--danger); }
 .tasks-hub__progress { position: relative; min-height: 24px; overflow: hidden; border: 1px solid var(--task-line); background: var(--task-soft); }
 .tasks-hub__progress i { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--brand) 15%, transparent); }
-.tasks-hub__progress em { position: relative; display: block; padding-right: 8px; font-size: 12px; line-height: 22px; font-style: normal; text-align: right; }
-.tasks-hub__empty { display: flex; min-height: 200px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 24px; color: var(--task-muted); font-size: 13px; text-align: center; }
-.tasks-hub__empty strong { color: var(--task-ink); font-size: 15px; }
+.tasks-hub__progress em { position: relative; display: block; padding-right: 8px; font-size: var(--fs-sm); line-height: 22px; font-style: normal; text-align: right; }
+.tasks-hub__empty { display: flex; min-height: 200px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 24px; color: var(--task-muted); font-size: var(--fs-sm); text-align: center; }
+.tasks-hub__empty strong { color: var(--task-ink); font-size: var(--fs-h3); }
 .tasks-hub__empty svg { width: 24px; height: 24px; }
-.tasks-hub__pages { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 0; color: var(--task-muted); font-size: 12px; }
+.tasks-hub__pages { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 0; color: var(--task-muted); font-size: var(--fs-sm); }
 .tasks-hub__pages span { margin-right: auto; }
-.tasks-hub__coverage { margin-top: 16px; border-top: 1px solid var(--task-line); padding-top: 8px; color: var(--task-muted); font-size: 12px; }
-.tasks-hub__coverage summary { width: fit-content; min-height: 40px; padding: 8px 0; color: var(--task-ink); cursor: pointer; font-size: 13px; font-weight: 600; }
+.tasks-hub__coverage { margin-top: 16px; border-top: 1px solid var(--task-line); padding-top: 8px; color: var(--task-muted); font-size: var(--fs-sm); }
+.tasks-hub__coverage summary { width: fit-content; min-height: 40px; padding: 8px 0; color: var(--task-ink); cursor: pointer; font-size: var(--fs-sm); font-weight: 600; }
 .tasks-hub__coverage p { max-width: 76em; margin: 8px 0 12px; }
 .tasks-hub__coverage > div { display: grid; grid-template-columns: minmax(160px, 1fr) 160px auto; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--task-line); }
 .tasks-hub__coverage > div button { min-height: 32px; color: var(--task-ink); text-decoration: underline; text-underline-offset: 4px; }
@@ -67,8 +67,8 @@
 @media (max-width: 600px) {
   .tasks-hub { padding: 8px; }
   .tasks-hub__header { align-items: flex-start; gap: 12px; padding: 16px 12px; }
-  .tasks-hub__header h1 { font-size: 22px; }
-  .tasks-hub__header p { font-size: 12px; }
+  .tasks-hub__header h1 { font-size: var(--fs-h1); }
+  .tasks-hub__header p { font-size: var(--fs-sm); }
   .tasks-hub__refresh { padding: 4px 8px; }
   .tasks-hub__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tasks-hub__summary button { min-height: 64px; padding: 12px; }
@@ -83,7 +83,7 @@
   .tasks-hub__tools select { min-height: 42px; }
   .tasks-hub__task { grid-template-columns: 28px minmax(0, 1fr) 68px; gap: 8px; padding: 12px 8px; }
   .tasks-hub__task-icon { width: 28px; height: 32px; }
-  .tasks-hub__task-main strong { font-size: 13px; }
+  .tasks-hub__task-main strong { font-size: var(--fs-sm); }
   .tasks-hub__task-meta { line-height: 1.7; }
   .tasks-hub__progress { grid-column: 2 / 4; width: 100%; }
   .tasks-hub__status { padding-inline: 4px; }
@@ -135,13 +135,13 @@
   }
 
   .tasks-hub.is-mobile .tasks-hub__summary span {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 18px;
   }
 
   .tasks-hub.is-mobile .tasks-hub__summary strong {
     color: var(--text-1);
-    font-size: 22px;
+    font-size: var(--fs-h1);
     font-weight: 600;
     line-height: 28px;
   }
@@ -170,7 +170,7 @@
   .tasks-hub.is-mobile .tasks-hub__launch button {
     min-height: 44px;
     border-radius: var(--radius-control);
-    font-size: 15px;
+    font-size: var(--fs-h3);
     font-weight: 500;
   }
 
@@ -218,7 +218,7 @@
   .tasks-hub.is-mobile .tasks-hub__task-main strong {
     grid-area: title;
     color: var(--text-1);
-    font-size: 16px;
+    font-size: var(--fs-h3);
     font-weight: 500;
     line-height: 22px;
   }
@@ -226,13 +226,13 @@
   .tasks-hub.is-mobile .tasks-hub__task-main > span:last-child {
     -webkit-line-clamp: 2;
     color: var(--text-3);
-    font-size: 13px;
+    font-size: var(--fs-sm);
     line-height: 20px;
   }
 
   .tasks-hub.is-mobile .tasks-hub__task-meta {
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 18px;
   }
 
@@ -251,7 +251,7 @@
   .tasks-hub.is-mobile .tasks-hub__status {
     align-self: flex-start;
     border-radius: var(--radius-tag);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 16px;
   }
 
@@ -278,7 +278,7 @@
     margin: 0 auto;
   }
 
-  /* 应用栏已显示「任务中心」，页内不再重复大标题与长说明 */
+  /* 桌面端没有应用栏，页内必须自带标题；只在手机端才由应用栏承担。 */
   .tasks-hub__header {
     padding: 0 0 16px;
     border: 0;
@@ -286,13 +286,13 @@
   }
 
   .tasks-hub__header h1 {
-    display: none;
+    display: block;
   }
 
   .tasks-hub__header p {
     margin: 0;
     max-width: 720px;
-    font-size: 13px;
+    font-size: var(--fs-sm);
     line-height: 20px;
   }
 
@@ -301,7 +301,7 @@
   }
 
   .tasks-hub__summary strong {
-    font-size: 20px;
+    font-size: var(--fs-h2);
   }
 }
 

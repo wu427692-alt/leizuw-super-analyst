@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { SidebarNav } from '../SidebarNav';
@@ -39,8 +39,8 @@ vi.mock('../../theme/ThemeToggle', () => ({
 
 describe('SidebarNav', () => {
   it.each([
-    ['zh', ['投研团队', '行情', '总览', '题材图谱', '自选看板', '深度研究', '任务中心', 'AI 热点', '机构纪要与录音', '量化研究', '数据下载', 'AI 问股', '使用指南']],
-    ['en', ['Research Team', 'Markets', 'Overview', 'Theme Map', 'Watchlist', 'Deep Research', 'Task Center', 'AI News', 'Institutional Notes & Audio', 'Quant Research', 'Data Downloads', 'AI Stock Q&A', 'User Guide']],
+    ['zh', ['投研团队', '行情', '总览', '题材图谱', '自选看板', '深度研究', '任务中心', 'AI 热点', '机构纪要与录音', '量化研究', '数据下载', '使用指南']],
+    ['en', ['Research Team', 'Markets', 'Overview', 'Theme Map', 'Watchlist', 'Deep Research', 'Task Center', 'AI News', 'Institutional Notes & Audio', 'Quant Research', 'Data Downloads', 'User Guide']],
   ] as const)('uses concise and complete %s workspace names in the expanded and collapsed sidebar', (language, labels) => {
     const previousLanguage = localStorage.getItem(UI_LANGUAGE_STORAGE_KEY);
     localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, language);
@@ -120,7 +120,6 @@ describe('SidebarNav', () => {
       '/essay-radar',
       '/essay-quant',
       '/data-acquisition',
-      '/chat',
       '/screening',
       '/guide',
       '/admin',
@@ -145,26 +144,40 @@ describe('SidebarNav', () => {
     await waitFor(() => expect(mockGetAlphaSiftStatus.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
-  it('shows the shared completion badge only when chat completion is pending', () => {
+  it('shows the shared completion badge on the single conversation entry only when it is pending', () => {
     completionBadgeState.value = true;
 
     const { rerender } = render(
-      <MemoryRouter initialEntries={['/chat']}>
+      <MemoryRouter initialEntries={['/meeting']}>
         <SidebarNav />
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId('chat-completion-badge')).toBeInTheDocument();
+    // 合并后对话只有一个入口：待读标记挂在「投研团队」上，不再有第二个「AI 问股」。
+    expect(within(screen.getByRole('link', { name: '投研团队' })).getByTestId('chat-completion-badge')).toBeInTheDocument();
     expect(screen.getByLabelText('问股有新消息')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'AI 问股' })).not.toBeInTheDocument();
 
     completionBadgeState.value = false;
     rerender(
-      <MemoryRouter initialEntries={['/chat']}>
+      <MemoryRouter initialEntries={['/meeting']}>
         <SidebarNav />
       </MemoryRouter>,
     );
 
     expect(screen.queryByTestId('chat-completion-badge')).not.toBeInTheDocument();
+  });
+
+  it('keeps exactly one conversation destination in the desktop sidebar', () => {
+    render(
+      <MemoryRouter initialEntries={['/meeting']}>
+        <SidebarNav />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: '投研团队' })).toHaveAttribute('href', '/meeting');
+    expect(document.querySelector('a[href="/chat"]')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'AI 问股' })).not.toBeInTheDocument();
   });
 
   it('renders the collapsed theme toggle variant when the sidebar is collapsed', () => {

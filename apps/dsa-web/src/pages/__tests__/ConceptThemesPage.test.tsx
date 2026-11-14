@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   refresh: null as null | (() => Promise<unknown>),
 }));
 vi.mock('../../api/conceptThemes', () => ({ conceptThemesApi: mocks }));
-vi.mock('../../components/common', () => ({ AppPage: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
+vi.mock('../../components/common', async importOriginal => ({ ...await importOriginal<object>(), AppPage: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 vi.mock('../../hooks/usePageActivationRefresh', () => ({ usePageActivationRefresh: (callback: typeof mocks.refresh) => { mocks.refresh = callback; } }));
 vi.mock('recharts', async importOriginal => ({ ...await importOriginal<object>(), ResponsiveContainer: () => null }));
 
@@ -52,6 +52,17 @@ describe('ConceptThemesPage request ownership and recovery', () => {
     expect(status).toHaveTextContent('已加入后台补数队列');
     expect(screen.getByText('本地成分尚未齐备，后台补数后自动显示。')).toBeInTheDocument();
     expect(screen.queryByText('当前条件没有命中成分股，可清除关键词后重试。')).not.toBeInTheDocument();
+  });
+
+  it('splits the workspace into one underline tab bar and keeps overview metrics compact', async () => {
+    window.history.replaceState({}, '', '/concept-themes');
+    render(<ConceptThemesPage />);
+    const tabs = await screen.findByRole('tablist', { name: '概念题材工作台分页' });
+    expect(within(tabs).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['研究总览', '题材轮动', `题材库${overview().total}`, '个股映射', '交易验证']);
+    expect(within(tabs).getByRole('tab', { name: '研究总览' })).toHaveAttribute('aria-selected', 'true');
+    // §11：顶部并列指标走 MetricRow，不再是一排同尺寸高卡片。
+    const kpis = await screen.findByLabelText('题材库规模');
+    expect(kpis.querySelectorAll('.metric')).toHaveLength(4);
   });
 
   it('does not claim no market evidence when independent market panels fail', async () => {

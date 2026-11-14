@@ -128,10 +128,13 @@ describe('EssayQuantPage immutable run selection', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看结果' }));
     expect(await screen.findByText('历史研究 A')).toBeInTheDocument();
     expect(screen.getByLabelText('当前路由')).toHaveTextContent('/essay-quant?section=results&run=55');
+    // 结果页按 §10 拆成「结论与指标 / 图表验证 / 稳健性与转译」三个子视图，
+    // 分布图注属于「图表验证」，先切换再断言。
+    fireEvent.click(screen.getByRole('tab', { name: '图表验证' }));
     expect(screen.getByText('主观察窗 5 日，样本 4')).toBeInTheDocument();
     expect(screen.queryByText('最新研究 B')).not.toBeInTheDocument();
     expect(essayQuantApi.dashboard).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '结果研判' }));
+    fireEvent.click(screen.getByRole('tab', { name: '结果研判' }));
     expect(screen.getByLabelText('当前路由')).toHaveTextContent('run=55');
   });
 
@@ -139,12 +142,15 @@ describe('EssayQuantPage immutable run selection', () => {
     let resolveLatest!: (value: EssayQuantDashboard) => void;
     vi.mocked(essayQuantApi.dashboard).mockImplementation(() => new Promise(resolve => { resolveLatest = resolve; }));
     renderAt('/essay-quant');
-    fireEvent.click(screen.getByRole('button', { name: '任务档案' }));
+    fireEvent.click(screen.getByRole('tab', { name: '任务档案' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看结果' }));
     expect(await screen.findByText('历史研究 A')).toBeInTheDocument();
     await act(async () => { resolveLatest(latest); });
     expect(screen.getByText('历史研究 A')).toBeInTheDocument();
     expect(screen.queryByText('最新研究 B')).not.toBeInTheDocument();
+    // 结果页按 §10 拆成「结论与指标 / 图表验证 / 稳健性与转译」三个子视图，
+    // 分布图注属于「图表验证」，先切换再断言。
+    fireEvent.click(screen.getByRole('tab', { name: '图表验证' }));
     expect(screen.getByText('主观察窗 5 日，样本 4')).toBeInTheDocument();
   });
 

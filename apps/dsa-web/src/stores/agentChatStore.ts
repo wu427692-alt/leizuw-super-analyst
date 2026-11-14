@@ -45,6 +45,12 @@ export interface Message {
   thinkingSteps?: ProgressStep[];
 }
 export interface StreamMeta { skillNames?: string[]; skillName?: string }
+/** 对话只有一个入口：/meeting（/chat 会重定向过去）。两个路径都算「正在看对话」，
+ *  否则停在 /meeting 时也会亮未读红点。 */
+const CONVERSATION_ROUTES = ['/chat', '/meeting'] as const;
+const isOnConversationRoute = (route: string | undefined): boolean =>
+  Boolean(route && CONVERSATION_ROUTES.some((base) => route === base || route.startsWith(`${base}/`)));
+
 type StreamEvent = ProgressStep & { session_id?: string; error?: unknown; background_continues?: boolean };
 
 function streamFailure(event: StreamEvent, fallback: string): ParsedApiError {
@@ -266,7 +272,7 @@ export const useAgentChatStore = create<AgentChatState & AgentChatActions>((set,
             completed = true;
             pendingQuestion = null;
             set(s => ({ messages: [...s.messages, { id: generateUUID(), role: 'assistant', content: event.content!,
-              ...skills, thinkingSteps: [...steps] }], completionBadge: s.currentRoute !== '/chat' }));
+              ...skills, thinkingSteps: [...steps] }], completionBadge: !isOnConversationRoute(s.currentRoute) }));
           } else {
             steps.push(event);
             set({ progressSteps: [...steps] });
@@ -290,7 +296,7 @@ export const useAgentChatStore = create<AgentChatState & AgentChatActions>((set,
         }
         if (current() && !completed) throw connectionNotice('回答连接已中断，尚未收到完成结果；后台可能仍在分析。请重新读取会话查看已保存内容，不会自动重复调用 AI。');
       } catch (error) {
-        if (current()) set({ chatError: getParsedApiError(error), completionBadge: get().currentRoute !== '/chat' });
+        if (current()) set({ chatError: getParsedApiError(error), completionBadge: !isOnConversationRoute(get().currentRoute) });
       } finally {
         ac.signal.removeEventListener('abort', cancelReader);
         if (reader) { void reader.cancel().catch(() => undefined); reader.releaseLock(); }

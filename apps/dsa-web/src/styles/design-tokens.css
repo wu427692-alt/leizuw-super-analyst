@@ -45,21 +45,22 @@
   --font-num: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; /* 配合 tabular-nums */
 
   /* ---------- 字号/行高（网页端 9 档；行高为固定 px） ---------- */
-  --fs-display: 32px;  --lh-display: 40px;  /* 指数点位主数字，700；不得用于标题 */
+  /* 层级只有四级文字 + 两级数字。标题全站同一个 24/600，模块标题同一个 17/600。 */
+  --fs-display: 30px;  --lh-display: 38px;  /* 主数值（指数点位、个股现价），600；不得用于标题 */
   --fs-h1: 24px;       --lh-h1: 32px;       /* 页面主标题，600；每页 1 个 */
-  --fs-h2: 18px;       --lh-h2: 26px;       /* 卡片标题，600 */
-  --fs-h3: 15px;       --lh-h3: 22px;       /* 区块小标题、表头，600 */
-  --fs-body: 14px;     --lh-body: 22px;     /* 正文、导航、表格内容 */
-  --fs-sm: 13px;       --lh-sm: 20px;       /* 次要列、密集列表 */
-  --fs-caption: 12px;  --lh-caption: 18px;  /* 时间戳、来源、角标；全站最小字号 */
-  --fs-num-lg: 22px;   --lh-num-lg: 28px;   /* 卡片主数值，700 */
-  --fs-num: 15px;      --lh-num: 22px;      /* 行内数值，600 */
+  --fs-h2: 17px;       --lh-h2: 24px;       /* 模块标题，600 */
+  --fs-h3: 15px;       --lh-h3: 22px;       /* 列表主行、卡片内标题，500 */
+  --fs-body: 14px;     --lh-body: 22px;     /* 正文、导航、表格内容，400 */
+  --fs-sm: 13px;       --lh-sm: 20px;       /* 辅助信息（代码、时间、来源），400 */
+  --fs-caption: 12px;  --lh-caption: 16px;  /* 只给角标/徽标用；不承载句子 */
+  --fs-num-lg: 22px;   --lh-num-lg: 28px;   /* 卡片主数值，600 */
+  --fs-num: 15px;      --lh-num: 22px;      /* 行内数值，500 */
 
   /* ---------- 字重（只有四档） ---------- */
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
-  --fw-bold: 700;
+  --fw-bold: 600; /* 收敛：700 不再使用 */
 
   /* ---------- 间距（4pt 阶梯） ---------- */
   --gap-2xs: 4px;   /* 图标与文字、tag 内 */
@@ -197,16 +198,236 @@
 
 @media (max-width: 767px) {
   :root {
-    /* 手机端 5 档：32 / 20 / 16 / 14 / 12 */
+    /* 手机端（对齐 iOS 的层级，参考乐小研 v2 规格：标题 28 / 模块 20 / 正文 17 / 辅助 15 / 标签 12）
+       网页正文 17 太大会挤掉信息密度，取 16；其余按规格。 */
     --fs-display: 32px; --lh-display: 40px;
-    --fs-h1: 20px;      --lh-h1: 28px;
-    --fs-h2: 16px;      --lh-h2: 24px;
-    --fs-h3: 16px;      --lh-h3: 24px;
+    --fs-h1: 28px;      --lh-h1: 34px;
+    --fs-h2: 20px;      --lh-h2: 26px;
+    --fs-h3: 16px;      --lh-h3: 22px;
     --fs-body: 16px;    --lh-body: 24px;
-    --fs-sm: 14px;      --lh-sm: 21px;
-    --fs-caption: 12px; --lh-caption: 18px;
-    --fs-num-lg: 20px;  --lh-num-lg: 28px;
-    --fs-num: 16px;     --lh-num: 24px;
+    --fs-sm: 14px;      --lh-sm: 20px;
+    --fs-caption: 12px; --lh-caption: 16px;
+    --fs-num-lg: 22px;  --lh-num-lg: 28px;
+    --fs-num: 16px;     --lh-num: 22px;
     --page-x: 16px;
   }
+}
+
+/* ============================================================
+   统一标题层级（全站强制）
+   原因：各页 h1 有 text-xl / text-2xl / md:text-3xl / font-bold / tracking-[-0.05em] 等 11 种写法，
+   h2 有 text-xs / sm / base / lg 12 种写法。这里在元素层统一，不逐页改 className。
+   ============================================================ */
+main h1:not(.mobile-app-bar__large-title):not([data-type-free]) {
+  font-size: var(--fs-h1) !important;
+  line-height: var(--lh-h1) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+}
+main h2:not([data-type-free]) {
+  font-size: var(--fs-h2) !important;
+  line-height: var(--lh-h2) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+main h3:not([data-type-free]) {
+  font-size: var(--fs-h3) !important;
+  line-height: var(--lh-h3) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+}
+
+/* ---------- 像素插画（弱存在感） ---------- */
+:root {
+  --pixel-hair: #3A3F4F;
+  --pixel-skin: #E9C9A8;
+  --pixel-eye: #2A2E3A;
+  --pixel-cloth: #9AA1B4;
+  --pixel-leg: #5B6172;
+  --pixel-hair-2: #6B4A36;
+  --pixel-hair-3: #8C8F99;
+  --pixel-collar: #F4F5F7;
+  --pixel-avatar-hair: #3A3F4F;
+  --pixel-avatar-cloth: #9AA1B4;
+  --pixel-table: #C4CAD8;
+  --pixel-table-lit: #D6DBE6;
+  --pixel-table-edge: #9AA1B4;
+  --pixel-props: #8A93A6;
+  --pixel-props-lit: #B7C0D2;
+  --pixel-warn: #C89B4A;
+  --pixel-hair-4: #8A5578;
+  --pixel-hair-5: #8A4646;
+  --pixel-cloth-1: #8A7098;  --pixel-cloth-1-dark: #75608A;
+  --pixel-cloth-2: #5A6478;  --pixel-cloth-2-dark: #4C5568;
+  --pixel-cloth-3: #6A7488;  --pixel-cloth-3-dark: #5A6376;
+  --pixel-cloth-4: #B09056;  --pixel-cloth-4-dark: #967A48;
+  --pixel-cloth-5: #9A5264;  --pixel-cloth-5-dark: #84465A;
+}
+.dark {
+  --pixel-hair: #2B2F3B;
+  --pixel-skin: #CDAE90;
+  --pixel-eye: #14161D;
+  --pixel-cloth: #4A5063;
+  --pixel-leg: #343947;
+  --pixel-hair-2: #7A5440;
+  --pixel-hair-3: #8E929E;
+  --pixel-collar: #D9DBE1;
+  --pixel-avatar-hair: #4A5064;
+  --pixel-avatar-cloth: #5E6579;
+  /* 会议室插画：桌子与桌面物件 */
+  --pixel-table: #3D4354;
+  --pixel-table-lit: #4A5265;
+  --pixel-table-edge: #2A2E3A;
+  --pixel-props: #6E7688;
+  --pixel-props-lit: #9BA6BC;
+  --pixel-warn: #D3B477;
+  --pixel-hair-4: #7A4B6B;
+  --pixel-hair-5: #6B3B3B;
+  --pixel-cloth-1: #6A5478;  --pixel-cloth-1-dark: #58466A;
+  --pixel-cloth-2: #3E4658;  --pixel-cloth-2-dark: #333A4A;
+  --pixel-cloth-3: #4A5468;  --pixel-cloth-3-dark: #3C4658;
+  --pixel-cloth-4: #8A7048;  --pixel-cloth-4-dark: #725C3A;
+  --pixel-cloth-5: #7A4152;  --pixel-cloth-5-dark: #663646;
+}
+.pixel-crew {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  opacity: .8;
+  padding: 0 4px 2px;
+  border-bottom: 1px solid var(--line-1);
+}
+.pixel-crew__lead { transform: translateY(-2px); }
+
+/* ---------- 全站唯一免责声明 ---------- */
+.shell-disclaimer {
+  margin: 32px 0 8px;
+  text-align: center;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-3);
+}
+
+/* 头像直接坐在底色上，不加底板——参考图里也是浮在背景上的 */
+.pixel-avatar { flex: none; }
+
+/* 会议桌插画：只做尺寸约束，颜色已在图里调过 */
+.pixel-room {
+  display: block;
+  width: 100%;
+  max-width: 460px;
+  height: auto;
+  margin: 4px auto 0;
+}
+
+/* ============================================================
+   详情面板：手机侧滑 / 桌面居中弹框
+   侧栏式面板在宽屏上离阅读区太远，桌面改成居中弹框。
+   ============================================================ */
+.app-drawer { position: fixed; inset: 0; }
+
+.app-drawer__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / .82);
+  backdrop-filter: blur(2px);
+  animation: app-drawer-fade .18s ease-out;
+}
+
+.app-drawer__frame { position: absolute; inset-block: 0; display: flex; width: 100%; }
+.app-drawer__frame.is-right { right: 0; justify-content: flex-end; }
+.app-drawer__frame.is-left { left: 0; justify-content: flex-start; }
+
+.app-drawer__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--bg-1);
+}
+.app-drawer__frame.is-right .app-drawer__panel { border-left: 1px solid var(--line-1); animation: app-drawer-slide-right .2s ease-out; }
+.app-drawer__frame.is-left .app-drawer__panel { border-right: 1px solid var(--line-1); animation: app-drawer-slide-left .2s ease-out; }
+
+.app-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-1);
+}
+@media (min-width: 640px) { .app-drawer__head { padding: 14px 24px; } }
+
+.app-drawer__title {
+  margin: 0;
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.app-drawer__close {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.app-drawer__close:hover { color: var(--text-1); border-color: var(--line-2); }
+/* 打开时焦点会落在关闭按钮上；橙色描边太抢眼，这里换成中性色 */
+.app-drawer__close:focus-visible { outline: 2px solid var(--line-2); outline-offset: 2px; }
+.app-drawer__close svg { width: 18px; height: 18px; }
+
+.app-drawer__body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+@media (min-width: 640px) { .app-drawer__body { padding: 20px 24px; } }
+
+/* ---------- 桌面：居中弹框 ---------- */
+@media (min-width: 1024px) {
+  /* 桌面端：外层容器自己居中（宽度由调用方的 max-w-* 决定），里面再放弹框 */
+  .app-drawer__frame,
+  .app-drawer__frame.is-right,
+  .app-drawer__frame.is-left {
+    inset: 0;
+    margin-inline: auto;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .app-drawer__frame .app-drawer__panel {
+    width: 100%;
+    height: auto;
+    max-height: min(86vh, 980px);
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgb(0 0 0 / .55);
+    animation: app-drawer-pop .18s ease-out;
+    overflow: hidden;
+  }
+
+  .app-drawer__head { padding: 16px 24px; }
+  .app-drawer__body { padding: 24px; }
+}
+
+@keyframes app-drawer-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes app-drawer-pop { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes app-drawer-slide-right { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+@keyframes app-drawer-slide-left { from { transform: translateX(-24px); opacity: .6; } to { transform: none; opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-drawer__backdrop,
+  .app-drawer__panel { animation: none; }
 }

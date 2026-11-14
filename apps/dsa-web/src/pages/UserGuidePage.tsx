@@ -9,10 +9,15 @@ import {
   ListChecks, LockKeyhole, Mic2, Network, Radar, Search, ShieldCheck,
   Star, TableProperties, Target, UserCheck, Workflow, X,
 } from 'lucide-react';
+// 手册是独立公开页，按需直引原语与其样式，避免把 components/common 整捆带进这个页面。
+import { PageTabs } from '../components/common/PageTabs';
+import { ShareBar } from '../components/common/InlineViz';
+import '../components/common/page-primitives.css';
 import './UserGuidePage.css';
 import './UserGuideGlass.css';
 
 type Category = '全部' | '每日使用' | '公司研究' | '行业题材' | '机构语料' | '数据量化' | '系统管理';
+type GuideView = 'manual' | 'workflow' | 'sources' | 'troubleshoot';
 type Hotspot = { number: number; x: number; y: number; title: string; detail: string };
 type GuideModule = {
   name: string; route?: string; purpose: string; data: string; actions: string[]; output: string;
@@ -26,18 +31,18 @@ type GuideChapter = {
 const legacyChapters: GuideChapter[] = [
   {
     id: 'team', category: '每日使用', eyebrow: '多角色协作 · 独立任务工作区', title: '智能投研团队', icon: UserCheck,
-    summary: '把一次研究拆成可执行的任务：主席分派，选股、数据、研究、组合、调度协同，结果直接落到黑板和文件。',
+    summary: '把一次研究拆成可执行的任务：主席分派，选股、数据、研究、组合、调度协同，结果直接落到对话和文件。',
     href: '/meeting', action: '进入智能投研团队', screenshot: '/landing/screens/meeting.jpg', alt: '智能投研团队实机页面截图',
     purpose: '用一个常驻任务栏管理多项研究，把行情、选股、研报、录音和文件交付放在同一个工作区里。',
     data: ['自选与行情快照', '研报 / 财报 / 公告 / 小作文', '会议录音与逐字稿', '多源检索与备源', '任务上下文与工作区文件'],
     outputs: ['行情曲线、选股表、评分条与筛选概况', '研报 / 财报 / 录音 ZIP 与文字稿', '可回看的任务记录与工作区文件'],
-    steps: ['新建任务，直接提问；每个任务独立上下文与工作区。', '主席拆解并分派给选股、数据、研究、组合角色。', '数据不足时自动走备源，并把缺口写入台账。', '结果上黑板；文件落到该任务的工作区。', '切换、搜索或按状态筛选任务，随时回看。'],
+    steps: ['新建任务，直接提问；每个任务独立上下文与工作区。', '主席拆解并分派给选股、数据、研究、组合角色。', '数据不足时自动走备源，并把缺口写入台账。', '结果进入对话；文件落到该任务的工作区。', '切换、搜索或按状态筛选任务，随时回看。'],
     modules: [
       { name: '任务栏', route: '/meeting', purpose: '管理多个并行研究任务。', data: '任务标题、状态、工作区', actions: ['新建任务', '切换 / 搜索 / 筛选', '改名 / 删除', '查看工作区文件'], output: '每个任务独立的上下文与文件目录。' },
-      { name: '黑板', purpose: '把关键结果可视化。', data: '行情、选股、评分、新闻、文件', actions: ['查看曲线', '查看表格', '查看评分条', '下载文件'], output: '不离开对话即可核对的图表与清单。' },
+      { name: '图表结果', purpose: '把关键结果可视化。', data: '行情、选股、评分、新闻、文件', actions: ['查看曲线', '查看表格', '查看评分条', '下载文件'], output: '不离开对话即可核对的图表与清单。' },
       { name: '数据与备源', purpose: '主源为空时继续找。', data: '研报 / 财报 / 公告 / 录音 / 小作文 / 新闻 / 概念', actions: ['主源查询', '备源切换', '缺口记录', '每日巡检'], output: '带来源与尝试记录的结果。' },
     ],
-    verify: ['每个任务的文件只出现在自己的工作区。', '黑板表格列与行完整，空值不留半截。', '主源为空时应看到备源结果或明确的缺口记录。'],
+    verify: ['每个任务的文件只出现在自己的工作区。', '图表表格列与行完整，空值不留半截。', '主源为空时应看到备源结果或明确的缺口记录。'],
   },
   {
     id: 'market', category: '每日使用', eyebrow: '开盘前 / 盘中 / 收盘后', title: '市场总览', icon: BarChart3,
@@ -404,6 +409,7 @@ const UserGuidePage = () => {
   const lightboxTrigger = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category>('全部');
+  const [view, setView] = useState<GuideView>('manual');
   const pendingChapter = useRef(location.hash.slice(1));
   const lastJumpKey = useRef<string | null>(null);
   useEffect(() => { document.title = '完整使用手册 - 乐子乌智能投研平台'; }, []);
@@ -440,6 +446,7 @@ const UserGuidePage = () => {
   const openChapter = (event: MouseEvent<HTMLAnchorElement>, id: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
+    setView('manual');
     if (!visibleChapters.some((chapter) => chapter.id === id)) clearFilters();
     pendingChapter.current = id;
     navigate({ hash: `#${id}` });
@@ -455,6 +462,9 @@ const UserGuidePage = () => {
     target.focus({ preventScroll: true });
     pendingChapter.current = '';
   }, [location.key, location.hash, visibleChapters]);
+  const categoryComposition = useMemo(() => categories
+    .filter((item) => item !== '全部')
+    .map((item) => ({ key: item, value: chapters.filter((chapter) => chapter.category === item).length, label: item })), []);
   const moduleCount = chapters.reduce((total, chapter) => total + chapter.modules.length, 0);
   const screenshotCount = chapters.filter((chapter) => chapter.screenshot).length;
   const screenshotDetailCount = chapters.reduce((total, chapter) => total + (chapter.hotspots?.length ?? 0), 0);
@@ -475,6 +485,12 @@ const UserGuidePage = () => {
       <div className="guide-hero-ledger" aria-label="手册覆盖统计">
         <span>MANUAL COVERAGE</span>
         <dl><div><dt>功能工作台</dt><dd>{chapters.length}</dd></div><div><dt>子模块</dt><dd>{moduleCount}</dd></div><div><dt>真实截图 / 细节</dt><dd>{screenshotCount}<small> / {screenshotDetailCount}</small></dd></div><div><dt>跨页流程</dt><dd>{workflowRows.length}</dd></div></dl>
+        <div className="guide-hero-composition">
+          <ShareBar ariaLabel="手册分类构成" segments={categoryComposition} />
+          <p className="guide-hero-composition-legend">
+            {categoryComposition.map((segment) => <span key={segment.key}>{segment.label} <b>{segment.value}</b></span>)}
+          </p>
+        </div>
         <p><CheckCircle2 /> 操作按本版本功能说明；截图为历史界面参考，不代表当前行情或任务状态。</p>
       </div>
     </section>
@@ -497,12 +513,24 @@ const UserGuidePage = () => {
     <div className="guide-layout">
       <aside className="guide-toc" aria-label="完整使用手册目录">
         <span>CONTENTS</span>
-        <a href="#start">01 · 注册与权限</a><a href="#read-data">02 · 数据阅读规则</a><a href="#workspaces">03 · 全部工作台</a>
+        <a href="#start" onClick={() => setView('manual')}>01 · 注册与权限</a><a href="#read-data" onClick={() => setView('manual')}>02 · 数据阅读规则</a><a href="#workspaces" onClick={() => setView('manual')}>03 · 全部工作台</a>
         {chapters.map((chapter) => <a className="is-child" href={`#${chapter.id}`} onClick={(event) => openChapter(event, chapter.id)} key={chapter.id}>{chapter.title}</a>)}
-        <a href="#workflow">04 · 跨页面流程</a><a href="#sources">05 · 数据源字典</a><a href="#faq">06 · 故障与核验</a>
+        <a href="#workflow" onClick={() => setView('workflow')}>04 · 跨页面流程</a><a href="#sources" onClick={() => setView('sources')}>05 · 数据源字典</a><a href="#faq" onClick={() => setView('troubleshoot')}>06 · 故障与核验</a>
       </aside>
 
       <article className="guide-content">
+        <PageTabs
+          ariaLabel="手册视图切换"
+          value={view}
+          onChange={(key) => setView(key as GuideView)}
+          items={[
+            { key: 'manual', label: '使用手册', badge: chapters.length },
+            { key: 'workflow', label: '跨页流程', badge: workflowRows.length },
+            { key: 'sources', label: '数据源', badge: sourceRows.length },
+            { key: 'troubleshoot', label: '排障与核验', badge: faqs.length },
+          ]}
+        />
+        {view === 'manual' ? (<>
         <section className="guide-section" id="start">
           <div className="guide-section-title"><span>01</span><div><small>ACCESS & IDENTITY</small><h2>注册、审批、登录与个人数据</h2></div></div>
           <div className="guide-start-grid">
@@ -556,6 +584,8 @@ const UserGuidePage = () => {
           })}
         </section>
 
+        </>) : null}
+        {view === 'workflow' ? (<>
         <section className="guide-section" id="workflow">
           <div className="guide-section-title"><span>04</span><div><small>CROSS-PAGE PLAYBOOKS</small><h2>功能之间如何真正打通</h2></div></div>
           <div className="guide-workflow-table" role="table" aria-label="跨页面研究流程">
@@ -565,6 +595,8 @@ const UserGuidePage = () => {
           <div className="guide-flow"><article><b>01</b><strong>提出可验证问题</strong><p>对象、时间、假设和决策问题。</p></article><ArrowRight /><article><b>02</b><strong>召回多源证据</strong><p>事实、观点、行情和反证分开。</p></article><ArrowRight /><article><b>03</b><strong>核验与量化</strong><p>回原文，检查样本和预期目标期。</p></article><ArrowRight /><article><b>04</b><strong>持续监控</strong><p>放入自选、情报或后台任务。</p></article></div>
         </section>
 
+        </>) : null}
+        {view === 'sources' ? (<>
         <section className="guide-section" id="sources">
           <div className="guide-section-title"><span>05</span><div><small>DATA SOURCE DICTIONARY</small><h2>数据来自哪里，使用时检查什么</h2></div></div>
           <div className="guide-source-table" role="table" aria-label="平台数据来源说明">
@@ -574,11 +606,14 @@ const UserGuidePage = () => {
           <div className="guide-data-pipeline"><Workflow /><div><small>SHARED DATA PIPELINE</small><h3>上游适配器 → 增量去重 → SQLite统一库 → 页面/API/AI/回测</h3><p>页面不应各自临时抓取一份互不相干的数据。共享事实进入统一库；实时快照保留来源和时间；AI只读取可追溯数据，不覆盖原始记录。</p></div></div>
         </section>
 
+        </>) : null}
+        {view === 'troubleshoot' ? (<>
         <section className="guide-section" id="faq">
           <div className="guide-section-title"><span>06</span><div><small>TROUBLESHOOTING & TRUST</small><h2>常见问题与正确处理方式</h2></div></div>
           <div className="guide-faq">{faqs.map(([question, answer], index) => <details key={question}><summary><b>{String(index + 1).padStart(2, '0')}</b><span>{question}</span><ChevronRight /></summary><p>{answer}</p></details>)}</div>
           <div className="guide-end"><HelpCircle /><div><small>SHORTEST STARTING PATH</small><h3>第一次使用只做三件事</h3><p>核对市场总览的交易日 → 把关注公司加入自选股 → 从事实时间线打开一篇原文。熟悉这三步后，再进入机构语料、行业调研和量化验证。</p></div><Link to="/app">现在开始 <ArrowRight /></Link></div>
         </section>
+        </>) : null}
       </article>
     </div>
 

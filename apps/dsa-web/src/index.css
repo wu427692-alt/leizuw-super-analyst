@@ -273,26 +273,13 @@
 }
 
 @media (max-width: 640px) {
-  .chat-page-header { margin-bottom: .55rem; padding: 0 .15rem; }
-  .chat-page-header h1 { font-size: 18px; }
-  .chat-page-header > p { display: none; }
-  .chat-page-header .inline-flex button { min-height: 36px; padding-inline: .55rem; font-size: 12px; }
-  .chat-main-pane { border-radius: var(--radius-card); }
-  .chat-message-row { gap: .45rem; }
-  .chat-message-row > div:first-child { width: 1.65rem; height: 1.65rem; }
-  .chat-message-bubble { max-width: calc(100% - 2.05rem); padding: .75rem .72rem; }
-  .chat-message-bubble .chat-prose { padding-right: 0 !important; font-size: 13px; line-height: 1.65; }
-  .chat-message-actions { position: static; justify-content: flex-end; margin-bottom: .4rem; }
-  .chat-copy-btn { min-height: 34px; height: 34px; padding: .35rem .55rem; font-size: 12px; }
-  .chat-composer { padding: .65rem; }
-  .chat-composer textarea { min-height: 46px; font-size: 15px; }
-  .chat-composer .space-y-3 { gap: .5rem; }
-  .quick-question-btn { min-height: 40px; font-size: 12px; }
+  /* 问股（/chat）的 ≤640px 版式已合并到文件末尾的 ≤1023px 响应式段落，
+     这里不再保留旧规则，避免与新的手机对话版式互相覆盖。 */
 
   .intelligence-hub-page header,
   .intelligence-feed-page header { padding: 12px 12px; }
   .intelligence-hub-page header h1,
-  .intelligence-feed-page header h1 { font-size: 22px; }
+  .intelligence-feed-page header h1 { font-size: var(--fs-h1); }
   .intelligence-header-actions { display: grid; width: 100%; grid-template-columns: 1fr 1fr; }
   .intelligence-header-actions button { min-height: 42px; justify-content: center; }
   .intelligence-source-controls { width: 100%; flex-direction: column; }
@@ -533,7 +520,7 @@
   align-items: center;
   padding: 4px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--fs-caption);
   font-weight: 500;
 }
 
@@ -1156,7 +1143,7 @@ textarea {
 }
 
 .history-selection-badge {
-  font-size: 12px;
+  font-size: var(--fs-caption);
   line-height: 1;
   padding: 3px 8px;
 }
@@ -1164,7 +1151,7 @@ textarea {
 .history-batch-delete-button {
   height: 22px;
   padding: 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1;
 }
 
@@ -1204,7 +1191,7 @@ textarea {
   height: 1.625rem;
   padding: 0.6rem 0.6rem;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--home-action-ai-text);
   background: var(--home-action-ai-bg);
   border: 1px solid var(--home-action-ai-border);
@@ -1251,7 +1238,7 @@ textarea {
 }
 
 .chat-skill-badge {
-  font-size: 12px;
+  font-size: var(--fs-caption);
   line-height: 1;
 }
 
@@ -1328,7 +1315,7 @@ textarea {
   border-radius: var(--radius-card);
   border: 1px solid transparent;
   padding: 0.42rem 0.6rem;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   transition:
     border-color 0.2s ease,
@@ -1484,7 +1471,7 @@ textarea {
 }
 
 .home-board-status-badge {
-  font-size: 12px;
+  font-size: var(--fs-caption);
   line-height: 1;
 }
 
@@ -1695,8 +1682,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--fs-sm);
+  font-weight: 600;
   line-height: 1;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -2016,26 +2003,26 @@ textarea {
 }
 
 .prose :where(h1) {
-  font-size: 18px;
+  font-size: var(--fs-h2);
 }
 
 .prose :where(h2) {
-  font-size: 15px;
+  font-size: var(--fs-h3);
   color: hsl(var(--color-purple));
 }
 
 .prose :where(h3) {
-  font-size: 15px;
+  font-size: var(--fs-h3);
 }
 
 .prose :where(h4) {
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .prose :where(p),
 .prose :where(li),
 .prose :where(strong) {
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.6;
 }
 
@@ -2088,7 +2075,7 @@ textarea {
   --chat-prose-border: var(--home-prose-border);
   --chat-prose-border-strong: var(--home-prose-border-strong);
   color: var(--chat-prose-fg);
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.6;
 }
 
@@ -2101,10 +2088,10 @@ textarea {
   font-weight: 600;
 }
 
-.chat-prose h1 { font-size: 18px; }
-.chat-prose h2 { font-size: 15px; color: hsl(var(--foreground) / 0.92); }
-.chat-prose h3 { font-size: 15px; }
-.chat-prose h4 { font-size: 14px; }
+.chat-prose h1 { font-size: var(--fs-h2); }
+.chat-prose h2 { font-size: var(--fs-h3); color: hsl(var(--foreground) / 0.92); }
+.chat-prose h3 { font-size: var(--fs-h3); }
+.chat-prose h4 { font-size: var(--fs-body); }
 
 .chat-prose p {
   margin-bottom: 0.5rem;
@@ -2142,7 +2129,7 @@ textarea {
   background: var(--chat-prose-code-bg);
   padding: 0.125rem 0.25rem;
   border-radius: var(--radius-tag);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   word-break: break-all;
 }
 
@@ -2183,7 +2170,7 @@ textarea {
 .quick-question-btn {
   padding: 0.375rem 0.75rem;
   border-radius: 9999px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   background: hsl(var(--card) / 0.7);
   border: 1px solid var(--border);
   color: var(--text-secondary-text);
@@ -2209,7 +2196,7 @@ textarea {
   background: hsl(var(--elevated));
   border: 1px solid var(--border);
   box-shadow: var(--shadow-card);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--text-secondary-text);
   pointer-events: none;
@@ -2290,7 +2277,7 @@ textarea {
 
 .session-item .title {
   display: block;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: hsl(var(--foreground) / 0.78);
@@ -2310,7 +2297,7 @@ textarea {
 }
 
 .session-item .meta {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: hsl(var(--muted-text) / 0.78);
 }
 
@@ -2392,11 +2379,11 @@ textarea {
   border-bottom: none;
 }
 .backtest-metric-row .label {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary-text);
 }
 .backtest-metric-row .value {
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-family: monospace;
   font-weight: 600;
   color: hsl(var(--foreground));
@@ -2423,7 +2410,7 @@ textarea {
   border-radius: var(--radius-control);
   border: 1px solid var(--backtest-border-dim);
   background: hsl(var(--elevated));
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-family: monospace;
 }
 .backtest-summary .label {
@@ -2456,7 +2443,7 @@ textarea {
   gap: 0.375rem;
   padding: 0.375rem 0.75rem;
   border-radius: var(--radius-control);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   transition: all 0.2s ease;
   cursor: pointer;
@@ -2529,7 +2516,7 @@ textarea {
 }
 
 .backtest-table-scroll-hint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted-text);
   text-align: right;
 }
@@ -2549,7 +2536,7 @@ textarea {
   top: 0;
   z-index: 1;
   padding: 0.75rem 0.75rem;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -2561,7 +2548,7 @@ textarea {
 
 .backtest-table-cell {
   padding: 0.625rem 0.75rem;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   vertical-align: middle;
 }
 
@@ -2651,13 +2638,13 @@ textarea {
   justify-content: center;
 }
 .backtest-empty-state .title {
-  font-size: 15px;
+  font-size: var(--fs-h3);
   font-weight: 500;
   color: hsl(var(--foreground));
   margin-bottom: 0.375rem;
 }
 .backtest-empty-state .desc {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted-text);
   max-width: 20rem;
 }
@@ -2886,7 +2873,7 @@ body {
 
 .evidence-rail__copy small {
   color: hsl(var(--secondary-text));
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -2896,7 +2883,7 @@ body {
   overflow: hidden;
   margin-top: 2px;
   color: hsl(var(--foreground));
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2906,7 +2893,7 @@ body {
   overflow: hidden;
   margin-top: 1px;
   color: hsl(var(--muted-text));
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2962,7 +2949,7 @@ body {
 
 .label-uppercase {
   color: var(--text-3);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-sm);
   line-height: var(--lh-caption);
   font-weight: 500;
   letter-spacing: 0;
@@ -3023,3 +3010,384 @@ body {
 .intelligence-terminal [class~="text-[#00E676]"]{color:var(--research-blue)!important}.intelligence-terminal [class~="border-[#00E676]"]{border-color:var(--research-blue)!important}.intelligence-terminal [class~="bg-[#00E676]"]{background:var(--research-blue)!important}
 .intelligence-terminal [class~="text-white"]{color:hsl(var(--foreground))!important}.intelligence-terminal [class~="text-[#717A84]"],.intelligence-terminal [class~="text-[#59616A]"],.intelligence-terminal [class~="text-[#A7AFB8]"]{color:hsl(var(--secondary-text))!important}
 .intelligence-terminal table thead{position:sticky;top:0;z-index:3}
+
+/* =====================================================================
+   问股（/chat）响应式版式
+   ≤1023px 与 useIsMobile() 断点对齐：手机 / 平板复用同一套「AI 回答
+   去气泡、去头像、正文全宽」的对话版式；<768px 在手机上再收紧一档。
+   ≥1024px 桌面端保持原有头像、气泡与字号。
+   参考 ChatGPT 移动端与 GAIA Mobile Chat Standards。
+   颜色、字号、圆角、间距优先取自 styles/design-tokens.css。
+   ===================================================================== */
+
+.chat-message-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.chat-message-main--user { align-items: flex-end; }
+
+/* 手机端会话顶部的一次性上下文：替代原先每条 AI 消息上方的角色标签。 */
+.chat-conversation-context { display: none; }
+
+@media (max-width: 1023px) {
+  /* 手机外壳本来是「文档流 + 整页滚动」；问股页要的是应用式固定视口，
+     所以只在此页把外壳行高锁定到应用栏与标签栏之间，页面本身不滚动。
+     44 = 应用栏，42 = 首屏大标题，56 = 底部标签栏；安全区由标签栏及其
+     下内边距承担（下面不再重复叠加 env(safe-area-inset-bottom)）。 */
+  .glass-workspace:has(.chat-workspace) > .flex {
+    height: calc(100svh - 44px - 42px - env(safe-area-inset-top));
+    min-height: 0;
+  }
+
+  .glass-workspace:has(.chat-workspace) .shell-content {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 路由边界包了一层 div，它也要能收缩，否则会把页面撑出视口 */
+  .glass-workspace:has(.chat-workspace) .shell-content > div {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .glass-workspace:has(.chat-workspace) .shell-disclaimer {
+    flex: none;
+    margin: 0 0 var(--gap-xs);
+  }
+
+  .chat-workspace {
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: 0;
+  }
+
+  /* 页头：标题由手机应用栏承担，页内只留历史入口与导出动作 */
+  .chat-page-header {
+    display: flex;
+    min-height: 0;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: var(--gap-xs);
+    padding: 0 16px;
+  }
+
+  .chat-page-header > div {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .chat-page-header h1 {
+    margin: 0;
+    font-size: var(--fs-h2);
+    line-height: var(--lh-h2);
+    font-weight: 600;
+  }
+
+  .chat-page-header > p,
+  .chat-page-header > div > p { display: none; }
+
+  .chat-page-header h1 button {
+    width: 44px;
+    height: 44px;
+    justify-content: center;
+  }
+
+  /* 手机端页头只保留历史入口与必要的导出动作：消息/工具统计属于桌面诊断信息，
+     手机上会让对话被压到一屏之外，直接收起。 */
+  .chat-page-header .chat-header-metrics { display: none; }
+
+  .chat-page-header .chat-header-actions { flex-wrap: nowrap; gap: 6px; }
+
+  .chat-page-header .chat-header-actions button {
+    min-height: 32px;
+    padding-inline: 10px;
+    font-size: var(--fs-sm);
+    line-height: var(--lh-sm);
+  }
+
+  /* 对话区：去掉桌面端的玻璃卡片，整块贴边 */
+  .chat-main-pane {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* 消息区：左右 16px 页边，消息间距由下面的行间距统一控制 */
+  .chat-main-pane [data-testid="chat-message-scroll"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 6px 16px 16px;
+  }
+
+  /* 消息区是定高 flex 列：子项必须 flex:none，否则内容超出一屏时
+     flex 会把消息行压缩，overflow:hidden 的用户气泡会掉字。 */
+  .chat-main-pane [data-testid="chat-message-scroll"] > .chat-message-row,
+  .chat-main-pane [data-testid="chat-message-scroll"] > .chat-streaming-row,
+  .chat-main-pane [data-testid="chat-message-scroll"] > .chat-conversation-context {
+    flex: none;
+  }
+
+  /* 间距规则：用户消息前 16px（AI→用户）；用户之后的第一条 AI 16px；
+     同一角色连续消息 6px。 */
+  .chat-message-row { gap: 0; }
+  .chat-message-row[data-role="user"] { margin-top: 16px; }
+  .chat-message-row[data-role="assistant"] { margin-top: 6px; }
+  .chat-conversation-context + .chat-message-row { margin-top: 0; }
+  .chat-message-row[data-role="user"] + .chat-message-row[data-role="assistant"] { margin-top: 16px; }
+
+  .chat-conversation-context {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .chat-conversation-context__label { flex: none; font-weight: 500; }
+
+  .chat-conversation-context__topic {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 手机端不再渲染头像；这里留一条兜底，避免旧类名漏出占宽 */
+  .chat-message-avatar { display: none !important; }
+
+  .chat-message-main { width: 100%; flex: 1 1 auto; }
+  .chat-message-main--assistant { align-items: stretch; }
+
+  /* AI 回答：无气泡、无边框、无背景，正文直接铺页面底色、全宽可读。
+     用户消息：右侧气泡，--bg-3 浅底，16px 圆角，最大 82% 宽。 */
+  .chat-message-bubble {
+    max-width: none;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .chat-message-bubble--mobile { width: 100%; }
+  .chat-message-bubble--mobile.chat-bubble-user { width: fit-content; }
+
+  .chat-message-plain {
+    width: 100%;
+    overflow: visible !important;
+  }
+
+  .chat-bubble-user {
+    width: fit-content;
+    max-width: 82%;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 16px;
+    background: var(--bg-3);
+    color: var(--text-1);
+    overflow: visible;
+  }
+
+  .chat-bubble-user p {
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+
+  /* 正文字号 13.5~14px、行高 1.5~1.55：数据类界面不再用 16px/1.65 */
+  .chat-message-bubble .chat-prose {
+    padding-right: 0 !important;
+    color: var(--text-1);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  /* AI 正文内部节奏：段距 6px，列表 4px，标题不按页面标题层级放大 */
+  .chat-message-bubble .chat-prose p { margin-bottom: 6px; }
+  .chat-message-bubble .chat-prose p:last-child { margin-bottom: 0; }
+  .chat-message-bubble .chat-prose ul,
+  .chat-message-bubble .chat-prose ol { margin: 4px 0; }
+  .chat-message-bubble .chat-prose li { margin: 2px 0; }
+  .chat-message-bubble .chat-prose hr { margin: 8px 0; }
+
+  .chat-prose h1,
+  .chat-prose h2 {
+    font-size: 16px;
+    line-height: 22px;
+    font-weight: 600;
+  }
+
+  .chat-prose h3,
+  .chat-prose h4 {
+    font-size: 14.5px;
+    line-height: 20px;
+    font-weight: 600;
+  }
+
+  /* markdown 表格横向滚动、代码块不撑破页面 */
+  .chat-prose table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .chat-prose pre {
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 10px;
+  }
+
+  .chat-prose code { font-size: 12.5px; }
+
+  /* 技能徽标只占一行小标签 */
+  .chat-skill-badge { font-size: 11px; }
+
+  /* 复制 / 导出：收成 28px 一行，不再占掉一条正文高度 */
+  .chat-message-actions {
+    position: static;
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .chat-message-actions .chat-copy-btn {
+    min-height: 28px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: var(--radius-control);
+    font-size: 11px;
+    line-height: 16px;
+  }
+
+  /* 流式输出中的等待块与正式 AI 回答同一套外观 */
+  .chat-streaming-row { gap: 0; margin-top: 16px; }
+
+  .chat-streaming-card--mobile {
+    width: 100%;
+    flex: 1 1 auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .chat-jump-to-bottom {
+    top: var(--gap-xs);
+    right: 16px;
+    bottom: auto;
+  }
+
+  /* 底部输入区：紧凑（textarea 40px / 14px，发送按钮 34px） */
+  .chat-composer {
+    flex: none;
+    padding: 8px 16px;
+    border-top: 1px solid var(--line-1);
+    background: var(--bg-0);
+  }
+
+  .chat-composer > .space-y-3 {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-xs);
+  }
+
+  .chat-composer > .space-y-3 > * {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+
+  .chat-composer-row { gap: var(--gap-xs); }
+
+  .chat-composer-input {
+    min-height: 40px !important;
+    max-height: 120px;
+    padding: 8px 12px;
+    border-radius: var(--radius-card);
+    font-size: 14px;
+    line-height: 20px;
+  }
+
+  .chat-send-btn,
+  .chat-stop-btn {
+    width: auto;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: var(--radius-card) !important;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 18px;
+  }
+
+  /* 策略 / 会话设置触发条 */
+  .chat-composer-meta button { height: 30px; font-size: 12px; }
+
+  .chat-composer-stock { display: none; }
+
+  /* 空会话：手机上从顶部开始排，超出部分交给消息区滚动 */
+  .chat-empty-wrap { align-items: flex-start; }
+  .chat-empty-state { width: 100%; padding: 16px 12px; }
+  .chat-empty-state > div:first-child { margin-bottom: 12px; }
+  .chat-empty-state p { display: none; }
+  .chat-empty-state h3 { margin: 0; }
+
+  /* 建议问法：手机上用可见的 chip，方便点 */
+  .quick-question-btn {
+    min-height: 32px;
+    padding: 4px 12px;
+    border: 1px solid var(--line-2);
+    background: var(--bg-2);
+    color: var(--text-2);
+    font-size: 13px !important;
+  }
+
+  /* 历史对话抽屉：起点让开应用栏，终点让开底部标签栏 */
+  .chat-sidebar-overlay {
+    top: calc(44px + env(safe-area-inset-top));
+    bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+
+  /* .glass-card 会把抽屉面板改回 position:relative，导致内容把面板撑出屏幕；
+     这里固定面板高度，让会话列表在自己的滚动区里滚动。 */
+  .chat-sidebar-overlay > div {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+  }
+}
+
+/* <768px：手机竖屏在 ≤1023px 版式上再收紧一档 */
+@media (max-width: 767px) {
+  .chat-main-pane [data-testid="chat-message-scroll"] { padding: 4px 16px 12px; }
+
+  /* 用户消息间距 14px、同角色 6px */
+  .chat-message-row[data-role="user"] { margin-top: 14px; }
+  .chat-message-row[data-role="user"] + .chat-message-row[data-role="assistant"] { margin-top: 14px; }
+
+  .chat-bubble-user { padding: 9px 12px; }
+
+  .chat-bubble-user p,
+  .chat-message-bubble .chat-prose {
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+
+  .chat-page-header { margin-bottom: 4px; }
+
+  .quick-question-btn { min-height: 30px; padding: 4px 11px; font-size: 13px !important; }
+
+  /* 安全区由底部标签栏承担，这里不重复叠加 env(safe-area-inset-bottom)。 */
+  .chat-composer { padding: 6px 16px 8px; }
+}

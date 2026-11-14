@@ -9,7 +9,7 @@ import {
   Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { essayRadarApi } from '../api/essayRadar';
-import { AppPage, Badge, Drawer, EmptyState } from '../components/common';
+import { AppPage, Badge, BarMeter, Drawer, EmptyState, MetricRow, PageTabs, ShareBar, Sparkline } from '../components/common';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import type {
@@ -21,6 +21,7 @@ import { CHART_TOOLTIP_STYLE } from '../utils/chartTheme';
 
 type RadarView = 'overview' | 'atlas' | 'feed' | 'trends' | 'reports' | 'system';
 type AtlasHorizon = 'short' | 'medium' | 'long' | 'custom';
+type AtlasPane = 'connect' | 'heat' | 'check';
 type FeedFailure = 'temporary' | 'permission' | 'request';
 
 function feedFailureKind(error: unknown): FeedFailure {
@@ -197,6 +198,7 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
   onPeriodChange: (horizon: AtlasHorizon, startDate?: string, endDate?: string) => void;
   onFilter: (term: string) => void;
 }) {
+  const [pane, setPane] = useState<AtlasPane>('connect');
   const [selectedCode, setSelectedCode] = useState('');
   const [draftStart, setDraftStart] = useState(startDate);
   const [draftEnd, setDraftEnd] = useState(endDate);
@@ -252,6 +254,17 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
 
   return (
     <div className="essay-view essay-atlas-view">
+      <PageTabs
+        ariaLabel="洞察图谱视图"
+        value={pane}
+        onChange={(key) => setPane(key as AtlasPane)}
+        items={[
+          { key: 'connect', label: '关联验证' },
+          { key: 'heat', label: '热度与排行' },
+          { key: 'check', label: '检验与诊断' },
+        ]}
+      />
+      {pane === 'connect' ? <>
       <section className="essay-period-rail" aria-label="洞察研究时间窗口">
         <div><span>研究窗口</span><strong>{data.period.startDate} — {data.period.endDate}</strong><small>{data.windowDays} 个自然日 · 按{periodLabel}聚合</small></div>
         <nav>{([
@@ -265,12 +278,14 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
       </section>
 
       <section className="essay-atlas-summary" aria-label="所选窗口语料洞察摘要">
-        <Metric label="已分析语料" value={data.summary.analyzedCount.toLocaleString()} note={`${data.windowDays} 日窗口`} tone="signal" />
-        <Metric label="真实来源" value={data.summary.sourceCount} note="按知识星球去重" />
-        <Metric label="主题 / 个股" value={`${data.summary.themeCount} / ${data.summary.stockCount}`} note="AI结构化实体" />
-        <Metric label="行情覆盖" value={`${data.marketImpact.coverage.eventCoveragePercent}%`} note={`${data.marketImpact.coverage.coveredEventDayCount}/${data.marketImpact.coverage.eventDayCount} 个事件日`} />
-        <Metric label="已验证股票" value={data.marketImpact.coverage.pricedStockCount} note={`候选 ${data.marketImpact.coverage.candidateStockCount} 只`} />
-        <Metric label="多空分歧" value={data.summary.divergenceCount} note="同一标的双向观点" tone="danger" />
+        <MetricRow columns={3} items={[
+          { label: '已分析语料', value: data.summary.analyzedCount.toLocaleString(), hint: `${data.windowDays} 日窗口` },
+          { label: '真实来源', value: data.summary.sourceCount, hint: '按知识星球去重' },
+          { label: '主题 / 个股', value: `${data.summary.themeCount} / ${data.summary.stockCount}`, hint: 'AI 结构化实体' },
+          { label: '行情覆盖', value: `${data.marketImpact.coverage.eventCoveragePercent}%`, hint: `${data.marketImpact.coverage.coveredEventDayCount}/${data.marketImpact.coverage.eventDayCount} 个事件日` },
+          { label: '已验证股票', value: data.marketImpact.coverage.pricedStockCount, hint: `候选 ${data.marketImpact.coverage.candidateStockCount} 只` },
+          { label: '多空分歧', value: data.summary.divergenceCount, hint: '同一标的双向观点' },
+        ]} />
       </section>
 
       <div className="essay-atlas-primary">
@@ -302,7 +317,9 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
           </div>
         </section>
       </div>
+      </> : null}
 
+      {pane === 'heat' ? <>
       <div className="essay-atlas-secondary">
         <section className="essay-panel essay-heatmap-panel">
           <div className="essay-panel-head"><div><span>按每{periodLabel}主题占比与阶段峰值计算 · 颜色越亮越集中</span><h2>主题热力迁移</h2></div><strong>{data.themeHeatmap.dates.length} 个{periodLabel}段</strong></div>
@@ -328,7 +345,9 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
           })}</div>
         </section>
       </div>
+      </> : null}
 
+      {pane === 'check' ? <>
       <div className="essay-atlas-tertiary">
         <section className="essay-panel essay-lead-lag-panel">
           <div className="essay-panel-head"><div><span>提及量领先未来收益 · 皮尔逊相关</span><h2>领先 / 滞后检验</h2></div><strong>{selectedMarket?.name || '—'}</strong></div>
@@ -349,6 +368,7 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
           <p className="essay-method-note">{data.marketImpact.entryRule}；{data.marketImpact.exitRule}。{data.marketImpact.priceBasis}；{data.marketImpact.dedupeRule}。来源：{data.marketImpact.coverage.sources.join('、') || '本地行情库'}。</p>
         </section>
       </div>
+      </> : null}
     </div>
   );
 }
@@ -374,7 +394,7 @@ function DailyReportArticle({ item }: { item: EssayDailyReport }) {
       {theme.counterEvidence ? <dl className="is-risk"><dt>反面证据</dt><dd>{theme.counterEvidence}</dd></dl> : null}
     </article>)}</div></section> : null}
     {report.stockFocus?.length ? <section className="essay-report-stock-section">
-      <div className="essay-report-section-title"><div><h3>重点研究候选</h3><p>来自当日明确提及与证据链，不构成买卖建议。</p></div><strong>{report.stockFocus.length} 只</strong></div>
+      <div className="essay-report-section-title"><div><h3>重点研究候选</h3></div><strong>{report.stockFocus.length} 只</strong></div>
       <div className="essay-report-stock-grid">{report.stockFocus.map((stock) => <article key={`${stock.tsCode}-${stock.name}`}>
         <header><div><h4>{stock.name || stock.tsCode}</h4><span>{stock.tsCode || '代码未核验'}</span></div><Badge variant={sentimentVariant(stock.stance)}>{SENTIMENT_LABELS[stock.stance] || stock.stance}</Badge></header>
         <div className="essay-report-stock-facts"><span>提及 {stock.mentionCount || 0}</span><span>置信 {stock.conviction || '未分级'}</span><span>{stock.timeHorizon || '周期未明确'}</span></div>
@@ -516,7 +536,7 @@ function AudioMemoDrawer({ task, initialTab, initialFileId, onClose, onDownload,
     };
   }, [selectedFileId, tab, task?.taskId]);
   return (
-    <Drawer isOpen={Boolean(task && (result || artifacts.length))} onClose={onClose} title={result?.title || '录音逐字稿'} width="max-w-6xl">
+    <Drawer isOpen={Boolean(task && (result || artifacts.length))} onClose={onClose} title={result?.title || '录音逐字稿'} width="max-w-6xl lg:max-w-5xl">
       {task ? <article className="essay-audio-memo">
         <header><div><h2>{result?.title || '录音逐字稿'}</h2></div><small>{formatTime(result?.generatedAt || task.updatedAt, true)} · {transcriptOnly ? '仅语音转写，未调用 AI 分析' : result?.model || '当前分析模型'}</small></header>
         <nav className={`essay-audio-workbench-tabs ${transcriptOnly ? 'is-transcript-only' : ''}`} aria-label="录音纪要工作台">
@@ -599,7 +619,7 @@ function EssayDetail({ selected, onClose }: { selected: EssayAnalysis | null; on
 
           <section className="essay-detail-section">
             <div className="essay-section-title"><Brain className="h-4 w-4" />AI 研判</div>
-            {selected.status === 'media_only' ? <p className="essay-summary">这是录音资料：系统不会自动分析；需要时可在录音检索页勾选源文件，后台转写并生成可下载的录音小作文。</p> : analyzed ? <>
+            {selected.status === 'media_only' ? <p className="essay-summary">录音资料，到「录音检索」勾选后可转写成文字。</p> : analyzed ? <>
               <div className="essay-detail-scoreline">
                 <span>重要度 <strong>{selected.importanceScore ?? '—'}</strong></span>
                 <span>信息增量 <strong>{selected.noveltyScore ?? '—'}</strong></span>
@@ -1369,6 +1389,22 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
   ];
   const activityMax = Math.max(...activityWindows.map((item) => item.value), 1);
   const trendMax = useMemo(() => Math.max(...(insights?.trend.map((item) => item.total) ?? [1]), 1), [insights?.trend]);
+  const trendTotals = useMemo(() => (insights?.trend ?? []).map((item) => item.total), [insights?.trend]);
+  const latestTrend = insights?.trend.at(-1);
+  // 来源构成最多 5 段：前 4 名单独成段，其余合并为「其它」，避免用截断的占比条冒充完整结构。
+  const sourceMixSegments = useMemo(() => {
+    const rows = (insights?.sourceMix ?? []).filter((row) => Number.isFinite(row.count) && row.count > 0).sort((left, right) => right.count - left.count);
+    const toSegment = (row: { name: string; count: number }, index: number) => ({ key: row.name, label: row.name, value: row.count, color: `var(--chart-${Math.min(index + 1, 5)})` });
+    if (rows.length <= 5) return rows.map(toSegment);
+    const head = rows.slice(0, 4).map(toSegment);
+    return [...head, { key: 'other', label: '其它来源', value: rows.slice(4).reduce((sum, row) => sum + row.count, 0), color: 'var(--chart-5)' }];
+  }, [insights?.sourceMix]);
+  const sentimentSegments = latestTrend ? [
+    { key: 'bullish', label: '看多', value: latestTrend.bullish, color: 'var(--up)' },
+    { key: 'neutral', label: '中性', value: latestTrend.neutral, color: 'var(--flat)' },
+    { key: 'mixed', label: '分歧', value: latestTrend.mixed, color: 'var(--warning)' },
+    { key: 'bearish', label: '看空', value: latestTrend.bearish, color: 'var(--down)' },
+  ].filter((segment) => segment.value > 0) : [];
   const openFeedFor = (term: string) => {
     setQuery(term);
     setPage(1);
@@ -1400,12 +1436,34 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
 
       {view === 'overview' ? (
         <div className="essay-view">
-          <section className="essay-metric-grid">
-            <Metric label="昨日新增" value={yesterday?.analyzedCount ?? '—'} note={yesterday?.date || '等待数据'} tone="signal" />
-            <Metric label="高重要度" value={yesterday?.highImportanceCount ?? '—'} note="重要度 ≥ 80" />
-            <Metric label="低置信" value={yesterday?.lowConfidenceCount ?? '—'} note="需要原文复核" tone="danger" />
-            <Metric label="传闻" value={yesterday?.rumorCount ?? '—'} note="与事实分开展示" tone="danger" />
-            <Metric label="证据覆盖" value={yesterday ? `${yesterday.evidenceCoveragePercent}%` : '—'} note="包含原文依据" />
+          <section className="essay-overview-metrics" aria-label="昨日核心指标">
+            <MetricRow columns={4} items={[
+              { label: '昨日新增', value: yesterday?.analyzedCount ?? null, hint: yesterday?.date || '等待数据' },
+              { label: '高重要度', value: yesterday?.highImportanceCount ?? null, hint: '重要度 ≥ 80' },
+              { label: '低置信', value: yesterday?.lowConfidenceCount ?? null, hint: '需要原文复核' },
+              { label: '传闻', value: yesterday?.rumorCount ?? null, hint: `证据覆盖 ${yesterday ? `${yesterday.evidenceCoveragePercent}%` : '—'}` },
+            ]} />
+          </section>
+
+          <section className="essay-panel essay-pulse-panel" aria-label="近 14 日关注度与构成">
+            <div className="essay-panel-head"><div><span>近 {insights?.trend.length ?? 0} 天完成分析记录 · {latestTrend?.date || '等待数据'}</span><h2>关注度与构成</h2></div><strong>峰值 {trendMax}</strong></div>
+            <div className="essay-pulse-grid">
+              <div className="essay-pulse-block">
+                <header><span>每日新增</span><strong>{(trendTotals.at(-1) ?? 0).toLocaleString()}</strong><small>最近一天</small></header>
+                <Sparkline values={trendTotals} width={210} height={26} ariaLabel="近 14 天每日新增已分析条目" />
+                <p>只统计已完成分析的条目，未完成不计入</p>
+              </div>
+              <div className="essay-pulse-block">
+                <header><span>来源构成</span><strong>{insights?.sourceMix.length ?? 0}</strong><small>个知识星球</small></header>
+                <ShareBar segments={sourceMixSegments} height={4} ariaLabel="来源构成" />
+                <div className="essay-mix-legend">{sourceMixSegments.map((segment) => <span key={segment.key}><i style={{ background: segment.color }} />{segment.label}<b>{segment.value.toLocaleString()}</b></span>)}</div>
+              </div>
+              <div className="essay-pulse-block">
+                <header><span>情绪构成</span><strong>{latestTrend ? latestTrend.total.toLocaleString() : '—'}</strong><small>最近一天条数</small></header>
+                <ShareBar segments={sentimentSegments} height={4} ariaLabel="情绪构成" />
+                <div className="essay-mix-legend">{sentimentSegments.map((segment) => <span key={segment.key}><i style={{ background: segment.color }} />{segment.label}<b>{segment.value.toLocaleString()}</b></span>)}</div>
+              </div>
+            </div>
           </section>
 
           <div className="essay-overview-grid">
@@ -1423,6 +1481,7 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
                 <article key={stock.symbol}>
                   <div><h3>{stock.name}</h3><span>{stock.symbol}</span></div>
                   <strong>{stock.monthMentions}</strong><small>近30日提及</small>
+                  {stock.trend?.length > 1 ? <span className="essay-watch-spark" aria-hidden="true"><Sparkline values={stock.trend.map((point) => point.total ?? 0)} width={86} height={16} /></span> : null}
                   <div className="essay-watch-counts"><span>今日 {stock.dayMentions}</span><span>7日 {stock.weekMentions}</span></div>
                   <p>{stock.latestThesis || '尚未形成有效摘要，进入信息流查看原文。'}</p>
                   <button type="button" onClick={() => openFeedFor(stock.name)}>按该股票筛选</button>
@@ -1468,7 +1527,7 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
             </div>
             <div className="essay-library-activity">
               <div className="essay-library-analysis-head"><span>原文新增</span><strong>{(historicalBacklog?.notes30d ?? 0).toLocaleString()}<small> / 30日</small></strong></div>
-              <div>{activityWindows.map((item) => <div key={item.label}><span>{item.label}</span><i><b style={{ width: `${(item.value / activityMax) * 100}%` }} /></i><strong>{item.value.toLocaleString()}</strong></div>)}</div>
+              <div>{activityWindows.map((item) => <div key={item.label}><span>{item.label}</span><span className="essay-activity-meter"><BarMeter value={item.value} max={activityMax} height={3} tone="neutral" ariaLabel={`${item.label}新增原文`} /></span><strong>{item.value.toLocaleString()}</strong></div>)}</div>
             </div>
           </section>
           <div className="essay-content-switch" role="tablist" aria-label="检索与获取内容类型">
@@ -1603,14 +1662,16 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
               <div className="essay-panel-head"><div><span>自选股日 / 周 / 月口径</span><h2>关注股趋势</h2></div></div>
               <div className="essay-watch-table">{insights?.watchlist.map((stock) => (
                 <button key={stock.symbol} onClick={() => openFeedFor(stock.name)}>
-                  <div><strong>{stock.name}</strong><span>{stock.symbol}</span></div><span>{stock.dayMentions}</span><span>{stock.weekMentions}</span><span>{stock.monthMentions}</span><small>{stock.averageImportance.toFixed(1)}</small>
+                  <div><strong>{stock.name}</strong><span>{stock.symbol}</span></div>
+                  <span className="essay-watch-spark" aria-hidden="true">{stock.trend?.length > 1 ? <Sparkline values={stock.trend.map((point) => point.total ?? 0)} width={54} height={14} /> : null}</span>
+                  <span>{stock.dayMentions}</span><span>{stock.weekMentions}</span><span>{stock.monthMentions}</span><small>{stock.averageImportance.toFixed(1)}</small>
                 </button>
-              ))}<div className="essay-watch-table-head"><span>标的</span><span>日</span><span>周</span><span>月</span><span>重要度</span></div>{!insights?.watchlist.length ? <div className="essay-module-empty">当前用户自选股尚无可匹配语料。</div> : null}</div>
+              ))}<div className="essay-watch-table-head"><span>标的</span><span>走势</span><span>日</span><span>周</span><span>月</span><span>重要度</span></div>{!insights?.watchlist.length ? <div className="essay-module-empty">当前用户自选股尚无可匹配语料。</div> : null}</div>
             </section>
             <section className="essay-panel">
               <div className="essay-panel-head"><div><span>近30天分析结果</span><h2>高频标的</h2></div></div>
               <div className="essay-stock-table">{dashboard?.topStocks.slice(0, 12).map((stock) => (
-                <div key={stock.key}><div><strong>{stock.name || stock.tsCode}</strong><span>{stock.tsCode}</span></div><strong>{stock.mentionCount}</strong><span className="is-bull">{stock.bullish}</span><span className="is-bear">{stock.bearish}</span><small>{stock.averageImportance.toFixed(1)}</small></div>
+                <div key={stock.key}><div><strong>{stock.name || stock.tsCode}</strong><span>{stock.tsCode}</span><BarMeter value={stock.mentionCount} max={Math.max(...(dashboard?.topStocks.map((row) => row.mentionCount) ?? [1]), 1)} log height={2} tone="neutral" ariaLabel={`${stock.name || stock.tsCode} 提及量相对规模`} /></div><strong>{stock.mentionCount}</strong><span className="is-bull">{stock.bullish}</span><span className="is-bear">{stock.bearish}</span><small>{stock.averageImportance.toFixed(1)}</small></div>
               ))}{trendModuleState.stocks === 'loading' && !dashboard ? <div className="essay-module-empty">正在统计高频标的…</div> : null}{trendModuleState.stocks === 'error' && !dashboard ? <div className="essay-module-empty">高频标的模块正在自动重试。</div> : null}</div>
             </section>
           </div>

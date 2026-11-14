@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Languages, LockKeyhole, Moon, Sun } from 'lucide-react';
+import { Languages, LockKeyhole, Moon, Sun, UserRound } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
@@ -55,6 +55,15 @@ export const MobileMoreSheet: React.FC<MobileMoreSheetProps> = ({ isOpen, onClos
             </div>
           </section>
         ))}
+        <section className="mobile-more__section">
+          <h3>账号</h3>
+          <div className="mobile-more__grid">
+            <NavLink to="/me" reloadDocument={documentNavigation} className={cn('mobile-more__item', isActive('/me') && 'is-active')} onClick={onClose}>
+              <span><UserRound aria-hidden="true" /></span>
+              {t('layout.nav.me')}
+            </NavLink>
+          </div>
+        </section>
         <section className="mobile-more__section">
           <h3>偏好</h3>
           <div className="mobile-more__prefs">

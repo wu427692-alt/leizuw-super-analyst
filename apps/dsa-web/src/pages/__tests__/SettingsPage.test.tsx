@@ -560,6 +560,7 @@ describe('SettingsPage', () => {
   });
 
   it('renders first-run setup checks and routes setup actions', async () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'base' }));
     render(<SettingsPage />);
 
     expect(await screen.findByTestId('first-run-setup-card')).toBeInTheDocument();
@@ -578,6 +579,7 @@ describe('SettingsPage', () => {
 
   it('keeps first-run setup summary neutral while setup status is loading', async () => {
     getSetupStatus.mockImplementation(() => new Promise(() => undefined));
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'base' }));
 
     render(<SettingsPage />);
 
@@ -590,6 +592,7 @@ describe('SettingsPage', () => {
 
   it('keeps first-run setup summary neutral when setup status fails', async () => {
     getSetupStatus.mockRejectedValue(new Error('setup status unavailable'));
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'base' }));
 
     render(<SettingsPage />);
 
@@ -689,6 +692,7 @@ describe('SettingsPage', () => {
   });
 
   it('runs a brief setup smoke analysis with the first watchlist stock', async () => {
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'base' }));
     render(<SettingsPage />);
 
     await screen.findByText('基础配置已满足最小可用分析');
@@ -724,6 +728,7 @@ describe('SettingsPage', () => {
       ],
     });
 
+    useSystemConfigMock.mockReturnValue(buildSystemConfigState({ activeCategory: 'base' }));
     render(<SettingsPage />);
 
     expect(await screen.findByText('还有基础配置需要处理')).toBeInTheDocument();
@@ -1177,6 +1182,7 @@ describe('SettingsPage', () => {
   it('runs AlphaSift enable flow from the settings card', async () => {
     const configState = buildSystemConfigState();
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      activeCategory: 'data_source',
       itemsByCategory: {
         ...configState.itemsByCategory,
         data_source: [
@@ -1234,6 +1240,7 @@ describe('SettingsPage', () => {
     const privateInstallSpec = 'git+https://user:token@example.com/internal/alphasift.git';
     const configState = buildSystemConfigState();
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      activeCategory: 'data_source',
       itemsByCategory: {
         ...configState.itemsByCategory,
         data_source: [
@@ -1950,6 +1957,7 @@ describe('SettingsPage', () => {
     const configState = buildSystemConfigState();
     alphasiftEnable.mockRejectedValueOnce(new Error('config update failed'));
     useSystemConfigMock.mockReturnValue(buildSystemConfigState({
+      activeCategory: 'data_source',
       itemsByCategory: {
         ...configState.itemsByCategory,
         data_source: [

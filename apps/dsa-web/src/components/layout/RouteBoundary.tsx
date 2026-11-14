@@ -17,7 +17,7 @@ type PageLoadingFallbackProps = {
 export const PageLoadingFallback: React.FC<PageLoadingFallbackProps> = ({
   fullPage = true,
   status = '正在加载页面组件',
-  detail = '页面打开后，各模块会分别读取数据。',
+  detail,
 }) => (
   <div
     className={
@@ -28,9 +28,11 @@ export const PageLoadingFallback: React.FC<PageLoadingFallbackProps> = ({
     role="status"
     aria-label={status}
   >
-    <div className="flex w-full max-w-xl items-start gap-3 border border-border/70 bg-card/85 p-5 backdrop-blur-sm">
-      <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 text-[hsl(var(--primary))] motion-safe:animate-spin" aria-hidden="true" />
-      <div><p className="text-sm font-semibold text-foreground">{status}</p><p className="mt-1 text-xs leading-5 text-secondary-text">{detail}</p></div>
+    {/* 加载态只给一个安静的转圈 + 「加载中」，不再用卡片和解释句子。 */}
+    <div className="flex items-center gap-2 text-secondary-text">
+      <LoaderCircle className="h-4 w-4 shrink-0 text-[hsl(var(--primary))] motion-safe:animate-spin" aria-hidden="true" />
+      <span className="text-sm">加载中</span>
+      {detail ? <span className="sr-only">{detail}</span> : null}
     </div>
   </div>
 );

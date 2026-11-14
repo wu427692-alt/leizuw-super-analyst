@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isAxiosError } from 'axios';
-import { Activity, AudioLines, Boxes, CheckCircle2, Clock3, DatabaseZap, FlaskConical, RefreshCw, Search, XCircle } from 'lucide-react';
+import { AudioLines, Boxes, ChevronRight, DatabaseZap, FlaskConical, RefreshCw, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { dataAcquisitionApi } from '../api/dataAcquisition';
 import { essayQuantApi } from '../api/essayQuant';
@@ -8,15 +8,16 @@ import { essayRadarApi } from '../api/essayRadar';
 import { essayExportsApi } from '../api/essayExports';
 import type { EssayExportStatus, EssayExportTask } from '../api/essayExports';
 import { industryResearchApi } from '../api/industryResearch';
-import { AppPage } from '../components/common';
+import { AppPage, BarMeter, MetricRow, PageTabs, ShareBar, Sparkline } from '../components/common';
 import { SegmentedChips } from '../components/mobile/SegmentedChips';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { useIsMobile, useIsPhone } from '../hooks/useIsMobile';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import './TasksHubPage.css';
 
 type TaskState = 'queued' | 'running' | 'completed' | 'limited' | 'failed' | 'no_results';
 type TaskKind = 'research' | 'quant' | 'audio-analysis' | 'audio-package' | 'acquisition' | 'essay-export';
+type TaskTab = 'active' | 'completed' | 'failed' | 'scope';
 type UnifiedTask = {
   id: string;
   kind: TaskKind;
@@ -172,6 +173,7 @@ const TasksHubPage = () => {
 
 function TasksHubContent() {
   const isMobile = useIsMobile();
+  const isPhone = useIsPhone();
   const navigate = useNavigate();
   useEffect(() => { document.title = '任务与验证 - 乐子乌智能投研平台'; }, []);
   const [channels, setChannels] = useState(initialChannels);
@@ -180,9 +182,10 @@ function TasksHubContent() {
   const alive = useRef(false);
   const inFlight = useRef<Partial<Record<TaskKind, Promise<void>>>>({});
   const lastAttempt = useRef<Partial<Record<TaskKind, number>>>({});
-  const [filter, setFilter] = useState<'all' | 'active' | 'completed' | 'failed'>('all');
+  const [tab, setTab] = useState<TaskTab>('active');
   const [kindFilter, setKindFilter] = useState<TaskKind | 'all'>('all');
   const [page, setPage] = useState(1);
+  const [mobileTab, setMobileTab] = useState<'active' | 'completed'>('completed');
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; };
@@ -244,37 +247,134 @@ function TasksHubContent() {
     completed: items.filter((item) => FINISHED_STATES.has(item.status)).length,
     failed: items.filter((item) => item.status === 'failed').length,
   }), [items]);
-  const filtered = useMemo(() => items.filter((item) => (kindFilter === 'all' || kindFilter === item.kind) && (
-    filter === 'all' || (filter === 'active' && ACTIVE_STATES.has(item.status))
-    || (filter === 'completed' && FINISHED_STATES.has(item.status))
-    || (filter === 'failed' && item.status === 'failed')
-  )), [filter, items, kindFilter]);
+  const filtered = useMemo(() => {
+    const byStatus = (item: UnifiedTask) => {
+      if (tab === 'active') return ACTIVE_STATES.has(item.status);
+      if (tab === 'completed') return FINISHED_STATES.has(item.status);
+      if (tab === 'failed') return item.status === 'failed';
+      return true;
+    };
+    return items.filter((item) => (kindFilter === 'all' || kindFilter === item.kind) && byStatus(item));
+  }, [items, kindFilter, tab]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const visible = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const missingHistory = TASK_KINDS.some(kind => (channels[kind].total ?? 0) > (channels[kind].items?.length ?? 0));
-  const selectFilter = (value: typeof filter) => { setFilter(value); setPage(1); };
+  // 近 7 天任务量：用已读取任务的更新时间做密度，补一条不占版面的时序线。
+  const dailyCounts = useMemo(() => {
+    const dayKey = (value: number) => new Date(value).toISOString().slice(0, 10);
+    const buckets = new Map<string, number>();
+    items.forEach((item) => {
+      const parsed = Date.parse(item.updatedAt);
+      if (Number.isNaN(parsed)) return;
+      buckets.set(dayKey(parsed), (buckets.get(dayKey(parsed)) ?? 0) + 1);
+    });
+    return Array.from({ length: 7 }, (_, index) => {
+      const day = new Date();
+      day.setDate(day.getDate() - (6 - index));
+      return buckets.get(dayKey(day.getTime())) ?? 0;
+    });
+  }, [items]);
+  const kindComposition = useMemo(() => TASK_KINDS
+    .map(kind => ({ key: kind, value: items.filter(item => item.kind === kind).length, label: KIND_META[kind].label }))
+    .filter(segment => segment.value > 0), [items]);
+  const kindMaxRead = Math.max(1, ...TASK_KINDS.map(kind => channels[kind].items?.length ?? 0));
+  const readAll = items.length;
+  const readTotal = TASK_KINDS.reduce((sum, kind) => sum + (channels[kind].total ?? 0), 0);
+  const switchTab = (next: string) => { setTab(next as TaskTab); setPage(1); };
 
+  // ---------- 手机端：研究记录（乐小研 09 版式）----------
+  if (isPhone) {
+    const activeTasks = items.filter((item) => ACTIVE_STATES.has(item.status));
+    const doneTasks = items.filter((item) => FINISHED_STATES.has(item.status));
+    const listed = mobileTab === 'active' ? activeTasks : doneTasks;
+    return <AppPage className="tasks-hub is-mobile lx-rec">
+      <SegmentedChips
+        ariaLabel="按状态切换"
+        value={mobileTab}
+        onChange={(value) => setMobileTab(value as 'active' | 'completed')}
+        items={[
+          { value: 'active' as const, label: `进行中 ${counts.active}` },
+          { value: 'completed' as const, label: `已完成 ${counts.completed}` },
+        ]}
+        className="lx-rec__seg"
+      />
+
+      {activeTasks.length ? (
+        <button type="button" className="lx-rec__banner" onClick={() => setMobileTab('active')}>
+          <span className="lx-rec__dot" aria-hidden="true" />
+          <span>{activeTasks.length} 项任务进行中</span>
+          <span className="lx-rec__banner-action">查看</span>
+          <ChevronRight aria-hidden="true" />
+        </button>
+      ) : null}
+
+      <section className="lx-section" aria-label="任务记录">
+        <header className="lx-section__head">
+          <h2>{mobileTab === 'active' ? '进行中' : '已完成'}</h2>
+          <div className="lx-section__meta"><button type="button" onClick={() => void load()} disabled={loading}>{loading ? '刷新中' : '刷新'}</button></div>
+        </header>
+        <div className="lx-rec__list">
+          {listed.length ? listed.map((task) => {
+            const meta = KIND_META[task.kind]; const Icon = meta.icon;
+            // 已完成的研究任务直接进报告页；其他任务仍回到各自模块。
+            const target = task.kind === 'research' && task.status === 'completed' ? `/report/${task.id}` : task.href;
+            return <button key={`${task.kind}-${task.id}`} type="button" className="lx-rec__row" onClick={() => navigate(target)}>
+              <span className="lx-rec__icon"><Icon aria-hidden="true" /></span>
+              <span className="lx-rec__main">
+                <strong>{task.title}</strong>
+                <small>{meta.label} · {safeDate(task.updatedAt)}</small>
+              </span>
+              <span className={`lx-rec__state is-${task.status}`}>{task.stageLabel || statusLabel(task.status)}</span>
+              <ChevronRight aria-hidden="true" className="lx-rec__chev" />
+            </button>;
+          }) : <p className="lx-list__empty">{loading ? '正在汇总任务' : mobileTab === 'active' ? '暂无进行中的任务' : '暂无记录'}</p>}
+        </div>
+      </section>
+
+      {failures.length > 0 ? <button type="button" className="lx-rec__warn" onClick={() => void load()}>
+        {failures.length} 类任务读取异常，点击重试
+      </button> : null}
+
+      <button type="button" className="lx-rec__new" onClick={() => navigate('/industry-research')}>新建研究</button>
+    </AppPage>;
+  }
+
+  const tabLabel = ({ active: '进行中', completed: '已完成', failed: '需要处理', scope: '读取范围' } as const)[tab];
   return <AppPage className={`tasks-hub max-w-none${isMobile ? ' is-mobile' : ''}`}>
-    <header className="tasks-hub__header">
-      <div><h1>任务与验证</h1><p>查看自己的研究、转写、回测、取数和小作文导出进度，点击任务继续处理或查看结果。</p></div>
-      <button type="button" className="tasks-hub__refresh" onClick={() => void load()}><RefreshCw aria-hidden="true" />刷新状态</button>
+    <header className="mb-[var(--gap-md)] flex flex-wrap items-end justify-between gap-[var(--gap-sm)]">
+      <div>
+        <h1 className="text-[length:var(--fs-h1)] font-semibold leading-[var(--lh-h1)] text-[color:var(--text-1)]">任务与验证</h1>
+        <p className="mt-1 text-[length:var(--fs-sm)] leading-[var(--lh-sm)] text-[color:var(--text-3)]">查看自己的研究、转写、取数和小作文导出进度，点击任务继续处理或查看结果。</p>
+      </div>
+      <div className="flex items-center gap-[var(--gap-xs)]">
+        <button type="button" className="tasks-hub__refresh" onClick={() => void load()}><RefreshCw aria-hidden="true" />刷新状态</button>
+        <button type="button" className="btn-primary" onClick={() => navigate('/industry-research')}>新建调研</button>
+      </div>
     </header>
 
-    <section className="tasks-hub__summary" aria-label="任务摘要">
-      <button onClick={() => selectFilter('active')} aria-pressed={filter === 'active'} className={filter === 'active' ? 'is-active' : ''}><Activity aria-hidden="true" /><span>正在处理</span><strong>{counts.active}</strong></button>
-      <button onClick={() => selectFilter('completed')} aria-pressed={filter === 'completed'} className={filter === 'completed' ? 'is-active' : ''}><CheckCircle2 aria-hidden="true" /><span>已结束</span><strong>{counts.completed}</strong></button>
-      <button onClick={() => selectFilter('failed')} aria-pressed={filter === 'failed'} className={filter === 'failed' ? 'is-active' : ''}><XCircle aria-hidden="true" /><span>需要处理</span><strong>{counts.failed}</strong></button>
-      <button onClick={() => selectFilter('all')} aria-pressed={filter === 'all'} className={filter === 'all' ? 'is-active' : ''}><Clock3 aria-hidden="true" /><span>已读取任务</span><strong>{items.length}</strong></button>
-    </section>
-    <p className="tasks-hub__scope">以上计数仅统计已读取记录{missingHistory ? '，尚有历史任务未列入' : ''}。运行任务每 10 秒更新；空列表与已完成任务在回到页面时更新。</p>
+    <MetricRow
+      className="mb-[var(--gap-md)]"
+      columns={4}
+      items={[
+        { label: '正在处理', value: counts.active, hint: '排队与执行中' },
+        { label: '已结束', value: counts.completed, hint: '完成 / 部分完成 / 无结果' },
+        { label: '需要处理', value: counts.failed, trend: counts.failed > 0 ? 'down' : 'flat', hint: '失败任务' },
+        { label: '已读取任务', value: items.length, hint: missingHistory ? '历史任务未读取完' : '已全部读取' },
+      ]}
+    />
 
-    <nav className="tasks-hub__launch" aria-label="新建任务">
-      <button onClick={() => navigate('/industry-research')}>新建调研</button>
-      <button onClick={() => navigate('/essay-quant')}>新建量化研究</button>
-      <button onClick={() => navigate('/essay-radar/feed?tab=audio')}>转写录音</button>
-      <button onClick={() => navigate('/data-acquisition')}>获取数据</button>
-    </nav>
+    <PageTabs
+      ariaLabel="任务视图切换"
+      value={tab}
+      onChange={switchTab}
+      items={[
+        { key: 'active', label: '进行中', badge: counts.active },
+        { key: 'completed', label: '已完成', badge: counts.completed },
+        { key: 'failed', label: '需要处理', badge: counts.failed },
+        { key: 'scope', label: '读取范围' },
+      ]}
+    />
 
     {failures.length > 0 ? <details className="tasks-hub__notice">
       <summary><span role="status">{failures.length} 类任务读取异常{incompatibleCount ? ` · ${incompatibleCount} 类接口版本不兼容` : ''}，已读取任务仍可查看。</span><span>异常详情</span></summary>
@@ -290,32 +390,85 @@ function TasksHubContent() {
       </div>)}</div>
     </details> : null}
 
-    {isMobile ? (
-      <SegmentedChips
-        ariaLabel="按任务类型筛选"
-        value={kindFilter}
-        onChange={(value) => { setKindFilter(value); setPage(1); }}
-        items={[{ value: 'all' as const, label: '全部' }, ...TASK_KINDS.map(kind => ({ value: kind, label: KIND_META[kind].label }))]}
-        className="tasks-hub__chips"
-      />
-    ) : null}
-    <div className="tasks-hub__tools">{isMobile ? null : <label>任务类型<select value={kindFilter} onChange={event => { setKindFilter(event.target.value as TaskKind | 'all'); setPage(1); }}><option value="all">所有类型</option>{TASK_KINDS.map(kind => <option key={kind} value={kind}>{KIND_META[kind].label}</option>)}</select></label>}<span>筛选命中 {filtered.length} 条已读取任务</span></div>
-    <section className="tasks-hub__list" aria-busy={loading} aria-label="任务记录">
-      {visible.map((task) => {
-        const meta = KIND_META[task.kind]; const Icon = meta.icon;
-        return <button key={`${task.kind}-${task.id}`} className="tasks-hub__task" onClick={() => navigate(task.href)}>
-          <span className="tasks-hub__task-icon"><Icon aria-hidden="true" /></span>
-          <span className="tasks-hub__task-main"><span className="tasks-hub__task-meta">{meta.label} · {safeDate(task.updatedAt)}{channels[task.kind].error ? ' · 上次读取状态' : ''}</span><strong>{task.title}</strong><span>{task.detail}</span></span>
-          <span className={`tasks-hub__status is-${task.status}`}>{task.stageLabel || statusLabel(task.status)}</span>
-          {task.progress == null ? <span className="tasks-hub__progress" aria-label="进度尚未确认"><em>{ACTIVE_STATES.has(task.status) ? '总量确认中' : '未计算'}</em></span>
-            : <span className={`tasks-hub__progress${task.progress >= 100 ? ' is-complete' : ''}`} aria-label={`进度 ${task.progress}%`}><i style={{ width: `${Math.max(0, Math.min(task.progress, 100))}%` }} /><em>{task.progress}%</em></span>}
-        </button>;
-      })}
-      {!loading && !visible.length ? <div className="tasks-hub__empty"><Boxes /><strong>{failures.length ? '部分渠道尚未读取成功' : '当前筛选下没有任务'}</strong><span>{failures.length ? '可重试上方未返回的渠道，未读取成功不代表没有任务。' : '可以从上方入口发起调研、量化、转写或取数任务。'}</span></div> : null}
-      {loading && !items.length ? <div className="tasks-hub__empty"><RefreshCw className="animate-spin" /><strong>正在汇总任务</strong><span>六类后台任务并行读取，已返回的任务会先显示。</span></div> : null}
-    </section>
-    {filtered.length > PAGE_SIZE ? <nav className="tasks-hub__pages" aria-label="任务列表分页"><span>第 {currentPage} / {totalPages} 页 · 本页 {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} 条</span><button disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页</button><button disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>下一页</button></nav> : null}
-    <details className="tasks-hub__coverage"><summary>读取范围与历史任务</summary><p>调研支持继续读取历史；其他类型的现有列表接口仅返回最近记录，不支持历史翻页。</p>{TASK_KINDS.map(kind => <div key={kind}><span>{KIND_META[kind].label}</span><span>{channels[kind].items === null ? '尚未读取' : `已读取 ${channels[kind].items?.length} / ${channels[kind].total ?? '未知'} 条`}</span><button type="button" onClick={() => navigate(CHANNEL_LINKS[kind])}>{kind === 'research' ? '查看全部调研' : '打开任务模块'}</button></div>)}{(channels.research.total ?? 0) > (channels.research.items?.length ?? 0) ? <button type="button" className="tasks-hub__more" disabled={channels.research.loading || channels.research.error === 'permission'} onClick={() => void loadChannel('research', true)}>{channels.research.loading ? '正在读取历史调研…' : '再读取 30 条历史调研'}</button> : null}</details>
+    {tab === 'scope' ? (
+      <div className="flex flex-col gap-[var(--gap-md)]">
+        <section className="border border-[color:var(--line-1)] bg-[var(--bg-1)] p-[var(--gap-md)]" aria-label="任务构成">
+          <div className="flex flex-wrap items-center justify-between gap-[var(--gap-sm)]">
+            <h2 className="text-[length:var(--fs-h2)] font-semibold text-[color:var(--text-1)]">已读取任务的类型构成</h2>
+            <span className="text-[length:var(--fs-caption)] tabular-nums text-[color:var(--text-3)]">共 {readAll} 条 · 各渠道合计 {readTotal} 条</span>
+          </div>
+          <ShareBar
+            className="mt-[var(--gap-sm)]"
+            ariaLabel="任务类型构成"
+            segments={kindComposition.map(segment => ({ key: segment.key, value: segment.value, label: segment.label }))}
+          />
+          <p className="mt-[var(--gap-xs)] flex flex-wrap gap-x-[var(--gap-md)] gap-y-[var(--gap-2xs)] text-[length:var(--fs-caption)] text-[color:var(--text-3)]">
+            {kindComposition.length
+              ? kindComposition.map(segment => <span key={segment.key}>{segment.label} <b className="tabular-nums text-[color:var(--text-2)]">{segment.value}</b></span>)
+              : <span>尚未读取到任务</span>}
+          </p>
+        </section>
+
+        <section className="border border-[color:var(--line-1)] bg-[var(--bg-1)] p-[var(--gap-md)]" aria-label="读取范围与历史任务">
+          <div className="flex flex-wrap items-center justify-between gap-[var(--gap-sm)]">
+            <h2 className="text-[length:var(--fs-h2)] font-semibold text-[color:var(--text-1)]">读取范围与历史任务</h2>
+            <span className="text-[length:var(--fs-caption)] text-[color:var(--text-3)]">调研支持继续读取历史；其他类型接口仅返回最近记录</span>
+          </div>
+          <div className="mt-[var(--gap-sm)] flex flex-col">
+            {TASK_KINDS.map(kind => (
+              <div key={kind} className="grid grid-cols-[minmax(96px,0.6fr)_minmax(0,1fr)_120px_auto] items-center gap-[var(--gap-sm)] border-t border-[color:var(--line-1)] py-[var(--gap-xs)] first:border-t-0">
+                <span className="truncate text-[length:var(--fs-sm)] text-[color:var(--text-2)]">{KIND_META[kind].label}</span>
+                <BarMeter
+                  value={channels[kind].items?.length ?? 0}
+                  max={kindMaxRead}
+                  log
+                  height={4}
+                  tone="neutral"
+                  ariaLabel={`${KIND_META[kind].label} 已读取 ${channels[kind].items?.length ?? 0} 条`}
+                />
+                <span className="text-right text-[length:var(--fs-caption)] tabular-nums text-[color:var(--text-3)]">{channels[kind].items === null ? '尚未读取' : `已读取 ${channels[kind].items?.length} / ${channels[kind].total ?? '未知'} 条`}</span>
+                <button type="button" className="tasks-hub__more" onClick={() => navigate(CHANNEL_LINKS[kind])}>{kind === 'research' ? '查看全部调研' : '打开任务模块'}</button>
+              </div>
+            ))}
+          </div>
+          {(channels.research.total ?? 0) > (channels.research.items?.length ?? 0) ? (
+            <button type="button" className="tasks-hub__more mt-[var(--gap-sm)]" disabled={channels.research.loading || channels.research.error === 'permission'} onClick={() => void loadChannel('research', true)}>{channels.research.loading ? '正在读取历史调研…' : '再读取 30 条历史调研'}</button>
+          ) : null}
+        </section>
+
+        {failures.length > 0 ? <p className="text-[length:var(--fs-caption)] text-[color:var(--text-3)]">{failures.length} 类任务读取异常，各渠道互不影响。</p> : null}
+      </div>
+    ) : (
+      <>
+        <div className="tasks-hub__tools">
+          <label>任务类型<select value={kindFilter} onChange={event => { setKindFilter(event.target.value as TaskKind | 'all'); setPage(1); }}><option value="all">所有类型</option>{TASK_KINDS.map(kind => <option key={kind} value={kind}>{KIND_META[kind].label}</option>)}</select></label>
+          <span className="flex items-center gap-[var(--gap-sm)]">
+            <span>筛选命中 {filtered.length} 条已读取任务{missingHistory ? ' · 尚有历史任务未列入' : ''}</span>
+            <span className="flex items-center gap-[var(--gap-2xs)]">{tabLabel} · 近 7 日任务量<Sparkline values={dailyCounts} width={72} height={16} ariaLabel="近 7 日任务量" /></span>
+          </span>
+        </div>
+        <section className="tasks-hub__list" aria-busy={loading} aria-label="任务记录">
+          {visible.map((task) => {
+            const meta = KIND_META[task.kind]; const Icon = meta.icon;
+            return <button key={`${task.kind}-${task.id}`} className="tasks-hub__task" onClick={() => navigate(task.href)}>
+              <span className="tasks-hub__task-icon"><Icon aria-hidden="true" /></span>
+              <span className="tasks-hub__task-main"><span className="tasks-hub__task-meta">{meta.label} · {safeDate(task.updatedAt)}{channels[task.kind].error ? ' · 上次读取状态' : ''}</span><strong>{task.title}</strong><span>{task.detail}</span></span>
+              <span className={`tasks-hub__status is-${task.status}`}>{task.stageLabel || statusLabel(task.status)}</span>
+              {task.progress == null ? <span className="tasks-hub__progress" aria-label="进度尚未确认"><em>{ACTIVE_STATES.has(task.status) ? '总量确认中' : '未计算'}</em></span>
+                : <span className="tasks-hub__progress" aria-label={`进度 ${task.progress}%`}>
+                  <span className="absolute inset-x-0 bottom-0">
+                    <BarMeter value={Math.max(0, Math.min(task.progress, 100))} max={100} height={4} tone={task.progress >= 100 ? 'accent' : 'auto'} ariaLabel={`任务进度条 ${task.progress}%`} />
+                  </span>
+                  <em>{task.progress}%</em>
+                </span>}
+            </button>;
+          })}
+          {!loading && !visible.length ? <div className="tasks-hub__empty"><Boxes /><strong>{failures.length ? '部分渠道尚未读取成功' : '当前筛选下没有任务'}</strong><span>{failures.length ? '点上方重试' : '可以从上方入口发起调研、量化、转写或取数任务。'}</span></div> : null}
+          {loading && !items.length ? <div className="tasks-hub__empty"><RefreshCw className="animate-spin" /><strong>正在汇总任务</strong></div> : null}
+        </section>
+        {filtered.length > PAGE_SIZE ? <nav className="tasks-hub__pages" aria-label="任务列表分页"><span>第 {currentPage} / {totalPages} 页 · 本页 {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} 条</span><button disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页</button><button disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>下一页</button></nav> : null}
+      </>
+    )}
   </AppPage>;
 }
 

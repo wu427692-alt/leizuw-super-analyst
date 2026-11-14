@@ -1068,7 +1068,7 @@ const HomePage: React.FC = () => {
           isOpen={runFlowDrawer.open}
           onClose={closeRunFlowDrawer}
           title={t('runFlow.drawerTitle')}
-          width="max-w-[96vw]"
+          width="max-w-[96vw] lg:max-w-5xl"
           zIndex={80}
         >
           <RunFlowPanel

@@ -22,7 +22,7 @@
   padding: 0 8px;
   background: var(--bg-3);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .concept-compare-actions button svg {
@@ -41,7 +41,7 @@
   color: var(--concept-ink, var(--text-1));
 }
 .concept-read-state > svg { width: 18px; flex-shrink: 0; }
-.concept-read-state strong, .concept-read-state small { display: block; font-size: 13px; line-height: 1.6; }
+.concept-read-state strong, .concept-read-state small { display: block; font-size: var(--fs-sm); line-height: 1.6; }
 .concept-read-state small { color: var(--concept-muted, var(--text-3)); }
 .concept-read-state button, .concept-reset-filters, .concept-window-toolbar button, .concept-compare-selections button {
   min-height: 38px;
@@ -49,36 +49,36 @@
   border: 1px solid var(--concept-line, var(--line-2));
   border-radius: 8px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: inherit;
 }
 .concept-read-state button { margin-left: auto; flex-shrink: 0; }
 .concept-read-state[data-error="true"] { border-color: var(--brand); }
 .concept-read-state .is-loading { animation: concept-orbit 1.5s linear infinite; }
 .concept-window-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--concept-line); }
-.concept-window-toolbar strong { font-size: 14px; }
-.concept-window-toolbar span { display: block; color: var(--concept-muted); font-size: 12px; margin-top: 4px; }
+.concept-window-toolbar strong { font-size: var(--fs-body); }
+.concept-window-toolbar span { display: block; color: var(--concept-muted); font-size: var(--fs-sm); margin-top: 4px; }
 .concept-window-toolbar > div:last-child { display: flex; gap: 8px; flex-shrink: 0; }
 .concept-window-toolbar button[aria-pressed="true"] { background: var(--bg-3); color: white; border-color: var(--line-2); }
 .concept-compare-selections { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; }
 .concept-compare-selections button { display: flex; align-items: center; gap: 4px; }
 .concept-compare-selections svg { width: 14px; height: 14px; }
-.concept-compare-selections span, .concept-filter-empty { color: var(--concept-muted); font-size: 13px; line-height: 1.65; }
+.concept-compare-selections span, .concept-filter-empty { color: var(--concept-muted); font-size: var(--fs-sm); line-height: 1.65; }
 .concept-filter-empty { padding: 16px; }
-.concept-page-nav button strong, .concept-page-nav button > span { font-size: 13px; }
-.concept-page-nav button small { font-size: 12px; }
-.concept-detail-actions button, .concept-stock-tools :is(input, select, button), .concept-pagination :is(button, span) { font-size: 12px; min-height: 34px; }
+.concept-page-nav button strong, .concept-page-nav button > span { font-size: var(--fs-sm); }
+.concept-page-nav button small { font-size: var(--fs-sm); }
+.concept-detail-actions button, .concept-stock-tools :is(input, select, button), .concept-pagination :is(button, span) { font-size: var(--fs-sm); min-height: 34px; }
 .concept-stock-lens:focus { outline: none; }
 .concept-stock-lens__head { position: sticky; top: 0; z-index: 1; background: var(--bg-2); }
 .concept-stock-lens__head-actions { display: flex; gap: 8px; align-items: center; }
-.concept-stock-lens__head-actions button:first-child { display: flex; width: auto; gap: 4px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
-.concept-stock-lens__head p { font-size: 12px; }
-.concept-lens-summary span { font-size: 12px; }
-.concept-detail :is(p, small, dt), .concept-stock-lens :is(p, small, dt) { font-size: 12px; line-height: 1.6; }
-.concept-stock-lens :is(.concept-horizon-profile small, .concept-lens-list article > div > span) { font-size: 12px !important; }
-.concept-stock-lens :is(.concept-alpha-evidence > a span, .concept-horizon-profile em, .concept-weight-decomp small) { font-size: 12px; }
-.concept-stock-lens .concept-lens-list article dd { font-size: 14px; }
-.concept-stock-lens .concept-alpha-evidence > a strong { font-size: 14px; }
+.concept-stock-lens__head-actions button:first-child { display: flex; width: auto; gap: 4px; padding: 0 8px; font-size: var(--fs-sm); white-space: nowrap; }
+.concept-stock-lens__head p { font-size: var(--fs-sm); }
+.concept-lens-summary span { font-size: var(--fs-sm); }
+.concept-detail :is(p, small, dt), .concept-stock-lens :is(p, small, dt) { font-size: var(--fs-sm); line-height: 1.6; }
+.concept-stock-lens :is(.concept-horizon-profile small, .concept-lens-list article > div > span) { font-size: var(--fs-sm) !important; }
+.concept-stock-lens :is(.concept-alpha-evidence > a span, .concept-horizon-profile em, .concept-weight-decomp small) { font-size: var(--fs-sm); }
+.concept-stock-lens .concept-lens-list article dd { font-size: var(--fs-body); }
+.concept-stock-lens .concept-alpha-evidence > a strong { font-size: var(--fs-body); }
 .concept-stock-lens__head > div:first-child { min-width: 0; }
 .concept-stock-lens__head h2 { overflow-wrap: anywhere; }
 html.light .concept-stock-lens__head { background: var(--bg-1); color: var(--text-2); }
@@ -93,7 +93,7 @@ html.light .concept-window-toolbar button[aria-pressed="true"] { background: var
   .concept-read-state > span { flex: 1; min-width: 150px; }
   .concept-read-state button { margin-left: 32px; }
   .concept-stock-lens__head { padding: 16px; gap: 8px; }
-  .concept-stock-lens__head h2 { font-size: 24px; }
+  .concept-stock-lens__head h2 { font-size: var(--fs-h1); }
   .concept-compare-actions {
     width: 100%;
     justify-content: space-between;

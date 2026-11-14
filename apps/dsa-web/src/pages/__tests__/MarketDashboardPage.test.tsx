@@ -72,6 +72,11 @@ function LocationProbe() {
 }
 function fixture() { return <MemoryRouter initialEntries={['/app']}><MarketDashboardPage /><LocationProbe /></MemoryRouter>; }
 async function flush() { await act(async () => { await Promise.resolve(); }); }
+/** 桌面端按 §10 拆了主 Tab：默认「行情概览」，完整快讯在「快讯」Tab。 */
+async function openTab(label: string) {
+  fireEvent.click(screen.getByRole('tab', { name: new RegExp(label) }));
+  await flush();
+}
 // Match the hook's lossy lookup key. A matching Map slot does not prove that
 // the payload belongs to this stock, especially across explicit exchanges.
 const quoteKey = (symbol: string) => symbol.trim().toUpperCase().split('.')[0].replace(/^(SH|SZ|BJ)/, '');
@@ -126,6 +131,7 @@ describe('MarketDashboardPage 个人自选股缓存隔离与证据入口', () =>
     vi.mocked(investmentMonitorApi.event).mockResolvedValue(news);
     const external = vi.spyOn(window, 'open');
     render(fixture()); await flush();
+    await openTab('快讯');
     const trigger = screen.getByRole('button', { name: '查看新闻详情：新闻阅读测试' });
     expect(trigger).toHaveTextContent('财联社快讯');
     expect(trigger).not.toHaveTextContent(/tushare/i);
@@ -138,13 +144,17 @@ describe('MarketDashboardPage 个人自选股缓存隔离与证据入口', () =>
     fireEvent.click(within(dialog).getByRole('button', { name: '返回首页' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByLabelText('当前路由')).toHaveTextContent('/app');
-    expect(screen.getByTestId('chart-603306.SH')).toBeInTheDocument();
+    // 焦点留在触发按钮上（仍在「快讯」Tab）
     expect(trigger).toHaveFocus();
+    // 回到「行情概览」后个股图仍在（自选区跟着概览 Tab 走）
+    await openTab('行情概览');
+    expect(screen.getByTestId('chart-603306.SH')).toBeInTheDocument();
   });
 
   it('新闻详情失败仍可返回，账号退出立即卸载详情', async () => {
     vi.mocked(investmentMonitorApi.event).mockRejectedValue(new Error('timeout'));
     const view = render(fixture()); await flush();
+    await openTab('快讯');
     fireEvent.click(screen.getByRole('button', { name: '查看新闻详情：公共财经新闻' })); await flush();
     expect(screen.getByRole('dialog')).toHaveTextContent('本次详情读取未完成');
     fireEvent.click(screen.getByRole('button', { name: '返回首页' }));
@@ -167,7 +177,9 @@ describe('MarketDashboardPage 个人自选股缓存隔离与证据入口', () =>
     expect(screen.getByText('正在读取当前账号的自选股…')).toBeInTheDocument();
     expect(screen.queryByText('暂无自选股数据')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '公共指数快照' })).toBeInTheDocument();
+    await openTab('快讯');
     expect(screen.getByText('公共财经新闻')).toBeInTheDocument();
+    await openTab('行情概览');
     await flush();
     expect(apiClient.get).toHaveBeenCalledTimes(2);
     await act(async () => { pendingB.reject(new Error('B timeout')); });
@@ -268,6 +280,7 @@ describe('MarketDashboardPage 个人自选股缓存隔离与证据入口', () =>
     for (const [label, id] of [['机构', 11], ['催化', 12], ['风险', 13]] as const) {
       expect(screen.getByRole('link', { name: `第二只股票${label}证据` })).toHaveAttribute('href', `/investment-monitor/feed?event=${id}`);
     }
+    await openTab('快讯');
     fireEvent.click(screen.getByRole('button', { name: '查看全部新闻' }));
     expect(screen.getByLabelText('当前路由')).toHaveTextContent('/investment-monitor/feed?channel=news');
   });

@@ -11,11 +11,13 @@ describe('MobileMoreSheet', () => {
       </MemoryRouter>,
     );
 
-    for (const label of ['题材图谱', '深度研究', '任务中心', 'AI 热点', '机构纪要与录音', '量化研究', '数据下载', 'AI 问股', '使用指南', '管理员']) {
+    for (const label of ['题材图谱', '深度研究', '任务中心', 'AI 热点', '机构纪要与录音', '量化研究', '数据下载', '使用指南', '管理员']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
     }
-    // 底部标签栏已有的入口不重复出现在弹层里
+    // 底部标签栏已有的入口不重复出现在弹层里；对话已合并进「团队」，不能再有第二个对话入口
     expect(screen.queryByRole('link', { name: '投研团队' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'AI 问股' })).not.toBeInTheDocument();
+    expect(document.querySelector('a[href="/chat"]')).toBeNull();
   });
 
   it('renders nothing while closed', () => {

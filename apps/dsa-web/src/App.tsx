@@ -17,6 +17,7 @@ import { chunkRetryKey, isChunkLoadError, reloadWithFreshFrontend } from './util
 import { canPreloadRoutes, preloadRoute } from './utils/routePreload';
 import { clearRequestCache } from './api/requestCache';
 import { safeUserAccessRedirect } from './utils/userAccessRedirect';
+import { useIsMobile } from './hooks/useIsMobile';
 import LandingPage from './pages/LandingPage';
 import './App.css';
 
@@ -63,6 +64,9 @@ function lazyRoute(
 const HomePage = lazyRoute(() => import('./pages/MarketDashboardPage'), 'home');
 const WorkbenchPage = lazyRoute(() => import('./pages/WorkbenchPage'), 'workbench');
 const InvestmentMeetingPage = lazyRoute(() => import('./pages/InvestmentMeetingPage'), 'meeting');
+const MePage = lazyRoute(() => import('./pages/MePage'), 'me');
+const ResearchReportPage = lazyRoute(() => import('./pages/ResearchReportPage'), 'report');
+const EvidenceDetailPage = lazyRoute(() => import('./pages/EvidenceDetailPage'), 'evidence');
 const SettingsPage = lazyRoute(() => import('./pages/SettingsPage'), 'settings');
 const LoginPage = lazyRoute(() => import('./pages/LoginPage'), 'login');
 const UserAccessPage = lazyRoute(() => import('./pages/UserAccessPage'), 'user-access');
@@ -90,6 +94,27 @@ const APP_ROUTE_PRELOAD_PATHS = [
   '/tasks',
   '/essay-radar',
 ];
+
+/**
+ * 对话入口收敛：「AI 问股」已合并进「投研团队」，导航里只剩 `/meeting`。
+ * 手机端把 `/chat` 的旧链接（含 `stock` / `name` / `prompt` / `from=meeting&topic`
+ * 等 query）原样带到 `/meeting`，由那里的对话页继续处理——旧深链不会 404，也不会
+ * 留下第二个对话入口。桌面端 `/chat` 仍作为别名页面存在（不再进导航），这样
+ * 看板、自选、总览里指向 `/chat?stock=...` 的既有链接不会丢掉标的上文。
+ */
+const ChatEntryRoute: React.FC = () => {
+  const location = useLocation();
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return (
+      <Navigate
+        to={{ pathname: '/meeting', search: location.search, hash: location.hash }}
+        replace
+      />
+    );
+  }
+  return <ChatPage />;
+};
 
 /**
  * Warm only the next useful pages after the current screen is fully usable.
@@ -232,10 +257,13 @@ const AppContent: React.FC = () => {
         )}
       >
         <Route path="/meeting" element={<InvestmentMeetingPage />} />
+        <Route path="/me" element={<MePage />} />
+        <Route path="/report/:projectId" element={<ResearchReportPage />} />
+        <Route path="/evidence/:projectId" element={<EvidenceDetailPage />} />
         <Route path="/home" element={<WorkbenchPage />} />
         <Route path="/app" element={<HomePage />} />
         <Route path="/dashboard" element={<Navigate to="/app" replace />} />
-        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat" element={<ChatEntryRoute />} />
         <Route path="/research-center" element={<Navigate to="/super-watchlist?view=decision" replace />} />
         <Route path="/industry-research" element={<IndustryResearchPage />} />
         <Route path="/concept-themes" element={<ConceptThemesPage />} />

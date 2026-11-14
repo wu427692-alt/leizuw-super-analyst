@@ -35,7 +35,7 @@ describe('RouteOutletBoundary', () => {
     </Routes></MemoryRouter>);
 
     const status = screen.getByRole('status', { name: '正在加载页面组件' });
-    expect(status).toHaveTextContent('各模块会分别读取数据');
+    expect(status).toHaveTextContent('加载中');
     expect(status).not.toHaveTextContent('%');
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     expect(screen.queryByText(/页面数据完整后/)).not.toBeInTheDocument();

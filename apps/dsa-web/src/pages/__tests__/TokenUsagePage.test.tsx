@@ -105,8 +105,12 @@ describe('TokenUsagePage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Token 用量监控' })).toBeInTheDocument();
     expect(await screen.findByText('400')).toBeInTheDocument();
-    expect(screen.getAllByText('openai/gpt-test')).toHaveLength(2);
-    expect(screen.getAllByText('个股分析')).toHaveLength(2);
+    // 概览只放指标与模型/类型聚合，调用明细在独立 Tab。
+    expect(screen.getByText('openai/gpt-test')).toBeInTheDocument();
+    expect(screen.getByText('个股分析')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /最近调用/ }));
+    expect(screen.getByText('openai/gpt-test')).toBeInTheDocument();
+    expect(screen.getByText('个股分析')).toBeInTheDocument();
     expect(screen.getByText(/600519/)).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/api/v1/usage/dashboard', {
       params: { period: 'month', limit: 50 },
@@ -120,7 +124,9 @@ describe('TokenUsagePage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Token usage' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Today' })).toBeInTheDocument();
-    expect(screen.getAllByText('Stock analysis')).toHaveLength(2);
+    expect(screen.getByText('Stock analysis')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /Recent calls/ }));
+    expect(screen.getByText('Stock analysis')).toBeInTheDocument();
     expect(screen.getByText('Latest 50 LLM token audit records.')).toBeInTheDocument();
     expect(screen.queryByText('Token 用量监控')).not.toBeInTheDocument();
   });
@@ -189,14 +195,14 @@ describe('TokenUsagePage', () => {
       todayRequest.resolve({ data: todayResponse });
     });
 
-    expect(await screen.findByText('900')).toBeInTheDocument();
+    expect((await screen.findAllByText('900')).length).toBeGreaterThan(0);
 
     await act(async () => {
       monthRequest.resolve({ data: dashboardResponse });
     });
 
     await waitFor(() => {
-      expect(screen.getByText('900')).toBeInTheDocument();
+      expect(screen.getAllByText('900').length).toBeGreaterThan(0);
     });
     expect(screen.queryByText('400')).not.toBeInTheDocument();
   });

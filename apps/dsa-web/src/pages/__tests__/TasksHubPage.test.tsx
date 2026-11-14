@@ -77,6 +77,8 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     expect(screen.getByText(/量化研究暂时未更新，保留最近成功读取/)).toBeInTheDocument();
     const otherCalls = vi.mocked(industryResearchApi.projects).mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: '重试量化研究' })); await flush();
+    // 主 Tab 拆分后任务按状态分页展示，恢复完成的任务落在「已完成」。
+    fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     expect(screen.getByLabelText('进度 100%')).toBeInTheDocument();
     expect(screen.queryByText(/上次读取状态/)).not.toBeInTheDocument();
     expect(industryResearchApi.projects).toHaveBeenCalledTimes(otherCalls);
@@ -141,6 +143,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     expect(screen.getByText(/量化研究接口版本不兼容，已停止自动重试/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: '重试量化研究' })); await flush();
     expect(within(screen.getByRole('main')).queryByRole('status')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     expect(screen.getByLabelText('进度 100%')).toBeVisible();
     expect(essayQuantApi.tasks).toHaveBeenCalledTimes(3);
   });
@@ -223,6 +226,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
   ])('$status 点击到精确结果或任务定位而非不存在的栏目', async ({ status, resultRunId, href }) => {
     vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: [{ ...running, status, resultRunId }], total: 1 });
     render(fixture()); await flush();
+    if (status === 'completed') fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     fireEvent.click(screen.getByRole('button', { name: /账号 A 的量化任务/ }));
     expect(screen.getByLabelText('当前路由')).toHaveTextContent(href);
   });
@@ -262,10 +266,12 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     const tasks = Array.from({ length: 45 }, (_, index) => ({ ...running, taskId: `quant-${index}`, name: `已完成量化 ${index}`, status: 'completed' as const, progress: 100, resultRunId: index + 10 }));
     vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: tasks, total: 83 });
     render(fixture()); await flush();
-    expect(screen.getByRole('button', { name: /已读取任务\s*45/ })).toBeInTheDocument();
+    expect(screen.getByLabelText('已读取任务')).toHaveTextContent('45');
     expect(screen.queryByText('全部任务')).not.toBeInTheDocument();
     expect(screen.getByText(/尚有历史任务未列入/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /读取范围/ }));
     expect(screen.getByText('已读取 45 / 83 条')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     const list = screen.getByRole('region', { name: '任务记录' });
     expect(within(list).getAllByRole('button')).toHaveLength(20);
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
@@ -277,11 +283,12 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
   });
 
   it('状态和类型筛选会回到第一页，不把未读取的记录说成没有历史', async () => {
-    const tasks = Array.from({ length: 21 }, (_, index) => ({ ...running, taskId: `task-${index}`, name: `任务 ${index}`, status: index ? 'completed' as const : 'failed' as const }));
+    const tasks = Array.from({ length: 41 }, (_, index) => ({ ...running, taskId: `task-${index}`, name: `任务 ${index}`, status: index ? 'completed' as const : 'failed' as const }));
     vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: tasks, total: 90 });
     render(fixture()); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
-    fireEvent.click(screen.getByRole('button', { name: /需要处理\s*1/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /需要处理/ }));
     expect(screen.getByText('任务 0')).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: '任务列表分页' })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole('combobox', { name: '任务类型' }), { target: { value: 'research' } });
@@ -294,12 +301,12 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(industryResearchApi.projects).mockImplementation(async options => ({ items: options?.offset ? [projects[29], projects[30]] : projects.slice(0, 30), total: 31 }));
     render(fixture()); await flush();
-    const coverage = screen.getByText('读取范围与历史任务').closest('details')!;
-    fireEvent.click(within(coverage).getByText('读取范围与历史任务'));
+    fireEvent.click(screen.getByRole('tab', { name: /读取范围/ }));
     fireEvent.click(screen.getByRole('button', { name: '再读取 30 条历史调研' })); await flush();
     expect(industryResearchApi.projects).toHaveBeenLastCalledWith({ limit: 30, offset: 30, force: true });
     expect(screen.getByText('已读取 31 / 31 条')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '再读取 30 条历史调研' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     fireEvent.click(screen.getByRole('button', { name: '下一页' }));
     fireEvent.click(screen.getByRole('button', { name: /公司调研 30/ }));
     expect(screen.getByLabelText('当前路由')).toHaveTextContent('/industry-research?project=research-30');
@@ -340,8 +347,9 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     vi.mocked(essayQuantApi.tasks).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(essayExportsApi.tasks).mockResolvedValue({ items: [{ ...exporting, status }], total: 1 });
     render(fixture()); await flush();
+    if (!active) fireEvent.click(screen.getByRole('tab', { name: status === 'failed' ? /需要处理/ : /已完成/ }));
     expect(within(screen.getByRole('button', { name: /宁德时代全部提及小作文/ })).getByText(label)).toBeVisible();
-    expect(screen.getByRole('button', { name: new RegExp(`^正在处理\\s*${active ? 1 : 0}$`) })).toBeVisible();
+    expect(screen.getByLabelText('正在处理')).toHaveTextContent(String(active ? 1 : 0));
     await advance(10_000);
     expect(essayExportsApi.tasks).toHaveBeenCalledTimes(active ? 2 : 1);
   });
@@ -357,6 +365,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
     expect(screen.getByText(running.name)).toBeVisible();
     expandFailures();
     fireEvent.click(screen.getByRole('button', { name: '重试小作文导出' })); await flush();
+    fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     expect(within(screen.getByRole('button', { name: /宁德时代全部提及小作文/ })).getByText(/已打包 12,400 篇/)).toBeVisible();
     expect(screen.queryByText(/上次读取状态/)).not.toBeInTheDocument();
   });
@@ -364,7 +373,7 @@ describe('TasksHubPage 每渠道快照与个人任务隔离', () => {
   it('导出无结果单独显示，不冒充成功导出；已结束筛选仍可打开查看原因', async () => {
     vi.mocked(essayExportsApi.tasks).mockResolvedValue({ items: [{ ...exporting, status: 'no_results', progress: null, matchedTotal: 0, targetTotal: 0, retrievedCount: 0, packagedCount: 0, message: '当前条件未匹配原文' }], total: 1 });
     render(fixture()); await flush();
-    fireEvent.click(screen.getByRole('button', { name: /^已结束\s*1$/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /已完成/ }));
     const row = screen.getByRole('button', { name: /宁德时代全部提及小作文/ });
     expect(within(row).getByText('无匹配结果')).toBeVisible();
     expect(within(row).getByText(/匹配 0 篇.*已收集 0 \/ 0 篇/)).toBeVisible();

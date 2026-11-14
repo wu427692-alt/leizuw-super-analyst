@@ -76,6 +76,8 @@ export const Shell: React.FC<ShellProps> = ({ children, documentNavigation = fal
         <main className="mobile-shell-main min-h-0 min-w-0 flex-1 touch-pan-y">
           <div className="shell-content mx-auto w-full min-w-0 max-w-[1680px] lg:px-6 lg:py-6">
             {children ?? <Outlet />}
+            {/* 全站唯一一处免责声明；各页面不再重复。 */}
+            <p className="shell-disclaimer">数据仅供参考，不构成投资建议</p>
           </div>
         </main>
       </div>

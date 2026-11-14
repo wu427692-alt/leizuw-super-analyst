@@ -17,21 +17,21 @@
 .rc-uses span,
 .rc-reflection > article > span {
   color: var(--rc-signal);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .rc-uses h3,
 .rc-reflection h3 {
   margin: 16px 0 8px;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .rc-uses p,
 .rc-reflection p {
   margin: 0;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.65;
 }
 
@@ -64,7 +64,7 @@
   padding-top: 8px;
   border-top: 1px solid var(--line-1);
   color: var(--rc-signal);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 400;
   line-height: 1.6;
 }

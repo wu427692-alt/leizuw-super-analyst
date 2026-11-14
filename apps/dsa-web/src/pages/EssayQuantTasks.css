@@ -22,10 +22,10 @@
 .quant-task-card header,
 .quant-task-card footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .quant-task-card header > div { min-width: 0; }
-.quant-task-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.quant-task-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
 .quant-task-card small,
 .quant-task-card time { color: var(--quant-muted); font: 12px ui-monospace, monospace; }
-.quant-task-card p { min-height: 27px; margin: 0; color: var(--quant-muted); font-size: 12px; line-height: 1.5; }
+.quant-task-card p { min-height: 27px; margin: 0; color: var(--quant-muted); font-size: var(--fs-sm); line-height: 1.5; }
 .quant-task-card header > span { flex: 0 0 auto; padding: 3px 4px; border: 1px solid var(--quant-border); color: var(--quant-muted); font: 12px ui-monospace, monospace; }
 .quant-task-card.is-running header > span,
 .quant-task-card.is-queued header > span { border-color: var(--line-2); color: var(--quant-cyan); }
@@ -56,7 +56,7 @@
   border: 1px solid var(--quant-border);
   color: var(--quant-cyan);
   background: transparent;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 

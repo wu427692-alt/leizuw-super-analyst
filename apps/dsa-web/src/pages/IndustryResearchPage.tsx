@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { industryResearchApi } from '../api/industryResearch';
-import { AppPage } from '../components/common';
+import { AppPage, MetricRow, PageTabs, ShareBar } from '../components/common';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
 import type {
   IndustryEvidence, IndustryResearchBlueprint, IndustryResearchProject, IndustryResearchProjectFilter, IndustryResearchReport, IndustryResearchSnapshot,
@@ -75,6 +76,20 @@ const revealWorkbench = () => {
   });
 };
 
+/**
+ * 发起研究后先让用户看到进度/首轮结论卡。手机上工作台栏目在整页最底部，直接跳到
+ * 那里会越过进度卡；React 提交有时晚于第一帧，所以这里多等几帧，不退回栏目栏。
+ */
+const revealResearchAnswer = () => {
+  let attempts = 0;
+  const tryScroll = () => {
+    const answer = document.getElementById('industry-research-answer');
+    if (answer) { answer.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    if (attempts < 12) { attempts += 1; window.setTimeout(tryScroll, 60); }
+  };
+  window.requestAnimationFrame(tryScroll);
+};
+
 function ProgressRing({ value }: { value: number }) {
   const safe = Math.max(0, Math.min(100, value));
   const circumference = 2 * Math.PI * 31;
@@ -121,6 +136,18 @@ function ResearchDataLedger({ snapshot }: { snapshot: IndustryResearchSnapshot }
   const reportChars = reportDocuments.reduce((sum, item) => sum + Number(item.textChars ?? 0), 0);
   return <section className="ir-data-ledger" aria-label="研究数据流量账本">
     <div className="ir-section-heading"><div><span>数据流量账本</span><h2>从数据库命中到实际入模</h2></div><small>三个数字口径分开，避免把命中量误当作模型实际阅读量。</small></div>
+    <div className="ir-ledger-funnel">
+      <ShareBar
+        segments={[
+          { key: 'matched', value: matched, color: 'var(--chart-1)', label: '数据库命中' },
+          { key: 'stored', value: stored, color: 'var(--chart-2)', label: '快照保存' },
+          { key: 'model', value: modelReady ?? 0, color: 'var(--chart-3)', label: '实际入模' },
+        ].filter(segment => segment.value > 0)}
+        height={6}
+        ariaLabel="证据从命中到入模的构成"
+      />
+      <span>命中 {matched.toLocaleString('zh-CN')} → 保存 {stored.toLocaleString('zh-CN')} → 入模 {modelReady?.toLocaleString('zh-CN') ?? '—'}</span>
+    </div>
     <div className="ir-data-ledger-grid">
       <article><Database /><span>数据库 / 接口命中</span><strong>{matched.toLocaleString('zh-CN')}</strong><small>筛选前相关记录</small></article>
       <article><FileCheck2 /><span>固定快照保存</span><strong>{stored.toLocaleString('zh-CN')}</strong><small>去重后可复核证据</small></article>
@@ -272,7 +299,7 @@ function ResearchMap({ blueprint }: { blueprint: IndustryResearchBlueprint }) {
       <div className="ir-terms"><span>本次召回词</span>{snapshot.queryTerms.map(term => <em key={term}>{term}</em>)}</div>
     </section>
     <section className="ir-timeline-panel">
-      <div className="ir-section-heading"><div><span>证据时序</span><h2>资料时间分布</h2></div><small>只表示资料数量，不代表价格趋势</small></div>
+      <div className="ir-section-heading"><div><span>证据时序</span><h2>资料时间分布</h2></div></div>
       <div className="ir-chart">
         {snapshot.timeline.length ? <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={250} initialDimension={{ width: 520, height: 250 }}>
           <AreaChart data={snapshot.timeline} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
@@ -323,6 +350,7 @@ function EvidenceLibrary({ blueprint }: { blueprint: IndustryResearchBlueprint }
         </a>;
       })}
     </div>
+    {!items.length ? <div className="ir-empty">当前筛选条件下没有可核对的证据</div> : null}
   </section>;
 }
 
@@ -354,13 +382,13 @@ const reportReadingMarkdown = (value: string | undefined, citations: Map<string,
 
 function ResearchAnswerBrief({ project, onOpen }: { project: IndustryResearchProject; onOpen: () => void }) {
   const report = project.report;
-  if (!report && project.status === 'failed') return <section className="ir-terminal-state is-failed" role="status">
+  if (!report && project.status === 'failed') return <section className="ir-terminal-state is-failed" id="industry-research-answer" role="status">
     <CircleAlert /><div><span>研究任务失败</span><h2>{project.message}</h2><p>{project.error || '任务现场已保留，可调整课题后重新创建；已有数据不会被清空。'}</p></div>
   </section>;
-  if (!report && project.status === 'limited') return <section className="ir-terminal-state is-limited" role="status">
+  if (!report && project.status === 'limited') return <section className="ir-terminal-state is-limited" id="industry-research-answer" role="status">
     <FileCheck2 /><div><span>有限完成</span><h2>{project.message}</h2><p>当前证据不足以发布完整研究报告，但已经取得的证据快照和质量缺口仍可查看。</p></div><button type="button" onClick={onOpen}>查看证据与缺口<ChevronRight /></button>
   </section>;
-  if (!report) return <section className="ir-answer-loading" aria-live="polite">
+  if (!report) return <section className="ir-answer-loading" id="industry-research-answer" aria-live="polite">
     <ProgressRing value={project.progress} />
     <div><span>Kimi 正在研究</span><h2>{project.message}</h2><p>证据召回完成后会先显示可用结论，不必等待八章长报告全部写完。</p></div>
   </section>;
@@ -370,7 +398,7 @@ function ResearchAnswerBrief({ project, onOpen }: { project: IndustryResearchPro
   const indicators = (report.monitoringIndicators ?? []).slice(0, 4);
   const isDraft = runningStatuses.has(project.status);
   const isLimited = project.status === 'limited';
-  return <section className={`ir-answer-brief ${isDraft ? 'is-draft' : ''} ${isLimited ? 'is-limited' : ''}`} aria-label={`${project.topic}研究结论`}>
+  return <section className={`ir-answer-brief ${isDraft ? 'is-draft' : ''} ${isLimited ? 'is-limited' : ''}`} id="industry-research-answer" aria-label={`${project.topic}研究结论`}>
     <header>
       <div><span>{isDraft ? 'Kimi 首轮结论' : isLimited ? '受限研究结论' : '研究结论'}</span><h2>{project.topic} · 研究结论先行</h2></div>
       <div className="ir-answer-status"><i />{isDraft ? `首轮结论可读 · 长报告 ${project.progress}%` : isLimited ? '有限完成 · 缺口已标注' : '完整报告已完成'}</div>
@@ -450,12 +478,12 @@ function ReportView({ project }: { project?: IndustryResearchProject }) {
         <span>{number}</span><div><strong>{item?.source || item?.kind || '资料来源'}</strong><p>{[item?.date, item?.title || item?.summary || evidenceId].filter(Boolean).join(' · ')}</p>{item?.url ? <a href={item.url} target="_blank" rel="noreferrer">查看原文</a> : null}</div>
       </li>)}</ol>
     </section> : null}
-    <footer className="ir-report-disclaimer">本报告仅供研究参考，不构成投资建议。</footer>
   </div>;
 }
 
 export default function IndustryResearchPage() {
   const [searchParams] = useSearchParams();
+  const isMobile = useIsMobile();
   const requestedProjectId = searchParams.get('project')?.trim() ?? '';
   const [topic, setTopic] = useState('光模块');
   const [researchType, setResearchType] = useState<ResearchType>('industry');
@@ -475,6 +503,8 @@ export default function IndustryResearchPage() {
   const [openingProjectId, setOpeningProjectId] = useState('');
   const [failedProjectId, setFailedProjectId] = useState('');
   const [tab, setTab] = useState<WorkspaceTab>('map');
+  // 桌面端工作区主 Tab：概览 / 证据与质量 / 研究流程。手机端保持整页顺序阅读（§10）。
+  const [deskTab, setDeskTab] = useState<'summary' | 'evidence' | 'process'>('summary');
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
@@ -617,7 +647,7 @@ export default function IndustryResearchPage() {
           : `尽快搞明白${requestedTopic}的产业脉络、发展趋势、龙头企业、最大痛点和应用场景，并形成不少于2万字的可追溯标准行业研究报告`,
         queryTerms: matchingBlueprint?.queryTerms ?? [],
       });
-      setActiveProject(project); setProjectSearch(''); setTab('report'); setError(''); revealWorkbench();
+      setActiveProject(project); setProjectSearch(''); setTab('report'); setError(''); revealResearchAnswer();
       void loadProjects({ page: 1, query: '', status: 'running' }, true);
       setLoading(false);
 
@@ -676,13 +706,15 @@ export default function IndustryResearchPage() {
   }, [openProject, requestedProjectId]);
 
   useEffect(() => {
-    if (requestedProjectId || openingProjectId || failedProjectId || !blueprint || loading || activeProject || topic.trim() !== blueprint.topic.trim()) return;
+    // A visible error is a user-facing state: do not silently replace it by
+    // auto-opening an older report that happens to match the same topic.
+    if (requestedProjectId || openingProjectId || failedProjectId || error || starting || !blueprint || loading || activeProject || topic.trim() !== blueprint.topic.trim()) return;
     const matching = projects.find(project => readableStatuses.has(project.status)
       && project.topic.trim() === blueprint.topic.trim()
       && project.researchType === blueprint.researchType
       && project.lookbackDays === blueprint.lookbackDays);
     if (matching) void openProject(matching.projectId, false);
-  }, [activeProject, blueprint, failedProjectId, loading, openProject, openingProjectId, projects, requestedProjectId, researchType, topic]);
+  }, [activeProject, blueprint, error, failedProjectId, loading, openProject, openingProjectId, projects, requestedProjectId, researchType, starting, topic]);
 
   const projectPages = Math.max(1, Math.ceil(projectTotal / projectPageSize));
 
@@ -702,6 +734,106 @@ export default function IndustryResearchPage() {
     { key: 'evidence', label: '证据库', icon: LibraryBig }, { key: 'questions', label: '访谈问题', icon: MessageSquareText },
     { key: 'report', label: '研究报告', icon: BookOpenCheck },
   ];
+
+  // 桌面端把「流程 / 证据与质量 / 覆盖」从一条长页面拆成互斥视图（§10）：
+  // 手机端仍是单列顺序阅读，保持上一轮的吸顶栏目、错误条位置与 44px 点击区。
+  const coverageList = activeSnapshot?.coverage ?? [];
+  const coveredChannels = coverageList.filter(item => item.count > 0).length;
+  const coverageShareSegments = [
+    { key: 'covered', value: coverageList.filter(item => item.status === 'covered').length, color: 'var(--chart-1)', label: '已覆盖' },
+    { key: 'missing', value: coverageList.filter(item => item.status !== 'covered').length, color: 'var(--bg-3)', label: '缺口' },
+  ].filter(segment => segment.value > 0);
+
+  const missionStrip = blueprint ? <section className="ir-mission-strip">
+    {blueprint.methodology.stages.map((stage, index) => {
+      const active = contextualProject?.stage === stage.stage;
+      const done = readableStatuses.has(contextualProject?.status ?? '') || (contextualProject && blueprint.methodology.stages.findIndex(item => item.stage === contextualProject.stage) > index);
+      return <article className={active ? 'is-active' : done ? 'is-done' : ''} key={stage.stage}>
+        <span>{done ? <CheckCircle2 /> : `0${index + 1}`}</span><div><small>{stage.hours}</small><h2>{stage.title}</h2><p>{stage.goal}</p></div>
+      </article>;
+    })}
+  </section> : null;
+
+  const taskState = <div className="ir-task-state">
+    {contextualProject ? <><ProgressRing value={contextualProject.progress} /><div><span>{statusLabel[contextualProject.status]}</span><strong>{contextualProject.topic}</strong><p>{contextualProject.message}</p></div></> : <><Gauge /><div><span>证据蓝图就绪</span><strong>{blueprint?.topic}</strong><p>启动课题后后台生成结论报告</p></div></>}
+  </div>;
+
+  const overviewSection = isMobile ? <section className="ir-overview">
+    <div className="ir-stat"><Database /><span>相关证据</span><strong>{compact(activeSnapshot?.totals.evidence ?? 0)}</strong><small>按关键词从本地库召回</small></div>
+    <div className="ir-stat"><Building2 /><span>企业候选</span><strong>{activeSnapshot?.companies.length ?? 0}</strong><small>必须在证据中明确出现</small></div>
+    <div className="ir-stat"><RadioTower /><span>数据渠道</span><strong>{coveredChannels}/{coverageList.length || 8}</strong><small>空缺会明确显示</small></div>
+    <div className="ir-stat"><ShieldCheck /><span>原文证据</span><strong>{activeSnapshot?.evidence.filter(item => item.originalAvailable).length ?? 0}</strong><small>保留来源、日期与入口</small></div>
+    {taskState}
+  </section> : <section className="ir-overview-board" aria-label="证据概览">
+    <MetricRow
+      className="min-w-0 flex-1"
+      columns={4}
+      items={[
+        { label: '相关证据', value: compact(activeSnapshot?.totals.evidence ?? 0), hint: '本地库召回' },
+        { label: '企业候选', value: activeSnapshot?.companies.length ?? 0, hint: '证据中出现' },
+        { label: '数据渠道', value: `${coveredChannels}/${coverageList.length || 8}`, hint: '空缺明确显示' },
+        { label: '原文证据', value: activeSnapshot?.evidence.filter(item => item.originalAvailable).length ?? 0, hint: '可回原文' },
+      ]}
+    />
+    {taskState}
+  </section>;
+
+  const coverageSection = blueprint ? <section className="ir-coverage">
+    <div className="ir-section-heading"><div><span>数据覆盖</span><h2>本次课题实际取得的材料</h2></div><small>{blueprint.methodology.evidenceRule}</small></div>
+    <div className="mb-2 flex items-center gap-3">
+      <ShareBar className="max-w-64 flex-1" segments={coverageShareSegments} height={4} ariaLabel="数据覆盖构成" />
+      <span className="shrink-0 text-[11px] tabular-nums text-[var(--text-3)]">已覆盖 {coveredChannels}/{coverageList.length}</span>
+    </div>
+    <div>{activeSnapshot?.coverage.map(item => <article className={item.status !== 'covered' ? 'is-missing' : ''} key={item.key}>
+      <span>{item.status === 'covered' ? <CheckCircle2 /> : <CircleAlert />}</span><div><strong>{item.name}</strong><small>{item.evidenceLevel} · {item.mediaFiles ? `${item.mediaFiles} 个文件` : '可追溯来源'}</small></div><em>{compact(item.count)}</em>
+    </article>)}</div>
+  </section> : null;
+
+  const taskCenterSection = (
+    <section className="ir-task-center" aria-label="行业与公司调研任务中心" aria-busy={projectsLoading}>
+      <div className="ir-task-center-head">
+        <div><span>任务账本</span><h2>研究任务与历史报告</h2><p>任务在服务器后台独立执行，离开页面后仍会继续；每位用户只看到自己的课题。</p></div>
+        <button type="button" onClick={() => void loadProjects(undefined, true)} disabled={projectsLoading}><Clock3 />刷新任务</button>
+      </div>
+      <form className="mt-4 flex flex-wrap items-center gap-2" aria-label="搜索历史报告" onSubmit={event => {
+        event.preventDefault();
+        void loadProjects({ page: 1, query: projectSearch.trim(), status: projectFilter }, true);
+      }}>
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm">
+          <Search className="h-4 w-4 shrink-0" />
+          <input aria-label="按报告标题搜索" className="min-w-0 flex-1 bg-transparent text-foreground outline-none" maxLength={200} value={projectSearch} onChange={event => setProjectSearch(event.target.value)} placeholder="搜索报告标题，例如：华懋科技、光模块" />
+        </label>
+        <button className="rounded-lg border border-border px-4 py-2 text-sm text-foreground" type="submit">搜索报告</button>
+        {projectQuery ? <button className="rounded-lg border border-border px-3 py-2 text-sm text-foreground" type="button" onClick={() => {
+          setProjectSearch(''); void loadProjects({ page: 1, query: '', status: projectFilter }, true);
+        }}>清除搜索</button> : null}
+      </form>
+      <div className="ir-task-filters" role="group" aria-label="任务状态筛选">
+        {([
+          ['all', '全部'], ['running', '运行中'], ['completed', '完整完成'], ['limited', '有限完成'], ['failed', '失败'],
+        ] as Array<[ProjectFilter, string]>).map(([key, label]) => <button type="button" aria-pressed={projectFilter === key} className={projectFilter === key ? 'is-active' : ''} onClick={() => void loadProjects({ page: 1, query: projectQuery, status: key }, true)} key={key}>
+          {label}<strong>{projectCounts[key]}</strong>
+        </button>)}
+      </div>
+      {projectsError ? <div role="status" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><CircleAlert className="h-4 w-4" />{projectsError}<button type="button" className="underline" onClick={() => void loadProjects(projectsAttemptRef.current, true)}>重试任务列表</button></div> : null}
+      {projectsLoading ? <div role="status" className="mb-3 flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="h-4 w-4 is-spinning" />{projectsLoaded ? '正在更新任务列表，当前结果仍可查看…' : '正在读取你的研究任务…'}</div> : null}
+      {projects.length ? <div className="ir-task-list">
+        {projects.map(project => <button type="button" className={`ir-task-row is-${project.status} ${project.projectId === activeProject?.projectId ? 'is-selected' : ''}`} key={project.projectId} aria-busy={openingProjectId === project.projectId} onClick={() => void openProject(project.projectId)}>
+          <span className="ir-task-icon">{project.status === 'completed' ? <CheckCircle2 /> : project.status === 'limited' ? <FileCheck2 /> : project.status === 'failed' ? <CircleAlert /> : <LoaderCircle className="is-spinning" />}</span>
+          <span className="ir-task-copy"><strong>{project.topic}</strong><small>{project.message}</small><em>{project.researchType === 'company' ? '上市公司研究' : '行业研究'} · {timestamp(project.updatedAt || project.createdAt, true)} · {project.lookbackDays} 天资料范围</em></span>
+          <span className="ir-task-meter"><i><b style={{ width: `${Math.max(0, Math.min(100, project.progress))}%` }} /></i><strong>{project.progress}%</strong></span>
+          <span className="ir-task-action">{project.status === 'completed' ? '打开报告' : project.status === 'limited' ? '打开有限报告' : project.status === 'failed' ? '查看原因' : statusLabel[project.status]}<ChevronRight /></span>
+        </button>)}
+      </div> : projectsLoaded ? <div className="ir-task-empty"><Clock3 /><strong>{projectQuery || projectFilter !== 'all' ? '当前筛选没有任务' : '还没有调研任务'}</strong><span>{projectQuery || projectFilter !== 'all' ? '尝试其他标题或切换任务状态。' : '输入行业或公司后可直接启动深度研究。'}</span></div> : null}
+      {projectsLoaded ? <nav aria-label="历史报告分页" className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+        <span>{projectQuery ? `标题“${projectQuery}” · ` : ''}共 {projectTotal} 个任务 · 第 {projectPage} / {projectPages} 页</span>
+        <div className="flex gap-2">
+          <button type="button" className="rounded-lg border border-border px-3 py-2 text-foreground disabled:opacity-40" disabled={projectPage <= 1 || projectsLoading} onClick={() => void loadProjects({ page: projectPage - 1, query: projectQuery, status: projectFilter }, true)}>上一页</button>
+          <button type="button" className="rounded-lg border border-border px-3 py-2 text-foreground disabled:opacity-40" disabled={projectPage >= projectPages || projectsLoading} onClick={() => void loadProjects({ page: projectPage + 1, query: projectQuery, status: projectFilter }, true)}>下一页</button>
+        </div>
+      </nav> : null}
+    </section>
+  );
 
   return <AppPage className="max-w-[1840px]">
     <main className="ir-shell">
@@ -727,90 +859,60 @@ export default function IndustryResearchPage() {
         <button type="button" className="ir-primary" onClick={() => void startProject()} disabled={topic.trim().length < 2 || starting}>{starting ? <LoaderCircle className="is-spinning" /> : <Play />}开始{researchType === 'company' ? '公司' : '行业'}研究</button>
       </section>
 
+      {error ? <div className="ir-inline-error" role="status"><CircleAlert />{error}{failedProjectId ? <button type="button" className="underline" onClick={() => void openProject(failedProjectId)}>重试打开报告</button> : null}</div> : null}
+
       {activeProject ? <ResearchAnswerBrief project={activeProject} onOpen={() => { setTab('report'); revealWorkbench(); }} /> : null}
 
-      <section className="ir-task-center" aria-label="行业与公司调研任务中心" aria-busy={projectsLoading}>
-        <div className="ir-task-center-head">
-          <div><span>任务账本</span><h2>研究任务与历史报告</h2><p>任务在服务器后台独立执行，离开页面后仍会继续；每位用户只看到自己的课题。</p></div>
-          <button type="button" onClick={() => void loadProjects(undefined, true)} disabled={projectsLoading}><Clock3 />刷新任务</button>
-        </div>
-        <form className="mt-4 flex flex-wrap items-center gap-2" aria-label="搜索历史报告" onSubmit={event => {
-          event.preventDefault();
-          void loadProjects({ page: 1, query: projectSearch.trim(), status: projectFilter }, true);
-        }}>
-          <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm">
-            <Search className="h-4 w-4 shrink-0" />
-            <input aria-label="按报告标题搜索" className="min-w-0 flex-1 bg-transparent text-foreground outline-none" maxLength={200} value={projectSearch} onChange={event => setProjectSearch(event.target.value)} placeholder="搜索报告标题，例如：华懋科技、光模块" />
-          </label>
-          <button className="rounded-lg border border-border px-4 py-2 text-sm text-foreground" type="submit">搜索报告</button>
-          {projectQuery ? <button className="rounded-lg border border-border px-3 py-2 text-sm text-foreground" type="button" onClick={() => {
-            setProjectSearch(''); void loadProjects({ page: 1, query: '', status: projectFilter }, true);
-          }}>清除搜索</button> : null}
-        </form>
-        <div className="ir-task-filters" role="group" aria-label="任务状态筛选">
-          {([
-            ['all', '全部'], ['running', '运行中'], ['completed', '完整完成'], ['limited', '有限完成'], ['failed', '失败'],
-          ] as Array<[ProjectFilter, string]>).map(([key, label]) => <button type="button" aria-pressed={projectFilter === key} className={projectFilter === key ? 'is-active' : ''} onClick={() => void loadProjects({ page: 1, query: projectQuery, status: key }, true)} key={key}>
-            {label}<strong>{projectCounts[key]}</strong>
-          </button>)}
-        </div>
-        {projectsError ? <div role="status" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><CircleAlert className="h-4 w-4" />{projectsError}<button type="button" className="underline" onClick={() => void loadProjects(projectsAttemptRef.current, true)}>重试任务列表</button></div> : null}
-        {projectsLoading ? <div role="status" className="mb-3 flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="h-4 w-4 is-spinning" />{projectsLoaded ? '正在更新任务列表，当前结果仍可查看…' : '正在读取你的研究任务…'}</div> : null}
-        {projects.length ? <div className="ir-task-list">
-          {projects.map(project => <button type="button" className={`ir-task-row is-${project.status} ${project.projectId === activeProject?.projectId ? 'is-selected' : ''}`} key={project.projectId} aria-busy={openingProjectId === project.projectId} onClick={() => void openProject(project.projectId)}>
-            <span className="ir-task-icon">{project.status === 'completed' ? <CheckCircle2 /> : project.status === 'limited' ? <FileCheck2 /> : project.status === 'failed' ? <CircleAlert /> : <LoaderCircle className="is-spinning" />}</span>
-            <span className="ir-task-copy"><strong>{project.topic}</strong><small>{project.message}</small><em>{project.researchType === 'company' ? '上市公司研究' : '行业研究'} · {timestamp(project.updatedAt || project.createdAt, true)} · {project.lookbackDays} 天资料范围</em></span>
-            <span className="ir-task-meter"><i><b style={{ width: `${Math.max(0, Math.min(100, project.progress))}%` }} /></i><strong>{project.progress}%</strong></span>
-            <span className="ir-task-action">{project.status === 'completed' ? '打开报告' : project.status === 'limited' ? '打开有限报告' : project.status === 'failed' ? '查看原因' : statusLabel[project.status]}<ChevronRight /></span>
-          </button>)}
-        </div> : projectsLoaded ? <div className="ir-task-empty"><Clock3 /><strong>{projectQuery || projectFilter !== 'all' ? '当前筛选没有任务' : '还没有调研任务'}</strong><span>{projectQuery || projectFilter !== 'all' ? '尝试其他标题或切换任务状态。' : '输入行业或公司后可直接启动深度研究。'}</span></div> : null}
-        {projectsLoaded ? <nav aria-label="历史报告分页" className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-          <span>{projectQuery ? `标题“${projectQuery}” · ` : ''}共 {projectTotal} 个任务 · 第 {projectPage} / {projectPages} 页</span>
-          <div className="flex gap-2">
-            <button type="button" className="rounded-lg border border-border px-3 py-2 text-foreground disabled:opacity-40" disabled={projectPage <= 1 || projectsLoading} onClick={() => void loadProjects({ page: projectPage - 1, query: projectQuery, status: projectFilter }, true)}>上一页</button>
-            <button type="button" className="rounded-lg border border-border px-3 py-2 text-foreground disabled:opacity-40" disabled={projectPage >= projectPages || projectsLoading} onClick={() => void loadProjects({ page: projectPage + 1, query: projectQuery, status: projectFilter }, true)}>下一页</button>
-          </div>
-        </nav> : null}
-      </section>
+      {isMobile ? taskCenterSection : null}
 
       {openingProjectId ? <div role="status" className="my-3 flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 is-spinning" />正在读取报告全文，已有内容保留可读…</div> : null}
-      {error ? <div className="ir-inline-error" role="status"><CircleAlert />{error}{failedProjectId ? <button type="button" className="underline" onClick={() => void openProject(failedProjectId)}>重试打开报告</button> : null}</div> : null}
       {loading && !blueprint ? <div className="ir-loading"><LoaderCircle /><strong>正在跨研报、机构段子、录音、公告、行情财务与互联网建立证据蓝图…</strong><span>数据未准备好时只显示等待，不弹窗打断。</span></div> : null}
 
+      {!isMobile ? <>
+        <div id="industry-research-workspace">
+          <PageTabs
+            className="ir-workspace-tabs"
+            ariaLabel="研究工作区视图切换"
+            items={[
+              { key: 'summary', label: '概览' },
+              { key: 'evidence', label: '证据与质量' },
+              { key: 'process', label: '研究流程' },
+            ]}
+            value={deskTab}
+            onChange={(key) => {
+              setDeskTab(key as 'summary' | 'evidence' | 'process');
+              window.requestAnimationFrame(() => {
+                document.getElementById('industry-research-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              });
+            }}
+          />
+        </div>
+        {deskTab === 'summary' ? <>
+          {blueprint && blueprintMatchesQuery ? <>{missionStrip}{overviewSection}{coverageSection}</> : null}
+          {taskCenterSection}
+        </> : null}
+        {deskTab === 'evidence' ? (blueprint && blueprintMatchesQuery ? <>
+          <ResearchDataLedger snapshot={activeSnapshot ?? blueprint.snapshot} />
+          <ResearchQualityPanel snapshot={activeSnapshot ?? blueprint.snapshot} report={activeReport} />
+        </> : null) : null}
+        {deskTab === 'process' ? (blueprint && blueprintMatchesQuery ? <>
+          <AIResearchWorkflow blueprint={blueprint} project={contextualProject} />
+          <ResearchMethodMatrix blueprint={blueprint} />
+        </> : null) : null}
+      </> : null}
+
       {blueprint && blueprintMatchesQuery ? <>
-        <section className="ir-mission-strip">
-          {blueprint.methodology.stages.map((stage, index) => {
-            const active = contextualProject?.stage === stage.stage;
-            const done = readableStatuses.has(contextualProject?.status ?? '') || (contextualProject && blueprint.methodology.stages.findIndex(item => item.stage === contextualProject.stage) > index);
-            return <article className={active ? 'is-active' : done ? 'is-done' : ''} key={stage.stage}>
-              <span>{done ? <CheckCircle2 /> : `0${index + 1}`}</span><div><small>{stage.hours}</small><h2>{stage.title}</h2><p>{stage.goal}</p></div>
-            </article>;
-          })}
-        </section>
+        {isMobile ? <>
+          {missionStrip}
+          {overviewSection}
+          <ResearchDataLedger snapshot={activeSnapshot ?? blueprint.snapshot} />
+          <AIResearchWorkflow blueprint={blueprint} project={contextualProject} />
+          <ResearchMethodMatrix blueprint={blueprint} />
+          <ResearchQualityPanel snapshot={activeSnapshot ?? blueprint.snapshot} report={activeReport} />
+          {coverageSection}
+        </> : null}
 
-        <section className="ir-overview">
-          <div className="ir-stat"><Database /><span>相关证据</span><strong>{compact(activeSnapshot?.totals.evidence ?? 0)}</strong><small>按关键词从本地库召回</small></div>
-          <div className="ir-stat"><Building2 /><span>企业候选</span><strong>{activeSnapshot?.companies.length ?? 0}</strong><small>必须在证据中明确出现</small></div>
-          <div className="ir-stat"><RadioTower /><span>数据渠道</span><strong>{activeSnapshot?.coverage.filter(item => item.count > 0).length ?? 0}/{activeSnapshot?.coverage.length ?? 8}</strong><small>空缺会明确显示</small></div>
-          <div className="ir-stat"><ShieldCheck /><span>原文证据</span><strong>{activeSnapshot?.evidence.filter(item => item.originalAvailable).length ?? 0}</strong><small>保留来源、日期与入口</small></div>
-          <div className="ir-task-state">
-            {contextualProject ? <><ProgressRing value={contextualProject.progress} /><div><span>{statusLabel[contextualProject.status]}</span><strong>{contextualProject.topic}</strong><p>{contextualProject.message}</p></div></> : <><Gauge /><div><span>证据蓝图就绪</span><strong>{blueprint.topic}</strong><p>启动课题后后台生成结论报告</p></div></>}
-          </div>
-        </section>
-
-        <ResearchDataLedger snapshot={activeSnapshot ?? blueprint.snapshot} />
-        <AIResearchWorkflow blueprint={blueprint} project={contextualProject} />
-        <ResearchMethodMatrix blueprint={blueprint} />
-        <ResearchQualityPanel snapshot={activeSnapshot ?? blueprint.snapshot} report={activeReport} />
-
-        <section className="ir-coverage">
-          <div className="ir-section-heading"><div><span>数据覆盖</span><h2>本次课题实际取得的材料</h2></div><small>{blueprint.methodology.evidenceRule}</small></div>
-          <div>{activeSnapshot?.coverage.map(item => <article className={item.status !== 'covered' ? 'is-missing' : ''} key={item.key}>
-            <span>{item.status === 'covered' ? <CheckCircle2 /> : <CircleAlert />}</span><div><strong>{item.name}</strong><small>{item.evidenceLevel} · {item.mediaFiles ? `${item.mediaFiles} 个文件` : '可追溯来源'}</small></div><em>{compact(item.count)}</em>
-          </article>)}</div>
-        </section>
-
-        <nav className="ir-tabs" id="industry-research-workbench" tabIndex={-1} aria-label="行业与公司调研工作台栏目">{tabs.map(({ key, label, icon: Icon }) => <button type="button" className={tab === key ? 'is-active' : ''} onClick={() => setTab(key)} key={key}><Icon />{label}</button>)}</nav>
+        <nav className="ir-tabs" id="industry-research-workbench" tabIndex={-1} aria-label="行业与公司调研工作台栏目">{tabs.map(({ key, label, icon: Icon }) => <button type="button" className={tab === key ? 'is-active' : ''} onClick={() => { setTab(key); if (isMobile) revealWorkbench(); }} key={key}><Icon />{label}</button>)}</nav>
 
         {tab === 'map' ? <ResearchMap blueprint={blueprint} /> : null}
         {tab === 'companies' ? <CompanyMatrix blueprint={blueprint} /> : null}

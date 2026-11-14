@@ -728,13 +728,13 @@ describe('SuperWatchlistPage', () => {
       const calls = mockLoad.mock.calls.length;
       const currentUrl = screen.getByTestId('location').textContent;
       // Clicking an already selected parent or child must not reset research.
-      fireEvent.click(screen.getByRole('button', { name: '资料库' }));
+      fireEvent.click(screen.getByRole('tab', { name: '资料库' }));
       fireEvent.click(screen.getByRole('button', { name: '公告研报' }));
       checkAnnouncementPosition();
       expect(screen.getByTestId('location').textContent).toBe(currentUrl);
-      fireEvent.click(screen.getByRole('button', { name: '财务与资金' }));
+      fireEvent.click(screen.getByRole('tab', { name: '财务与资金' }));
       expect(screen.getByRole('heading', { name: '收入与利润' })).toBeVisible();
-      fireEvent.click(screen.getByRole('button', { name: '资料库' }));
+      fireEvent.click(screen.getByRole('tab', { name: '资料库' }));
       checkAnnouncementPosition();
       expect(mockLoad).toHaveBeenCalledTimes(calls);
       expect(mockAnalyzeConsensus).not.toHaveBeenCalled();
@@ -756,7 +756,7 @@ describe('SuperWatchlistPage', () => {
       expect(screen.getByRole('searchbox')).toHaveValue('新闻记录');
       expect(within(screen.getByRole('navigation', { name: '资料分页' })).getByText('第 2 / 2 页')).toBeVisible();
       expect(mockLoad).toHaveBeenCalledTimes(1);
-      fireEvent.click(screen.getByRole('button', { name: '总览' }));
+      fireEvent.click(screen.getByRole('tab', { name: '总览' }));
       fireEvent.click(await screen.findByRole('button', { name: '查看公司公告' }));
       expect(await screen.findByRole('searchbox')).toHaveValue('');
       expect(screen.getByRole('combobox', { name: '资料筛选' })).toHaveValue('announcements');
@@ -973,8 +973,8 @@ describe('SuperWatchlistPage', () => {
       respondWith(item);
       render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
       const brief = await screen.findByRole('region', { name: '当前股票研究摘要' });
-      expect(brief).toHaveTextContent('近183天已入库预览');
-      expect(brief).toHaveTextContent('不是全库清单');
+      expect(brief).toHaveTextContent('近 183 天');
+
       const channel = (name: string) => within(brief).getByRole('region', { name: `${name}预览` });
       expect(channel('公司公告')).toHaveTextContent('当前预览未载入');
       for (const [label, count] of [['公司公告', 0], ['券商研究', 1], ['机构段子', 2], ['相关新闻', 2]] as const) {
@@ -1788,12 +1788,12 @@ describe('SuperWatchlistPage', () => {
     expect(await screen.findByRole('button', { name: '小作文', pressed: true })).toBeInTheDocument();
     expect(mockLoad).toHaveBeenCalledWith('603306.SH', 183, false, 'full');
     expect(mockLoad.mock.calls.some(call => call[3] === 'overview')).toBe(false);
-    expect(screen.getByRole('button', { name: '资料库', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '资料库', selected: true })).toBeInTheDocument();
     expect(screen.queryByTestId('market-chart')).not.toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('section=essay');
     fireEvent.click(screen.getByRole('button', { name: '展开行情图' }));
     expect(screen.getByTestId('market-chart')).toHaveTextContent('603306.SH');
-    fireEvent.click(screen.getByRole('button', { name: '财务与资金' }));
+    fireEvent.click(screen.getByRole('tab', { name: '财务与资金' }));
     fireEvent.click(screen.getByRole('button', { name: '资金筹码' }));
     expect(screen.getByTestId('location')).toHaveTextContent('section=capital');
     expect(screen.queryByTestId('market-chart')).not.toBeInTheDocument();
@@ -1849,7 +1849,7 @@ describe('SuperWatchlistPage', () => {
     expect(band.querySelector('.super-stock-price')).not.toHaveClass('is-up');
     expect(band.querySelector('.super-stock-price')).toHaveTextContent('——');
     expect(screen.queryByText('+1.00%')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '总览', pressed: true })).toBeEnabled();
+    expect(screen.getByRole('tab', { name: '总览', selected: true })).toBeEnabled();
   });
 
   it('keeps an undated price neutral and distinguishes stale snapshots from verified closing records', async () => {
@@ -1927,7 +1927,7 @@ describe('SuperWatchlistPage', () => {
     mockLoad.mockImplementation(async (_symbol, _days, _force, view) => workspace(view === 'full' ? older : recent, view));
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
     await screen.findByRole('heading', { name: '华懋科技' });
-    fireEvent.click(screen.getByRole('button', { name: '财务与资金' }));
+    fireEvent.click(screen.getByRole('tab', { name: '财务与资金' }));
     expect(await screen.findByText('30 亿元')).toBeInTheDocument();
     const band = screen.getByRole('heading', { name: '华懋科技' }).closest('section')!;
     expect(within(band).getByText('76.02')).toBeInTheDocument();
@@ -1945,11 +1945,11 @@ describe('SuperWatchlistPage', () => {
       ? new Promise(resolve => { finishFull = resolve; })
       : Promise.resolve(workspace(item, 'overview')));
     render(<MemoryRouter><SuperWatchlistPage /><LocationProbe /></MemoryRouter>);
-    const nav = await screen.findByRole('navigation', { name: '个股信息栏目' });
-    expect(within(nav).getAllByRole('button').map(button => button.textContent)).toEqual(['总览', '财务与资金', '一致预期', '资料库']);
+    const nav = await screen.findByRole('tablist', { name: '个股信息栏目' });
+    expect(within(nav).getAllByRole('tab').map(button => button.textContent)).toEqual(['总览', '财务与资金', '一致预期', '资料库']);
     expect(mockLoad.mock.calls.every(call => call[3] === 'overview')).toBe(true);
     expect(screen.queryByRole('navigation', { name: '资料类型' })).not.toBeInTheDocument();
-    fireEvent.click(within(nav).getByRole('button', { name: '资料库' }));
+    fireEvent.click(within(nav).getByRole('tab', { name: '资料库' }));
     expect(await screen.findByText('正在读取资料库，行情和其他栏目仍可使用。')).toBeInTheDocument();
     expect(mockLoad).toHaveBeenCalledWith('603306.SH', 183, false, 'full');
     expect(screen.queryByText('暂无数据')).not.toBeInTheDocument();
@@ -1971,7 +1971,7 @@ describe('SuperWatchlistPage', () => {
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
     await screen.findByRole('heading', { name: '华懋科技' });
     expect(screen.getAllByText('74.31').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: '财务与资金' }));
+    fireEvent.click(screen.getByRole('tab', { name: '财务与资金' }));
     await screen.findByText('30 亿元');
     const band = screen.getByRole('heading', { name: '华懋科技' }).closest('section')!;
     expect(within(band).getByText('76.02')).toBeInTheDocument();
@@ -1987,7 +1987,7 @@ describe('SuperWatchlistPage', () => {
     mockLoad.mockImplementation((_symbol, _days, _force, view) => view === 'full'
       ? Promise.reject(new Error('detail timeout')) : Promise.resolve(workspace(item, 'overview')));
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '资料库' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '资料库' }));
     await screen.findByRole('button', { name: '重试当前股票' });
     expect(screen.getByRole('heading', { name: '华懋科技' })).toBeInTheDocument();
     expect(screen.getAllByText('76.02')).toHaveLength(2);
@@ -2025,7 +2025,7 @@ describe('SuperWatchlistPage', () => {
     item.timeline = documents.slice(0, 2);
     respondWith(item);
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '资料库' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '资料库' }));
     expect(await screen.findByText('16 条已载入资料')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /专题资料.*查看原文/ })).toHaveLength(12);
     expect(screen.getByRole('navigation', { name: '资料分页' })).toHaveTextContent('第 1 / 2 页');
@@ -2060,7 +2060,7 @@ describe('SuperWatchlistPage', () => {
     mockEvent.mockResolvedValue(comment);
 
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '资料库' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '资料库' }));
     expect(await screen.findByRole('button', { name: '研究资料', pressed: true })).toBeInTheDocument();
     expect(await screen.findByText('1 条已载入资料')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /公司订单与盈利研究.*查看原文/ })).toBeInTheDocument();
@@ -2098,7 +2098,7 @@ describe('SuperWatchlistPage', () => {
       mockEvent.mockResolvedValue(snapshots[13]);
       render(<MemoryRouter><SuperWatchlistPage /><LocationProbe /></MemoryRouter>);
 
-      fireEvent.click(await screen.findByRole('button', { name: '资料库' }));
+      fireEvent.click(await screen.findByRole('tab', { name: '资料库' }));
       const filter = await screen.findByRole('combobox', { name: '资料筛选' });
       expect(filter).toHaveValue('all');
       expect(screen.getByText('4 条已载入资料')).toBeVisible();
@@ -2317,7 +2317,7 @@ describe('SuperWatchlistPage', () => {
     respondWith(item);
 
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '资料库' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '资料库' }));
     fireEvent.click(screen.getByRole('button', { name: '小作文' }));
 
     const original = await screen.findByRole('button', { name: /华懋下半年订单跟踪.*查看原文/ });
@@ -2375,7 +2375,7 @@ describe('SuperWatchlistPage', () => {
     mockEvent.mockResolvedValue(comment);
 
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '资料库' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '资料库' }));
     fireEvent.click(screen.getByRole('button', { name: '股评监控' }));
 
     const detailButton = await screen.findByRole('button', { name: /华懋订单讨论.*15评 · 详情/ });
@@ -2457,7 +2457,7 @@ describe('SuperWatchlistPage', () => {
     });
 
     render(<MemoryRouter><SuperWatchlistPage /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '一致预期' }));
+    fireEvent.click(await screen.findByRole('tab', { name: '一致预期' }));
 
     expect(await screen.findByRole('heading', { name: '一致预期', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '检索原文' })).toHaveAttribute('href', `/essay-radar/feed?query=${encodeURIComponent(item.name)}`);
@@ -3001,7 +3001,7 @@ describe('SuperWatchlistPage', () => {
     expect(screen.queryByText(/^较新的券商研究/)).not.toBeInTheDocument();
     expect(screen.getByText('1 条已载入资料')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: '总览' }));
+    fireEvent.click(screen.getByRole('tab', { name: '总览' }));
     fireEvent.click(await screen.findByRole('button', { name: '查看券商研究' }));
     filter = await screen.findByRole('combobox', { name: '资料筛选' });
     expect(filter).toHaveValue('research');

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isAxiosError } from 'axios';
-import { Bot, CheckCircle2, CircleDashed, DatabaseZap, Download, FileArchive, PackageCheck, Play, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react';
+import { Bot, CheckCircle2, CircleDashed, Download, FileArchive, Play, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react';
 import { dataAcquisitionApi } from '../api/dataAcquisition';
 import { getRequestCacheGeneration } from '../api/requestCache';
-import { AppPage, Badge, Card, EmptyState, EvidenceRail, PageHeader, StatCard } from '../components/common';
+import { AppPage, Badge, BarMeter, Card, EmptyState, HeatCell, MetricRow, PageHeader, PageTabs, ShareBar } from '../components/common';
 import ResearchReportLibrary from '../components/data-acquisition/ResearchReportLibrary';
 import type { AcquisitionCapabilities, AcquisitionDownloadProgress, AcquisitionJob, AcquisitionPlan, AcquisitionPreflight, AcquisitionRunTask } from '../types/dataAcquisition';
 import { usePageActivationRefresh } from '../hooks/usePageActivationRefresh';
@@ -177,15 +177,20 @@ const DataAcquisitionPage = () => {
   return <DataAcquisitionContent key={`${ownerId}:${authMethod}:${accessEnabled}`} userId={ownerId} />;
 };
 
+const ACQUISITION_VIEWS = ['tasks', 'jobs', 'coverage', 'reports'] as const;
+type AcquisitionView = typeof ACQUISITION_VIEWS[number];
+
+const isAcquisitionView = (value: string | null): value is AcquisitionView =>
+  ACQUISITION_VIEWS.includes(value as AcquisitionView);
+
 function DataAcquisitionContent({ userId }: { userId: number }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTaskId = searchParams.get('task')?.trim() ?? '';
   const storageKey = `dsa:data-acquisition:v2:user:${userId}:active-task`;
   const [rememberedTaskId, setRememberedTaskId] = useState(() => readRememberedTask(storageKey));
   const activeTaskId = requestedTaskId || rememberedTaskId;
-  const view = searchParams.get('view') || (activeTaskId ? 'tasks' : 'reports');
-  const showTasks = view === 'tasks';
-  const [reportsOpened, setReportsOpened] = useState(!showTasks);
+  const requestedView = searchParams.get('view');
+  const view: AcquisitionView = isAcquisitionView(requestedView) ? requestedView : (activeTaskId ? 'tasks' : 'reports');
   const [request, setRequest] = useState(EXAMPLES[0]);
   const [plannedRequest, setPlannedRequest] = useState('');
   const [capabilities, setCapabilities] = useState<AcquisitionCapabilities | null>(null);
@@ -264,6 +269,67 @@ function DataAcquisitionContent({ userId }: { userId: number }) {
   const planChanged = Boolean(plan && request.trim() !== plannedRequest);
   const selectionsChanged = Boolean(plan && Object.entries(entitySelections).some(([query, symbol]) => symbol !== (plan.scope.entitySelections?.[query] ?? '')));
   const planBlocked = Boolean(plan?.preflight && (!plan.preflight.canExecute || plan.preflight.status !== 'ready' || plan.preflight.checks.some(check => check.status === 'blocked')));
+  const selectView = (next: AcquisitionView) => {
+    setSearchParams(current => {
+      const params = new URLSearchParams(current);
+      params.set('view', next);
+      return params;
+    });
+  };
+  const scrollToTaskDetail = (defer: boolean) => {
+    const run = () => {
+      try {
+        document.getElementById('acquisition-task-detail')?.scrollIntoView?.({ block: 'start' });
+      } catch {
+        /* 无布局环境（测试/无滚动容器）下忽略 */
+      }
+    };
+    if (defer) {
+      window.setTimeout(run, 0);
+      return;
+    }
+    run();
+  };
+  const viewJobResult = (job: AcquisitionJob) => {
+    setActiveJob(job);
+    setViewedJobTaskId(activeTaskId);
+    if (view !== 'tasks') {
+      selectView('tasks');
+      scrollToTaskDetail(true);
+      return;
+    }
+    scrollToTaskDetail(false);
+  };
+
+  // 覆盖与下载记录的可视化需要真实量纲：渠道能力数、包行数、数据集行数都来自接口，不做估算。
+  const availableSourceCount = (capabilities?.sources ?? []).filter(source => source.available).length;
+  const totalSourceCount = capabilities?.sources.length ?? 0;
+  const maxSourceResourceCount = Math.max(1, ...(capabilities?.sources ?? []).map(source => source.resources.length));
+  const jobsRowCountTotal = (jobs ?? []).reduce((total, item) => total + item.summary.rowCount, 0);
+  const maxJobRowCount = Math.max(1, ...(jobs ?? []).map(item => item.summary.rowCount), activeJob?.summary.rowCount ?? 0);
+  const maxDatasetRowCount = Math.max(
+    1,
+    ...(jobs ?? []).flatMap(item => item.datasets.map(dataset => dataset.rowCount)),
+    ...((activeJob?.datasets ?? []).map(dataset => dataset.rowCount)),
+  );
+  const planSourceSegments = useMemo(() => {
+    if (!plan) {
+      return [];
+    }
+    const counts = new Map<string, number>();
+    for (const task of plan.tasks) {
+      counts.set(task.source, (counts.get(task.source) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .map(([key, value]) => ({ key, value, label: SOURCE_LABELS[key] ?? key }));
+  }, [plan]);
+  const acquisitionTabs = [
+    { key: 'tasks', label: '取数任务', badge: tasks?.length },
+    { key: 'jobs', label: '下载记录', badge: jobs?.length },
+    { key: 'coverage', label: '数据覆盖', badge: totalSourceCount || undefined },
+    { key: 'reports', label: '研报筛选下载' },
+  ];
   const selectTask = (taskId: string) => {
     setRememberedTaskId(taskId); setActiveJob(null);
     setSearchParams(current => { const next = new URLSearchParams(current); next.set('task', taskId); next.set('view', 'tasks'); return next; });
@@ -359,225 +425,399 @@ function DataAcquisitionContent({ userId }: { userId: number }) {
 
   return (
     <AppPage>
-      <div className="space-y-5">
-        <PageHeader eyebrow="AI ORCHESTRATION · MULTI-SOURCE EXPORT" title="数据一站式获取"
+      <div className="space-y-4">
+        <PageHeader
+          title="数据一站式获取"
           description="手动研报筛选使用本地链接库；跨渠道取数按已确认的目标与日期，每次重新调用渠道 API，返回实际匹配结果与原文链接。"
-          actions={<button className="btn-secondary inline-flex items-center gap-2" onClick={() => void load()}>
-            <RefreshCw className="h-4 w-4" />刷新任务
-          </button>} />
-
-        <EvidenceRail items={[
-          { label: '可用渠道', value: capabilities ? `${capabilities.sources.filter((source) => source.available).length} / ${capabilities.sources.length}` : '—', note: '每个渠道独立筛选与导出', tone: capabilities?.sources.some((source) => source.available) ? 'verified' : 'default' },
-          { label: '规划模型', value: capabilities ? capabilities.planner.available ? capabilities.planner.model : '等待配置' : '读取中', note: capabilities?.planner.available ? `最多 ${capabilities.planner.maxTasks} 个子任务` : '仍可使用本地研报库', tone: capabilities?.planner.available ? 'verified' : 'default' },
-          { label: '所选任务', value: runTask ? PHASE_LABELS[runTask.phase] : tracked.loading ? '正在恢复进度' : tracked.unavailable ? '暂不可查看' : '未选择', note: runTask ? `${runTask.progress}% · ${runTask.completedTasks}/${runTask.totalTasks}` : '离开页面不影响后台执行', tone: runActive ? 'live' : runTask?.status === 'failed' ? 'warning' : 'default' },
-          { label: '最近数据包', value: jobs ? `${jobs.length} 个` : '—', note: '当前账号的最近生成记录', tone: jobs?.length ? 'verified' : 'default' },
-        ]} />
-
-        {error ? <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div> : null}
-
-        <nav className="flex flex-wrap gap-2" aria-label="取数工作区">
-          <button className={showTasks ? 'btn-secondary' : 'btn-primary'} aria-pressed={!showTasks}
-            onClick={() => { setReportsOpened(true); setSearchParams(current => { const next = new URLSearchParams(current); next.set('view', 'reports'); return next; }); }}>研报筛选下载</button>
-          <button className={showTasks ? 'btn-primary' : 'btn-secondary'} aria-pressed={showTasks}
-            onClick={() => setSearchParams(current => { const next = new URLSearchParams(current); next.set('view', 'tasks'); return next; })}>跨渠道取数与任务</button>
-          <Link className="btn-secondary" to="/tasks">全部后台任务</Link>
-        </nav>
-
-        <div hidden={showTasks}>{!showTasks || reportsOpened ? <ResearchReportLibrary /> : null}</div>
-
-        {showTasks ? <>
-        <section aria-label="后台取数任务">
-          <Card title="后台取数任务">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs leading-5 text-secondary-text">点击任务查看真实进度与数据包；可离开页面，稍后回来继续查看。</p>
-              {activeTaskId ? <button className="btn-secondary" disabled={planning || validating || running} onClick={newTask}>新建取数任务</button> : null}
+          actions={(
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-secondary inline-flex items-center gap-2" onClick={() => void load()}>
+                <RefreshCw className="h-4 w-4" />刷新任务
+              </button>
+              <Link className="btn-secondary" to="/tasks">全部后台任务</Link>
             </div>
-            {activeTaskId ? <p className="mb-3 text-xs text-secondary-text">新建任务只切换工作区，不中止已提交的后台任务。</p> : null}
-            {loadErrors.tasks ? <p role="status" className="mb-3 text-sm text-warning">{loadErrors.tasks} <button className="underline" onClick={() => void loadChannel('tasks')}>重试后台任务</button></p> : null}
-            {tasks === null ? <p role="status" className="text-sm text-secondary-text">{loadErrors.tasks ? '任务列表尚未读取成功' : '正在读取后台任务…'}</p> : tasks.length ?
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{tasks.slice(0, 9).map(task => <button key={task.taskId} onClick={() => selectTask(task.taskId)}
-                aria-pressed={task.taskId === activeTaskId} className={`min-w-0 rounded-xl border p-3 text-left ${task.taskId === activeTaskId ? 'border-primary bg-primary/10' : 'border-border'}`}>
-                <div className="flex justify-between gap-2 text-xs text-secondary-text"><span>{TASK_STATUS_LABELS[task.status]}</span><span>{task.progress}%</span></div>
-                <p className="mt-1 truncate text-sm font-medium">{task.result?.title || task.tasks.map(item => item.label).slice(0, 2).join('、') || '数据获取任务'}</p>
-                <p className="mt-1 truncate text-xs text-secondary-text">{task.message}</p>
-                <p className="mt-2 text-[12px] text-secondary-text">{formatTime(task.updatedAt)}</p>
-              </button>)}</div> : <p className="text-sm text-secondary-text">还没有后台取数任务，先在下方生成计划并确认执行。</p>}
-            {tracked.loading ? <p className="mt-3 text-sm text-secondary-text" role="status">正在恢复所选任务进度…</p> : null}
-            {tracked.notice ? <p className="mt-3 text-sm text-warning" role="status">{tracked.notice} <button className="underline" onClick={tracked.retry}>重试所选任务</button></p> : null}
-            {runTask ? <div className="mt-3 flex flex-wrap items-center gap-3 text-sm"><span>{runTask.message}</span><a className="text-primary underline" href="#acquisition-task-detail">查看执行明细{runTask.result ? '与下载' : ''}</a></div> : null}
-          </Card>
-        </section>
+          )}
+        />
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,.7fr)]">
-          <Card className="relative overflow-hidden" padding="lg">
-            <div className="pointer-events-none absolute -right-24 -top-24 h-56 w-56 rounded-full bg-primary/10 blur-3xl" />
-            <div className="relative">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Bot className="h-5 w-5 text-primary" />告诉 AI 你要什么数据</div>
-              <textarea aria-label="取数需求" value={request} onChange={(event) => setRequest(event.target.value)} rows={6}
-                className="mt-4 w-full resize-y rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
+        <MetricRow
+          columns={4}
+          items={[
+            {
+              label: '可用渠道',
+              value: capabilities ? `${availableSourceCount}/${totalSourceCount}` : null,
+              hint: '每个渠道独立筛选与导出',
+              viz: capabilities
+                ? <BarMeter value={availableSourceCount} max={totalSourceCount || 1} tone="neutral" height={4} ariaLabel={`可用渠道 ${availableSourceCount}/${totalSourceCount}`} />
+                : null,
+            },
+            {
+              label: '规划模型',
+              value: capabilities ? (capabilities.planner.available ? capabilities.planner.model : null) : null,
+              hint: capabilities?.planner.available ? `最多 ${capabilities.planner.maxTasks} 个子任务` : '仍可使用本地研报库',
+            },
+            {
+              label: '所选任务',
+              value: runTask ? `${runTask.progress}%` : null,
+              hint: runTask ? (PHASE_LABELS[runTask.phase] ?? runTask.phase) : (tracked.loading ? '正在恢复进度' : '未选择'),
+              viz: runTask
+                ? <BarMeter value={runTask.progress} max={100} tone="neutral" height={4} ariaLabel={`任务进度 ${runTask.progress}%`} />
+                : null,
+            },
+            {
+              label: '数据包',
+              value: jobs ? jobs.length : null,
+              hint: '当前账号的最近生成记录',
+            },
+          ]}
+        />
+
+        {error ? <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div> : null}
+
+        <PageTabs
+          items={acquisitionTabs}
+          value={view}
+          onChange={(key) => selectView(key as AcquisitionView)}
+          ariaLabel="取数工作区"
+        />
+
+        {view === 'tasks' ? (
+          <div className="space-y-3">
+            <section aria-label="后台取数任务">
+              <Card padding="sm">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2">
+                    <h2 className="text-sm font-semibold text-foreground">后台取数任务</h2>
+                    <span className="font-mono text-xs tabular-nums text-secondary-text">{tasks?.length ?? 0}</span>
+                  </div>
+                  {activeTaskId ? (
+                    <button className="btn-secondary text-xs" disabled={planning || validating || running} onClick={newTask}>
+                      新建取数任务
+                    </button>
+                  ) : null}
+                </div>
+                {loadErrors.tasks ? <p role="status" className="mb-2 text-sm text-warning">{loadErrors.tasks} <button className="underline" onClick={() => void loadChannel('tasks')}>重试后台任务</button></p> : null}
+                {tracked.loading ? <p className="mb-2 text-sm text-secondary-text" role="status">正在恢复所选任务进度…</p> : null}
+                {tracked.notice ? <p className="mb-2 text-sm text-warning" role="status">{tracked.notice} <button className="underline" onClick={tracked.retry}>重试所选任务</button></p> : null}
+                {tasks === null ? (
+                  <p role="status" className="text-sm text-secondary-text">{loadErrors.tasks ? '任务列表尚未读取成功' : '正在读取后台任务…'}</p>
+                ) : tasks.length ? (
+                  <ul className="divide-y divide-border/60">
+                    {tasks.slice(0, 9).map(task => {
+                      const selected = task.taskId === activeTaskId;
+                      return (
+                        <li key={task.taskId}>
+                          <button
+                            type="button"
+                            onClick={() => selectTask(task.taskId)}
+                            aria-pressed={selected}
+                            className={`w-full py-2.5 pr-1 text-left transition-colors ${selected ? 'bg-primary/5' : 'hover:bg-card/40'}`}
+                          >
+                            <div className="flex items-baseline justify-between gap-2 text-xs text-secondary-text">
+                              <span className="flex items-center gap-2">
+                                <span>{TASK_STATUS_LABELS[task.status]}</span>
+                                <span className="font-mono tabular-nums text-foreground">{task.progress}%</span>
+                              </span>
+                              <span className="shrink-0 font-mono text-[12px] tabular-nums">{formatTime(task.updatedAt)}</span>
+                            </div>
+                            <p className="mt-1 truncate text-sm font-medium text-foreground">{task.result?.title || task.tasks.map(item => item.label).slice(0, 2).join('、') || '数据获取任务'}</p>
+                            <p className="mt-0.5 truncate text-xs text-secondary-text">{task.message}</p>
+                            <div className="mt-1.5">
+                              <BarMeter value={task.progress} max={100} tone="neutral" height={3} ariaLabel={`任务进度 ${task.progress}%`} />
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-secondary-text">还没有后台取数任务，先在下方生成计划并确认执行。</p>
+                )}
+                {runTask ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+                    <span>{runTask.message}</span>
+                    <button type="button" className="text-primary underline" onClick={() => scrollToTaskDetail(false)}>
+                      查看执行明细{runTask.result ? '与下载' : ''}
+                    </button>
+                  </div>
+                ) : null}
+              </Card>
+            </section>
+
+            <Card padding="sm">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Bot className="h-4 w-4 text-primary" />告诉 AI 你要什么数据</div>
+              <textarea aria-label="取数需求" value={request} onChange={(event) => setRequest(event.target.value)} rows={5}
+                className="mt-3 w-full resize-y rounded-lg border border-border bg-background/70 px-3 py-2 text-sm leading-6 text-foreground outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/10"
                 placeholder="例如：获取两只自选股近三个月行情、公告、机构研报、小作文与工商风险，按来源打包……" />
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 {EXAMPLES.map((example, index) => <button key={example} type="button" onClick={() => setRequest(example)}
-                  className="rounded-full border border-border bg-card/70 px-3 py-1.5 text-xs text-secondary-text transition hover:border-primary/40 hover:text-foreground">
+                  className="rounded-full border border-border bg-card/70 px-3 py-1 text-xs text-secondary-text transition hover:border-primary/40 hover:text-foreground">
                   示例 {index + 1}
                 </button>)}
               </div>
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs text-secondary-text"><ShieldCheck className="h-4 w-4 text-success" />先审计划，再执行；密钥不会写入数据包</div>
-                <button className="btn-primary inline-flex items-center gap-2" disabled={planning || validating || runActive || request.trim().length < 2} onClick={() => void createPlan()}>
+                <button className={`${plan ? 'btn-secondary' : 'btn-primary'} inline-flex items-center gap-2`} disabled={planning || validating || runActive || request.trim().length < 2} onClick={() => void createPlan()}>
                   <Send className={`h-4 w-4 ${planning ? 'animate-pulse' : ''}`} />{planning ? 'AI 正在规划…' : '生成取数计划'}
                 </button>
               </div>
-            </div>
-          </Card>
+            </Card>
 
-          <Card title="已接入渠道" subtitle="SOURCE REGISTRY">
-            <div aria-label="股票目录同步状态" className="mb-3 text-xs leading-5 text-secondary-text">
-              <p className="flex flex-wrap gap-x-2 gap-y-1">
-                <span className="font-medium text-foreground">股票目录 · {capabilities?.stockDirectory?.source || '未核验'}</span>
-                {capabilities?.stockDirectory?.entryCount != null ? <span>{capabilities.stockDirectory.entryCount.toLocaleString('zh-CN')} 只证券</span> : null}
-                <span>{capabilities?.stockDirectory?.lastSuccessAt ? `最近成功同步：${formatTime(capabilities.stockDirectory.lastSuccessAt)}` : '最近成功同步：未核验'}</span>
-                <span>{capabilities?.stockDirectory?.refreshing ? '后台自动更新中' : capabilities?.stockDirectory?.stale ? '等待后台自动更新' : capabilities?.stockDirectory?.lastSuccessAt ? '目录已更新 · 后台自动维护' : '目录状态待核验'}</span>
-              </p>
-              {capabilities?.stockDirectory?.error ? <p className="text-warning">目录更新暂未成功，等待后台自动重试。</p> : null}
-            </div>
-            {loadErrors.sources ? <p role="status" className="mb-3 text-sm text-warning">{loadErrors.sources} <button className="underline" onClick={() => void loadChannel('sources')}>重试渠道信息</button></p> : null}
-            {!capabilities && !loadErrors.sources ? <p role="status" className="text-sm text-secondary-text">正在读取渠道信息…</p> : null}
-            <div className="space-y-3">
-              {(capabilities?.sources ?? []).map((source) => <div key={source.key} className="rounded-2xl border border-border/70 bg-background/45 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-foreground">{source.name}</span>
-                  <Badge variant={source.available ? 'success' : 'warning'}>{source.available ? '可用' : '待配置'}</Badge>
-                </div>
-                <p className="mt-1 text-xs text-secondary-text">{source.mode} · {source.resources.length} 类能力</p>
-              </div>)}
-            </div>
-          </Card>
-        </div>
-
-        {plan ? <Card title={plan.title} subtitle={`${plan.model} · 可审计执行计划`} variant="gradient" padding="lg">
-          <p className="text-sm text-secondary-text">{plan.objective}</p>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-secondary-text">
-            {[...plan.scope.companyNames, ...plan.scope.symbols, ...plan.scope.keywords].map((value) => <Badge key={value}>{value}</Badge>)}
-            {plan.scope.startDate || plan.scope.endDate ? <Badge>{plan.scope.startDate || '—'} → {plan.scope.endDate || '—'}</Badge> : null}
-            <Badge variant={plan.scope.marketWide ? 'warning' : 'success'}>{plan.scope.marketWide ? '全市场范围' : '严格按目标过滤'}</Badge>
-            <Badge variant={plan.includeFiles ? 'warning' : 'info'}>{plan.includeFiles ? '下载原始文件并打包' : '仅结构化数据与原文链接'}</Badge>
-          </div>
-          {plan.preflight ? <PlanPreflight preflight={plan.preflight} selections={entitySelections}
-            disabled={validating || runActive || planChanged}
-            onSelectionChange={(query, value) => setEntitySelections(current => ({ ...current, [query]: value }))} /> : null}
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {plan.tasks.map((task, index) => <div key={task.id} className="rounded-2xl border border-border/70 bg-background/55 p-4">
-              <div className="flex items-start justify-between gap-3"><span className="text-xs font-semibold text-primary">{String(index + 1).padStart(2, '0')}</span><Badge>{SOURCE_LABELS[task.source] ?? task.source}</Badge></div>
-              <h3 className="mt-3 font-semibold text-foreground">{task.label}</h3>
-              <p className="mt-1 text-xs leading-5 text-secondary-text">{task.reason || '按用户需求获取该数据集'}</p>
-              {task.resource === 'research_report' ? <div className="mt-3 space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-[12px] text-secondary-text">
-                <p className="font-medium text-foreground">按目标与日期现场调用研报 API → 严格筛选 → PDF链接/原文</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(Array.isArray(task.params.topics) ? task.params.topics : []).map((topic) => <Badge key={String(topic)}>{String(topic)}</Badge>)}
-                  <Badge>{String(task.params.keywordMode ?? task.params.keyword_mode ?? 'any').toLowerCase() === 'any' ? '任一主题命中' : '全部主题命中'}</Badge>
-                  <Badge variant="success">人工确认优先</Badge>
-                </div>
-              </div> : null}
-              <code className="mt-3 block truncate rounded-lg bg-card px-2 py-1.5 text-[12px] text-secondary-text">{task.source}.{task.resource}</code>
-              {plan.preflight?.checks.filter(check => check.taskId === task.id).map((check, checkIndex) => <p key={checkIndex}
-                className={`mt-2 text-xs leading-5 ${check.status === 'blocked' ? 'text-warning' : 'text-secondary-text'}`}>{check.message}</p>)}
-            </div>)}
-          </div>
-          {plan.caveats.length ? <div className="mt-4 rounded-xl border border-warning/25 bg-warning/10 px-4 py-3 text-xs text-secondary-text">{plan.caveats.join('；')}</div> : null}
-          {planChanged ? <p role="status" className="mt-4 text-sm text-warning">需求已修改，请重新生成并核对计划后再执行，避免按旧条件取数。</p> : null}
-          {selectionsChanged ? <p role="status" className="mt-4 text-sm text-warning">目标选择已修改，请重新校验股票代码与各渠道参数后再执行。</p> : null}
-          <div className="mt-5 flex flex-wrap justify-end gap-3">
-            {plan.preflight && (planBlocked || selectionsChanged) ? <button className="btn-secondary inline-flex items-center gap-2"
-              disabled={runActive || planChanged || planning || validating} onClick={() => void validatePlan()}>
-              <ShieldCheck className={`h-4 w-4 ${validating ? 'animate-pulse' : ''}`} />{validating ? '正在校验目标…' : '重新校验目标与代码'}
-            </button> : null}
-            <button className="btn-primary inline-flex items-center gap-2" disabled={runActive || planChanged || planning || validating || planBlocked || selectionsChanged} onClick={() => void runPlan()}>
-            <Play className={`h-4 w-4 ${runActive ? 'animate-pulse' : ''}`} />{runActive ? '后台任务执行中…' : `确认执行 ${plan.tasks.length} 个任务`}
-          </button></div>
-        </Card> : null}
-
-        <div id="acquisition-task-detail" className="scroll-mt-6" />
-        {runTask ? <Card title="真实任务进度" subtitle={runTask.taskId} padding="lg">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                {runTask.status === 'failed' ? <XCircle className="h-5 w-5 text-danger" /> :
-                  runTask.status === 'completed' && runTask.result?.status === 'success' && runTask.result.summary.rowCount > 0 ? <CheckCircle2 className="h-5 w-5 text-success" /> : runTask.status === 'completed' ? <XCircle className="h-5 w-5 text-warning" /> :
-                    <CircleDashed className="h-5 w-5 animate-spin text-primary" />}
-                <span className="font-semibold text-foreground">{runTask.result && ['completed', 'failed'].includes(runTask.status) ? jobStatusLabel(runTask.result) : PHASE_LABELS[runTask.phase] ?? runTask.phase}</span>
+            {plan ? <Card padding="sm" title={plan.title}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-secondary-text">{plan.objective}</p>
+                <span className="shrink-0 font-mono text-xs tabular-nums text-secondary-text">{plan.model}</span>
               </div>
-              <p className={`mt-1 text-sm ${runTask.status === 'failed' ? 'text-danger' : 'text-secondary-text'}`}>{runTask.message}</p>
-            </div>
-            <div className="text-right font-mono text-2xl font-semibold text-foreground">{runTask.progress}%</div>
-          </div>
-          <div className="mt-4 h-3 overflow-hidden rounded-full bg-border/70" role="progressbar" aria-label="跨渠道取数与打包进度"
-            aria-valuemin={0} aria-valuemax={100} aria-valuenow={runTask.progress}>
-            <div className={`h-full rounded-full transition-[width] duration-300 ${runTask.status === 'failed' ? 'bg-danger' : 'bg-primary'}`}
-              style={{ width: `${runTask.progress}%` }} />
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3" aria-label="渠道任务处理状态">
-            {(runTask.tasks ?? []).map((task, index) => {
-              const dataset = runTask.result?.datasets.find(item => item.taskId === task.id);
-              const completed = dataset?.status === 'success' && dataset.rowCount > 0;
-              const failed = Boolean(dataset && (dataset.status === 'failed' || dataset.rowCount === 0));
-              const current = task.id === runTask.currentTaskId && runTask.status === 'running';
-              return <div key={task.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${completed ? 'border-success/25 bg-success/5' : failed ? 'border-warning/25 bg-warning/5' : current ? 'border-primary/35 bg-primary/5' : 'border-border/70 bg-background/40'}`}>
-                {completed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-warning" /> : current ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border text-[12px] text-secondary-text">{index + 1}</span>}
-                <div className="min-w-0"><p className="truncate text-xs font-medium text-foreground">{task.label}</p><p className="truncate text-[12px] text-secondary-text">{SOURCE_LABELS[task.source] ?? task.source}</p></div>
-              </div>;
-            })}
-          </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-secondary-text">
-            <span>已处理 {runTask.completedTasks}/{runTask.totalTasks || 0} 个渠道任务</span>
-            <span>最后更新 {formatTime(runTask.updatedAt)}</span>
-          </div>
-        </Card> : null}
-
-        {activeJob ? <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="数据集" value={activeJob.summary.taskCount} icon={<DatabaseZap className="h-5 w-5" />} />
-            <StatCard label="成功" value={activeJob.summary.successCount} icon={<CheckCircle2 className="h-5 w-5" />} />
-            <StatCard label="失败" value={activeJob.summary.failedCount} icon={<XCircle className="h-5 w-5" />} />
-            <StatCard label="总行数" value={activeJob.summary.rowCount} icon={<PackageCheck className="h-5 w-5" />} />
-          </div>
-          <Card title={jobTitle(activeJob)} subtitle={`${activeJob.title} · ${activeJob.jobId}`}>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div><p className="text-sm text-foreground">{activeJob.summary.rowCount === 0 ? '本次查询未取得符合条件的数据。请检查范围与各渠道说明；可下载查询结果与诊断，不代表资料已获取。' : '按渠道分目录，分别包含 JSON、CSV、Excel，并附任务范围与来源清单。'}</p><p className="mt-1 text-xs text-secondary-text">状态：{jobStatusLabel(activeJob)} · {formatTime(activeJob.generatedAt)}{activeJob.summary.includeFiles ? ` · 原始文件成功 ${activeJob.summary.downloadedFileCount ?? 0} 个 / 失败 ${activeJob.summary.failedFileCount ?? 0} 个` : ''}</p></div>
-              <div className="flex flex-wrap gap-2"><button className="btn-primary inline-flex items-center gap-2" disabled={Boolean(downloading)} onClick={() => void download(activeJob)}>
-                <Download className="h-4 w-4" />{downloading === activeJob.jobId ? `${downloadProgress?.percent ?? '—'}% 下载中` : activeJob.summary.rowCount === 0 ? '下载查询结果与诊断' : '下载 ZIP 数据包'}
-              </button>
-              {activeJob.summary.rowCount > 0 && activeJob.status !== 'failed' ? <button className="btn-secondary inline-flex items-center gap-2" disabled={Boolean(downloading)} onClick={() => browserDownload(activeJob)}>
-                <Download className="h-4 w-4" />浏览器下载
-              </button> : null}</div>
-            </div>
-            <ul className="mt-3 space-y-2" aria-label="数据包渠道结果">{activeJob.datasets.map(dataset => <li key={dataset.taskId} className="rounded-lg border border-border p-3 text-xs">
-              <span className="font-medium">{dataset.label} · {SOURCE_LABELS[dataset.source] || dataset.source}</span>
-              <span className="ml-2">{dataset.rowCount === 0 ? '未取得数据' : dataset.status === 'success' ? `${dataset.rowCount} 行` : '取数未完成'}</span>
-              {dataset.error ? <p className="mt-1 break-words text-danger">{dataset.error}</p> : null}
-              {dataset.attachmentError ? <p className="mt-1 break-words text-warning">{dataset.attachmentError}</p> : null}
-            </li>)}</ul>
-            {downloadProgress?.jobId === activeJob.jobId ? <DownloadProgress state={downloadProgress} /> : null}
-            {nativeDownloadJobId === activeJob.jobId ? <p role="status" className="mt-3 text-xs text-secondary-text">已交给浏览器，请在下载列表查看进度</p> : null}
-          </Card>
-        </div> : null}
-
-        <Card title="最近数据包" subtitle="LOCAL PACKAGE HISTORY">
-          {loadErrors.jobs ? <p role="status" className="mb-3 text-sm text-warning">{loadErrors.jobs} <button className="underline" onClick={() => void loadChannel('jobs')}>重试数据包记录</button></p> : null}
-          {jobs === null ? <p role="status" className="text-sm text-secondary-text">{loadErrors.jobs ? '数据包记录尚未读取成功' : '正在读取数据包记录…'}</p> : !jobs.length ? <EmptyState icon={<FileArchive className="h-6 w-6" />} title="还没有数据包" description="描述需求并执行计划后，生成记录会出现在这里。" /> :
-            <div className="divide-y divide-border/60">{jobs.map((job) => <div key={job.jobId} className="py-4 first:pt-0 last:pb-0">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-medium text-foreground">{job.title}</p><Badge variant={job.status === 'success' && job.summary.rowCount > 0 ? 'success' : job.summary.rowCount === 0 || job.status === 'partial' ? 'warning' : 'danger'}>{jobStatusLabel(job)}</Badge>{!job.contractVersion?.startsWith('channel-scoped-v') ? <Badge variant="warning">旧版未分渠道</Badge> : <Badge variant="info">渠道独立包</Badge>}</div>
-                  <p className="mt-1 truncate text-xs text-secondary-text">{job.summary.rowCount} 行 · {job.summary.successCount}/{job.summary.taskCount} 数据集 · {formatTime(job.generatedAt)}</p></div>
-                <div className="flex gap-2"><button className="btn-secondary" onClick={() => { setActiveJob(job); setViewedJobTaskId(activeTaskId); document.getElementById('acquisition-task-detail')?.scrollIntoView({ block: 'start' }); }}>查看渠道结果</button>
-                <button className="btn-secondary inline-flex shrink-0 items-center gap-2" disabled={Boolean(downloading)} onClick={() => void download(job)}><Download className="h-4 w-4" />{downloading === job.jobId ? `${downloadProgress?.percent ?? '—'}%` : '下载'}</button>
-                {job.summary.rowCount > 0 && job.status !== 'failed' ? <button className="btn-secondary inline-flex shrink-0 items-center gap-2" disabled={Boolean(downloading)} onClick={() => browserDownload(job)}><Download className="h-4 w-4" />浏览器下载</button> : null}</div>
+              {planSourceSegments.length > 1 ? (
+                <div className="mt-2 flex items-center gap-3">
+                  <ShareBar segments={planSourceSegments} height={4} className="min-w-0 flex-1" ariaLabel="计划任务来源构成" />
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-secondary-text">{plan.tasks.length} 个任务</span>
+                </div>
+              ) : null}
+              <div className="mt-2 flex flex-wrap gap-2 text-xs text-secondary-text">
+                {[...plan.scope.companyNames, ...plan.scope.symbols, ...plan.scope.keywords].map((value) => <Badge key={value}>{value}</Badge>)}
+                {plan.scope.startDate || plan.scope.endDate ? <Badge>{plan.scope.startDate || '—'} → {plan.scope.endDate || '—'}</Badge> : null}
+                <Badge variant={plan.scope.marketWide ? 'warning' : 'success'}>{plan.scope.marketWide ? '全市场范围' : '严格按目标过滤'}</Badge>
+                <Badge variant={plan.includeFiles ? 'warning' : 'info'}>{plan.includeFiles ? '下载原始文件并打包' : '仅结构化数据与原文链接'}</Badge>
               </div>
-              {downloadProgress?.jobId === job.jobId ? <DownloadProgress state={downloadProgress} /> : null}
-              {nativeDownloadJobId === job.jobId ? <p role="status" className="mt-3 text-xs text-secondary-text">已交给浏览器，请在下载列表查看进度</p> : null}
-            </div>)}</div>}
-        </Card>
-        </> : null}
+              {plan.preflight ? <PlanPreflight preflight={plan.preflight} selections={entitySelections}
+                disabled={validating || runActive || planChanged}
+                onSelectionChange={(query, value) => setEntitySelections(current => ({ ...current, [query]: value }))} /> : null}
+              <ul className="mt-3 divide-y divide-border/60 border-y border-border/60" aria-label="计划任务清单">
+                {plan.tasks.map((task, index) => <li key={task.id} className="py-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <span className="font-mono text-xs tabular-nums text-secondary-text">{String(index + 1).padStart(2, '0')}</span>
+                      <span className="truncate text-sm font-medium text-foreground">{task.label}</span>
+                    </div>
+                    <Badge>{SOURCE_LABELS[task.source] ?? task.source}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-secondary-text">{task.reason || '按用户需求获取该数据集'}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <code className="rounded bg-card px-2 py-0.5 text-[12px] text-secondary-text">{task.source}.{task.resource}</code>
+                    {task.resource === 'research_report' ? <>
+                      <Badge variant="info">按目标与日期现场调用研报 API · 筛选后给 PDF/原文</Badge>
+                      {(Array.isArray(task.params.topics) ? task.params.topics : []).map((topic) => <Badge key={String(topic)}>{String(topic)}</Badge>)}
+                      <Badge>{String(task.params.keywordMode ?? task.params.keyword_mode ?? 'any').toLowerCase() === 'any' ? '任一主题命中' : '全部主题命中'}</Badge>
+                      <Badge variant="success">人工确认优先</Badge>
+                    </> : null}
+                  </div>
+                  {plan.preflight?.checks.filter(check => check.taskId === task.id).map((check, checkIndex) => <p key={checkIndex}
+                    className={`mt-1.5 text-xs leading-5 ${check.status === 'blocked' ? 'text-warning' : 'text-secondary-text'}`}>{check.message}</p>)}
+                </li>)}
+              </ul>
+              {plan.caveats.length ? <p className="mt-2 border-l-2 border-[var(--warning-border)] pl-3 text-xs leading-5 text-secondary-text">{plan.caveats.join('；')}</p> : null}
+              {planChanged ? <p role="status" className="mt-2 text-sm text-warning">需求已修改，请重新生成并核对计划后再执行，避免按旧条件取数。</p> : null}
+              {selectionsChanged ? <p role="status" className="mt-2 text-sm text-warning">目标选择已修改，请重新校验股票代码与各渠道参数后再执行。</p> : null}
+              <div className="mt-3 flex flex-wrap justify-end gap-2">
+                {plan.preflight && (planBlocked || selectionsChanged) ? <button className="btn-secondary inline-flex items-center gap-2"
+                  disabled={runActive || planChanged || planning || validating} onClick={() => void validatePlan()}>
+                  <ShieldCheck className={`h-4 w-4 ${validating ? 'animate-pulse' : ''}`} />{validating ? '正在校验目标…' : '重新校验目标与代码'}
+                </button> : null}
+                <button className={`${activeJob ? 'btn-secondary' : 'btn-primary'} inline-flex items-center gap-2`} disabled={runActive || planChanged || planning || validating || planBlocked || selectionsChanged} onClick={() => void runPlan()}>
+                  <Play className={`h-4 w-4 ${runActive ? 'animate-pulse' : ''}`} />{runActive ? '后台任务执行中…' : `确认执行 ${plan.tasks.length} 个任务`}
+                </button>
+              </div>
+            </Card> : null}
+
+            <div id="acquisition-task-detail" className="scroll-mt-6" />
+            {runTask ? <Card padding="sm" title="真实任务进度">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {runTask.status === 'failed' ? <XCircle className="h-4 w-4 text-danger" /> :
+                      runTask.status === 'completed' && runTask.result?.status === 'success' && runTask.result.summary.rowCount > 0 ? <CheckCircle2 className="h-4 w-4 text-success" /> : runTask.status === 'completed' ? <XCircle className="h-4 w-4 text-warning" /> :
+                        <CircleDashed className="h-4 w-4 animate-spin text-primary" />}
+                    <span className="text-sm font-semibold text-foreground">{runTask.result && ['completed', 'failed'].includes(runTask.status) ? jobStatusLabel(runTask.result) : PHASE_LABELS[runTask.phase] ?? runTask.phase}</span>
+                  </div>
+                  <p className={`mt-1 text-xs leading-5 ${runTask.status === 'failed' ? 'text-danger' : 'text-secondary-text'}`}>{runTask.message}</p>
+                </div>
+                <div className="shrink-0 text-right font-mono text-xl font-semibold tabular-nums text-foreground">{runTask.progress}%</div>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-border/70" role="progressbar" aria-label="跨渠道取数与打包进度"
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={runTask.progress}>
+                <div className={`h-full rounded-full transition-[width] duration-300 ${runTask.status === 'failed' ? 'bg-danger' : 'bg-primary'}`}
+                  style={{ width: `${runTask.progress}%` }} />
+              </div>
+              <ul className="mt-3 divide-y divide-border/60 border-y border-border/60" aria-label="渠道任务处理状态">
+                {(runTask.tasks ?? []).map((task, index) => {
+                  const dataset = runTask.result?.datasets.find(item => item.taskId === task.id);
+                  const completed = dataset?.status === 'success' && dataset.rowCount > 0;
+                  const failed = Boolean(dataset && (dataset.status === 'failed' || dataset.rowCount === 0));
+                  const current = task.id === runTask.currentTaskId && runTask.status === 'running';
+                  return <li key={task.id} className="flex items-center gap-3 py-2">
+                    {completed ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : failed ? <XCircle className="h-4 w-4 shrink-0 text-warning" /> : current ? <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border font-mono text-[12px] tabular-nums text-secondary-text">{index + 1}</span>}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-foreground">{task.label}</p>
+                      <p className="truncate text-[12px] text-secondary-text">{SOURCE_LABELS[task.source] ?? task.source}</p>
+                    </div>
+                    {dataset ? (
+                      <span className="shrink-0 font-mono text-xs tabular-nums text-secondary-text">{dataset.rowCount === 0 ? '无数据' : `${dataset.rowCount} 行`}</span>
+                    ) : null}
+                  </li>;
+                })}
+              </ul>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[12px] text-secondary-text">
+                <span>已处理 <span className="font-mono tabular-nums">{runTask.completedTasks}/{runTask.totalTasks || 0}</span> 个渠道任务</span>
+                <span>最后更新 <span className="font-mono tabular-nums">{formatTime(runTask.updatedAt)}</span></span>
+              </div>
+            </Card> : null}
+
+            {activeJob ? <div className="space-y-3">
+              <MetricRow
+                columns={3}
+                items={[
+                  { label: '数据集', value: activeJob.summary.taskCount },
+                  { label: '成功渠道', value: activeJob.summary.successCount, delta: activeJob.summary.failedCount ? `失败 ${activeJob.summary.failedCount}` : undefined, trend: activeJob.summary.failedCount ? 'down' : 'flat' },
+                  { label: '总行数', value: activeJob.summary.rowCount },
+                ]}
+              />
+              <Card padding="sm" title={jobTitle(activeJob)}>
+                <p className="truncate text-xs text-secondary-text">{activeJob.title} · {activeJob.jobId}</p>
+                <p className="mt-1 text-sm text-foreground">{activeJob.summary.rowCount === 0 ? '本次查询未取得符合条件的数据。请检查范围与各渠道说明；可下载查询结果与诊断，不代表资料已获取。' : '按渠道分目录，分别包含 JSON、CSV、Excel，并附任务范围与来源清单。'}</p>
+                <p className="mt-1 text-xs text-secondary-text">状态：{jobStatusLabel(activeJob)} · {formatTime(activeJob.generatedAt)}{activeJob.summary.includeFiles ? ` · 原始文件成功 ${activeJob.summary.downloadedFileCount ?? 0} 个 / 失败 ${activeJob.summary.failedFileCount ?? 0} 个` : ''}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button className="btn-primary inline-flex items-center gap-2" disabled={Boolean(downloading)} onClick={() => void download(activeJob)}>
+                    <Download className="h-4 w-4" />{downloading === activeJob.jobId ? `${downloadProgress?.percent ?? '—'}% 下载中` : activeJob.summary.rowCount === 0 ? '下载查询结果与诊断' : '下载 ZIP 数据包'}
+                  </button>
+                  {activeJob.summary.rowCount > 0 && activeJob.status !== 'failed' ? <button className="btn-secondary inline-flex items-center gap-2" disabled={Boolean(downloading)} onClick={() => browserDownload(activeJob)}>
+                    <Download className="h-4 w-4" />浏览器下载
+                  </button> : null}
+                </div>
+                <ul className="mt-3 divide-y divide-border/60 border-y border-border/60" aria-label="数据包渠道结果">
+                  {activeJob.datasets.map(dataset => <li key={dataset.taskId} className="flex items-start gap-3 py-2 text-xs">
+                    <HeatCell intensity={dataset.rowCount / maxDatasetRowCount} size={10} ariaLabel={`${dataset.label} ${dataset.rowCount} 行`} />
+                    <div className="min-w-0 flex-1">
+                      <span className="font-medium">{dataset.label} · {SOURCE_LABELS[dataset.source] || dataset.source}</span>
+                      <span className="ml-2 font-mono tabular-nums">{dataset.rowCount === 0 ? '未取得数据' : dataset.status === 'success' ? `${dataset.rowCount} 行` : '取数未完成'}</span>
+                      {dataset.error ? <p className="mt-1 break-words text-danger">{dataset.error}</p> : null}
+                      {dataset.attachmentError ? <p className="mt-1 break-words text-warning">{dataset.attachmentError}</p> : null}
+                    </div>
+                  </li>)}
+                </ul>
+                {downloadProgress?.jobId === activeJob.jobId ? <DownloadProgress state={downloadProgress} /> : null}
+                {nativeDownloadJobId === activeJob.jobId ? <p role="status" className="mt-2 text-xs text-secondary-text">已交给浏览器，请在下载列表查看进度</p> : null}
+              </Card>
+            </div> : null}
+          </div>
+        ) : null}
+
+        {view === 'jobs' ? (
+          <div className="space-y-3">
+            <MetricRow
+              columns={3}
+              items={[
+                { label: '数据包', value: jobs ? jobs.length : null, hint: '当前账号的生成记录' },
+                { label: '总行数', value: jobs ? jobsRowCountTotal : null },
+                { label: '未完整包', value: jobs ? jobs.filter(item => item.status !== 'success' || item.summary.rowCount === 0).length : null },
+              ]}
+            />
+            <Card padding="sm">
+              <div className="flex items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold text-foreground">下载记录</h2>
+                <span className="font-mono text-xs tabular-nums text-secondary-text">{jobs?.length ?? 0}</span>
+              </div>
+              {loadErrors.jobs ? <p role="status" className="mb-2 text-sm text-warning">{loadErrors.jobs} <button className="underline" onClick={() => void loadChannel('jobs')}>重试数据包记录</button></p> : null}
+              {jobs === null ? <p role="status" className="text-sm text-secondary-text">{loadErrors.jobs ? '数据包记录尚未读取成功' : '正在读取数据包记录…'}</p> : !jobs.length ? <EmptyState icon={<FileArchive className="h-6 w-6" />} title="还没有数据包" description="描述需求并执行计划后，生成记录会出现在这里。" /> : (
+                <ul className="divide-y divide-border/60">
+                  {jobs.map((job) => <li key={job.jobId} className="py-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-medium text-foreground">{job.title}</p>
+                          <Badge variant={job.status === 'success' && job.summary.rowCount > 0 ? 'success' : job.summary.rowCount === 0 || job.status === 'partial' ? 'warning' : 'danger'}>{jobStatusLabel(job)}</Badge>
+                          {!job.contractVersion?.startsWith('channel-scoped-v') ? <Badge variant="warning">旧版未分渠道</Badge> : <Badge variant="info">渠道独立包</Badge>}
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-secondary-text"><span className="font-mono tabular-nums">{job.summary.rowCount}</span> 行 · <span className="font-mono tabular-nums">{job.summary.successCount}/{job.summary.taskCount}</span> 数据集 · {formatTime(job.generatedAt)}</p>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <BarMeter value={job.summary.rowCount} max={maxJobRowCount} log tone="neutral" height={3} className="max-w-[220px]" ariaLabel={`${job.summary.rowCount} 行`} />
+                          <span className="flex gap-0.5">
+                            {job.datasets.slice(0, 10).map((dataset, index) => (
+                              <HeatCell key={`${job.jobId}-${dataset.taskId}-${index}`} intensity={dataset.rowCount / maxDatasetRowCount} size={8} ariaLabel={`${dataset.label} ${dataset.rowCount} 行`} />
+                            ))}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <button className="btn-secondary" onClick={() => viewJobResult(job)}>查看渠道结果</button>
+                        <button className="btn-secondary inline-flex shrink-0 items-center gap-2" disabled={Boolean(downloading)} onClick={() => void download(job)}><Download className="h-4 w-4" />{downloading === job.jobId ? `${downloadProgress?.percent ?? '—'}%` : '下载'}</button>
+                        {job.summary.rowCount > 0 && job.status !== 'failed' ? <button className="btn-secondary inline-flex shrink-0 items-center gap-2" disabled={Boolean(downloading)} onClick={() => browserDownload(job)}><Download className="h-4 w-4" />浏览器下载</button> : null}
+                      </div>
+                    </div>
+                    {downloadProgress?.jobId === job.jobId ? <DownloadProgress state={downloadProgress} /> : null}
+                    {nativeDownloadJobId === job.jobId ? <p role="status" className="mt-2 text-xs text-secondary-text">已交给浏览器，请在下载列表查看进度</p> : null}
+                  </li>)}
+                </ul>
+              )}
+            </Card>
+          </div>
+        ) : null}
+
+        {view === 'coverage' ? (
+          <div className="space-y-3">
+            <MetricRow
+              columns={3}
+              items={[
+                {
+                  label: '可用渠道',
+                  value: capabilities ? `${availableSourceCount}/${totalSourceCount}` : null,
+                  hint: '每个渠道独立筛选与导出',
+                  viz: capabilities ? <BarMeter value={availableSourceCount} max={totalSourceCount || 1} tone="neutral" height={4} ariaLabel={`可用渠道 ${availableSourceCount}/${totalSourceCount}`} /> : null,
+                },
+                {
+                  label: '规划模型',
+                  value: capabilities ? (capabilities.planner.available ? capabilities.planner.model : null) : null,
+                  hint: capabilities?.planner.available ? `最多 ${capabilities.planner.maxTasks} 个子任务` : '仍可使用本地研报库',
+                },
+                {
+                  label: '目录证券',
+                  value: capabilities?.stockDirectory?.entryCount != null ? capabilities.stockDirectory.entryCount.toLocaleString('zh-CN') : null,
+                  hint: capabilities?.stockDirectory?.source || '未核验',
+                },
+              ]}
+            />
+            <Card padding="sm">
+              <div className="flex items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold text-foreground">渠道覆盖</h2>
+                <span className="font-mono text-xs tabular-nums text-secondary-text">{totalSourceCount}</span>
+              </div>
+              {loadErrors.sources ? <p role="status" className="mb-2 text-sm text-warning">{loadErrors.sources} <button className="underline" onClick={() => void loadChannel('sources')}>重试渠道信息</button></p> : null}
+              {!capabilities && !loadErrors.sources ? <p role="status" className="text-sm text-secondary-text">正在读取渠道信息…</p> : null}
+              <ul className="mt-1 divide-y divide-border/60">
+                {(capabilities?.sources ?? []).map((source) => <li key={source.key} className="py-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+                      <HeatCell intensity={source.resources.length / maxSourceResourceCount} size={10} ariaLabel={`${source.name} ${source.resources.length} 类能力`} />
+                      <span className="truncate">{source.name}</span>
+                    </span>
+                    <Badge variant={source.available ? 'success' : 'warning'}>{source.available ? '可用' : '待配置'}</Badge>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-secondary-text">
+                    <span className="shrink-0">{source.mode}</span>
+                    <BarMeter value={source.resources.length} max={maxSourceResourceCount} tone="neutral" height={3} className="min-w-0 flex-1" ariaLabel={`${source.resources.length} 类能力`} />
+                    <span className="shrink-0 font-mono tabular-nums">{source.resources.length} 类</span>
+                  </div>
+                </li>)}
+              </ul>
+            </Card>
+            <Card padding="sm">
+              <div className="flex items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold text-foreground">股票目录</h2>
+                <span className="font-mono text-xs tabular-nums text-secondary-text">{capabilities?.stockDirectory?.entryCount != null ? capabilities.stockDirectory.entryCount.toLocaleString('zh-CN') : '—'}</span>
+              </div>
+              <div aria-label="股票目录同步状态" className="mt-1 text-xs leading-5 text-secondary-text">
+                <p className="flex flex-wrap gap-x-2 gap-y-1">
+                  <span className="font-medium text-foreground">股票目录 · {capabilities?.stockDirectory?.source || '未核验'}</span>
+                  {capabilities?.stockDirectory?.entryCount != null ? <span>{capabilities.stockDirectory.entryCount.toLocaleString('zh-CN')} 只证券</span> : null}
+                  <span>{capabilities?.stockDirectory?.lastSuccessAt ? `最近成功同步：${formatTime(capabilities.stockDirectory.lastSuccessAt)}` : '最近成功同步：未核验'}</span>
+                  <span>{capabilities?.stockDirectory?.refreshing ? '后台自动更新中' : capabilities?.stockDirectory?.stale ? '等待后台自动更新' : capabilities?.stockDirectory?.lastSuccessAt ? '目录已更新 · 后台自动维护' : '目录状态待核验'}</span>
+                </p>
+                {capabilities?.stockDirectory?.error ? <p className="text-warning">目录更新暂未成功，等待后台自动重试。</p> : null}
+              </div>
+            </Card>
+          </div>
+        ) : null}
+
+        {view === 'reports' ? <ResearchReportLibrary /> : null}
       </div>
     </AppPage>
   );

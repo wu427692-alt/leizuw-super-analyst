@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ChevronDown, CircleAlert, CircleDashed, Clock, Play, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useAuth, useSystemConfig } from '../hooks';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
@@ -7,14 +7,13 @@ import { createParsedApiError, getParsedApiError, type ParsedApiError } from '..
 import { analysisApi } from '../api/analysis';
 import { alphasiftApi, notifyAlphaSiftConfigChanged, notifySystemConfigChanged } from '../api/alphasift';
 import { systemConfigApi } from '../api/systemConfig';
-import { ApiErrorAlert, Button, ConfirmDialog, EmptyState } from '../components/common';
+import { ApiErrorAlert, BarMeter, Button, ConfirmDialog, EmptyState, PageTabs } from '../components/common';
 import {
   AuthSettingsCard,
   ChangePasswordCard,
   IntelligentImport,
   LLMChannelEditor,
   NotificationTestPanel,
-  SettingsCategoryNav,
   SettingsAlert,
   SettingsField,
   SettingsLoading,
@@ -22,7 +21,7 @@ import {
   SettingsSectionCard,
 } from '../components/settings';
 import { WEB_BUILD_INFO } from '../utils/constants';
-import { getCategoryDescription } from '../utils/systemConfigI18n';
+import { getCategoryDescription, getCategoryTitle } from '../utils/systemConfigI18n';
 import type {
   ConfigValidationIssue,
   SchedulerStatusResponse,
@@ -94,6 +93,36 @@ const PROMPT_CACHE_ADVANCED_SETTING_KEYS = new Set([
 function isPromptCacheAdvancedSetting(item: { key: string }) {
   return PROMPT_CACHE_ADVANCED_SETTING_KEYS.has(item.key);
 }
+
+type SettingsTabGroup = {
+  key: string;
+  label: Record<UiLanguage, string>;
+  /** 该主 Tab 覆盖的配置域；多域时 Tab 内再出二级分段（最多两层，规范 §10） */
+  categories: SystemConfigCategory[];
+};
+
+/**
+ * 设置页主 Tab 分域（`docs/ui-design-system.md` §10）。
+ *
+ * 后端配置域有 7～8 个，全部铺在一个长页面里会让每一屏都背着「首次启动检查 + AlphaSift +
+ * 全部分类配置」。这里把互斥的配置域收进 5 个主 Tab，多域 Tab 内再出二级分段，
+ * 默认只渲染当前 Tab（不靠 CSS 隐藏）。
+ */
+const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
+  { key: 'basic', label: { zh: '基础配置', en: 'Basics' }, categories: ['base'] },
+  { key: 'model', label: { zh: '模型与智能体', en: 'Models & agent' }, categories: ['ai_model', 'agent'] },
+  { key: 'notify', label: { zh: '通知渠道', en: 'Notifications' }, categories: ['notification'] },
+  { key: 'data', label: { zh: '数据与回测', en: 'Data & backtest' }, categories: ['data_source', 'backtest'] },
+  { key: 'system', label: { zh: '系统与安全', en: 'System & security' }, categories: ['system'] },
+];
+
+/**
+ * 同一页面挂在两个路由上（`/settings` 会重定向到 `/admin/settings`，另有 `/admin/api-models`）。
+ * 从「模型配置」入口进来时直接落在模型视图，不再要求用户自己找 Tab。
+ */
+const SETTINGS_ROUTE_CATEGORY: Record<string, SystemConfigCategory> = {
+  '/admin/api-models': 'ai_model',
+};
 
 function trimDesktopRuntimeString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -308,6 +337,10 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
   const requiredMissing = status?.checks.filter((check) => check.required && check.status === 'needs_action') || [];
   const isComplete = Boolean(status?.isComplete);
   const canRunSmoke = Boolean(status?.readyForSmoke && firstStockCode);
+  const totalChecks = status?.checks.length ?? 0;
+  const configuredChecks = status?.checks.filter(
+    (check) => check.status === 'configured' || check.status === 'inherited',
+  ).length ?? 0;
   const summaryTitle = !status
     ? error
       ? t('settings.setupGuideUnknownTitle')
@@ -328,16 +361,14 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
 
   if (isHidden) {
     return (
-      <div className="rounded-2xl border settings-border bg-card/90 px-4 py-3 shadow-soft-card">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-foreground">{t('settings.setupGuideHiddenTitle')}</p>
-            <p className="mt-1 text-xs leading-5 text-muted-text">{t('settings.setupGuideHiddenDescription')}</p>
-          </div>
-          <Button type="button" variant="settings-secondary" size="sm" onClick={() => setIsHidden(false)}>
-            {t('settings.setupGuideOpen')}
-          </Button>
+      <div className="flex flex-col gap-3 border-b border-[var(--settings-border)] pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-foreground">{t('settings.setupGuideHiddenTitle')}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-text">{t('settings.setupGuideHiddenDescription')}</p>
         </div>
+        <Button type="button" variant="settings-secondary" size="sm" onClick={() => setIsHidden(false)}>
+          {t('settings.setupGuideOpen')}
+        </Button>
       </div>
     );
   }
@@ -346,14 +377,27 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
     <SettingsSectionCard
       title={t('settings.setupGuideTitle')}
       description={t('settings.setupGuideDescription')}
+      actions={status ? (
+        <span className="font-mono text-xs tabular-nums text-muted-text">{configuredChecks}/{totalChecks}</span>
+      ) : null}
     >
       <div data-testid="first-run-setup-card" className="space-y-4">
-        <div className="flex flex-col gap-3 rounded-2xl border settings-border bg-background/35 px-4 py-4 md:flex-row md:items-start md:justify-between">
+        {status && totalChecks > 0 ? (
+          <BarMeter
+            value={configuredChecks}
+            max={totalChecks}
+            tone="accent"
+            height={4}
+            ariaLabel={t('settings.setupGuideTitle')}
+          />
+        ) : null}
+
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground">
               {summaryTitle}
             </p>
-            <p className="mt-1 text-xs leading-6 text-muted-text">
+            <p className="mt-1 text-xs leading-5 text-muted-text">
               {summaryMessage}
             </p>
           </div>
@@ -383,26 +427,21 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
         ) : null}
 
         {status ? (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="divide-y divide-[var(--settings-border)] border-y border-[var(--settings-border)]">
             {status.checks.map((check) => (
-              <div
-                key={check.key}
-                className="rounded-2xl border settings-border bg-card/65 px-4 py-3"
-              >
-                <div className="flex items-start gap-3">
-                  {getSetupCheckIcon(check)}
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-foreground">{check.title}</p>
-                      <span className="rounded-full border settings-border bg-background/60 px-2 py-0.5 text-[12px] font-medium text-muted-text">
-                        {getSetupCheckStatusLabel(check, t)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs leading-5 text-muted-text">{check.message}</p>
-                    {check.nextStep ? (
-                      <p className="mt-2 text-xs leading-5 text-secondary-text">{check.nextStep}</p>
-                    ) : null}
+              <div key={check.key} className="flex items-start gap-3 py-3">
+                {getSetupCheckIcon(check)}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <p className="text-sm font-medium text-foreground">{check.title}</p>
+                    <span className="text-[12px] text-muted-text">
+                      {getSetupCheckStatusLabel(check, t)}
+                    </span>
                   </div>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-text">{check.message}</p>
+                  {check.nextStep ? (
+                    <p className="mt-1 text-xs leading-5 text-secondary-text">{check.nextStep}</p>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -421,7 +460,7 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
           </Button>
           <Button
             type="button"
-            variant="settings-primary"
+            variant="settings-secondary"
             size="sm"
             disabled={!canRunSmoke || isSaving || isRunningSmoke}
             isLoading={isRunningSmoke}
@@ -435,7 +474,7 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
         </div>
 
         {!canRunSmoke && status ? (
-          <p className="text-xs leading-6 text-muted-text">
+          <p className="text-xs leading-5 text-muted-text">
             {firstStockCode ? t('settings.setupGuideSmokeNotReady') : t('settings.setupGuideSmokeNeedsStock')}
           </p>
         ) : null}
@@ -613,8 +652,8 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
     >
       <div data-testid="scheduler-settings-card" className="space-y-4">
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
-          <div className="space-y-4 rounded-2xl border settings-border bg-background/35 px-4 py-4">
-                <label className="flex items-start gap-3">
+          <div className="space-y-4">
+            <label className="flex items-start gap-3">
                   <input
                     type="checkbox"
                     className="mt-1 h-4 w-4 rounded border-border text-cyan focus:ring-cyan/20"
@@ -629,7 +668,7 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
                   />
               <span>
                 <span className="block text-sm font-semibold text-foreground">{t('settings.schedulerEnable')}</span>
-                <span className="block text-xs leading-6 text-muted-text">{t('settings.schedulerEnableDescription')}</span>
+                <span className="block text-xs leading-5 text-muted-text">{t('settings.schedulerEnableDescription')}</span>
               </span>
             </label>
 
@@ -692,10 +731,10 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
             </div>
           </div>
 
-          <div className="space-y-3 rounded-2xl border settings-border bg-background/35 px-4 py-4">
+          <div className="space-y-3 border-t border-[var(--settings-border)] pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
             <div>
               <p className="text-sm font-semibold text-foreground">{t('settings.schedulerStatus')}</p>
-              <p className="mt-1 text-xs leading-6 text-muted-text">
+              <p className="mt-1 text-xs leading-5 text-muted-text">
                 {status?.running
                   ? t('settings.schedulerRunning')
                   : statusEnabled
@@ -703,25 +742,25 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
                     : t('settings.schedulerDisabled')}
               </p>
             </div>
-            <dl className="grid grid-cols-1 gap-2 text-xs">
-              <div className="rounded-xl border settings-border bg-card/60 px-3 py-2">
-                <dt className="text-muted-text">{t('settings.schedulerEffectiveTimes')}</dt>
-                <dd className="mt-1 font-medium text-foreground">{effectiveStatusTimes.join(', ') || '-'}</dd>
+            <dl className="divide-y divide-[var(--settings-border)] border-y border-[var(--settings-border)] text-xs">
+              <div className="flex items-baseline justify-between gap-3 py-2">
+                <dt className="shrink-0 text-muted-text">{t('settings.schedulerEffectiveTimes')}</dt>
+                <dd className="text-right font-mono font-medium tabular-nums text-foreground">{effectiveStatusTimes.join(', ') || '-'}</dd>
               </div>
-              <div className="rounded-xl border settings-border bg-card/60 px-3 py-2">
-                <dt className="text-muted-text">{t('settings.schedulerNextRun')}</dt>
-                <dd className="mt-1 font-medium text-foreground">
+              <div className="flex items-baseline justify-between gap-3 py-2">
+                <dt className="shrink-0 text-muted-text">{t('settings.schedulerNextRun')}</dt>
+                <dd className="text-right font-mono font-medium tabular-nums text-foreground">
                   {formatSchedulerTimestamp(status?.nextRunAt, language)}
                 </dd>
               </div>
-              <div className="rounded-xl border settings-border bg-card/60 px-3 py-2">
-                <dt className="text-muted-text">{t('settings.schedulerLastSuccess')}</dt>
-                <dd data-testid="scheduler-last-success" className="mt-1 font-medium text-foreground">
+              <div className="flex items-baseline justify-between gap-3 py-2">
+                <dt className="shrink-0 text-muted-text">{t('settings.schedulerLastSuccess')}</dt>
+                <dd data-testid="scheduler-last-success" className="text-right font-mono font-medium tabular-nums text-foreground">
                   {formatSchedulerTimestamp(status?.lastSuccessAt, language)}
                 </dd>
               </div>
               {status?.lastError ? (
-                <div className="rounded-xl border border-danger/40 bg-danger/10 px-3 py-2">
+                <div className="py-2">
                   <dt className="text-danger">{t('settings.schedulerLastError')}</dt>
                   <dd data-testid="scheduler-last-error" className="mt-1 break-words text-danger">{status.lastError}</dd>
                 </div>
@@ -839,6 +878,72 @@ const SettingsPage: React.FC = () => {
   } = useSystemConfig();
 
   const currentChangedItems = getChangedItems();
+
+  // 路由入口决定初始视图：`/admin/api-models` 是模型配置，进来不能还要自己找 Tab。
+  // 只在首次挂载时对齐一次，之后完全由用户切换的 Tab 决定，避免与加载后的分类回填互相打架。
+  const routeCategoryAppliedRef = useRef(false);
+  useEffect(() => {
+    if (routeCategoryAppliedRef.current) {
+      return;
+    }
+    routeCategoryAppliedRef.current = true;
+    const routeCategory = typeof window === 'undefined'
+      ? undefined
+      : SETTINGS_ROUTE_CATEGORY[window.location.pathname];
+    if (routeCategory && routeCategory !== activeCategory) {
+      setActiveCategory(routeCategory);
+    }
+  }, [activeCategory, setActiveCategory]);
+
+  // 主 Tab 分域（§10）：把后端配置域收成 5 个入口，多域 Tab 内再出二级分段。
+  // 后端若新增未归类的配置域，会作为独立 Tab 追加，保证配置项不会因为没进分组而消失。
+  const settingsTabs = useMemo<SettingsTabGroup[]>(() => {
+    const availableCategories = new Set(categories.map((category) => category.category as SystemConfigCategory));
+    const groupedTabs = SETTINGS_TAB_GROUPS
+      .map((group) => ({
+        ...group,
+        categories: group.categories.filter((category) => availableCategories.has(category)),
+      }))
+      .filter((group) => group.categories.length > 0);
+    const groupedCategories = new Set(groupedTabs.flatMap((group) => group.categories));
+    const ungroupedTabs: SettingsTabGroup[] = categories
+      .filter((category) => !groupedCategories.has(category.category as SystemConfigCategory))
+      .map((category) => ({
+        key: `category:${category.category}`,
+        label: {
+          zh: getCategoryTitle(category.category as SystemConfigCategory, category.title, 'zh'),
+          en: getCategoryTitle(category.category as SystemConfigCategory, category.title, 'en'),
+        },
+        categories: [category.category as SystemConfigCategory],
+      }));
+    return [...groupedTabs, ...ungroupedTabs];
+  }, [categories]);
+  const activeTabGroup = settingsTabs.find((tab) => tab.categories.includes(activeCategory as SystemConfigCategory))
+    ?? settingsTabs[0];
+
+  const settingsPageRef = useRef<HTMLDivElement | null>(null);
+  const scrollSettingsIntoView = useCallback(() => {
+    // 切 Tab 后回到内容顶部（§10）；jsdom 没有布局，包一层容错。
+    try {
+      settingsPageRef.current?.scrollIntoView?.({ block: 'start' });
+    } catch {
+      /* 不支持滚动时忽略 */
+    }
+  }, []);
+
+  const selectSettingsTab = useCallback((tabKey: string) => {
+    const nextTab = settingsTabs.find((tab) => tab.key === tabKey);
+    if (!nextTab) {
+      return;
+    }
+    setActiveCategory(nextTab.categories[0]);
+    scrollSettingsIntoView();
+  }, [setActiveCategory, settingsTabs, scrollSettingsIntoView]);
+
+  const selectSettingsCategory = useCallback((category: SystemConfigCategory) => {
+    setActiveCategory(category);
+    scrollSettingsIntoView();
+  }, [setActiveCategory, scrollSettingsIntoView]);
 
   const refreshSetupStatus = useCallback(async () => {
     const requestId = setupStatusRequestIdRef.current + 1;
@@ -1287,6 +1392,11 @@ const SettingsPage: React.FC = () => {
     <SettingsSectionCard
       title={t('settings.activePanelTitle')}
       description={getCategoryDescription(activeCategory as SystemConfigCategory, '', uiLanguage) || t('settings.activePanelDescription')}
+      actions={(
+        <span className="font-mono text-xs tabular-nums text-muted-text">
+          {visibleActiveItems.length + promptCacheAdvancedItems.length}
+        </span>
+      )}
     >
       {visibleActiveItems.map((item) => (
         <SettingsField
@@ -1299,7 +1409,7 @@ const SettingsPage: React.FC = () => {
         />
       ))}
       {promptCacheAdvancedItems.length ? (
-        <details className="group/prompt-cache rounded-[1.15rem] border border-[var(--settings-border)] bg-[var(--settings-surface)] p-4 shadow-soft-card transition-[background-color,border-color,box-shadow] duration-200 hover:border-[var(--settings-border-strong)] hover:bg-[var(--settings-surface-hover)]">
+        <details className="group/prompt-cache border-t border-[var(--settings-border)] pt-4">
           <summary className="flex cursor-pointer list-none items-start justify-between gap-3 [&::-webkit-details-marker]:hidden">
             <div className="min-w-0 space-y-1">
               <p className="text-sm font-semibold text-foreground">
@@ -1335,108 +1445,127 @@ const SettingsPage: React.FC = () => {
   );
 
   return (
-    <div className="settings-page min-h-full px-4 pb-6 pt-4 md:px-6">
-      <div className="mb-5 rounded-[1.5rem] border settings-border bg-card/94 px-5 py-5 shadow-soft-card-strong backdrop-blur-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">{t('settings.pageTitle')}</h1>
-            <p className="text-xs leading-6 text-muted-text">
-              {t('settings.pageDescription')}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="settings-secondary"
-              onClick={resetDraft}
-              disabled={isLoading || isSaving}
-            >
-              {t('settings.reset')}
-            </Button>
-              <Button
-                type="button"
-                variant="settings-primary"
-                onClick={() => void handleSaveConfig()}
-                disabled={!effectiveHasDirty || isSaving || isLoading}
-                isLoading={isSaving}
-                loadingText={t('settings.saving')}
-              >
-                {isSaving
-                  ? t('settings.saving')
-                  : effectiveDirtyCount
-                    ? t('settings.saveConfigWithCount', { count: effectiveDirtyCount })
-                    : t('settings.saveConfig')}
-              </Button>
-          </div>
+    <div ref={settingsPageRef} className="settings-page min-h-full px-4 pb-6 pt-4 md:px-6">
+      <header className="flex flex-col gap-3 border-b border-[var(--settings-border)] pb-4 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('settings.pageTitle')}</h1>
+          <p className="mt-1 text-xs leading-5 text-muted-text">
+            {t('settings.pageDescription')}
+          </p>
         </div>
 
-        {saveError ? (
-          <ApiErrorAlert
-            className="mt-3"
-            error={saveError}
-            actionLabel={retryAction === 'save' ? t('settings.saveRetry') : undefined}
-            onAction={retryAction === 'save' ? () => void retry() : undefined}
-          />
-        ) : null}
-      </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="settings-secondary"
+            onClick={resetDraft}
+            disabled={isLoading || isSaving}
+          >
+            {t('settings.reset')}
+          </Button>
+          <Button
+            type="button"
+            variant="settings-primary"
+            onClick={() => void handleSaveConfig()}
+            disabled={!effectiveHasDirty || isSaving || isLoading}
+            isLoading={isSaving}
+            loadingText={t('settings.saving')}
+          >
+            {isSaving
+              ? t('settings.saving')
+              : effectiveDirtyCount
+                ? t('settings.saveConfigWithCount', { count: effectiveDirtyCount })
+                : t('settings.saveConfig')}
+          </Button>
+        </div>
+      </header>
+
+      {saveError ? (
+        <ApiErrorAlert
+          className="mt-4"
+          error={saveError}
+          actionLabel={retryAction === 'save' ? t('settings.saveRetry') : undefined}
+          onAction={retryAction === 'save' ? () => void retry() : undefined}
+        />
+      ) : null}
 
       {loadError ? (
         <ApiErrorAlert
           error={loadError}
           actionLabel={retryAction === 'load' ? t('common.retry') : t('settings.reload')}
           onAction={() => void retry()}
-          className="mb-4"
+          className="mt-4"
         />
       ) : null}
 
       {isLoading ? (
-        <SettingsLoading />
+        <div className="mt-4">
+          <SettingsLoading />
+        </div>
       ) : (
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[280px_1fr]">
-          <aside className="lg:sticky lg:top-4 lg:self-start">
-            <SettingsCategoryNav
-              categories={categories}
-              itemsByCategory={itemsByCategory}
-              activeCategory={activeCategory}
-              onSelect={setActiveCategory}
-            />
-          </aside>
+        <div className="mt-4">
+          <PageTabs
+            items={settingsTabs.map((tab) => ({
+              key: tab.key,
+              label: tab.label[uiLanguage],
+              badge: tab.categories.reduce(
+                (total, category) => total + (itemsByCategory[category]?.length ?? 0),
+                0,
+              ),
+            }))}
+            value={activeTabGroup?.key ?? ''}
+            onChange={selectSettingsTab}
+            ariaLabel={t('settings.categoryNavTitle')}
+          />
 
-          <section className="space-y-4">
-            <FirstRunSetupCard
-              status={setupStatus}
-              isLoading={isRefreshingSetupStatus}
-              error={setupStatusError}
-              firstStockCode={firstSetupStockCode}
-              isSaving={isSaving}
-              isRunningSmoke={isRunningSetupSmoke}
-              smokeError={setupSmokeError}
-              smokeSuccess={setupSmokeSuccess}
-              onRefresh={refreshSetupStatus}
-              onSelectCategory={setActiveCategory}
-              onRunSmoke={handleRunSetupSmoke}
-              listSeparator={uiLanguage === 'en' ? ', ' : '、'}
-              t={t}
+          {activeTabGroup && activeTabGroup.categories.length > 1 ? (
+            <PageTabs
+              items={activeTabGroup.categories.map((category) => ({
+                key: category,
+                label: getCategoryTitle(category, '', uiLanguage),
+              }))}
+              value={activeCategory}
+              onChange={(category) => selectSettingsCategory(category as SystemConfigCategory)}
+              ariaLabel={activeTabGroup.label[uiLanguage]}
             />
-            {alphasiftItem ? (
+          ) : null}
+
+          <section className="space-y-3 [&_.backdrop-blur-sm]:backdrop-blur-none [&_.shadow-soft-card-strong]:shadow-none [&_.shadow-soft-card]:shadow-none">
+            {activeCategory === 'base' ? (
+              <FirstRunSetupCard
+                status={setupStatus}
+                isLoading={isRefreshingSetupStatus}
+                error={setupStatusError}
+                firstStockCode={firstSetupStockCode}
+                isSaving={isSaving}
+                isRunningSmoke={isRunningSetupSmoke}
+                smokeError={setupSmokeError}
+                smokeSuccess={setupSmokeSuccess}
+                onRefresh={refreshSetupStatus}
+                onSelectCategory={setActiveCategory}
+                onRunSmoke={handleRunSetupSmoke}
+                listSeparator={uiLanguage === 'en' ? ', ' : '、'}
+                t={t}
+              />
+            ) : null}
+            {activeCategory === 'data_source' && alphasiftItem ? (
               <SettingsSectionCard
                 title={t('settings.alphaSift')}
                 description={t('settings.alphaSiftDescription')}
               >
-                <div className="flex flex-col gap-4 rounded-2xl border settings-border bg-background/35 px-4 py-4 md:flex-row md:items-center md:justify-between">
-                  <div>
+                <div className="flex flex-col gap-3 border-l-2 border-[var(--warning-border)] pl-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
                     <p className="text-sm font-semibold text-foreground">
                       {alphasiftEnabled ? t('settings.alphaSiftEnabled') : t('settings.alphaSiftDisabled')}
                     </p>
-                    <p className="mt-1 text-xs leading-6 text-muted-text">
+                    <p className="mt-1 text-xs leading-5 text-muted-text">
                       {t('settings.alphaSiftSummary')}
                     </p>
-                    <p className="mt-2 text-xs leading-6 text-[var(--warning)] dark:text-[var(--warning)]">
+                    <p className="mt-1 text-xs leading-5 text-[var(--warning)]">
                       {t('settings.alphaSiftRisk')}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
                     <Button
                       type="button"
                       variant="settings-secondary"
@@ -1446,7 +1575,7 @@ const SettingsPage: React.FC = () => {
                     </Button>
                     <Button
                       type="button"
-                      variant={alphasiftEnabled ? 'settings-secondary' : 'settings-primary'}
+                      variant="settings-secondary"
                       onClick={() => void updateAlphaSiftEnabled(!alphasiftEnabled)}
                       disabled={isSaving || isLoading || isUpdatingAlphaSift}
                       isLoading={isUpdatingAlphaSift}
@@ -1468,7 +1597,11 @@ const SettingsPage: React.FC = () => {
                 ) : null}
               </SettingsSectionCard>
             ) : null}
+
             {activeCategory === 'system' ? <AuthSettingsCard /> : null}
+            {activeCategory === 'system' && passwordChangeable ? (
+              <ChangePasswordCard />
+            ) : null}
             {activeCategory === 'system' ? (
               <SchedulerSettingsCard
                 items={rawActiveItems}
@@ -1489,24 +1622,24 @@ const SettingsPage: React.FC = () => {
                 <div
                   className={`grid grid-cols-1 gap-3 ${shouldShowDesktopVersionCard ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}
                 >
-                  <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                    <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
+                  <div className="min-w-0 md:border-l md:border-[var(--settings-border)] md:pl-4 md:first:border-l-0 md:first:pl-0">
+                    <p className="text-[12px] font-medium text-muted-text">
                       {t('settings.versionWebui')}
                     </p>
                     <p className="mt-2 break-all font-mono text-sm text-foreground">
                       {WEB_BUILD_INFO.version}
                     </p>
                   </div>
-                  <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                    <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
+                  <div className="min-w-0 md:border-l md:border-[var(--settings-border)] md:pl-4 md:first:border-l-0 md:first:pl-0">
+                    <p className="text-[12px] font-medium text-muted-text">
                       {t('settings.versionBuildId')}
                     </p>
                     <p className="mt-2 break-all font-mono text-sm text-foreground">
                       {WEB_BUILD_INFO.buildId}
                     </p>
                   </div>
-                  <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                    <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
+                  <div className="min-w-0 md:border-l md:border-[var(--settings-border)] md:pl-4 md:first:border-l-0 md:first:pl-0">
+                    <p className="text-[12px] font-medium text-muted-text">
                       {t('settings.versionBuildTime')}
                     </p>
                     <p className="mt-2 break-all font-mono text-sm text-foreground">
@@ -1514,8 +1647,8 @@ const SettingsPage: React.FC = () => {
                     </p>
                   </div>
                   {shouldShowDesktopVersionCard ? (
-                    <div className="rounded-2xl border settings-border bg-background/40 px-4 py-3">
-                      <p className="text-[12px] font-semibold uppercase tracking-normal text-muted-text">
+                    <div className="min-w-0 md:border-l md:border-[var(--settings-border)] md:pl-4 md:first:border-l-0 md:first:pl-0">
+                      <p className="text-[12px] font-medium text-muted-text">
                         {t('settings.versionDesktop')}
                       </p>
                       <p className="mt-2 break-all font-mono text-sm text-foreground">
@@ -1524,15 +1657,15 @@ const SettingsPage: React.FC = () => {
                     </div>
                   ) : null}
                 </div>
-                <p className="text-xs leading-6 text-muted-text">
+                <p className="text-xs leading-5 text-muted-text">
                   {t('settings.updateBuildDescription')}
                 </p>
                 {canCheckDesktopUpdate ? (
-                  <div className="mt-4 space-y-3 rounded-2xl border settings-border bg-background/30 px-4 py-4">
+                  <div className="mt-4 space-y-3 border-t border-[var(--settings-border)] pt-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
                         <p className="text-sm font-medium text-foreground">{t('settings.desktopUpdate')}</p>
-                        <p className="text-xs leading-6 text-muted-text">
+                        <p className="text-xs leading-5 text-muted-text">
                           {t('settings.desktopUpdateDescription')}
                         </p>
                       </div>
@@ -1562,14 +1695,14 @@ const SettingsPage: React.FC = () => {
                         } : undefined}
                       />
                     ) : (
-                      <p className="text-xs leading-6 text-muted-text">
+                      <p className="text-xs leading-5 text-muted-text">
                         {t('settings.desktopCurrentNoStatus')}
                       </p>
                     )}
                   </div>
                 ) : null}
                 {WEB_BUILD_INFO.isFallbackVersion ? (
-                  <p className="text-xs leading-6 text-[var(--warning)] dark:text-[var(--warning)]">
+                  <p className="text-xs leading-5 text-[var(--warning)] dark:text-[var(--warning)]">
                     {t('settings.fallbackVersionWarning')}
                   </p>
                 ) : null}
@@ -1582,7 +1715,7 @@ const SettingsPage: React.FC = () => {
               >
                 <div className="space-y-4">
                   {!isEnvBackupAllowed ? (
-                    <p className="text-xs leading-6 text-[var(--warning)] dark:text-[var(--warning)]">
+                    <p className="text-xs leading-5 text-[var(--warning)] dark:text-[var(--warning)]">
                       {t('settings.disabledAuthBackupWarning')}
                     </p>
                   ) : null}
@@ -1599,7 +1732,7 @@ const SettingsPage: React.FC = () => {
                     </Button>
                     <Button
                       type="button"
-                      variant="settings-primary"
+                      variant="settings-secondary"
                       onClick={beginEnvBackupImport}
                       disabled={envBackupActionDisabled}
                       isLoading={isImportingEnv}
@@ -1617,10 +1750,10 @@ const SettingsPage: React.FC = () => {
                       }}
                     />
                   </div>
-                  <p className="text-xs leading-6 text-muted-text">
+                  <p className="text-xs leading-5 text-muted-text">
                     {t('settings.envExportNote')}
                   </p>
-                  <p className="text-xs leading-6 text-muted-text">
+                  <p className="text-xs leading-5 text-muted-text">
                     {t('settings.envDockerNote')}
                   </p>
                   {envBackupActionError ? (
@@ -1671,9 +1804,6 @@ const SettingsPage: React.FC = () => {
                   disabled={isSaving || isLoading}
                 />
               </SettingsSectionCard>
-            ) : null}
-            {activeCategory === 'system' && passwordChangeable ? (
-              <ChangePasswordCard />
             ) : null}
             {activeCategory === 'notification' ? (
               <SettingsPanelErrorBoundary

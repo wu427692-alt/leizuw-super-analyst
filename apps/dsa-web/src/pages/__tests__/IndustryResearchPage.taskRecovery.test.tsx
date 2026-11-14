@@ -11,7 +11,19 @@ vi.mock('../../api/industryResearch', () => ({ industryResearchApi: {
   downloadUrl: (id: string, format: string) => `/test/${id}.${format}`,
 } }));
 vi.mock('../../hooks/usePageActivationRefresh', () => ({ usePageActivationRefresh: vi.fn() }));
-vi.mock('../../components/common', () => ({ AppPage: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
+vi.mock('../../components/common', () => ({
+  AppPage: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  // 页面新增的共享原语：这里只需可渲染，布局断言不在本文件覆盖范围。
+  PageTabs: ({ items, value }: { items: Array<{ key: string; label: string }>; value: string }) => (
+    <div data-testid="mock-page-tabs" data-active={value}>{items.map(item => <span key={item.key}>{item.label}</span>)}</div>
+  ),
+  Metric: () => null,
+  MetricRow: () => null,
+  Sparkline: () => null,
+  BarMeter: () => null,
+  ShareBar: () => null,
+  HeatCell: () => null,
+}));
 
 const running: IndustryResearchProject = {
   projectId: 'research-1', topic: '光模块', researchType: 'industry', objective: '测试报告读取',

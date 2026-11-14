@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AiNewsPage from '../AiNewsPage';
 import type { AiNewsFeed } from '../AiNewsPage';
@@ -126,9 +126,11 @@ describe('AiNewsPage', () => {
     fetchMock.mockResolvedValue(respond({ ...feed, sources: [{ ...feed.sources[0], last_success: '2000-01-01T00:00:00Z', kind: 'official' }] }));
     render(<AiNewsPage />);
     await screen.findByRole('link', { name: 'Example original English headline' });
-    fireEvent.click(screen.getByRole('button', { name: '来源' }));
+    fireEvent.click(screen.getByRole('tab', { name: '来源' }));
     expect(screen.getByText('陈旧')).toBeInTheDocument();
-    expect(screen.getByText('官方动态')).toBeInTheDocument();
+    // 来源类型同时出现在来源卡与「来源类型构成」ShareBar 图例里：分别定位，避免只匹配到其中一个。
+    expect(within(document.querySelector('.ai-news-source-grid') as HTMLElement).getByText('官方动态')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('来源类型构成')).getByText('官方动态')).toBeInTheDocument();
     expect(screen.getByText('当前窗口条目')).toBeInTheDocument();
     expect(screen.getByText(/统计范围：近 7 天/)).toBeInTheDocument();
   });

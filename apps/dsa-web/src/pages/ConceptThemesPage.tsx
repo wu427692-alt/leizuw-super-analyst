@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Activity, ArrowRight, Binary, Boxes, BrainCircuit, ChevronRight, CircleDot,
+  Activity, ArrowRight, Boxes, BrainCircuit, ChevronRight, CircleDot,
   Clock3, Database, Download, GitBranch, Layers3, Link2, Network, RefreshCw, Scale, Search, ShieldCheck,
   Sparkles, Star, Target, TrendingUp, X,
 } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
-import { AppPage } from '../components/common';
+import { AppPage, BarMeter, HeatCell, MetricRow, PageTabs, ShareBar } from '../components/common';
 import { BottomSheet } from '../components/mobile/BottomSheet';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EmptyState } from '../components/common/EmptyState';
@@ -128,7 +128,7 @@ function TradeDecisionWorkbench({ overview, leaders, lifecycle, watchlistMap, on
       </article>)}</div>
       {!candidates.length ? <div className="concept-decision-empty"><EmptyState title="候选正在准备" description="归因任务完成后，这里只展示满足真实来源和同一截止日要求的股票。" /><a href="/essay-quant?source=concept-themes&strategy=theme-event">先创建题材事件验证模板 <ArrowRight /></a><small>可先定义入场、持有期、止损与样本外窗口；候选形成后再绑定标的，不需要停在空页面等待。</small></div> : null}
     </section>
-    <footer><ShieldCheck /><p><strong>闭环规则：</strong>先保存数据截止日与入选条件，再在量化回测中验证收益、回撤、成交约束和样本外表现，最后回到此页复盘失效原因。研究计划不构成投资建议。</p></footer>
+    <footer><ShieldCheck /><p>保存条件 → 回测验证 → 回来复盘</p></footer>
   </section>;
 }
 
@@ -165,7 +165,7 @@ function RotationSparkline({ points }: { points: ConceptRotation['items'][number
   return <svg className="concept-rotation-spark" viewBox="0 0 72 26" role="img" aria-label={`${values.length}日题材涨跌轨迹`}><path d={path} /></svg>;
 }
 
-function ThemeCard({ item, active, onClick }: { item: ConceptTheme; active: boolean; onClick: () => void }) {
+function ThemeCard({ item, active, heatMax, onClick }: { item: ConceptTheme; active: boolean; heatMax: number; onClick: () => void }) {
   return <button type="button" className={`concept-theme-card ${active ? 'is-active' : ''}`} onClick={onClick}>
     <div className="concept-theme-card__top">
       <span className="concept-source-dot" style={{ background: SOURCE_COLOR[item.source] ?? CHART_FLAT }} />
@@ -178,6 +178,7 @@ function ThemeCard({ item, active, onClick }: { item: ConceptTheme; active: bool
       <span><b>{metric(item.heatScore, 0)}</b>热度</span>
       <span data-tone={(item.pctChange ?? 0) >= 0 ? 'up' : 'down'}><b>{signed(item.pctChange)}</b>当日</span>
     </div>
+    <div className="concept-theme-card__heat"><BarMeter value={item.heatScore ?? 0} max={heatMax} height={3} tone="accent" ariaLabel={`${item.canonicalName} 热度相对当前列表`} /></div>
     <div className="concept-theme-card__foot"><span>{TYPE_LABEL[item.themeType] ?? item.themeType} · L{item.level} · {item.canonicalSourceCount || 1}方/{item.canonicalNodeCount || 1}节点</span><ChevronRight /></div>
   </button>;
 }
@@ -193,10 +194,9 @@ function SourceRail({ themes }: { themes: ConceptTheme[] }) {
 }
 
 function InstitutionCorpusPulse({ value }: { value: ThemeDetail['institutionCorpus'] }) {
-  const total = Math.max(1, value.total || 0);
   return <section className="concept-corpus-pulse">
     <header><div><span><BrainCircuit /> AI STRUCTURED CORPUS</span><strong>机构语料共识</strong><small>近 {value.windowDays || 90} 日 · 只统计主题字段明确命中的已分析机构段子</small></div><ScoreRing value={(value.score + 100) / 2} label={value.score > 12 ? '偏多' : value.score < -12 ? '偏空' : '中性'} /></header>
-    <div className="concept-corpus-pulse__meter"><i data-tone="bullish" style={{ width: `${value.bullish / total * 100}%` }} /><i data-tone="neutral" style={{ width: `${value.neutral / total * 100}%` }} /><i data-tone="bearish" style={{ width: `${value.bearish / total * 100}%` }} /></div>
+    <div className="concept-corpus-pulse__meter"><ShareBar height={3} ariaLabel={`机构语料情绪构成：看多 ${value.bullish} · 中性 ${value.neutral} · 看空 ${value.bearish}`} segments={[{ key: 'bullish', value: value.bullish, color: 'var(--up)', label: '看多' }, { key: 'neutral', value: value.neutral, color: 'var(--flat)', label: '中性' }, { key: 'bearish', value: value.bearish, color: 'var(--down)', label: '看空' }]} /></div>
     <dl><div><dt>明确看多</dt><dd>{value.bullish}</dd></div><div><dt>中性跟踪</dt><dd>{value.neutral}</dd></div><div><dt>明确看空</dt><dd>{value.bearish}</dd></div><div><dt>近14日新增</dt><dd>{value.recent14D}<small>{value.volumeChangePct == null ? ' · 无前窗' : ` · ${signed(value.volumeChangePct)}`}</small></dd></div></dl>
     {value.items.length ? <div className="concept-corpus-pulse__items">{value.items.slice(0, 4).map(item => <a href={item.url} key={item.topicId}><span data-tone={item.sentiment}>{item.sentiment === 'bullish' ? '看多' : item.sentiment === 'bearish' ? '看空' : '中性'}</span><strong>{item.title}</strong><small>{item.summary || `${item.model} 已完成结构化研判`}</small></a>)}</div> : <p>当前题材暂无满足“已分析 + 明确主题命中”的机构语料，不用通用行业文字凑共识。</p>}
     <footer>{value.truncated ? '高频题材仅取最近 600 篇作为当前样本 · ' : ''}{value.method}</footer>
@@ -209,7 +209,7 @@ function ThemeAffinityMap({ value, onTheme }: { value: ThemeDetail['relatedTheme
   return <section className="concept-affinity-map">
     <header><div><span><Network /> CONSTITUENT AFFINITY</span><strong>题材成分关系图</strong><small>寻找共同股票，也识别只是名字相近但成分不同的题材</small></div><b>{value.targetTotalStocks} 股基准</b></header>
     <div>{value.items.slice(0, 10).map(item => <button type="button" key={item.canonicalName} onClick={() => onTheme(item.canonicalName)}>
-      <span><strong>{item.canonicalName}</strong><small>{item.relationType} · {item.family} · {item.cluster}</small></span><b>{metric(item.jaccardPct, 1)}%</b><i style={{ width: `${Math.max(4, item.jaccardPct / maxJaccard * 100)}%` }} /><p>{item.sharedStocks} 只共同 · 当前题材仍有 {item.targetExclusiveStocks} 只独占 · 对方共 {item.otherTotalStocks} 股</p><ChevronRight />
+      <span><strong>{item.canonicalName}</strong><small>{item.relationType} · {item.family} · {item.cluster}</small></span><b>{metric(item.jaccardPct, 1)}%</b><span className="concept-affinity-bar"><BarMeter value={item.jaccardPct} max={maxJaccard} height={3} tone="neutral" ariaLabel={`与 ${item.canonicalName} 的成分重合度`} /></span><p>{item.sharedStocks} 只共同 · 当前题材仍有 {item.targetExclusiveStocks} 只独占 · 对方共 {item.otherTotalStocks} 股</p><ChevronRight />
     </button>)}</div>
     <footer>{value.method}</footer>
   </section>;
@@ -226,6 +226,32 @@ function ConsensusMatrix({ stocks }: { stocks: ConceptStock[] }) {
       {rows.map(stock => <div className="concept-matrix-row" key={stock.tsCode}>
         <span><strong>{stock.name}</strong><small>{stock.tsCode}</small></span>
         {sources.map(source => <i key={source} className={stock.sources.includes(source) ? 'is-hit' : ''} aria-label={`${stock.name} · ${SOURCE_LABEL[source]} · ${stock.sources.includes(source) ? '已纳入' : '未纳入'}`} />)}
+      </div>)}
+    </div>
+  </section>;
+}
+
+function AlphaHeatmap({ stocks, horizonDays }: { stocks: ConceptStock[]; horizonDays: number }) {
+  const priced = stocks.filter(item => typeof item.residualReturn === 'number' && Number.isFinite(item.residualReturn));
+  if (!priced.length) {
+    return <section className="concept-alpha-heat is-empty" aria-label="成分股窗口 Alpha 分布">
+      <header><div><strong>成分股窗口 Alpha 分布</strong><small>{horizonDays} 日窗口</small></div><span>等待归因</span></header>
+      <p>归因完成后按多源共识分层展示；没有真实残差时不画色块。</p>
+    </section>;
+  }
+  const scale = Math.max(...priced.map(item => Math.abs(item.residualReturn as number)), 0.01);
+  const rows = [
+    { key: 'strong', label: '强共识 · 3+源', values: priced.filter(item => item.sourceCount >= 3) },
+    { key: 'confirmed', label: '交叉确认 · 2源', values: priced.filter(item => item.sourceCount === 2) },
+    { key: 'single', label: '单源待核验', values: priced.filter(item => item.sourceCount <= 1) },
+  ];
+  return <section className="concept-alpha-heat" aria-label="成分股窗口 Alpha 分布">
+    <header><div><strong>成分股窗口 Alpha 分布</strong><small>{horizonDays} 日窗口 · 一格一只股票，色深表示相对题材的超额幅度，红为跑赢、绿为跑输</small></div><span>{priced.length} 只已归因</span></header>
+    <div className="concept-alpha-heat__grid">
+      {rows.map(row => <div className="concept-alpha-heat__row" key={row.key}>
+        <span>{row.label}<b>{row.values.length}</b></span>
+        <div>{row.values.slice(0, 60).map(item => <HeatCell key={item.tsCode} intensity={(item.residualReturn as number) / scale} size={12} ariaLabel={`${item.name || item.tsCode} · ${horizonDays} 日 Alpha ${signed(item.residualReturn)}`} />)}
+          {!row.values.length ? <em>本层暂无已归因成分</em> : null}</div>
       </div>)}
     </div>
   </section>;
@@ -281,7 +307,7 @@ function ThemeResearchQueue({ stocks, onOpen }: { stocks: ConceptStock[]; onOpen
     { key: 'alpha', title: '独立正 Alpha', note: 'Beta<0.8且窗口Alpha>0', values: take([...stocks].filter(item => (item.beta ?? 99) < .8 && (item.residualReturn ?? 0) > 0).sort((a, b) => (b.residualReturn ?? 0) - (a.residualReturn ?? 0))) },
     { key: 'divergence', title: '负 Alpha 背离', note: 'Beta≥0.8但窗口Alpha<0', values: take([...stocks].filter(item => (item.beta ?? -99) >= .8 && (item.residualReturn ?? 0) < 0).sort((a, b) => (a.residualReturn ?? 0) - (b.residualReturn ?? 0))) },
   ];
-  return <section className="concept-research-queue"><header><div><strong>题材研究优先队列</strong><small>由来源共识与归因结果生成，用于决定先核验谁，不构成买卖信号</small></div><Target /></header><div>{groups.map(group => <article key={group.key} data-kind={group.key}><h3>{group.title}</h3><p>{group.note}</p>{group.values.map(item => <button type="button" key={item.tsCode} aria-label={`${item.name}：${item.betaInterpretation}`} onClick={() => onOpen(item.tsCode)}><span>{item.name}<small>{item.tsCode}</small></span><b>{group.key === 'consensus' ? `${item.sourceCount}源 · W${metric(item.weightScore, 0)}` : group.key === 'elastic' ? `β ${metric(item.beta)}` : signed(item.residualReturn)}</b></button>)}{!group.values.length ? <em>当前无满足条件的成分</em> : null}</article>)}</div></section>;
+  return <section className="concept-research-queue"><header><div><strong>先看哪些题材</strong></div><Target /></header><div>{groups.map(group => <article key={group.key} data-kind={group.key}><h3>{group.title}</h3><p>{group.note}</p>{group.values.map(item => <button type="button" key={item.tsCode} aria-label={`${item.name}：${item.betaInterpretation}`} onClick={() => onOpen(item.tsCode)}><span>{item.name}<small>{item.tsCode}</small></span><b>{group.key === 'consensus' ? `${item.sourceCount}源 · W${metric(item.weightScore, 0)}` : group.key === 'elastic' ? `β ${metric(item.beta)}` : signed(item.residualReturn)}</b></button>)}{!group.values.length ? <em>当前无满足条件的成分</em> : null}</article>)}</div></section>;
 }
 
 function MarketConsensusRadar({ value, mode, onMode, onOpen }: {
@@ -315,21 +341,20 @@ function InstitutionDiscoveryRadar({ value, onSelect, onOpen }: {
     provider_consensus: '多源已确认', provider_single: '单源待交叉', corpus_candidate: '语料新候选',
   } as const;
   return <section className="concept-institution-radar" id="concept-corpus-radar">
-    <header><div><span><BrainCircuit /> LOCAL CORPUS DISCOVERY</span><h2>机构语料新兴题材雷达</h2><p>从本地机构段子提取正在加速的主题与明确提及股票；AI 候选不会自动升级为市场共识。</p></div><div><strong>{number(value?.totalCandidates)}</strong><small>{value?.windowDays || 30} 日有效候选</small></div></header>
+    <header><div><span><BrainCircuit /> LOCAL CORPUS DISCOVERY</span><h2>机构语料新兴题材雷达</h2><p>机构纪要里正在升温的主题</p></div><div><strong>{number(value?.totalCandidates)}</strong><small>{value?.windowDays || 30} 日有效候选</small></div></header>
     <div className="concept-institution-radar__track">
       {value?.items.slice(0, 8).map(item => {
-        const totalTone = Math.max(1, item.sentiment.bullish + item.sentiment.neutral + item.sentiment.bearish);
         return <article key={item.canonicalName} data-status={item.status}>
           <div className="concept-institution-radar__title"><button type="button" onClick={() => onSelect(item)}><strong>{item.canonicalName}</strong><ChevronRight /></button><span>{statusLabel[item.status]}</span></div>
           <div className="concept-institution-radar__metrics"><b>{item.noteCount}<small>篇语料</small></b><b>{item.recent7D}<small>近7日</small></b><b data-tone={(item.accelerationPct ?? 0) >= 0 ? 'up' : 'down'}>{item.accelerationPct == null ? 'NEW' : signed(item.accelerationPct)}<small>提及加速度</small></b><b>{metric(item.discoveryScore, 0)}<small>发现分</small></b></div>
-          <div className="concept-institution-radar__tone" aria-label={`看多 ${item.sentiment.bullish} · 中性 ${item.sentiment.neutral} · 看空 ${item.sentiment.bearish}`}><i data-tone="bullish" style={{ width: `${item.sentiment.bullish / totalTone * 100}%` }} /><i data-tone="neutral" style={{ width: `${item.sentiment.neutral / totalTone * 100}%` }} /><i data-tone="bearish" style={{ width: `${item.sentiment.bearish / totalTone * 100}%` }} /></div>
+          <div className="concept-institution-radar__tone" aria-label={`看多 ${item.sentiment.bullish} · 中性 ${item.sentiment.neutral} · 看空 ${item.sentiment.bearish}`}><ShareBar height={3} ariaLabel={`${item.canonicalName} 语料情绪构成`} segments={[{ key: 'bullish', value: item.sentiment.bullish, color: 'var(--up)', label: '看多' }, { key: 'neutral', value: item.sentiment.neutral, color: 'var(--flat)', label: '中性' }, { key: 'bearish', value: item.sentiment.bearish, color: 'var(--down)', label: '看空' }]} /></div>
           <div className="concept-institution-radar__stocks">{item.stocks.slice(0, 4).map(stock => <button type="button" key={`${item.canonicalName}-${stock.tsCode || stock.name}`} onClick={() => stock.tsCode ? onOpen(stock.tsCode) : undefined} disabled={!stock.tsCode}><span>{stock.name}</span><b>{stock.mentions}</b></button>)}{!item.stocks.length ? <em>暂无明确股票提及</em> : null}</div>
           <footer>{item.providerCount ? `${item.providerCount} 个独立供应商已有同名题材` : '尚无供应商同名题材，需人工核验'} · {item.latestAt?.slice(0, 10) || '近期'}</footer>
         </article>;
       })}
       {value && !value.items.length ? <p>当前窗口没有符合条件的机构语料候选；无证据时不生成虚假题材。</p> : null}
     </div>
-    <footer>{value?.method || '机构语料只负责发现线索，供应商目录负责定义市场共识，两套口径不会混算。'}</footer>
+    <footer>{value?.method || ''}</footer>
   </section>;
 }
 
@@ -365,7 +390,7 @@ function InstitutionCandidatePanel({ item, onClose, onTheme, onOpen }: {
     <section className="concept-candidate-panel__summary"><div><strong>{item.noteCount}</strong><span>30日语料</span></div><div><strong>{item.recent7D}</strong><span>近7日</span></div><div><strong>{item.accelerationPct == null ? 'NEW' : signed(item.accelerationPct)}</strong><span>提及加速度</span></div><div><strong>{metric(item.discoveryScore, 0)}</strong><span>发现分</span></div></section>
     <section className="concept-candidate-panel__boundary"><ShieldCheck /><div><strong>{item.providerCount ? `${item.providerCount} 个独立供应商已确认` : '尚未进入供应商市场共识'}</strong><p>{item.providerCount ? `源目录：${item.providerSources.map(source => SOURCE_LABEL[source] || source).join(' · ')}` : '当前只说明机构语料集中讨论，不能据此新增题材成分或解释股价。'}</p></div></section>
     <section className="concept-candidate-panel__stocks"><header><strong>明确提及股票</strong><small>同名股票已与题材成分库统一身份</small></header><div>{item.stocks.map(stock => <button type="button" disabled={!stock.tsCode} onClick={() => stock.tsCode ? onOpen(stock.tsCode) : undefined} key={`${stock.tsCode}-${stock.name}`}><span><strong>{stock.name}</strong><small>{stock.tsCode || '非A股/待映射'}</small></span><b>{stock.mentions} 次</b><ChevronRight /></button>)}</div></section>
-    <section className="concept-candidate-panel__evidence"><header><strong>最近原始证据</strong><small>点击回到机构段子原文</small></header>{item.samples.map(sample => <a href={sample.url} key={sample.topicId}><span>{sample.date.slice(0, 10)}</span><strong>{sample.title || '未命名机构段子'}</strong><ChevronRight /></a>)}</section>
+    <section className="concept-candidate-panel__evidence"><header><strong>最近原始证据</strong></header>{item.samples.map(sample => <a href={sample.url} key={sample.topicId}><span>{sample.date.slice(0, 10)}</span><strong>{sample.title || '未命名机构段子'}</strong><ChevronRight /></a>)}</section>
     {item.providerCount ? <button type="button" className="concept-candidate-panel__action" onClick={() => { onTheme(item.canonicalName); onClose(); }}>进入市场题材与成分归因 <ArrowRight /></button> : <p className="concept-candidate-panel__note">继续等待供应商目录交叉确认；候选证据不会自动进入题材权重、Beta 或 Alpha。</p>}
   </aside>;
 }
@@ -387,7 +412,7 @@ function WatchlistExposureMap({ value, onOpen, onCluster, onExport }: {
       <p>{value.concentration.interpretation}</p>
     </div>
     <div className="concept-watchlist-map__body">
-      <div className="concept-watchlist-map__themes">{value.themes.slice(0, 8).map(item => <button type="button" key={`${item.family}-${item.cluster}`} onClick={() => onCluster(item.family, item.cluster)}><span><strong>{item.cluster}</strong><small>{item.family}</small></span><b>{item.stockCount}/{value.stockCount}</b><p>平均权重 {metric(item.averageWeight, 0)} · {item.stocks.map(stock => stock.name).join('、')}</p><i style={{ width: `${item.stockCount / value.stockCount * 100}%` }} /></button>)}</div>
+      <div className="concept-watchlist-map__themes">{value.themes.slice(0, 8).map(item => <button type="button" key={`${item.family}-${item.cluster}`} onClick={() => onCluster(item.family, item.cluster)}><span><strong>{item.cluster}</strong><small>{item.family}</small></span><b>{item.stockCount}/{value.stockCount}</b><p>平均权重 {metric(item.averageWeight, 0)} · {item.stocks.map(stock => stock.name).join('、')}</p><span className="concept-watchlist-bar"><BarMeter value={item.stockCount} max={value.stockCount} height={3} tone="neutral" ariaLabel={`${item.cluster} 覆盖 ${item.stockCount} 只自选`} /></span></button>)}</div>
       <div className="concept-watchlist-map__stocks">{value.stocks.map(stock => <button type="button" onClick={() => onOpen(stock.tsCode)} key={stock.tsCode}><div><strong>{stock.name}</strong><code>{stock.tsCode}</code></div><b>{stock.independentClusterCount} 主线</b><p>{stock.themes.slice(0, 3).map(theme => theme.cluster).join(' · ') || '等待多源题材归因'}</p><span>{stock.rawThemeCount} 标签 · 重叠 {metric(stock.overlapRate, 0)}% · {stock.asOfDate || '待归因'}</span><ChevronRight /></button>)}</div>
     </div>
     <footer>{value.method}</footer>
@@ -424,12 +449,13 @@ function ClusterAggregate({ value, onOpen }: { value: ConceptClusterDetail; onOp
   </section>;
 }
 
-function StockRow({ item, selected, onClick }: { item: ConceptStock; selected: boolean; onClick: () => void }) {
+function StockRow({ item, selected, alphaScale, onClick }: { item: ConceptStock; selected: boolean; alphaScale: number; onClick: () => void }) {
   return <button type="button" className={`concept-stock-row ${selected ? 'is-active' : ''}`} onClick={onClick}>
     <span className="concept-stock-name"><strong>{item.name || item.tsCode}{item.inWatchlist ? <Star aria-label="我的自选" /> : null}</strong><small>{item.tsCode}</small></span>
     <span><strong>{item.weightScore ? item.weightScore.toFixed(1) : '待算'}</strong><small>题材权重</small></span>
     <span aria-label={item.betaInterpretation}><strong>{metric(item.beta)}</strong><small>题材 Beta · {item.confidence === 'high' ? '高' : item.confidence === 'medium' ? '中' : '低'}置信</small></span>
     <span data-tone={(item.residualReturn ?? 0) >= 0 ? 'up' : 'down'}><strong>{signed(item.residualReturn)}</strong><small>窗口 Alpha</small></span>
+    <span className="concept-stock-heat"><HeatCell intensity={(item.residualReturn ?? 0) / (alphaScale || 1)} size={12} ariaLabel={`${item.name || item.tsCode} 窗口 Alpha ${signed(item.residualReturn)}`} /></span>
     <span><strong>{item.sourceCount}</strong><small>独立提供方</small></span>
     <span className="concept-stock-reason">{item.reasons?.[0] || '结构化来源已确认，尚无文字入选原因'}</span>
     <ChevronRight />
@@ -664,6 +690,10 @@ export default function ConceptThemesPage() {
     confirmed: detail?.stocks.filter(item => item.sourceCount === 2).length ?? 0,
     singleSource: detail?.stocks.filter(item => item.sourceCount === 1).length ?? 0,
   };
+  const detailAlphaScale = useMemo(() => {
+    const values = (detail?.stocks ?? []).map(item => item.residualReturn).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return values.length ? Math.max(...values.map(value => Math.abs(value)), 0.01) : 1;
+  }, [detail]);
   const comparison = useMemo(() => {
     if (compareThemes?.length !== 2) return null;
     const [left, right] = compareThemes;
@@ -750,11 +780,13 @@ export default function ConceptThemesPage() {
         <div className="concept-orbit" aria-hidden="true"><span /><span /><span /><b /></div>
       </header>
 
-      <nav className="concept-page-nav" aria-label="概念题材工作台分页">
-        {CONCEPT_SECTIONS.map(item => <button type="button" key={item.key} className={activeSection === item.key ? 'is-active' : ''} onClick={() => selectSection(item.key)}>
-          <i>{item.index}</i><span><strong>{item.label}</strong><small>{item.purpose}</small></span>
-        </button>)}
-      </nav>
+      <PageTabs
+        className="concept-main-tabs"
+        ariaLabel="概念题材工作台分页"
+        value={activeSection}
+        onChange={key => selectSection(key as ConceptSection)}
+        items={CONCEPT_SECTIONS.map(item => ({ key: item.key, label: item.label, badge: item.key === 'catalog' && overview ? number(overview.total) : undefined }))}
+      />
       <SnapshotNotice label="题材目录" state={overviewState} />
       {['catalog', 'stocks', 'decision'].includes(activeSection) ? <section className="concept-window-toolbar" aria-label="归因窗口">
         <div><strong>归因窗口</strong><span>详情、排行、画像与对照使用同一交易日窗口</span></div>
@@ -762,11 +794,13 @@ export default function ConceptThemesPage() {
       </section> : null}
 
       {activeSection === 'overview' ? <>
-        <section className="concept-kpis">
-          <div><Database /><span>源题材节点</span><strong>{number(overview?.summary.themes)}</strong><small>语义分层 {metric(overview?.summary.semanticCoveragePct, 1)}% · 六套原始口径保留</small></div>
-          <div><GitBranch /><span>成分关系</span><strong>{number(overview?.summary.memberships)}</strong><small>已扫描 {number(overview?.summary.attemptedThemes)} 个节点 · {metric(overview?.summary.scanCoveragePct, 1)}%</small></div>
-          <div><Binary /><span>归因结果</span><strong>{number(overview?.summary.exposures)}</strong><small>{number(overview?.summary.exposureThemes)}题材 / {number(overview?.summary.exposureStocks)}股票 · 可研究 {number(overview?.summary.researchableThemes)}</small></div>
-          <div><ShieldCheck /><span>最新交易日</span><strong>{overview?.summary.marketDate || '—'}</strong><small>{overview?.sync?.stage || '共享题材库'}</small></div>
+        <section className="concept-kpis" aria-label="题材库规模">
+          <MetricRow columns={4} items={[
+            { label: '源题材节点', value: number(overview?.summary.themes), hint: `语义分层 ${metric(overview?.summary.semanticCoveragePct, 1)}% · 六套原始口径保留` },
+            { label: '成分关系', value: number(overview?.summary.memberships), hint: `已扫描 ${number(overview?.summary.attemptedThemes)} 个节点`, viz: <BarMeter value={overview?.summary.scanCoveragePct ?? 0} max={100} height={3} tone="accent" ariaLabel="成分扫描进度" /> },
+            { label: '归因结果', value: number(overview?.summary.exposures), hint: `${number(overview?.summary.exposureThemes)} 题材 / ${number(overview?.summary.exposureStocks)} 股票 · 可研究 ${number(overview?.summary.researchableThemes)}` },
+            { label: '最新交易日', value: overview?.summary.marketDate || null, hint: overview?.sync?.stage || '共享题材库' },
+          ]} />
         </section>
         <section className="concept-quality-strip" data-tone={!overview || overview.summary.quality.warnings.length ? 'attention' : 'ready'} aria-label="题材数据质量与截止时间">
           <div><span>目录交易日</span><strong>{overview?.summary.quality.catalogDate || '—'}</strong></div>
@@ -832,6 +866,7 @@ export default function ConceptThemesPage() {
             <div><strong>{item.canonicalName}</strong><span>{item.cluster}</span></div>
             <RotationSparkline points={item.points} />
             <b data-tone={(item.pctChange || 0) >= 0 ? 'up' : 'down'}>{signed(item.pctChange)}</b>
+            <span className="concept-rotation-meter"><BarMeter value={item.rotationScore} max={Math.max(...(rotation?.items.map(row => row.rotationScore) ?? [1]), 1)} height={3} tone="neutral" ariaLabel={`${item.canonicalName} 轮动分相对规模`} /></span>
             <small>轮动 {metric(item.rotationScore, 0)} · {item.sourceCount}源 · 5日 {signed(item.momentum5d)}</small>
           </button>)}
           {rotation && !rotation.items.length ? <p>该窗口暂无题材历史快照；当前目录与成分股仍可正常检索。</p> : null}
@@ -873,7 +908,7 @@ export default function ConceptThemesPage() {
           <SnapshotNotice label="主题簇" state={clusterState} />
           {clusterDetail ? <ClusterAggregate value={clusterDetail} onOpen={tsCode => void openStock(tsCode)} /> : null}
           <div className="concept-grid">
-            {visibleThemes.map(item => <ThemeCard key={item.id} item={item} active={selectedTheme === item.id} onClick={() => setSelectedThemeId(item.id)} />)}
+            {visibleThemes.map(item => <ThemeCard key={item.id} item={item} active={selectedTheme === item.id} heatMax={Math.max(...visibleThemes.map(theme => theme.heatScore ?? 0), 1)} onClick={() => setSelectedThemeId(item.id)} />)}
           </div>
           {overview && overview.total > overview.pageSize ? <nav className="concept-pagination" aria-label="题材分页"><button type="button" disabled={page <= 1 || loading} onClick={() => { setSelectedThemeId(null); setPage(value => Math.max(1, value - 1)); }}>上一页</button><span>第 {page} / {Math.max(1, Math.ceil(overview.total / overview.pageSize))} 页</span><button type="button" disabled={page >= Math.ceil(overview.total / overview.pageSize) || loading} onClick={() => { setSelectedThemeId(null); setPage(value => value + 1); }}>下一页</button></nav> : null}
           {!loading && !overviewState.error && overview && !visibleThemes.length ? <EmptyState title="没有命中题材" description="调整关键词或层级筛选；后台目录会按最新交易日自动更新。" /> : null}
@@ -889,13 +924,14 @@ export default function ConceptThemesPage() {
             {detail.institutionCorpus ? <InstitutionCorpusPulse value={detail.institutionCorpus} /> : null}
             {detail.relatedThemes ? <ThemeAffinityMap value={detail.relatedThemes} onTheme={openThemeInCatalog} /> : null}
             <section className="concept-consensus-spectrum"><div><span>强共识 · 3+源</span><b>{consensusDistribution.strong}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.strong / detail.totalStocks * 100 : 0}%` }} /></div><div><span>交叉确认 · 2源</span><b>{consensusDistribution.confirmed}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.confirmed / detail.totalStocks * 100 : 0}%` }} /></div><div><span>单源待核验</span><b>{consensusDistribution.singleSource}</b><i style={{ width: `${detail.totalStocks ? consensusDistribution.singleSource / detail.totalStocks * 100 : 0}%` }} /></div></section>
+            <AlphaHeatmap stocks={detail.stocks} horizonDays={horizonDays} />
             <SourceRail themes={detail.sourceNodes} />
             <ConsensusMatrix stocks={detail.stocks} />
             <BetaAlphaMap stocks={detail.stocks} horizonDays={horizonDays} />
             <ThemeResearchQueue stocks={detail.stocks} onOpen={tsCode => void openStock(tsCode)} />
             <div className="concept-stock-table-head"><span>成分股 / 权重 / Beta / {horizonDays}日 Alpha</span><span>点击展开股票题材透镜</span></div>
             <div className="concept-stock-tools"><label><Search /><input value={stockQuery} onChange={event => updateStockFilters({ query: event.target.value })} placeholder="搜索成分股名称或代码" /></label><button type="button" className={watchlistOnly ? 'is-active' : ''} disabled={!watchlistOnly && !detail.watchlistStocks?.length} onClick={() => updateStockFilters({ only: !watchlistOnly })}><Star />我的自选 {detail.watchlistStocks?.length || 0}</button><select value={stockSort} onChange={event => updateStockFilters({ sort: event.target.value as typeof stockSort })} aria-label="成分股排序"><option value="weight">题材权重</option><option value="beta">Beta弹性</option><option value="alpha">Alpha排序</option><option value="name">名称</option></select></div>
-            <div className="concept-stock-table">{visibleStocks.map(item => <StockRow key={item.tsCode} item={item} selected={stockLens?.tsCode === item.tsCode} onClick={() => void openStock(item.tsCode)} />)}</div>
+            <div className="concept-stock-table">{visibleStocks.map(item => <StockRow key={item.tsCode} item={item} selected={stockLens?.tsCode === item.tsCode} alphaScale={detailAlphaScale} onClick={() => void openStock(item.tsCode)} />)}</div>
             {!filteredStocks.length ? <p className="concept-filter-empty">{detail.refreshNeeded && !detail.stocks.length ? '本地成分尚未齐备，后台补数后自动显示。' : watchlistOnly ? '当前筛选下没有自选股，可取消“我的自选”或清除关键词。' : '当前条件没有命中成分股，可清除关键词后重试。'}</p> : null}
             {filteredStocks.length > stockPageSize ? <nav className="concept-pagination concept-stock-pages" aria-label="成分股分页"><button type="button" disabled={stockPage <= 1} onClick={() => updateStockFilters({ page: Math.max(1, stockPage - 1) })}>上一页</button><span>{stockPage} / {Math.ceil(filteredStocks.length / stockPageSize)} · {filteredStocks.length}股</span><button type="button" disabled={stockPage >= Math.ceil(filteredStocks.length / stockPageSize)} onClick={() => updateStockFilters({ page: stockPage + 1 })}>下一页</button></nav> : null}
           </> : !detailState.loading && !detailState.error ? <div className="concept-detail-empty"><CircleDot className={detailLoading ? 'is-loading' : ''} /><h2>{detailLoading ? '正在组装题材共识' : '选择一个题材'}</h2><p>{detailLoading ? '正在读取共享库。' : '这里将展开各来源节点、成分股共识、可解释权重和收益归因。'}</p></div> : null}

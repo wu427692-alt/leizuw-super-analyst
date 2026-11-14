@@ -1,16 +1,28 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useUserAccess } from '../contexts/UserAccessContext';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, Settings2, SlidersHorizontal } from 'lucide-react';
 import { cn } from '../utils/cn';
 import { agentApi } from '../api/agent';
 import { systemConfigApi } from '../api/systemConfig';
-import { ApiErrorAlert, Badge, Button, ConfirmDialog, EmptyState, InlineAlert, ScrollArea, Tooltip } from '../components/common';
+import {
+  ApiErrorAlert,
+  Badge,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  InlineAlert,
+  MetricRow,
+  ScrollArea,
+  ShareBar,
+  Tooltip,
+} from '../components/common';
 import { getParsedApiError } from '../api/error';
 import type { SkillInfo } from '../api/agent';
 import { DashboardStateBlock } from '../components/dashboard';
+import { PixelAvatar } from '../components/illustration/PixelAvatar';
 import {
   useAgentChatStore,
   type Message,
@@ -29,6 +41,8 @@ import { isNearBottom } from '../utils/chatScroll';
 import { getReportText } from '../utils/reportLanguage';
 import { extractStockCodesFromMessage } from '../utils/chatStockCode';
 import { findMatchingStockCode, includesStockCode, normalizeStockCode } from '../utils/stockCode';
+import { findResearchSession } from '../stores/researchSessionStore';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 // Quick question examples shown on empty state
 const QUICK_QUESTIONS = [
@@ -41,6 +55,12 @@ const QUICK_QUESTIONS = [
 ];
 
 const MAX_SELECTED_SKILLS = 3;
+
+/**
+ * 「研究议题 → 会话」带进 chat 的参数。切换 / 新开会话时必须清掉，
+ * 否则页头会把上一个研究的议题串到别的会话上。
+ */
+const MEETING_QUERY_KEYS = ['from', 'topic', 'stock', 'name', 'cycle'] as const;
 const CONTEXT_COMPRESSION_CONFIG_KEY = 'AGENT_CONTEXT_COMPRESSION_ENABLED';
 const STRONG_COMPARE_STOCK_MESSAGE_RE = /比较|对比|\bvs\b|和[^，。,.!?！？]{0,40}比/i;
 const WEAK_COMPARE_STOCK_MESSAGE_RE = /差异(?!化)|区别|不同|相比|对照|比一比/;
@@ -151,7 +171,15 @@ const restoreActiveStockContextFromMessages = (messages: Message[]): ActiveStock
 };
 
 const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGlobals }) => {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  // 手机/平板（≤1023px，与 index.css 的 chat 版式断点一致）：对话区改为
+  // 「AI 回答直接铺在页面底色上、只有用户消息有气泡、不显示头像」。
+  const isMobile = useIsMobile();
+  // 从「研究议题」进入的会话：`from=meeting` + `topic` 只影响页头与「返回研究议题」，
+  // 不改变 chat 原有的 question/report 追问参数契约。
+  const isMeetingEntry = searchParams.get('from') === 'meeting';
+  const meetingTopicParam = searchParams.get('topic')?.trim() || '';
   const [input, setInput] = useState('');
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -161,6 +189,9 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [showSkillDesc, setShowSkillDesc] = useState<string | null>(null);
   const [mobileSkillPickerOpen, setMobileSkillPickerOpen] = useState(false);
+  // 会话级设置（全局上下文压缩等）默认收起：它不属于「提问」这条主流程，
+  // 展开入口放在输入区右侧，避免把设置项平铺在输入框上方。规范 §10。
+  const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -216,10 +247,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
     };
   }, []);
 
-  // Set page title
-  useEffect(() => {
-    document.title = '问股 - 乐子乌智能投研平台';
-  }, []);
+  // 页面标题在下面随「研究议题上下文」变化：从会议进来是议题，普通进入仍是「问股」。
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -288,6 +316,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
   );
 
   const {
+    ownerScope,
     messages,
     loading,
     progressSteps,
@@ -306,6 +335,62 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
     stopStream,
     clearCompletionBadge,
   } = useAgentChatStore();
+
+  /**
+   * 研究议题上下文：本次 chat 会话是否来自「投研团队 → 研究议题」。
+   *
+   * - 从会议进来：URL 带 from/topic/session（会话 id 对得上才算，避免切换会话后串题）；
+   * - 从侧栏回看这次研究：本机研究记录里能按 sessionId 找回议题。
+   * 命中时页头、文档标题、AI 角色名都改用研究语境，并给出返回「研究议题」的入口。
+   */
+  const meetingSessionParam = searchParams.get('session')?.trim() || '';
+  const researchContext = useMemo(() => {
+    if (isMeetingEntry && meetingTopicParam && (!meetingSessionParam || meetingSessionParam === sessionId)) {
+      return {
+        sessionId: meetingSessionParam || sessionId,
+        topic: meetingTopicParam,
+        stock: searchParams.get('stock')?.trim() || '',
+        stockName: searchParams.get('name')?.trim() || '',
+        cycle: searchParams.get('cycle')?.trim() || '',
+      };
+    }
+    const stored = findResearchSession(ownerScope, sessionId);
+    return stored ? { ...stored } : null;
+  }, [isMeetingEntry, meetingTopicParam, meetingSessionParam, sessionId, ownerScope, searchParams]);
+
+  // 页面标题跟着会话走：研究工作会话显示议题，普通会话仍是「问股」。
+  useEffect(() => {
+    document.title = researchContext
+      ? `研究议题 · ${researchContext.topic.slice(0, 20)} - 乐子乌智能投研平台`
+      : '问股 - 乐子乌智能投研平台';
+  }, [researchContext]);
+
+  const goBackToMeeting = useCallback(() => {
+    if (!researchContext) return;
+    const params = new URLSearchParams({
+      topic: researchContext.topic,
+      session: researchContext.sessionId,
+    });
+    if (researchContext.stock) params.set('stock', researchContext.stock);
+    if (researchContext.stockName) params.set('name', researchContext.stockName);
+    if (researchContext.cycle) params.set('cycle', researchContext.cycle);
+    navigate(`/meeting?${params.toString()}`);
+  }, [navigate, researchContext]);
+
+  // 从侧栏回看研究会话时把议题写回 URL：应用栏标题、「返回研究议题」才不会丢上下文。
+  useEffect(() => {
+    if (!researchContext || isMeetingEntry) return;
+    if (searchParams.get('from') === 'meeting' && searchParams.get('topic')) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('from', 'meeting');
+      next.set('topic', researchContext.topic);
+      if (researchContext.stock) next.set('stock', researchContext.stock);
+      if (researchContext.stockName) next.set('name', researchContext.stockName);
+      if (researchContext.cycle) next.set('cycle', researchContext.cycle);
+      return next;
+    }, { replace: true });
+  }, [researchContext, isMeetingEntry, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (activeStockContext || messages.length === 0) {
@@ -537,7 +622,12 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
     requestScrollToBottom('auto');
     useAgentChatStore.getState().startNewChat();
     observedSessionParamRef.current = null;
-    setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('session'); return next; }, { replace: true });
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('session');
+      MEETING_QUERY_KEYS.forEach((key) => next.delete(key));
+      return next;
+    }, { replace: true });
     setSidebarOpen(false);
   }, [requestScrollToBottom, setSearchParams]);
 
@@ -554,7 +644,13 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
     setInput('');
     requestScrollToBottom('auto');
     observedSessionParamRef.current = targetSessionId;
-    setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set('session', targetSessionId); return next; });
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('session', targetSessionId);
+      // 研究议题只属于发起它的那个会话：切走就不再展示。
+      MEETING_QUERY_KEYS.forEach((key) => next.delete(key));
+      return next;
+    });
     void switchSession(targetSessionId);
     setSidebarOpen(false);
   }, [requestScrollToBottom, sessionId, switchSession, setSearchParams]);
@@ -586,6 +682,9 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
   // Prepared research questions carry an explicit stock identity; report
   // follow-ups may additionally hydrate their saved analysis by recordId.
   useEffect(() => {
+    // 研究议题发起的会话已经把议题作为首条消息发出，URL 上的 stock / name / cycle
+    // 只用于页头展示和「返回研究议题」，不能在这里预填成一句追问。
+    if (searchParams.get('from') === 'meeting') return;
     const preparedPrompt = searchParams.get('prompt')?.trim();
     const stock = sanitizeFollowUpStockCode(searchParams.get('stock'));
     const name = sanitizeFollowUpStockName(searchParams.get('name'));
@@ -847,7 +946,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
 
   const sidebarContent = (
     <>
-      <div className="flex items-center justify-between border-b border-white/5 bg-white/2 p-3.5">
+      <div className="flex items-center justify-between border-b border-line-1 px-3 py-2">
         <h2 className="text-sm font-semibold text-cyan uppercase tracking-normal flex items-center gap-2">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -856,7 +955,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
         </h2>
         <button
           onClick={handleStartNewChat}
-          className="rounded-lg p-1.5 text-muted-text transition-all hover:bg-white/10 hover:text-foreground"
+          className="rounded-lg p-1.5 text-muted-text transition-colors hover:bg-bg-3 hover:text-foreground"
           aria-label="开启新对话"
         >
           <svg
@@ -886,14 +985,14 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
             loading
             compact
             title="加载对话中..."
-            className="rounded-2xl border border-dashed border-border/50 bg-surface/30"
+            className="rounded-lg border border-dashed border-line-2 bg-bg-1"
           />
         ) : sessions.length === 0 && !sessionsError ? (
           <DashboardStateBlock
             compact
             title="暂无历史对话"
             description="开始提问后，这里会保留会话记录。"
-            className="rounded-2xl border border-dashed border-border/50 bg-surface/30"
+            className="rounded-lg border border-dashed border-line-2 bg-bg-1"
           />
         ) : (
           <div className="space-y-2">
@@ -959,20 +1058,50 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
     ? getSkillNames(selectedSkillIds).join('、')
     : '通用分析';
 
+  /**
+   * 会话统计进标题栏（§11）：消息数 / 工具调用次数 / 工具耗时合计，
+   * 不再额外占一行统计条。数字一律 tabular-nums 由 Metric 保证。
+   */
+  const sessionStats = useMemo(() => {
+    const toolSteps = messages.flatMap((message) => (
+      (message.thinkingSteps || []).filter((step) => step.type === 'tool_done')
+    ));
+    const toolDuration = toolSteps.reduce((sum, step) => sum + (step.duration || 0), 0);
+    return {
+      messages: messages.length,
+      tools: toolSteps.length,
+      duration: toolDuration,
+    };
+  }, [messages]);
+
+  /** 分析进度用构成占比条表达（§11）：已完成 / 进行中 / 等待。 */
+  const progressSegments = useMemo(() => {
+    if (!progressSteps.length) return [];
+    const done = progressSteps.filter((step) => step.success === true || step.type === 'tool_done').length;
+    const pending = Math.max(0, progressSteps.length - done);
+    return [
+      { key: 'done', value: done, color: 'var(--chart-1)', label: '已完成' },
+      { key: 'pending', value: pending, color: 'var(--line-2)', label: '进行中' },
+    ].filter((segment) => segment.value > 0);
+  }, [progressSteps]);
+
   return (
     <div
       data-testid="chat-workspace"
       className="chat-workspace flex w-full min-w-0 gap-4 overflow-hidden"
     >
       {/* Desktop sidebar */}
-      <div className="hidden h-full w-64 flex-shrink-0 flex-col overflow-hidden rounded-[1.25rem] border border-white/8 bg-card/82 shadow-soft-card md:flex">
+      <div className={cn(
+        'h-full w-64 flex-shrink-0 flex-col overflow-hidden rounded-xl border border-line-1 bg-bg-1',
+        isMobile ? 'hidden' : 'flex',
+      )}>
         {sidebarContent}
       </div>
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-40 md:hidden"
+          className={cn('chat-sidebar-overlay fixed inset-0 z-40', isMobile ? '' : 'hidden')}
           onClick={() => setSidebarOpen(false)}
         >
           <div className="page-drawer-overlay absolute inset-0" />
@@ -999,12 +1128,15 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
 
       {/* Main chat area */}
       <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="chat-page-header mb-4 flex-shrink-0 space-y-3">
+        <header className="chat-page-header mb-3 flex-shrink-0 space-y-2">
           <div className="flex items-start justify-between gap-4">
-            <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="md:hidden p-1.5 -ml-1 rounded-lg hover:bg-hover transition-colors text-secondary-text hover:text-foreground"
+                className={cn(
+                  'p-1.5 -ml-1 rounded-lg hover:bg-hover transition-colors text-secondary-text hover:text-foreground',
+                  isMobile ? '' : 'hidden',
+                )}
                 aria-label="历史对话"
               >
                 <svg
@@ -1022,7 +1154,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                 </svg>
               </button>
               <svg
-                className="chat-header-brand hidden w-6 h-6 text-cyan md:block"
+                className={cn('chat-header-brand w-6 h-6 text-cyan', isMobile ? 'hidden' : 'block')}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1034,10 +1166,19 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                   d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
                 />
               </svg>
-              <span className="hidden md:inline">问股</span>
+              {researchContext ? (
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="shrink-0 text-base font-semibold text-secondary-text md:text-lg">研究议题</span>
+                  <span className="truncate text-base font-semibold md:text-2xl">
+                    · {researchContext.topic}
+                  </span>
+                </span>
+              ) : (
+                <span className={isMobile ? 'hidden' : 'inline'}>问股</span>
+              )}
             </h1>
             {messages.length > 0 && (
-              <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
+              <div className="chat-header-actions flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
                 <Tooltip content="导出会话为 Markdown 文件">
                   <span className="inline-flex">
                     <Button
@@ -1131,9 +1272,28 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
               </div>
             )}
           </div>
-          <p className="text-secondary-text text-sm">
-            向 AI 询问个股分析，获取基于技能视角的交易建议与实时决策报告。
-          </p>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <p className="text-secondary-text text-sm">
+              {researchContext
+                ? '这是围绕本次研究议题展开的会话，可以继续追问；研究结果也保存在这个会话里。'
+                : '向 AI 询问个股分析，获取基于技能视角的交易建议与实时决策报告。'}
+            </p>
+            {sessionStats.messages > 0 ? (
+              <div className="chat-header-metrics shrink-0">
+              <MetricRow
+                columns={3}
+                items={[
+                  { label: '消息', value: sessionStats.messages },
+                  { label: '工具调用', value: sessionStats.tools },
+                  {
+                    label: '工具耗时',
+                    value: sessionStats.duration > 0 ? `${sessionStats.duration.toFixed(1)}s` : null,
+                  },
+                ]}
+              />
+              </div>
+            ) : null}
+          </div>
           {deleteError && <InlineAlert variant="danger" title="对话未删除" message={deleteError} />}
           {sendToast ? (
             <InlineAlert
@@ -1145,13 +1305,70 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
           ) : null}
         </header>
 
-        <div className="chat-main-pane relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden border border-white/6 bg-card/78 glass-card">
+        {/* 研究议题与当前标的合成一条上下文条：同一批上下文只占一行，不再各铺一条。 */}
+        {researchContext || activeStockCode ? (
+          <div
+            data-testid={researchContext ? 'chat-meeting-topic' : undefined}
+            className="chat-context-bar mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line-1 bg-bg-1 px-3 py-2"
+          >
+            {researchContext ? (
+              <>
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="text-[11px] leading-none text-secondary-text">本次研究议题</span>
+                  <strong className="truncate text-sm font-medium text-foreground">
+                    {researchContext.topic}
+                  </strong>
+                  {[researchContext.stockName, researchContext.stock, researchContext.cycle].filter(Boolean).length > 0 ? (
+                    <span className="truncate text-[11px] text-muted-text">
+                      {[researchContext.stockName, researchContext.stock, researchContext.cycle].filter(Boolean).join(' · ')}
+                    </span>
+                  ) : null}
+                </div>
+                <Button variant="secondary" size="xsm" onClick={goBackToMeeting} aria-label="返回研究议题">
+                  返回研究议题
+                </Button>
+              </>
+            ) : null}
+            {activeStockCode ? (
+              <div
+                className={cn(
+                  'flex min-w-0 items-center gap-2',
+                  researchContext && 'shrink-0 border-line-1 pt-1',
+                  researchContext && !isMobile && 'md:border-l md:pl-4 md:pt-0',
+                )}
+              >
+                <PixelAvatar seed={activeStockCode} size={24} className="chat-stock-row__avatar" />
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className="truncate text-sm font-medium text-foreground">
+                    {activeStockContext?.stock_name?.trim() || activeStockCode}
+                  </span>
+                  {activeStockContext?.stock_name ? (
+                    <span className="font-mono text-[11px] tabular-nums text-muted-text">{activeStockCode}</span>
+                  ) : null}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="xsm"
+                  isLoading={isWatchlistActioning}
+                  onClick={() => void handleToggleWatchlist(activeStockCode)}
+                >
+                  {stockInWatchlist(activeStockCode) ? '从自选删除' : '加入自选'}
+                </Button>
+                {watchlistMessage ? (
+                  <span className="text-[11px] text-muted-text" role="status">{watchlistMessage}</span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="chat-main-pane relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line-1 bg-bg-1">
           {/* Messages */}
           <ScrollArea
             className="relative z-10 flex-1"
             viewportRef={messagesViewportRef}
             onScroll={handleMessagesScroll}
-            viewportClassName="space-y-6 p-4 md:p-6"
+            viewportClassName={isMobile ? 'chat-message-list--mobile' : 'space-y-4 p-3 md:p-4'}
             testId="chat-message-scroll"
           >
             {messagesLoading && (
@@ -1161,15 +1378,14 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
               <div className="space-y-2" role="status">
                 <ApiErrorAlert error={historyError} />
                 <Button variant="secondary" size="sm" disabled={messagesLoading || loading} onClick={() => void retrySession()}>重新读取历史会话</Button>
-                <p className="text-xs text-muted-text">已加载内容保留。这里只重新读取记录，不会重复调用 AI。</p>
               </div>
             )}
             {messages.length === 0 && !loading && !messagesLoading && !historyError ? (
-              <div className="flex h-full items-center justify-center">
+              <div className="chat-empty-wrap flex h-full items-center justify-center">
                 <EmptyState
                   title="开始问股"
                   description="输入「分析 600519」或「茅台现在能买吗」，AI 将调用实时数据工具为您生成决策报告。"
-                  className="max-w-2xl border-dashed bg-card/55"
+                  className="chat-empty-state max-w-2xl border-dashed bg-card/55"
                   icon={(
                     <svg
                       className="h-8 w-8"
@@ -1201,102 +1417,143 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                 />
               </div>
             ) : (
-              messages.map((msg) => {
-                const skillLabel = getMessageSkillLabel(msg);
-                return (
-                <div
-                  key={msg.id}
-                  className={`chat-message-row flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
-                >
+              <>
+                {/* 手机端把「AI 问股 / AI 研究小组」这个角色标签从每条消息上方收走，
+                    整段会话只在顶部出现一次，把纵向空间还给正文。 */}
+                {isMobile ? (
+                  <div className="chat-conversation-context" data-testid="chat-conversation-context">
+                    <span className="chat-conversation-context__label">
+                      {researchContext ? 'AI 研究小组' : 'AI 问股'}
+                    </span>
+                    {researchContext?.topic ? (
+                      <span className="chat-conversation-context__topic">· {researchContext.topic}</span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {messages.map((msg) => {
+                  const skillLabel = getMessageSkillLabel(msg);
+                  const isUser = msg.role === 'user';
+                  return (
                   <div
+                    key={msg.id}
+                    data-chat-row="message"
+                    data-role={msg.role}
                     className={cn(
-                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold shadow-sm transition-all',
-                      msg.role === 'user' ? 'chat-avatar-user' : 'chat-avatar-ai'
+                      'chat-message-row flex',
+                      !isMobile && 'gap-4',
+                      isUser ? 'flex-row-reverse' : ''
                     )}
                   >
-                    {msg.role === 'user' ? 'U' : 'AI'}
-                  </div>
-                  <div
-                    className={cn(
-                      'chat-message-bubble group/message min-w-0 w-fit max-w-[min(100%,48rem)] overflow-hidden px-5 py-3.5 transition-colors',
-                      msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'
-                    )}
-                  >
-                    {msg.role === 'assistant' && skillLabel && (
-                      <div className="mb-2">
-                        <Badge variant="info" className="chat-skill-badge shadow-none" aria-label={`技能 ${skillLabel}`}>
-                          <svg
-                            className="w-3 h-3"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M13 10V3L4 14h7v7l9-11h-7z"
-                            />
-                          </svg>
-                          {skillLabel}
-                        </Badge>
+                    {/* 手机端去掉头像：横向空间全部让给正文（桌面端保留）。 */}
+                    {!isMobile ? (
+                      <div
+                        className={cn(
+                          'chat-message-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold',
+                          isUser ? 'chat-avatar-user' : 'chat-avatar-ai'
+                        )}
+                      >
+                        {isUser ? 'U' : 'AI'}
                       </div>
-                    )}
-                    {msg.role === 'assistant' && renderThinkingBlock(msg)}
-                    {msg.role === 'assistant' &&
-                      expandedThinking.has(msg.id) &&
-                      msg.thinkingSteps &&
-                      renderThinkingDetails(msg.thinkingSteps)}
-                    {msg.role === 'assistant' ? (
-                      <div className="relative">
-                        <div className="chat-message-actions">
-                          <button
-                            type="button"
-                            onClick={() => copyMessageToClipboard(msg.id, msg.content)}
-                            className="chat-copy-btn"
-                            aria-label={copiedMessages.has(msg.id) ? text.copied : text.copy}
-                          >
-                            {copiedMessages.has(msg.id) ? text.copied : text.copy}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadMessageAsMarkdown(msg)}
-                            className="chat-copy-btn"
-                            aria-label="导出此条消息为 Markdown"
-                          >
-                            导出
-                          </button>
-                        </div>
-                        <div className="chat-prose pr-20 sm:pr-24">
-                          <Markdown remarkPlugins={[remarkGfm]}>
-                            {msg.content}
-                          </Markdown>
-                        </div>
+                    ) : null}
+                    <div
+                      className={cn(
+                        'chat-message-main flex min-w-0 flex-col',
+                        isUser ? 'chat-message-main--user' : 'chat-message-main--assistant'
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          'chat-message-bubble group/message min-w-0 overflow-hidden transition-colors',
+                          isUser
+                            ? 'chat-bubble-user w-fit'
+                            : (isMobile ? 'chat-message-plain' : 'chat-bubble-ai'),
+                          isMobile ? 'chat-message-bubble--mobile' : 'w-fit max-w-[min(100%,48rem)] px-4 py-3'
+                        )}
+                      >
+                        {msg.role === 'assistant' && skillLabel && (
+                          <div className="mb-2">
+                            <Badge variant="info" className="chat-skill-badge shadow-none" aria-label={`技能 ${skillLabel}`}>
+                              <svg
+                                className="w-3 h-3"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                                />
+                              </svg>
+                              {skillLabel}
+                            </Badge>
+                          </div>
+                        )}
+                        {msg.role === 'assistant' && renderThinkingBlock(msg)}
+                        {msg.role === 'assistant' &&
+                          expandedThinking.has(msg.id) &&
+                          msg.thinkingSteps &&
+                          renderThinkingDetails(msg.thinkingSteps)}
+                        {msg.role === 'assistant' ? (
+                          <div className="relative">
+                            <div className="chat-message-actions">
+                              <button
+                                type="button"
+                                onClick={() => copyMessageToClipboard(msg.id, msg.content)}
+                                className="chat-copy-btn"
+                                aria-label={copiedMessages.has(msg.id) ? text.copied : text.copy}
+                              >
+                                {copiedMessages.has(msg.id) ? text.copied : text.copy}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadMessageAsMarkdown(msg)}
+                                className="chat-copy-btn"
+                                aria-label="导出此条消息为 Markdown"
+                              >
+                                导出
+                              </button>
+                            </div>
+                            <div className="chat-prose pr-20 sm:pr-24">
+                              <Markdown remarkPlugins={[remarkGfm]}>
+                                {msg.content}
+                              </Markdown>
+                            </div>
+                          </div>
+                        ) : (
+                          msg.content
+                            .split('\n')
+                            .map((line, i) => (
+                              <p
+                                key={i}
+                                className="mb-1 last:mb-0 leading-relaxed"
+                              >
+                                {line || '\u00A0'}
+                              </p>
+                            ))
+                        )}
                       </div>
-                    ) : (
-                      msg.content
-                        .split('\n')
-                        .map((line, i) => (
-                          <p
-                            key={i}
-                            className="mb-1 last:mb-0 leading-relaxed"
-                          >
-                            {line || '\u00A0'}
-                          </p>
-                        ))
-                    )}
+                    </div>
                   </div>
-                </div>
-                );
-              })
+                  );
+                })}
+              </>
             )}
 
             {loading && (
-              <div className="flex gap-4">
-                <div className="w-8 h-8 rounded-full bg-elevated text-foreground flex items-center justify-center flex-shrink-0 text-xs font-bold">
-                  AI
-                </div>
-                <div className="min-w-[200px] max-w-[min(100%,48rem)] overflow-hidden rounded-2xl rounded-tl-sm border border-white/6 bg-card/72 px-5 py-4">
+              <div className={cn('chat-streaming-row flex', !isMobile && 'gap-4')}>
+                {!isMobile ? (
+                  <div className="chat-message-avatar w-8 h-8 rounded-full bg-elevated text-foreground flex items-center justify-center flex-shrink-0 text-xs font-bold">
+                    AI
+                  </div>
+                ) : null}
+                <div className={cn(
+                  'chat-streaming-card overflow-hidden',
+                  isMobile
+                    ? 'chat-streaming-card--mobile'
+                    : 'min-w-[200px] max-w-[min(100%,48rem)] rounded-xl rounded-tl-sm border border-line-1 bg-bg-1 px-4 py-3',
+                )}>
                   <div className="flex items-center gap-2.5 text-sm text-secondary-text">
                     <div className="relative w-4 h-4 flex-shrink-0">
                       <div className="absolute inset-0 rounded-full border-2 border-cyan/20" />
@@ -1306,6 +1563,18 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                       {getCurrentStage(progressSteps)}
                     </span>
                   </div>
+                  {progressSegments.length > 0 ? (
+                    <div className="mt-2 flex items-center gap-3">
+                      <ShareBar
+                        segments={progressSegments}
+                        className="max-w-48 flex-1"
+                        ariaLabel="分析步骤进度"
+                      />
+                      <span className="shrink-0 text-[11px] tabular-nums text-muted-text">
+                        步骤 {progressSteps.filter((step) => step.success === true || step.type === 'tool_done').length}/{progressSteps.length}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -1314,7 +1583,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
           </ScrollArea>
 
           {showJumpToBottom && (
-            <div className="pointer-events-none absolute bottom-[5.75rem] right-4 z-20 md:bottom-24 md:right-6">
+            <div className="chat-jump-to-bottom pointer-events-none absolute bottom-[5.75rem] right-4 z-20 md:bottom-24 md:right-6">
               <button
                 type="button"
                 className="pointer-events-auto chat-copy-btn shadow-soft-card"
@@ -1343,8 +1612,8 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
           )}
 
           {/* Input area */}
-          <div className="chat-composer border-t border-white/6 bg-card/88 p-4 md:p-6 relative z-20">
-            <div className="space-y-3">
+          <div className="chat-composer relative z-20 border-t border-line-1 bg-bg-1 p-3 md:p-4">
+            <div className="space-y-2">
               {chatError ? (
                 <div className="space-y-2">
                   <ApiErrorAlert error={chatError} />
@@ -1355,7 +1624,6 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                       if (previous) { setInput(previous.content); inputRef.current?.focus(); }
                     }}>重新编辑上次问题</Button>
                   </div>
-                  <p className="text-xs text-muted-text">不会自动重新发送问题；后台可能已保存结果，请先读取会话。</p>
                   {progressSteps.length > 0 && (
                     <details className="text-xs text-secondary-text">
                       <summary className="cursor-pointer">查看断开前的处理进度</summary>
@@ -1372,161 +1640,168 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                   className="rounded-xl px-3 py-2 text-xs shadow-none"
                 />
               ) : null}
-              {canManageGlobals && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/6 bg-surface/25 px-3 py-2">
-                <label
-                  className={cn(
-                    'inline-flex items-center gap-2 text-sm',
-                    contextCompressionLoaded && !contextCompressionSaving
-                      ? 'cursor-pointer text-foreground'
-                      : 'cursor-not-allowed text-muted-text',
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={contextCompressionEnabled}
-                    disabled={!contextCompressionLoaded || contextCompressionSaving}
-                    onChange={(event) => void updateContextCompressionEnabled(event.target.checked)}
-                    className="chat-skill-checkbox"
-                  />
-                  <span className="font-medium">上下文压缩</span>
-                  <span className="text-xs text-muted-text">节省长会话 token</span>
-                </label>
-                <span className="text-xs text-muted-text">
-                  {contextCompressionSaving
-                    ? '保存中...'
-                    : contextCompressionEnabled
-                      ? '已启用'
-                      : '未启用'}
-                </span>
-              </div>}
-              {canManageGlobals && contextCompressionError ? (
-                <InlineAlert
-                  variant="danger"
-                  title="上下文压缩设置未保存"
-                  message={contextCompressionError}
-                  className="rounded-xl px-3 py-2 text-xs shadow-none"
-                />
-              ) : null}
               {skillsError && (
                 <div className="flex flex-wrap items-center gap-2 text-xs" role="status">
                   <span className="text-secondary-text">分析策略暂未加载，可直接使用通用分析。{skillsError}</span>
                   <Button variant="secondary" size="sm" disabled={skillsLoading} onClick={() => void loadSkills()}>重新加载策略</Button>
                 </div>
               )}
-              {skills.length > 0 && (
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    className="home-surface-button flex h-10 w-full items-center justify-between gap-3 rounded-xl px-3 text-left text-sm text-foreground md:hidden"
-                    aria-label={mobileSkillPickerOpen ? '收起策略选择' : '展开策略选择'}
-                    aria-expanded={mobileSkillPickerOpen}
-                    aria-controls="chat-skill-picker-panel"
-                    onClick={() => setMobileSkillPickerOpen((open) => !open)}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <SlidersHorizontal className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
-                      <span className="flex-shrink-0 font-medium">策略</span>
-                      <span className="truncate text-xs text-muted-text">{selectedSkillSummary}</span>
-                    </span>
-                    <ChevronDown
-                      className={cn(
-                        'h-4 w-4 flex-shrink-0 text-muted-text transition-transform',
-                        mobileSkillPickerOpen ? 'rotate-180' : '',
-                      )}
-                      aria-hidden="true"
+              {canManageGlobals && contextCompressionError ? (
+                <InlineAlert
+                  variant="danger"
+                  title="上下文压缩设置未保存"
+                  message={contextCompressionError}
+                  className="rounded-lg px-3 py-2 text-xs shadow-none"
+                />
+              ) : null}
+
+              {/* 策略与会话设置都是「默认不需要看、需要能就地展开」的面板（§10）：
+                  收成一行触发条，正文区不再被整排复选框占掉。 */}
+              {skills.length > 0 || canManageGlobals ? (
+                <div className="chat-composer-meta flex flex-wrap items-center gap-2">
+                  {skills.length > 0 ? (
+                    <button
+                      type="button"
+                      className="flex h-8 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-line-1 px-2.5 text-left text-xs text-secondary-text hover:text-foreground"
+                      aria-label={mobileSkillPickerOpen ? '收起策略选择' : '展开策略选择'}
+                      aria-expanded={mobileSkillPickerOpen}
+                      aria-controls="chat-skill-picker-panel"
+                      onClick={() => setMobileSkillPickerOpen((open) => !open)}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <SlidersHorizontal className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                        <span className="flex-shrink-0 font-medium">策略</span>
+                        <span className="truncate text-muted-text">{selectedSkillSummary}</span>
+                      </span>
+                      <ChevronDown
+                        className={cn(
+                          'h-3.5 w-3.5 flex-shrink-0 text-muted-text transition-transform',
+                          mobileSkillPickerOpen ? 'rotate-180' : '',
+                        )}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  ) : null}
+                  {canManageGlobals ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-lg border border-line-1 px-2.5 text-xs text-secondary-text hover:text-foreground"
+                      aria-label={sessionSettingsOpen ? '收起会话设置' : '会话设置'}
+                      aria-expanded={sessionSettingsOpen}
+                      aria-controls="chat-session-settings"
+                      onClick={() => setSessionSettingsOpen((open) => !open)}
+                    >
+                      <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      会话设置
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {skills.length > 0 ? (
+                <div
+                  id="chat-skill-picker-panel"
+                  data-testid="chat-skill-picker-panel"
+                  className={cn(
+                    mobileSkillPickerOpen ? 'flex' : 'hidden',
+                    'max-h-40 flex-wrap items-start gap-x-5 gap-y-2 overflow-y-auto rounded-lg border border-line-1 bg-bg-1 px-3 py-2',
+                  )}
+                >
+                  <span className="mt-1 flex-shrink-0 text-xs font-medium text-muted-text">策略</span>
+                  <label className="mt-0.5 flex cursor-pointer items-center gap-1.5 text-sm">
+                    <input
+                      type="checkbox"
+                      name="general-analysis"
+                      value=""
+                      checked={selectedSkillIds.length === 0}
+                      onChange={() => setSelectedSkillIds([])}
+                      className="chat-skill-checkbox"
                     />
-                  </button>
-                  <div
-                    id="chat-skill-picker-panel"
-                    data-testid="chat-skill-picker-panel"
-                    className={cn(
-                      mobileSkillPickerOpen ? 'flex' : 'hidden',
-                      'max-h-40 flex-wrap items-start gap-x-5 gap-y-2 overflow-y-auto rounded-xl border border-white/6 bg-surface/25 px-3 py-2 md:flex md:max-h-none md:overflow-visible md:border-0 md:bg-transparent md:p-0',
-                    )}
-                  >
-                    <span className="text-xs text-muted-text font-medium uppercase tracking-normal flex-shrink-0 mt-1">
-                      策略
+                    <span
+                      className={`text-sm transition-colors ${selectedSkillIds.length === 0 ? 'font-medium text-foreground' : 'text-secondary-text hover:text-foreground'}`}
+                    >
+                      通用分析
                     </span>
-                    <label className="flex items-center gap-1.5 text-sm cursor-pointer group mt-0.5">
+                  </label>
+                  {skills.map((s) => {
+                    const checked = selectedSkillIdSet.has(s.id);
+                    const disabled = !checked && skillLimitReached;
+                    return (
+                      <label
+                        key={s.id}
+                        className={`relative mt-0.5 flex cursor-pointer items-center gap-1.5 ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                        onMouseEnter={() => setShowSkillDesc(s.id)}
+                        onMouseLeave={() => setShowSkillDesc(null)}
+                      >
+                        <input
+                          type="checkbox"
+                          name="skills"
+                          value={s.id}
+                          checked={checked}
+                          disabled={disabled}
+                          onChange={() => toggleSkillSelection(s.id)}
+                          className="chat-skill-checkbox"
+                        />
+                        <span
+                          className={`text-sm transition-colors ${checked ? 'font-medium text-foreground' : 'text-secondary-text hover:text-foreground'}`}
+                        >
+                          {s.name}
+                        </span>
+                        {showSkillDesc === s.id && s.description && (
+                          <div className="skill-desc-tooltip">
+                            <p className="skill-title">{s.name}</p>
+                            <p>{s.description}</p>
+                          </div>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {canManageGlobals ? (
+                <div
+                  id="chat-session-settings"
+                  data-testid="chat-session-settings"
+                  className={sessionSettingsOpen ? 'block' : 'hidden'}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line-1 bg-bg-1 px-3 py-2">
+                    <label
+                      className={cn(
+                        'inline-flex items-center gap-2 text-sm',
+                        contextCompressionLoaded && !contextCompressionSaving
+                          ? 'cursor-pointer text-foreground'
+                          : 'cursor-not-allowed text-muted-text',
+                      )}
+                    >
                       <input
                         type="checkbox"
-                        name="general-analysis"
-                        value=""
-                        checked={selectedSkillIds.length === 0}
-                        onChange={() => setSelectedSkillIds([])}
+                        checked={contextCompressionEnabled}
+                        disabled={!contextCompressionLoaded || contextCompressionSaving}
+                        onChange={(event) => void updateContextCompressionEnabled(event.target.checked)}
                         className="chat-skill-checkbox"
                       />
-                      <span
-                        className={`transition-colors text-sm ${selectedSkillIds.length === 0 ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
-                      >
-                        通用分析
-                      </span>
+                      <span className="font-medium">上下文压缩</span>
                     </label>
-                    {skills.map((s) => {
-                      const checked = selectedSkillIdSet.has(s.id);
-                      const disabled = !checked && skillLimitReached;
-                      return (
-                        <label
-                          key={s.id}
-                          className={`flex items-center gap-1.5 cursor-pointer group relative mt-0.5 ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
-                          onMouseEnter={() => setShowSkillDesc(s.id)}
-                          onMouseLeave={() => setShowSkillDesc(null)}
-                        >
-                          <input
-                            type="checkbox"
-                            name="skills"
-                            value={s.id}
-                            checked={checked}
-                            disabled={disabled}
-                            onChange={() => toggleSkillSelection(s.id)}
-                            className="chat-skill-checkbox"
-                          />
-                          <span
-                            className={`transition-colors text-sm ${checked ? 'text-foreground font-medium' : 'text-secondary-text group-hover:text-foreground'}`}
-                          >
-                            {s.name}
-                          </span>
-                          {showSkillDesc === s.id && s.description && (
-                            <div className="skill-desc-tooltip">
-                              <p className="skill-title">{s.name}</p>
-                              <p>{s.description}</p>
-                            </div>
-                          )}
-                        </label>
-                      );
-                    })}
+                    <span className="text-xs text-muted-text">
+                      {contextCompressionSaving
+                        ? '保存中...'
+                        : contextCompressionEnabled
+                          ? '已启用'
+                          : '未启用'}
+                    </span>
                   </div>
                 </div>
-              )}
+              ) : null}
 
-            {activeStockCode && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-text font-mono">{activeStockCode}</span>
-                <Button
-                  variant="secondary"
-                  size="xsm"
-                  isLoading={isWatchlistActioning}
-                  onClick={() => void handleToggleWatchlist(activeStockCode)}
-                  className="text-[12px]"
-                >
-                  {stockInWatchlist(activeStockCode) ? '从自选删除' : '加入自选'}
-                </Button>
-                {watchlistMessage && (
-                  <span className="text-[12px] text-secondary-text animate-in fade-in">{watchlistMessage}</span>
-                )}
-              </div>
-            )}
-
-              <div className="flex items-end gap-3">
+              <div className="chat-composer-row flex items-end gap-3">
                 <textarea
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="例如：分析 600519 / 茅台现在适合买入吗？ (Enter 发送, Shift+Enter 换行)"
+                  placeholder="输入研究问题"
                   disabled={loading || messagesLoading || Boolean(historyError)}
                   rows={1}
-                  className="input-surface input-focus-glow flex-1 min-h-[44px] max-h-[200px] rounded-xl border bg-transparent px-4 py-2.5 text-sm transition-all focus:outline-none resize-none disabled:cursor-not-allowed disabled:opacity-60"
+                  className="chat-composer-input input-surface input-focus-glow flex-1 min-h-[44px] max-h-[200px] rounded-xl border bg-transparent px-4 py-2.5 text-sm transition-all focus:outline-none resize-none disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ height: 'auto' }}
                   onInput={(e) => {
                     const t = e.target as HTMLTextAreaElement;
@@ -1534,16 +1809,15 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                     t.style.height = `${Math.min(t.scrollHeight, 200)}px`;
                   }}
                 />
-                {loading ? <Button variant="secondary" onClick={stopStream}>停止等待</Button> : <Button
+                {loading ? <Button variant="secondary" onClick={stopStream} className="chat-stop-btn flex-shrink-0">停止等待</Button> : <Button
                   variant="primary"
                   onClick={() => handleSend()}
                   disabled={!input.trim() || messagesLoading || Boolean(historyError)}
-                  className="btn-primary flex-shrink-0"
+                  className="chat-send-btn btn-primary flex-shrink-0"
                 >
                   发送
                 </Button>}
               </div>
-              {loading && <p className="text-xs text-muted-text">停止等待仅断开当前连接，不保证取消后台分析。</p>}
             </div>
           </div>
         </div>

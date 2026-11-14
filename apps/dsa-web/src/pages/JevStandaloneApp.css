@@ -1,11 +1,11 @@
 .jev-standalone { min-height: 100svh; background: var(--bg-1); color: var(--text-2); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
 .jev-standalone-nav { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px max(24px, calc((100vw - 64px) / 2)); border-bottom: 1px solid var(--line-1); background: var(--bg-1); }
-.jev-standalone-nav a { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); text-decoration: none; font-size: 12px; }
-.jev-standalone-nav a.jev-site-name { color: var(--text-2); font-size: 15px; font-weight: 600; }
+.jev-standalone-nav a { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); text-decoration: none; font-size: var(--fs-sm); }
+.jev-standalone-nav a.jev-site-name { color: var(--text-2); font-size: var(--fs-h3); font-weight: 600; }
 .jev-standalone-nav a:hover { color: var(--text-2); }
 .jev-standalone a:focus-visible { outline: 2px solid var(--line-2); outline-offset: 4px; }
 .jev-standalone-gate { margin: 0 auto; padding: 64px 24px; max-width: 1452px; text-align: left; }
-.jev-standalone-gate h1 { font-size: 24px; font-weight: 600; margin: 0 0 12px; }
-.jev-standalone-gate p { color: var(--text-3); font-size: 14px; margin-bottom: 24px; }
-.jev-standalone-gate a { display: inline-block; background: var(--bg-3); color: var(--text-1); text-decoration: none; font-size: 14px; padding: 8px 16px; }
-@media (max-width: 480px) { .jev-standalone-nav { padding: 16px; } .jev-standalone-nav a.jev-site-name { font-size: 13px; } }
+.jev-standalone-gate h1 { font-size: var(--fs-h1); font-weight: 600; margin: 0 0 12px; }
+.jev-standalone-gate p { color: var(--text-3); font-size: var(--fs-body); margin-bottom: 24px; }
+.jev-standalone-gate a { display: inline-block; background: var(--bg-3); color: var(--text-1); text-decoration: none; font-size: var(--fs-body); padding: 8px 16px; }
+@media (max-width: 480px) { .jev-standalone-nav { padding: 16px; } .jev-standalone-nav a.jev-site-name { font-size: var(--fs-sm); } }

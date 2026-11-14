@@ -60,7 +60,7 @@
     margin: 0;
     overflow: hidden;
     color: var(--text-1);
-    font-size: 17px;
+    font-size: var(--fs-h2);
     font-weight: 600;
     line-height: 22px;
     text-overflow: ellipsis;
@@ -109,8 +109,8 @@
     margin: 0;
     padding: 4px 16px 4px;
     color: var(--text-1);
-    font-size: 28px;
-    font-weight: 700;
+    font-size: var(--fs-display);
+    font-weight: 600;
     line-height: 34px;
     letter-spacing: 0;
     opacity: 1;
@@ -146,7 +146,7 @@
     border-radius: var(--radius-tag);
     color: var(--text-1);
     background: transparent;
-    font-size: 15px;
+    font-size: var(--fs-h3);
     text-align: left;
   }
 
@@ -194,7 +194,7 @@
     border: 0;
     color: var(--text-3);
     background: transparent;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 14px;
     transition: color var(--dur-fast) var(--ease-standard);
   }
@@ -307,7 +307,7 @@
 .mobile-sheet__title-block h2 {
   margin: 0;
   color: var(--text-1);
-  font-size: 18px;
+  font-size: var(--fs-h2);
   font-weight: 600;
   line-height: 26px;
 }
@@ -315,7 +315,7 @@
 .mobile-sheet__title-block p {
   margin: 2px 0 0;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
 }
 
@@ -396,7 +396,7 @@
   border-radius: var(--radius-pill);
   color: var(--text-2);
   background: transparent;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 20px;
   white-space: nowrap;
   scroll-snap-align: start;
@@ -404,7 +404,7 @@
 
 .mobile-chip b {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
@@ -441,7 +441,7 @@
 .mobile-group__head h2 {
   margin: 0;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   line-height: 20px;
 }
@@ -451,7 +451,7 @@
   border: 0;
   background: transparent;
   color: var(--brand-text);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -505,7 +505,7 @@ button.mobile-row:active {
 .mobile-row__main strong {
   overflow: hidden;
   color: var(--text-1);
-  font-size: 16px;
+  font-size: var(--fs-h3);
   font-weight: 500;
   line-height: 22px;
   text-overflow: ellipsis;
@@ -515,7 +515,7 @@ button.mobile-row:active {
 .mobile-row__main small {
   overflow: hidden;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -531,14 +531,14 @@ button.mobile-row:active {
 }
 
 .mobile-row__value b {
-  font-size: 16px;
+  font-size: var(--fs-h3);
   font-weight: 600;
   line-height: 22px;
 }
 
 .mobile-row__value small {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
 }
 
@@ -626,20 +626,20 @@ button.mobile-row:active {
   justify-content: space-between;
   gap: 8px;
   color: var(--text-2);
-  font-size: 15px;
+  font-size: var(--fs-h3);
   line-height: 22px;
 }
 
 .mobile-home__hero-code {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 
 .mobile-home__hero-value {
   margin: 0;
-  font-size: 32px;
-  font-weight: 700;
+  font-size: var(--fs-display);
+  font-weight: 600;
   line-height: 40px;
   font-variant-numeric: tabular-nums;
 }
@@ -648,7 +648,7 @@ button.mobile-row:active {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
@@ -666,14 +666,14 @@ button.mobile-row:active {
   background: var(--warning-bg);
   padding: 8px 12px;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
 .mobile-home__status {
   margin: 0;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -702,7 +702,7 @@ button.mobile-row:active {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
   font-variant-numeric: tabular-nums;
 }
@@ -710,7 +710,7 @@ button.mobile-row:active {
 .mobile-breadth__note {
   margin-left: auto;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .mobile-sector {
@@ -732,7 +732,7 @@ button.mobile-row:active {
 
 .mobile-sector p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   line-height: 18px;
 }
@@ -742,7 +742,7 @@ button.mobile-row:active {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -785,7 +785,7 @@ button.mobile-row:active {
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-1);
-  font-size: 15px;
+  font-size: var(--fs-h3);
   line-height: 22px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -796,7 +796,7 @@ button.mobile-row:active {
   align-items: center;
   justify-content: space-between;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
 }
 
@@ -823,7 +823,7 @@ button.mobile-row:active {
   border-radius: var(--radius-card);
   color: var(--text-2);
   background: var(--bg-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
 }
 
@@ -856,7 +856,7 @@ button.mobile-row:active {
   border-radius: var(--radius-control);
   color: var(--text-2);
   background: transparent;
-  font-size: 15px;
+  font-size: var(--fs-h3);
 }
 
 .mobile-home__refresh:active {
@@ -879,7 +879,7 @@ button.mobile-row:active {
 .mobile-home__footer p {
   margin: 0;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
   text-align: center;
 }
@@ -913,7 +913,7 @@ button.mobile-row:active {
 .mobile-more__section h3 {
   margin: 0 0 12px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   line-height: 18px;
 }
@@ -933,7 +933,7 @@ button.mobile-row:active {
   border: 0;
   background: transparent;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 18px;
   text-align: center;
   text-decoration: none;
@@ -985,7 +985,7 @@ button.mobile-row:active {
   border-radius: var(--radius-control);
   background: var(--bg-2);
   color: var(--text-1);
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 .mobile-more__prefs svg {
@@ -1016,7 +1016,7 @@ button.mobile-row:active {
 .mobile-watch-add__input {
   height: 44px !important;
   border-radius: var(--radius-control) !important;
-  font-size: 16px !important;
+  font-size: var(--fs-h3) !important;
 }
 
 .mobile-watch-add > button {
@@ -1045,7 +1045,7 @@ button.mobile-row:active {
 .mobile-watch-error {
   margin: 0;
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -1092,13 +1092,13 @@ button.mobile-row:active {
 
 .mobile-watch-empty strong {
   color: var(--text-1);
-  font-size: 15px;
+  font-size: var(--fs-h3);
   font-weight: 600;
 }
 
 .mobile-watch-empty span {
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -1117,39 +1117,65 @@ button.mobile-row:active {
     display: none;
   }
 
+  /* 价格区：名称/代码一行，价格左对齐做页面最大字号，涨跌与时间紧贴其下 */
   :root .super-watchlist-page.is-mobile-detail .super-market-band {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px 16px;
-    border: 1px solid var(--line-1);
-    border-radius: var(--radius-card);
-    background: var(--bg-1);
-    padding: 16px;
+    grid-template-areas: "identity identity" "price price" "asof asof";
+    align-items: baseline;
+    gap: 0;
+    border: 0;
+    background: transparent;
+    padding: 4px 0 8px;
   }
 
+  :root .super-watchlist-page.is-mobile-detail .super-stock-identity {
+    grid-area: identity;
+    display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  }
   :root .super-watchlist-page.is-mobile-detail .super-stock-identity h2 {
-    font-size: 22px;
-    line-height: 28px;
+    font-size: var(--fs-h1);
+    line-height: var(--lh-h1);
+    font-weight: 600;
   }
 
-  :root .super-watchlist-page.is-mobile-detail .super-stock-identity > span,
-  :root .super-watchlist-page.is-mobile-detail .super-stock-identity > p {
-    font-size: 12px;
-    line-height: 18px;
+  :root .super-watchlist-page.is-mobile-detail .super-stock-identity > span {
+    font-size: var(--fs-sm);
+    line-height: var(--lh-sm);
+    color: var(--text-3);
   }
 
+  :root .super-watchlist-page.is-mobile-detail .super-stock-price {
+    grid-area: price;
+    display: flex; flex-direction: row; flex-wrap: wrap;
+    align-items: baseline; justify-content: flex-start;
+    gap: 4px 12px;
+    margin: 12px 0 0;
+  }
   :root .super-watchlist-page.is-mobile-detail .super-stock-price strong {
-    font-size: 28px;
-    line-height: 34px;
+    font-size: var(--fs-display);
+    line-height: var(--lh-display);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  :root .super-watchlist-page.is-mobile-detail .super-stock-price.is-up strong { color: var(--up); }
+  :root .super-watchlist-page.is-mobile-detail .super-stock-price.is-down strong { color: var(--down); }
+  :root .super-watchlist-page.is-mobile-detail .super-stock-price span {
+    font-size: var(--fs-h3);
+    line-height: var(--lh-h3);
+    font-weight: 500;
   }
 
-  :root .super-watchlist-page.is-mobile-detail .super-ask-button {
-    grid-column: 1 / -1;
-    min-height: 44px;
-    width: 100%;
-    border-radius: var(--radius-control);
+  :root .super-watchlist-page.is-mobile-detail .super-stock-asof {
+    grid-area: asof;
+    margin: 6px 0 0;
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+    line-height: var(--lh-sm);
   }
+
+  /* 桌面端「问 AI 这只股票」在手机上交给底部固定主按钮 */
+  :root .super-watchlist-page.is-mobile-detail .super-market-band > .super-ask-button { display: none; }
 
   /* 一级栏目吸顶：详情很长，随时能换栏目 */
   :root .super-watchlist-page.is-mobile-detail .super-detail-nav {
@@ -1180,7 +1206,7 @@ button.mobile-row:active {
     border-radius: var(--radius-pill);
     background: transparent;
     color: var(--text-2);
-    font-size: 14px;
+    font-size: var(--fs-body);
     white-space: nowrap;
   }
 
@@ -1204,7 +1230,7 @@ button.mobile-row:active {
     min-height: 32px;
     padding: 0 12px;
     border-radius: var(--radius-pill);
-    font-size: 13px;
+    font-size: var(--fs-sm);
     white-space: nowrap;
   }
 
@@ -1241,7 +1267,7 @@ button.mobile-row:active {
     margin-top: 0;
     overflow: hidden;
     color: var(--text-3);
-    font-size: 13px;
+    font-size: var(--fs-sm);
     line-height: 20px;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -1290,7 +1316,7 @@ button.mobile-row:active {
     grid-area: date;
     align-items: baseline;
     gap: 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 18px;
   }
 
@@ -1305,7 +1331,7 @@ button.mobile-row:active {
   .report-lib-row h4 {
     display: -webkit-box;
     overflow: hidden;
-    font-size: 15px;
+    font-size: var(--fs-h3);
     line-height: 22px;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -1315,7 +1341,7 @@ button.mobile-row:active {
     display: -webkit-box;
     margin-top: 2px;
     overflow: hidden;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 18px;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 1;
@@ -1330,7 +1356,7 @@ button.mobile-row:active {
     display: flex;
     flex-wrap: wrap;
     gap: 4px 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 18px;
   }
 
@@ -1403,7 +1429,7 @@ button.mobile-row:active {
     border: 1px solid var(--line-2);
     border-radius: var(--radius-pill);
     color: var(--text-2);
-    font-size: 14px;
+    font-size: var(--fs-body);
   }
 
   :root .essay-quant-terminal .quant-tabs button.is-active {
@@ -1455,7 +1481,7 @@ button.mobile-row:active {
     border-radius: var(--radius-pill) !important;
     background: var(--bg-2) !important;
     color: var(--text-2) !important;
-    font-size: 13px !important;
+    font-size: var(--fs-sm) !important;
   }
 }
 
@@ -1482,7 +1508,7 @@ button.mobile-row:active {
 
 .market-metric__label {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 16px;
 }
 
@@ -1490,7 +1516,7 @@ button.mobile-row:active {
   margin: 0;
   overflow: hidden;
   color: var(--text-1);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
   line-height: 20px;
   text-overflow: ellipsis;
@@ -1502,7 +1528,7 @@ button.mobile-row:active {
 }
 
 .market-metric.is-lead .market-metric__value {
-  font-size: 20px;
+  font-size: var(--fs-h2);
   font-weight: 600;
   line-height: 26px;
   letter-spacing: -0.01em;
@@ -1517,7 +1543,7 @@ button.mobile-row:active {
   border-bottom: 1px solid var(--line-1);
   padding: 6px 14px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-caption);
 }
 
 @media (max-width: 1023px) {
@@ -1537,3 +1563,220 @@ button.mobile-row:active {
 
 .market-metric.is-time { display: none; }
 @media (min-width: 1024px) { .market-metric.is-time { display: flex; flex: 0 0 auto; padding-inline: 12px; } }
+
+/* =====================================================================
+   乐小研 v2 版式（手机端）
+   规格：页边 16，模块间距 28，卡片圆角 12、内边距 16，行高 60，
+   模块标题 20/600，表头 13/400 弱色，数字等宽。
+   ===================================================================== */
+.lx-home { display: flex; flex-direction: column; gap: 28px; padding: 4px 0 24px; }
+
+.lx-search {
+  display: flex; align-items: center; gap: 10px;
+  height: 44px; padding: 0 14px;
+  border: 1px solid var(--line-1); border-radius: 12px;
+  background: var(--bg-1); color: var(--text-3);
+  font-size: var(--fs-body); text-align: left;
+}
+.lx-search svg { width: 18px; height: 18px; }
+
+.lx-error { margin: 0; color: var(--danger); font-size: var(--fs-sm); }
+
+.lx-section { display: flex; flex-direction: column; gap: 12px; }
+.lx-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.lx-section__head h2 { margin: 0; }
+.lx-section__meta { color: var(--text-3); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.lx-section__meta button { color: var(--brand); font-size: var(--fs-sm); }
+
+/* 三张指数卡 */
+.lx-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.lx-tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  min-height: 92px; padding: 12px;
+  border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1);
+  text-align: left;
+}
+.lx-tile.is-active { border-color: var(--line-2); background: var(--bg-2); }
+.lx-tile.is-skeleton { background: var(--bg-2); }
+.lx-tile__name { color: var(--text-2); font-size: var(--fs-sm); }
+.lx-tile__value {
+  color: var(--text-1); font-size: 17px; line-height: 24px; font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.lx-tile__change { font-style: normal; font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.lx-chips.mobile-chips { margin: 0; padding: 0 0 4px; }
+
+/* 表格：表头 + 行；行与行只用细分隔线 */
+.lx-table { border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1); overflow: hidden; }
+.lx-table__head, .lx-table__row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  padding: 0 16px;
+}
+.lx-table__head.is-3, .lx-table__row.is-3 { grid-template-columns: minmax(0, 1fr) auto 76px; }
+.lx-table__head { height: 40px; color: var(--text-3); font-size: var(--fs-sm); border-bottom: 1px solid var(--line-1); }
+.lx-table__head span:not(:first-child) { text-align: right; }
+.lx-table__row { min-height: 52px; width: 100%; border-bottom: 1px solid var(--line-1); text-align: left; }
+.lx-table__row:last-child { border-bottom: 0; }
+.lx-table__row.is-stock { min-height: 60px; }
+.lx-table__row b { text-align: right; white-space: nowrap; font-size: var(--fs-body); font-weight: 500; font-variant-numeric: tabular-nums; }
+.lx-table__name { color: var(--text-1); font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lx-table__empty { width: 100%; height: 56px; color: var(--brand); font-size: var(--fs-body); }
+
+.lx-stock { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.lx-stock > span { display: flex; flex-direction: column; min-width: 0; }
+.lx-stock strong { color: var(--text-1); font-size: var(--fs-body); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lx-stock small { color: var(--text-3); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
+.lx-num { color: var(--text-1); }
+
+/* 资讯列表 */
+.lx-list { border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1); overflow: hidden; }
+.lx-list__row {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr) 16px; align-items: center; gap: 12px;
+  width: 100%; min-height: 64px; padding: 10px 16px;
+  border-bottom: 1px solid var(--line-1); text-align: left;
+}
+.lx-list__row:last-child { border-bottom: 0; }
+.lx-list__icon {
+  display: grid; place-items: center; width: 36px; height: 36px;
+  border-radius: 10px; background: var(--bg-2); color: var(--text-3);
+}
+.lx-list__icon svg { width: 18px; height: 18px; }
+.lx-list__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lx-list__main strong {
+  color: var(--text-1); font-size: var(--fs-body); font-weight: 500; line-height: 22px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lx-list__main small { color: var(--text-3); font-size: var(--fs-sm); }
+.lx-list__chev { width: 16px; height: 16px; color: var(--text-3); }
+.lx-list__empty { margin: 0; padding: 20px 16px; color: var(--text-3); font-size: var(--fs-body); }
+
+/* 自选（乐小研版式）补充 */
+:root .super-watchlist-page.is-mobile-list { gap: 0; padding: 12px 16px 24px !important; font-family: var(--font-sans); }
+.lx-titlebar-action { position: absolute; top: -50px; right: 16px; z-index: 31; }
+.lx-titlebar-action button { color: var(--brand); font-size: var(--fs-body); font-weight: 500; height: 44px; }
+.super-watchlist-page.is-mobile-list { position: relative; }
+.lx-count { margin-left: 6px; color: var(--text-2); font-weight: 500; font-variant-numeric: tabular-nums; }
+.lx-table__row .lx-stock { background: none; border: 0; padding: 0; text-align: left; }
+.lx-table__row.is-skeleton { background: var(--bg-2); opacity: .5; }
+.lx-delete { justify-self: end; display: grid; place-items: center; width: 40px; height: 40px; color: var(--danger); }
+.lx-delete svg { width: 18px; height: 18px; }
+.lx-outline-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 48px; border: 1px solid var(--brand); border-radius: 12px;
+  color: var(--brand); font-size: var(--fs-body); font-weight: 500; background: transparent;
+}
+.lx-outline-btn svg { width: 18px; height: 18px; }
+
+/* =====================================================================
+   页面 A：研究记录 / TasksHub 手机端（≤767px）
+   ===================================================================== */
+@media (max-width: 767px) {
+  .lx-tasks-page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 32px; }
+
+  /* 分段控制 */
+  .lx-tasks-segment {
+    display: grid; grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--line-1); border-radius: 10px;
+    overflow: hidden; background: var(--bg-1);
+  }
+  .lx-tasks-segment button {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    height: 44px; border: 0; background: transparent;
+    color: var(--text-2); font-size: var(--fs-h3); font-weight: 500;
+  }
+  .lx-tasks-segment button b {
+    display: inline-flex; min-width: 20px; height: 20px; align-items: center;
+    justify-content: center; padding: 0 5px; border-radius: 10px;
+    background: var(--bg-2); color: var(--text-3); font-size: var(--fs-caption); font-weight: 600;
+  }
+  .lx-tasks-segment button.is-active { background: var(--brand); color: #fff; }
+  .lx-tasks-segment button.is-active b { background: rgba(255,255,255,.2); color: #fff; }
+
+  /* 进行中提示条 */
+  .lx-tasks-running {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    border: 1px solid var(--line-1); border-radius: 10px;
+    background: var(--bg-1); color: var(--text-2); font-size: var(--fs-sm); text-align: left;
+  }
+  .lx-tasks-running__dot {
+    width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #3b82f6;
+    animation: lx-dot-pulse 1.4s ease infinite;
+  }
+  @keyframes lx-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  .lx-tasks-running > span { flex: 1; }
+  .lx-tasks-running > button {
+    color: var(--brand); font-size: var(--fs-sm); font-weight: 500;
+    white-space: nowrap; border: 0; background: transparent;
+  }
+
+  /* 会话卡 */
+  .lx-tasks-session { display: flex; flex-direction: column; gap: 6px; padding: 14px; text-align: left; }
+  .lx-tasks-session__company { color: var(--text-1); font-size: var(--fs-h3); font-weight: 600; }
+  .lx-tasks-session__q { color: var(--text-2); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 底部新建按钮 */
+  .lx-tasks-new {
+    position: sticky; bottom: calc(56px + env(safe-area-inset-bottom) + 8px);
+    display: flex; align-items: center; justify-content: center;
+    height: 52px; border-radius: 14px; border: 0;
+    background: var(--brand); color: #fff;
+    font-size: var(--fs-h3); font-weight: 600; gap: 8px;
+  }
+  .lx-tasks-new svg { width: 20px; height: 20px; }
+}
+
+/* ---------- 09 研究记录（乐小研版式） ---------- */
+.lx-rec { gap: 0; }
+.lx-rec__seg.mobile-chips { margin: 0; padding: 0; }
+.lx-rec__seg .mobile-chip { flex: 1 0 auto; justify-content: center; }
+.lx-rec__banner {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; min-height: 52px; margin-top: 16px; padding: 0 16px;
+  border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1);
+  color: var(--text-1); font-size: var(--fs-body); text-align: left;
+}
+.lx-rec__banner-action { margin-left: auto; color: var(--brand); font-size: var(--fs-body); font-weight: 500; }
+.lx-rec__banner svg { width: 16px; height: 16px; color: var(--text-3); }
+.lx-rec__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand); flex: none; }
+.lx-rec__list { border: 1px solid var(--line-1); border-radius: 12px; background: var(--bg-1); overflow: hidden; }
+.lx-rec__row {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr) auto 16px; align-items: center; gap: 10px;
+  width: 100%; min-height: 64px; padding: 10px 14px;
+  border-bottom: 1px solid var(--line-1); text-align: left;
+}
+.lx-rec__row:last-child { border-bottom: 0; }
+.lx-rec__icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--bg-2); color: var(--text-2); }
+.lx-rec__icon svg { width: 18px; height: 18px; }
+.lx-rec__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lx-rec__main strong { color: var(--text-1); font-size: var(--fs-body); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lx-rec__main small { color: var(--text-3); font-size: var(--fs-sm); }
+.lx-rec__state { font-size: var(--fs-sm); color: var(--text-2); white-space: nowrap; }
+.lx-rec__state.is-running, .lx-rec__state.is-queued { color: var(--brand); }
+.lx-rec__state.is-failed { color: var(--danger); }
+.lx-rec__chev { width: 16px; height: 16px; color: var(--text-3); }
+.lx-rec__warn { margin-top: 16px; width: 100%; min-height: 48px; border-radius: 12px; border: 1px solid var(--warning); color: var(--warning); font-size: var(--fs-sm); background: transparent; }
+.lx-rec__new {
+  margin-top: 24px; width: 100%; height: 52px; border-radius: 12px;
+  background: var(--brand); color: var(--brand-on); font-size: var(--fs-body); font-weight: 600;
+}
+
+/* 手机端个股详情底部固定主按钮 */
+.super-mobile-cta { display: none; }
+@media (max-width: 1023px) {
+  :root .super-watchlist-page.is-mobile-detail .super-mobile-cta {
+    display: block;
+    position: fixed; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    z-index: 30;
+    padding: 8px 16px 10px;
+    background: linear-gradient(to top, var(--bg-0) 62%, transparent);
+  }
+  :root .super-watchlist-page.is-mobile-detail .super-mobile-cta button {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; height: 52px; border-radius: 12px;
+    background: var(--brand); color: var(--brand-on);
+    font-size: var(--fs-body); font-weight: 600;
+  }
+  /* 给底部按钮留出空间，避免遮挡最后一块内容 */
+  :root .super-watchlist-page.is-mobile-detail .super-watchlist-feeds { padding-bottom: 84px; }
+}

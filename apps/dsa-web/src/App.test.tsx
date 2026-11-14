@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -10,7 +10,7 @@ import { cachedQuery, resetRequestCacheForTests } from './api/requestCache';
 type AuthState = ReturnType<typeof AuthContext.useAuth>;
 type UserAccessState = ReturnType<typeof UserAccessContext.useUserAccess>;
 
-const { chatPageShouldThrow, setCurrentRoute, useAgentChatStoreMock, privatePageRead, privatePageMount, privatePageUnmount } = vi.hoisted(() => {
+const { chatPageShouldThrow, setCurrentRoute, useAgentChatStoreMock, privatePageRead, privatePageMount, privatePageUnmount, viewport } = vi.hoisted(() => {
   const setCurrentRoute = vi.fn();
   const chatPageShouldThrow = { value: false };
   const state = { completionBadge: false };
@@ -19,8 +19,14 @@ const { chatPageShouldThrow, setCurrentRoute, useAgentChatStoreMock, privatePage
     { getState: () => ({ setCurrentRoute }) },
   );
   return { chatPageShouldThrow, setCurrentRoute, useAgentChatStoreMock,
-    privatePageRead: vi.fn<(owner: number) => Promise<string>>(), privatePageMount: vi.fn(), privatePageUnmount: vi.fn() };
+    privatePageRead: vi.fn<(owner: number) => Promise<string>>(), privatePageMount: vi.fn(), privatePageUnmount: vi.fn(),
+    viewport: { isMobile: false } };
 });
+
+vi.mock('./hooks/useIsMobile', () => ({
+  useIsMobile: () => viewport.isMobile,
+  useIsPhone: () => viewport.isMobile,
+}));
 
 vi.mock('./contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: ReactNode }) => children,
@@ -85,6 +91,10 @@ vi.mock('./pages/ChatPage', () => ({
     }
     return <div data-testid="chat-page">Chat</div>;
   },
+}));
+
+vi.mock('./pages/InvestmentMeetingPage', () => ({
+  default: () => <div data-testid="meeting-page">Meeting</div>,
 }));
 
 vi.mock('./pages/TokenUsagePage', () => ({
@@ -154,6 +164,7 @@ beforeEach(() => {
   privatePageRead.mockReset();
   privatePageRead.mockImplementation(async owner => `账号 ${owner} 的个人资料`);
   chatPageShouldThrow.value = false;
+  viewport.isMobile = false;
   window.history.pushState({}, '', '/');
   localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, 'zh');
   vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState());
@@ -289,6 +300,37 @@ describe('App routing behavior', () => {
     expect(setCurrentRoute).toHaveBeenCalledWith('/chat');
     expect(screen.queryByTestId('login-page')).not.toBeInTheDocument();
     expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
+  });
+
+  it('keeps desktop /chat as an alias page that is no longer a navigation entry', async () => {
+    window.history.pushState({}, '', '/chat?stock=300750&name=%E5%AE%81%E5%BE%B7%E6%97%B6%E4%BB%A3');
+
+    render(<App />);
+
+    expect(await screen.findByTestId('chat-page')).toBeInTheDocument();
+    expect(setCurrentRoute).toHaveBeenLastCalledWith('/chat');
+    // 侧栏只留一个对话入口，指向合并后的团队页；「AI 问股」不再是导航项。
+    const sidebar = screen.getByRole('navigation', { name: '主导航' });
+    const sidebarHrefs = within(sidebar).getAllByRole('link').map((link) => link.getAttribute('href'));
+    expect(sidebarHrefs.filter((href) => href === '/meeting')).toHaveLength(1);
+    expect(sidebarHrefs).not.toContain('/chat');
+    expect(within(sidebar).queryByRole('link', { name: 'AI 问股' })).not.toBeInTheDocument();
+  });
+
+  it('sends mobile /chat deep links to the merged conversation page with their query intact', async () => {
+    viewport.isMobile = true;
+    window.history.pushState({}, '', '/chat?from=meeting&topic=%E5%82%A8%E8%83%BD%E6%80%8E%E4%B9%88%E7%9C%8B&stock=300750');
+
+    render(<App />);
+
+    expect(await screen.findByTestId('meeting-page')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/meeting');
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get('from')).toBe('meeting');
+    expect(params.get('topic')).toBe('储能怎么看');
+    expect(params.get('stock')).toBe('300750');
+    expect(setCurrentRoute).toHaveBeenLastCalledWith('/meeting');
+    expect(screen.queryByTestId('chat-page')).not.toBeInTheDocument();
   });
 
   it('routes /admin/usage to the token usage page after auth is ready', async () => {

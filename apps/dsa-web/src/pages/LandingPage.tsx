@@ -10,8 +10,8 @@ import './LandingPage.css';
 const productTours = [
   {
     title: '智能投研团队', heading: '多角色协作，把研究拆成可执行的任务。', href: '/meeting', action: '进入智能投研团队',
-    description: '主席、选股、数据、研究员、组合、调度六个角色围绕同一块黑板协作；每个任务独立上下文与工作区，可切换、搜索、并行。',
-    data: '任务栏 · 黑板可视化 · 多源备源 · 文件交付 · 录音转写',
+    description: '主席、选股、数据、研究员、组合、调度六个角色围绕同一组结果协作；每个任务独立上下文与工作区，可切换、搜索、并行。',
+    data: '任务栏 · 图表结果 · 多源备源 · 文件交付 · 录音转写',
     output: '行情曲线、选股表、评分条、研报/财报/录音 ZIP 与文字稿',
     screenshot: '/landing/screens/meeting.jpg', alt: '智能投研团队实机界面',
   },

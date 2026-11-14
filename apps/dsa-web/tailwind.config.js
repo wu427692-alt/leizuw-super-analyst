@@ -157,7 +157,9 @@ export default {
         // 最小 12px；xxs/label 旧名保留但抬到下限
         xxs: ['var(--fs-caption)', { lineHeight: 'var(--lh-caption)' }],
         label: ['var(--fs-caption)', { lineHeight: 'var(--lh-caption)' }],
-        xs: ['var(--fs-caption)', { lineHeight: 'var(--lh-caption)' }],
+        // text-xs 是全站用得最多的类（364 处），多数其实是正文辅助信息而不是角标；
+        // 抬到 sm 档，真正的角标用 text-caption。
+        xs: ['var(--fs-sm)', { lineHeight: 'var(--lh-sm)' }],
         sm: ['var(--fs-sm)', { lineHeight: 'var(--lh-sm)' }],
         base: ['var(--fs-body)', { lineHeight: 'var(--lh-body)' }],
         lg: ['var(--fs-h2)', { lineHeight: 'var(--lh-h2)' }],
@@ -173,6 +175,14 @@ export default {
         display: ['var(--fs-display)', { lineHeight: 'var(--lh-display)' }],
         num: ['var(--fs-num)', { lineHeight: 'var(--lh-num)' }],
         'num-lg': ['var(--fs-num-lg)', { lineHeight: 'var(--lh-num-lg)' }],
+      },
+      // 字重只留三档：常规 400 / 强调 500 / 标题 600。bold 降到 600，避免同屏 600 与 700 并存。
+      fontWeight: {
+        normal: '400',
+        medium: '500',
+        semibold: '600',
+        bold: '600',
+        extrabold: '600',
       },
       spacing: {
         18: '4.5rem',

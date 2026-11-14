@@ -57,7 +57,7 @@ describe.each(cases)('$name task lists deliver refreshed results to the actual t
     });
     expect(screen.getByRole('button', { name: /running 研究任务/ })).toBeVisible();
     expect(screen.queryByRole('button', { name: /completed 研究任务/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^正在处理\s*1$/ })).toBeVisible();
+    expect(screen.getByLabelText('正在处理')).toHaveTextContent('1');
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(vi.mocked(apiClient.get).mock.calls.filter(([url]) => url === path)).toHaveLength(3);
   });

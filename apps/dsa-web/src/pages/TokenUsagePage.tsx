@@ -1,13 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Clock3, Cpu, Database, Gauge, RefreshCw } from 'lucide-react';
+import { Clock3, RefreshCw } from 'lucide-react';
 import { usageApi, type UsageDashboard, type UsageModelBreakdown, type UsagePeriod } from '../api/usage';
 import type { ParsedApiError } from '../api/error';
-import { ApiErrorAlert, AppPage, Card, EmptyState, PageHeader, StatCard } from '../components/common';
+import {
+  ApiErrorAlert,
+  AppPage,
+  Card,
+  EmptyState,
+  MetricRow,
+  PageHeader,
+  PageTabs,
+  ShareBar,
+  BarMeter,
+} from '../components/common';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import type { UiLanguage, UiTextKey, UiTextParams } from '../i18n/uiText';
 import { cn } from '../utils/cn';
 
 type Translate = (key: UiTextKey, params?: UiTextParams) => string;
+type UsageTab = 'overview' | 'calls';
 
 const PERIOD_OPTIONS: UsagePeriod[] = ['today', 'month', 'all'];
 
@@ -69,39 +80,10 @@ function buildParsedError(error: unknown, t: Translate): ParsedApiError {
   };
 }
 
-const ModelUsageCard: React.FC<{ model: UsageModelBreakdown; language: UiLanguage; t: Translate }> = ({ model, language, t }) => {
-  return (
-    <Card padding="sm" className="rounded-lg">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold text-foreground">{model.model}</h3>
-          <p className="mt-1 text-xs text-secondary-text">{t('usage.calls', { count: formatNumber(model.calls, language) })}</p>
-        </div>
-        <span className="rounded-full border border-cyan/20 bg-cyan/10 px-2 py-1 text-xs text-cyan">
-          {formatNumber(model.totalTokens, language)} tokens
-        </span>
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
-        <div>
-          <p className="text-xs text-secondary-text">Prompt</p>
-          <p className="mt-1 font-medium text-foreground">{formatNumber(model.promptTokens, language)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-secondary-text">Completion</p>
-          <p className="mt-1 font-medium text-foreground">{formatNumber(model.completionTokens, language)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-secondary-text">{t('usage.maxSingleCall')}</p>
-          <p className="mt-1 font-medium text-foreground">{formatNumber(model.maxTotalTokens, language)}</p>
-        </div>
-      </div>
-    </Card>
-  );
-};
-
 const TokenUsagePage: React.FC = () => {
   const { language, t } = useUiLanguage();
   const [period, setPeriod] = useState<UsagePeriod>('month');
+  const [tab, setTab] = useState<UsageTab>('overview');
   const [dashboard, setDashboard] = useState<UsageDashboard | null>(null);
   const [error, setError] = useState<ParsedApiError | null>(null);
   const [loading, setLoading] = useState(true);
@@ -137,161 +119,188 @@ const TokenUsagePage: React.FC = () => {
     };
   }, [loadDashboard]);
 
-  const largestCallTypeTotal = useMemo(() => {
-    return Math.max(...(dashboard?.byCallType.map((item) => item.totalTokens) ?? [0]), 1);
-  }, [dashboard]);
+  const modelMax = useMemo(
+    () => Math.max(...(dashboard?.byModel.map((item) => item.totalTokens) ?? [0]), 1),
+    [dashboard],
+  );
+  const callTypeSegments = useMemo(
+    () => (dashboard?.byCallType ?? []).map((item) => ({
+      key: item.callType,
+      value: item.totalTokens,
+      label: getCallTypeLabel(item.callType, t),
+    })),
+    [dashboard, t],
+  );
+
+  const renderModelRow = (model: UsageModelBreakdown) => (
+    <div key={model.model} className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_72px] items-center gap-[var(--gap-sm)] border-t border-[color:var(--line-1)] py-[var(--gap-xs)] first:border-t-0">
+      <div className="min-w-0">
+        <div className="truncate text-[length:var(--fs-sm)] font-medium text-[color:var(--text-1)]">{model.model}</div>
+        <div className="text-[length:var(--fs-caption)] tabular-nums text-[color:var(--text-3)]">{t('usage.calls', { count: formatNumber(model.calls, language) })}</div>
+      </div>
+      <BarMeter value={model.totalTokens} max={modelMax} log height={4} ariaLabel={`${model.model} 消耗 ${model.totalTokens} tokens`} />
+      <div className="text-right">
+        <div className="text-[length:var(--fs-num)] font-semibold tabular-nums text-[color:var(--text-1)]">{formatNumber(model.totalTokens, language)}</div>
+        <div className="text-[length:var(--fs-caption)] tabular-nums text-[color:var(--text-3)]">{t('usage.maxSingleCall')} {formatNumber(model.maxTotalTokens, language)}</div>
+      </div>
+    </div>
+  );
 
   return (
     <AppPage>
-      <div className="space-y-5">
-        <PageHeader
-          eyebrow={t('usage.eyebrow')}
-          title={t('usage.title')}
-          description={t('usage.description')}
-          actions={(
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-xl border border-border/70 bg-card/70 p-1">
-                {PERIOD_OPTIONS.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setPeriod(option)}
-                    className={cn(
-                      'rounded-lg px-3 py-1.5 text-sm transition-colors',
-                      period === option
-                        ? 'bg-cyan text-background shadow-soft-card'
-                        : 'text-secondary-text hover:bg-hover hover:text-foreground'
-                    )}
-                  >
-                    {t(PERIOD_LABEL_KEYS[option])}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                className="btn-secondary inline-flex items-center gap-2"
-                onClick={() => void loadDashboard()}
-                disabled={loading}
-              >
-                <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
-                {t('usage.refresh')}
-              </button>
+      <PageHeader
+        eyebrow={t('usage.eyebrow')}
+        title={t('usage.title')}
+        description={t('usage.description')}
+        actions={(
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-border/70 bg-card/70 p-1">
+              {PERIOD_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setPeriod(option)}
+                  className={cn(
+                    'rounded-lg px-3 py-1.5 text-sm transition-colors',
+                    period === option
+                      ? 'bg-cyan text-background shadow-soft-card'
+                      : 'text-secondary-text hover:bg-hover hover:text-foreground'
+                  )}
+                >
+                  {t(PERIOD_LABEL_KEYS[option])}
+                </button>
+              ))}
             </div>
-          )}
-        />
-
-        {error ? <ApiErrorAlert error={error} actionLabel={t('common.retry')} onAction={() => void loadDashboard()} /> : null}
-
-        {loading && !dashboard ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="h-28 animate-pulse rounded-2xl border border-border/70 bg-card/60" />
-            ))}
+            <button
+              type="button"
+              className="btn-secondary inline-flex items-center gap-2"
+              onClick={() => void loadDashboard()}
+              disabled={loading}
+            >
+              <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
+              {t('usage.refresh')}
+            </button>
           </div>
-        ) : null}
+        )}
+      />
 
-        {dashboard ? (
+      <PageTabs
+        ariaLabel={language === 'en' ? 'Usage views' : '用量视图切换'}
+        value={tab}
+        onChange={(key) => setTab(key as UsageTab)}
+        items={[
+          { key: 'overview', label: language === 'en' ? 'Overview' : '概览' },
+          { key: 'calls', label: t('usage.recentCalls'), badge: dashboard?.recentCalls.length },
+        ]}
+      />
+
+      {error ? <ApiErrorAlert error={error} actionLabel={t('common.retry')} onAction={() => void loadDashboard()} /> : null}
+
+      {loading && !dashboard ? (
+        <div className="flex flex-col gap-[var(--gap-sm)]">
+          <div className="h-16 animate-pulse rounded-[var(--radius-card)] border border-[color:var(--line-1)] bg-[var(--bg-1)]" />
+          <div className="h-40 animate-pulse rounded-[var(--radius-card)] border border-[color:var(--line-1)] bg-[var(--bg-1)]" />
+        </div>
+      ) : null}
+
+      {dashboard ? (
+        dashboard.totalCalls === 0 ? (
+          <EmptyState title={t('usage.emptyTitle')} description={t('usage.emptyDescription')} />
+        ) : tab === 'overview' ? (
           <>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard label={t('usage.totalTokens')} value={formatNumber(dashboard.totalTokens, language)} hint={t('usage.dateRange', { from: dashboard.fromDate, to: dashboard.toDate })} icon={<Database className="h-5 w-5" />} tone="primary" />
-              <StatCard label={t('usage.totalCalls')} value={formatNumber(dashboard.totalCalls, language)} hint={t('usage.totalCallsHint')} icon={<Activity className="h-5 w-5" />} />
-              <StatCard label={t('usage.promptTokens')} value={formatNumber(dashboard.totalPromptTokens, language)} hint={t('usage.promptTokensHint')} icon={<Cpu className="h-5 w-5" />} />
-              <StatCard label={t('usage.completionTokens')} value={formatNumber(dashboard.totalCompletionTokens, language)} hint={t('usage.completionTokensHint')} icon={<Gauge className="h-5 w-5" />} />
+            <MetricRow
+              className="mb-[var(--gap-md)]"
+              columns={4}
+              items={[
+                { label: t('usage.totalTokens'), value: formatNumber(dashboard.totalTokens, language), hint: t('usage.dateRange', { from: dashboard.fromDate, to: dashboard.toDate }) },
+                { label: t('usage.totalCalls'), value: formatNumber(dashboard.totalCalls, language), hint: t('usage.totalCallsHint') },
+                { label: t('usage.promptTokens'), value: formatNumber(dashboard.totalPromptTokens, language), hint: t('usage.promptTokensHint') },
+                { label: t('usage.completionTokens'), value: formatNumber(dashboard.totalCompletionTokens, language), hint: t('usage.completionTokensHint') },
+              ]}
+            />
+
+            <div className="mb-[var(--gap-md)] flex items-center gap-[var(--gap-sm)]">
+              <span className="shrink-0 text-[length:var(--fs-caption)] text-[color:var(--text-3)]">{t('usage.callTypeTitle')}</span>
+              <ShareBar className="max-w-[280px]" ariaLabel={t('usage.callTypeTitle')} segments={callTypeSegments} />
             </div>
 
-            {dashboard.totalCalls === 0 ? (
-              <EmptyState title={t('usage.emptyTitle')} description={t('usage.emptyDescription')} />
-            ) : (
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
-                <section className="space-y-4">
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">{t('usage.modelUsage')}</h2>
-                    <p className="mt-1 text-sm text-secondary-text">{t('usage.modelUsageDescription')}</p>
-                  </div>
-                  <div className="grid gap-4">
-                    {dashboard.byModel.map((model) => (
-                      <ModelUsageCard key={model.model} model={model} language={language} t={t} />
-                    ))}
-                  </div>
-                </section>
+            <div className="grid gap-[var(--gap-lg)] xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+              <Card title={t('usage.modelUsage')} subtitle={t('usage.breakdown')} padding="md">
+                <p className="mb-[var(--gap-xs)] text-[length:var(--fs-caption)] text-[color:var(--text-3)]">{t('usage.modelUsageDescription')}</p>
+                <div className="flex flex-col">{dashboard.byModel.map(renderModelRow)}</div>
+              </Card>
 
-                <section className="space-y-4">
-                  <Card title={t('usage.callTypeTitle')} subtitle={t('usage.breakdown')} className="rounded-lg">
-                    <div className="space-y-4">
-                      {dashboard.byCallType.map((item) => (
-                        <div key={item.callType}>
-                          <div className="flex items-center justify-between gap-3 text-sm">
-                            <span className="font-medium text-foreground">{getCallTypeLabel(item.callType, t)}</span>
-                            <span className="text-secondary-text">{formatNumber(item.totalTokens, language)} tokens</span>
-                          </div>
-                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-border/70">
-                            <div
-                              className="h-full rounded-full bg-cyan"
-                              style={{ width: `${Math.max(4, (item.totalTokens / largestCallTypeTotal) * 100)}%` }}
-                            />
-                          </div>
-                          <p className="mt-1 text-xs text-secondary-text">
-                            {t('usage.callTypeDetail', {
-                              calls: formatNumber(item.calls, language),
-                              prompt: formatNumber(item.promptTokens, language),
-                              completion: formatNumber(item.completionTokens, language),
-                            })}
-                          </p>
-                        </div>
-                      ))}
+              <Card title={t('usage.callTypeTitle')} subtitle={t('usage.breakdown')} padding="md">
+                <div className="flex flex-col gap-[var(--gap-sm)]">
+                  {dashboard.byCallType.map((item) => (
+                    <div key={item.callType} className="border-t border-[color:var(--line-1)] pt-[var(--gap-xs)] first:border-t-0 first:pt-0">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-[length:var(--fs-sm)] font-medium text-[color:var(--text-1)]">{getCallTypeLabel(item.callType, t)}</span>
+                        <span className="text-[length:var(--fs-num)] font-semibold tabular-nums text-[color:var(--text-1)]">{formatNumber(item.totalTokens, language)}</span>
+                      </div>
+                      <p className="mt-1 text-[length:var(--fs-caption)] tabular-nums text-[color:var(--text-3)]">
+                        {t('usage.callTypeDetail', {
+                          calls: formatNumber(item.calls, language),
+                          prompt: formatNumber(item.promptTokens, language),
+                          completion: formatNumber(item.completionTokens, language),
+                        })}
+                      </p>
                     </div>
-                  </Card>
-                </section>
-              </div>
-            )}
-
-            <section className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold text-foreground">{t('usage.recentCalls')}</h2>
-                  <p className="mt-1 text-sm text-secondary-text">{t('usage.recentCallsDescription')}</p>
+                  ))}
                 </div>
-                <Clock3 className="h-5 w-5 text-secondary-text" />
-              </div>
-              <div className="overflow-hidden rounded-2xl border border-border/70 bg-card/75 shadow-soft-card">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-border/70 text-sm">
-                    <thead className="bg-surface-2/70 text-left text-xs uppercase tracking-normal text-secondary-text">
-                      <tr>
-                        <th className="px-4 py-3 font-medium">{t('usage.table.time')}</th>
-                        <th className="px-4 py-3 font-medium">{t('usage.table.type')}</th>
-                        <th className="px-4 py-3 font-medium">{t('usage.table.model')}</th>
-                        <th className="px-4 py-3 text-right font-medium">Prompt</th>
-                        <th className="px-4 py-3 text-right font-medium">Completion</th>
-                        <th className="px-4 py-3 text-right font-medium">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {dashboard.recentCalls.length ? dashboard.recentCalls.map((item) => (
-                        <tr key={item.id} className="hover:bg-hover/60">
-                          <td className="whitespace-nowrap px-4 py-3 text-secondary-text">{formatDateTime(item.calledAt, language)}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-foreground">{getCallTypeLabel(item.callType, t)}</td>
-                          <td className="min-w-56 px-4 py-3">
-                            <div className="max-w-[18rem] truncate font-medium text-foreground">{item.model}</div>
-                            {item.stockCode ? <div className="text-xs text-secondary-text">{item.stockCode}</div> : null}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-secondary-text">{formatNumber(item.promptTokens, language)}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-secondary-text">{formatNumber(item.completionTokens, language)}</td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right font-medium text-foreground">{formatNumber(item.totalTokens, language)}</td>
-                        </tr>
-                      )) : (
-                        <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-secondary-text">{t('usage.noRecentCalls')}</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
+              </Card>
+            </div>
           </>
-        ) : null}
-      </div>
+        ) : (
+          <section>
+            <div className="mb-[var(--gap-sm)] flex flex-wrap items-end justify-between gap-[var(--gap-sm)]">
+              <div>
+                <h2 className="text-[length:var(--fs-h2)] font-semibold text-[color:var(--text-1)]">{t('usage.recentCalls')}</h2>
+                <p className="mt-1 text-[length:var(--fs-caption)] text-[color:var(--text-3)]">
+                  {t('usage.recentCallsDescription')}
+                  <span className="ml-2 tabular-nums">本页 {Math.min(dashboard.recentCalls.length, 25)} / {dashboard.recentCalls.length} 条</span>
+                </p>
+              </div>
+              <Clock3 className="h-4 w-4 text-secondary-text" />
+            </div>
+            <div className="overflow-hidden rounded-[var(--radius-card)] border border-[color:var(--line-1)] bg-[var(--bg-1)]">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-border/70 text-sm">
+                  <thead className="bg-surface-2/70 text-left text-xs uppercase tracking-normal text-secondary-text">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">{t('usage.table.time')}</th>
+                      <th className="px-3 py-2 font-medium">{t('usage.table.type')}</th>
+                      <th className="px-3 py-2 font-medium">{t('usage.table.model')}</th>
+                      <th className="px-3 py-2 text-right font-medium">Prompt</th>
+                      <th className="px-3 py-2 text-right font-medium">Completion</th>
+                      <th className="px-3 py-2 text-right font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {dashboard.recentCalls.length ? dashboard.recentCalls.slice(0, 25).map((item) => (
+                      <tr key={item.id} className="h-8 hover:bg-hover/60">
+                        <td className="whitespace-nowrap px-3 py-1 tabular-nums text-secondary-text">{formatDateTime(item.calledAt, language)}</td>
+                        <td className="whitespace-nowrap px-3 py-1 text-foreground">{getCallTypeLabel(item.callType, t)}</td>
+                        <td className="min-w-56 px-3 py-1">
+                          <div className="max-w-[18rem] truncate font-medium text-foreground">{item.model}</div>
+                          {item.stockCode ? <div className="text-xs tabular-nums text-secondary-text">{item.stockCode}</div> : null}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-1 text-right tabular-nums text-secondary-text">{formatNumber(item.promptTokens, language)}</td>
+                        <td className="whitespace-nowrap px-3 py-1 text-right tabular-nums text-secondary-text">{formatNumber(item.completionTokens, language)}</td>
+                        <td className="whitespace-nowrap px-3 py-1 text-right font-medium tabular-nums text-foreground">{formatNumber(item.totalTokens, language)}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-secondary-text">{t('usage.noRecentCalls')}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )
+      ) : null}
     </AppPage>
   );
 };
