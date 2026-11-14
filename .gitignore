@@ -90,3 +90,5 @@ static/
 /apps/dsa-desktop/dist/
 node_modules/
 docs/specs/
+# 临时媒体产物（无代码引用，勿入库）
+aliyun-media/

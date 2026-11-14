@@ -12,10 +12,12 @@ import unicodedata
 
 from sqlalchemy import and_, case, desc, false, func, literal, not_, or_, select, true, tuple_, union_all
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import load_only
 
 from src.storage import (
     DatabaseManager,
+    MonitoringEventContentRecord,
     MonitoringEventRecord,
     MonitoringSourceRecord,
     ResearchNote,
@@ -1730,10 +1732,117 @@ class InvestmentMonitorRepository:
             ).scalars().all()
         return [self._event_dict(row) for row in rows]
 
+    def recent_news_events(self, *, days: int = 7, limit: int = 320) -> List[Dict[str, Any]]:
+        """首页新闻栏的候选池。
+
+        只取 news / long_news，带 limit 和精简列——首页每次刷新都调这个方法，
+        拉全类型 600 行会把仪表盘拖到几十秒。
+        """
+        cutoff = utc_naive_now() - timedelta(days=max(1, int(days)))
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(MonitoringEventRecord)
+                .where(
+                    MonitoringEventRecord.event_type.in_(("news", "long_news")),
+                    MonitoringEventRecord.event_at >= cutoff,
+                )
+                .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+                .limit(max(1, int(limit)))
+                .options(load_only(*_EVENT_LIST_COLUMNS))
+            ).scalars().all()
+        return [self._event_dict(row) for row in rows]
+
     def get_event(self, event_id: int) -> Optional[Dict[str, Any]]:
         with self.db.get_session() as session:
             row = session.get(MonitoringEventRecord, int(event_id), options=(load_only(*_EVENT_LIST_COLUMNS),))
             return self._event_dict(row) if row is not None else None
+
+    def get_event_raw_url(self, event_id: int) -> Optional[str]:
+        """取出入库 payload 里的发布方链接。
+
+        ``long_news`` 这类来源只用 ``raw_payload`` 保存原文链接，``url`` 列是空的；
+        只在这一条事件的 url 列与 metrics 都没有链接时才做一次窄查询，
+        不把整个 payload 带进常规读取路径。
+        """
+        with self.db.get_session() as session:
+            raw = session.execute(
+                select(MonitoringEventRecord.raw_payload).where(MonitoringEventRecord.id == int(event_id))
+            ).scalar()
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        value = str(payload.get("url") or "").strip()
+        return value or None
+
+    def get_event_content_cache(self, event_id: int) -> Optional[Dict[str, Any]]:
+        """读取按需正文缓存。
+
+        返回原始 datetime（naive UTC），冷却窗口判断由服务层负责，避免把
+        「多久算太频繁」这种策略写进仓储层。
+        """
+        with self.db.get_session() as session:
+            row = session.get(MonitoringEventContentRecord, int(event_id))
+            return self._event_content_dict(row) if row is not None else None
+
+    def save_event_content_cache(
+        self, event_id: int, *, status: str, content: Optional[str] = None,
+        error: Optional[str] = None, source_url: Optional[str] = None,
+        fetched_at: Optional[datetime] = None, attempted_at: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """写入/更新单条正文缓存，返回落库后的快照。
+
+        并发点开同一条快讯时两个请求可能同时插入，主键冲突退化为更新，
+        不能让一次重复点击变成接口错误。
+        """
+        identifier = int(event_id)
+        now = utc_naive_now()
+        values = {
+            "status": str(status or "")[:20] or "failed",
+            "content": content or None,
+            "error": str(error)[:200] if error else None,
+            "source_url": str(source_url)[:1000] if source_url else None,
+            "fetched_at": fetched_at if fetched_at is not None else (
+                now if str(status or "") == "ok" else None
+            ),
+            "attempted_at": attempted_at or now,
+        }
+        with self.db.get_session() as session:
+            row = session.get(MonitoringEventContentRecord, identifier)
+            if row is None:
+                row = MonitoringEventContentRecord(event_id=identifier, **values)
+                session.add(row)
+            else:
+                for key, value in values.items():
+                    setattr(row, key, value)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                row = session.get(MonitoringEventContentRecord, identifier)
+                if row is None:
+                    raise
+                for key, value in values.items():
+                    setattr(row, key, value)
+                session.commit()
+            stored = self._event_content_dict(row)
+        return stored
+
+    @staticmethod
+    def _event_content_dict(row: MonitoringEventContentRecord) -> Dict[str, Any]:
+        return {
+            "event_id": int(row.event_id),
+            "status": str(row.status or ""),
+            "content": row.content,
+            "error": row.error,
+            "source_url": row.source_url,
+            "fetched_at": row.fetched_at,
+            "attempted_at": row.attempted_at,
+        }
 
     def list_announcements(
         self, *, start_at: datetime, end_at: datetime, symbol: Optional[str] = None,

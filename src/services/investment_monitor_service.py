@@ -688,6 +688,112 @@ class InvestmentMonitorService:
             raise InvestmentMonitorError("情报事件不存在")
         return event
 
+    @staticmethod
+    def _news_dedup_key(event: Dict[str, Any]) -> str:
+        """同一条新闻常被多家快讯转载，标题写法还不一样。
+
+        这里把方括号前缀、标点和空白都去掉，只留前 24 个字做去重键，
+        让「【中科宇航…试车考核】近日…」和「中科宇航…试车考核」归成一条。
+        """
+        raw = str(event.get("title") or "")
+        raw = re.sub(r"^【([^】]{2,48})】.*$", r"\1", raw.strip())
+        key = re.sub(r"[\s·:：|,，。、；;！!？?“”\"'（）()【】\[\]-]", "", raw)
+        return key[:24]
+
+    def _diverse_news(self, events: List[Dict[str, Any]], *, limit: int, per_source: int) -> List[Dict[str, Any]]:
+        """按时间倒序取新闻，但每个来源最多 per_source 条，先保证来源多样。
+
+        首页那一栏如果被同一家快讯刷满，读者会以为没有新闻。配额用完后再放宽一次，
+        避免来源本来就少的时候栏目空掉。
+        """
+        picked: List[Dict[str, Any]] = []
+        seen_titles: set = set()
+        per_source_count: Counter = Counter()
+        overflow: List[Dict[str, Any]] = []
+        for event in events:
+            title = self._news_dedup_key(event)
+            if not title or title in seen_titles:
+                continue
+            seen_titles.add(title)
+            key = str(event.get("source_key") or "")
+            if per_source_count[key] < per_source:
+                per_source_count[key] += 1
+                picked.append(event)
+            else:
+                overflow.append(event)
+            if len(picked) >= limit:
+                break
+        for event in overflow:
+            if len(picked) >= limit:
+                break
+            picked.append(event)
+        return picked[:limit]
+
+    def audit_source_freshness(self, *, stale_after_minutes: int = 90) -> Dict[str, Any]:
+        """按「最后一条事件的时间」检查每个源是否还在出数据。
+
+        调度器说 success 只代表这次调用没抛异常；上游延迟、分页截断、配置失效
+        都可能让数据悄悄停住。这里用真实数据时间判断。
+
+        标定原则：每个源按自己的刷新周期给容忍窗口，避免把「日更源」「备用源」
+        误报成故障——噪音大的告警等于没有告警。
+        """
+        freshness = self.repo.source_event_freshness()
+        sources = {row["source_key"]: row for row in self.repo.list_sources()}
+        now = utc_naive_now()
+        stalled: List[Dict[str, Any]] = []
+        for key, observed in freshness.items():
+            source = sources.get(key) or {}
+            if not source.get("enabled", True):
+                continue
+            # 从没成功跑通过的源（未配置、备用源）不参与停摆判断。
+            if not source.get("last_success_at") and not observed.get("latest_event_at"):
+                continue
+            # 按类别给容忍窗口：快讯类要求小时级，公告/研报可以隔夜，
+            # 日线与快照类本来就一天一条。用统一阈值会把它们全部误报。
+            category = str(source.get("category") or "")
+            poll = int(source.get("poll_interval_seconds") or source.get("poll_seconds") or 600)
+            if category == "news":
+                # 快讯是唯一要求小时级新鲜度的类别，也是这次事故的当事方。
+                budget = max(stale_after_minutes, poll // 60 * 3)
+            elif category in {"comment", "essay"}:
+                budget = max(3 * 60, poll // 60 * 3)
+            elif category in {"company", "research", "governance", "enterprise"}:
+                budget = max(6 * 60, poll // 60 * 3)
+            elif category in {"market", "fundamental", "capital", "technical", "ownership", "sentiment", "institution"}:
+                # 披露类与研报类天然稀疏：一天一条甚至一周一条都正常。
+                budget = 26 * 60
+            else:
+                budget = max(stale_after_minutes, poll // 60 * 3)
+            # 备用源只在主源不可用时才会写入，不参与停摆判定。
+            if "备用" in str(source.get("name") or ""):
+                continue
+            latest_raw = observed.get("latest_event_at")
+            latest = self._utc_iso_to_utc_naive(latest_raw)
+            if latest is None:
+                continue
+            stalled_minutes = int((now - latest).total_seconds() // 60)
+            if stalled_minutes <= budget:
+                continue
+            stalled.append({
+                "source_key": key, "name": source.get("name") or key,
+                "latest_event_at": latest_raw, "stalled_minutes": stalled_minutes,
+                "reason": f"超过 {budget} 分钟没有新数据",
+            })
+            logger.warning(
+                "[investment-monitor] source %s stalled: last event %s (%s min ago, budget %s)",
+                key, latest_raw, stalled_minutes, budget,
+            )
+            try:
+                self.repo.update_source_status(
+                    key, status="stale", error=f"超过 {budget} 分钟没有新数据（最后一条 {latest_raw}）",
+                )
+            except Exception:  # noqa: BLE001 - 巡检失败不应影响采集
+                logger.warning("[investment-monitor] failed to mark source %s as stale", key)
+        if not stalled:
+            logger.info("[investment-monitor] freshness audit: all %s sources are current", len(freshness))
+        return {"checked": len(freshness), "stalled": stalled, "checked_at": now.isoformat() + "Z"}
+
     def dashboard(self, *, days: int = 7) -> Dict[str, Any]:
         safe_days = max(1, min(int(days), 90))
         watchlist = self.watchlist()
@@ -717,16 +823,24 @@ class InvestmentMonitorService:
             for symbol in watchlist
         ]
         latest = events
-        excluded_markers = ("金十", "快讯", "雪球", "热门股票")
-        news_events = [
-            event for event in latest
-            if str((source_meta.get(event["source_key"]) or {}).get("category") or "") == "news"
-            and event.get("event_type") in {"news", "long_news"}
-            and not any(
-                marker in f'{event.get("source") or ""} {event.get("source_name") or ""}'
-                for marker in excluded_markers
-            )
-        ]
+        # 「快讯」曾经被整源排除，结果只剩一个长篇新闻源在撑首页，看着不像新闻。
+        # 现在只排除明确的信息噪音源，快讯和长篇新闻一起进候选池；
+        # 再按来源做配额，避免某一家快讯刷满整栏。
+        excluded_markers = ("金十", "雪球", "热门股票")
+        news_pool = self.repo.recent_news_events(days=safe_days, limit=320)
+
+        def _news_candidate(event: Dict[str, Any]) -> bool:
+            meta = source_meta.get(event["source_key"]) or {}
+            if str(meta.get("category") or "") != "news":
+                return False
+            if event.get("event_type") not in {"news", "long_news"}:
+                return False
+            label = f'{event.get("source") or ""} {event.get("source_name") or ""}'
+            return not any(marker in label for marker in excluded_markers)
+
+        news_events = self._diverse_news(
+            [event for event in news_pool if _news_candidate(event)], limit=30, per_source=3,
+        )
         watchlist_symbols = set(watchlist)
         pinned_news = sorted(
             [
@@ -770,8 +884,14 @@ class InvestmentMonitorService:
             "channels": self._counter_rows(channel_counts),
             "latest_events": [self.compact_event(event) for event in latest[:40]],
             "high_priority": [self.compact_event(event) for event in latest if event["importance_score"] >= 75][:20],
-            "latest_news": [self.compact_event(event) for event in news_events if int(event["id"]) not in pinned_ids][:30],
-            "pinned_news": [self.compact_event(event) for event in pinned_news],
+            # 首页「最近快讯」点开要看正文：快讯本身平均仅 108 字，但 long_news
+            # 平均 3000 字，用默认 600 字上限会把长篇新闻砍掉八成。这里放宽到 3000，
+            # 对快讯几乎没有体积影响（实测超 600 字的长讯只占 0.4%）。
+            "latest_news": [
+                self.compact_event(event, summary_limit=3000)
+                for event in news_events if int(event["id"]) not in pinned_ids
+            ][:30],
+            "pinned_news": [self.compact_event(event, summary_limit=3000) for event in pinned_news],
             "sources": self.list_sources(),
         }
 
@@ -1851,6 +1971,28 @@ class InvestmentMonitorService:
             # macOS and other development platforms.
             pass
 
+    def _cursor_after_fetch(self, source: Dict[str, Any], events: Sequence[Dict[str, Any]]) -> datetime:
+        """抓取成功后游标该落到哪里。
+
+        不能一律写 utc_naive_now()：上游有发布延迟、分页也有上限，
+        「这次没报错」不等于「时间窗已经取完」。游标一旦跳到当下，
+        中间没取到的区间就再也回不来了（本次线上新闻落后数小时就是这个原因）。
+
+        规则：
+        - 一条都没取到：游标不动，下一轮仍在原处重试；
+        - 取到了：推进到这批事件里的最新时间，且不早于原游标、不超过当前时间。
+        """
+        previous = self._utc_iso_to_utc_naive(source.get("last_success_at"))
+        newest = max(
+            (event.get("event_at") for event in events if isinstance(event.get("event_at"), datetime)),
+            default=None,
+        )
+        if newest is None:
+            return previous or utc_naive_now()
+        ceiling = utc_naive_now()
+        advanced = min(newest, ceiling)
+        return max(previous, advanced) if previous else advanced
+
     def _persist_fetched_source(
         self, source: Dict[str, Any], *, value: Optional[List[Dict[str, Any]]],
         duration_ms: int, fetch_error: Optional[Exception],
@@ -1880,7 +2022,7 @@ class InvestmentMonitorService:
                 key, status="success", item_count=saved["created"],
                 received_count=saved["received"], created_count=saved["created"],
                 updated_count=saved["updated"], duration_ms=duration_ms,
-                success_at=utc_naive_now(),
+                success_at=self._cursor_after_fetch(source, value or []),
             )
             return {"source_key": key, "status": "success", "duration_ms": duration_ms, **saved}
         except Exception as exc:  # noqa: BLE001 - persistence failure remains source-scoped.
@@ -2109,10 +2251,13 @@ class InvestmentMonitorService:
         if self._backfill_days:
             start = now - timedelta(days=self._backfill_days)
         else:
-            live_overlap = max(5, min(int(os.getenv("INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES", "10")), 60))
+            # Tushare 的 news 接口有 20–60 分钟的发布延迟：查「最近 10 分钟」经常是 0 行，
+            # 但调用本身不报错，游标会被推到当下，晚到的数据就永远落在窗口之外。
+            # 因此实时重叠必须大于上游延迟；恢复窗口放到 24 小时，让停机造成的空洞能自愈。
+            live_overlap = max(5, min(int(os.getenv("INVESTMENT_MONITOR_NEWS_LIVE_OVERLAP_MINUTES", "120")), 240))
             recovery_overlap = max(
                 live_overlap,
-                min(int(os.getenv("INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES", "360")), 1440),
+                min(int(os.getenv("INVESTMENT_MONITOR_NEWS_OVERLAP_MINUTES", "1440")), 1440),
             )
             last_success_raw = source.get("last_success_at")
             last_success = self._utc_iso_to_market_naive(last_success_raw)
@@ -2131,7 +2276,7 @@ class InvestmentMonitorService:
                 "src": src,
                 "start_date": window_start.strftime("%Y-%m-%d %H:%M:%S"),
                 "end_date": window_end.strftime("%Y-%m-%d %H:%M:%S"),
-            }, limit=300, max_pages=20 if self._backfill_days else 1,
+            }, limit=300, max_pages=20,
                 fields=("datetime", "content", "title", "channels")))
             window_start = window_end
         events = []
@@ -3098,7 +3243,8 @@ class InvestmentMonitorService:
                 source, external_id=f"guba:{post_id}", event_type="stock_forum_post",
                 perspective="investor", title=title, summary=content, symbols=[symbol],
                 sentiment=self._sentiment(content), importance=importance, confidence=0.35,
-                event_at=row.get("published_at") or utc_naive_now(),
+                # 股吧时间戳是北京时间；事件表统一存 UTC，必须走同一个解析器
+                event_at=self._parse_datetime(row.get("published_at")) or utc_naive_now(),
                 tags=["东方财富股吧", "公开股评", "待核验"] + (["含图片"] if images else []),
                 actors=[author, "东方财富股吧"], metrics=metrics,
                 url=str(row.get("url") or "") or None, raw=row,
@@ -3154,7 +3300,8 @@ class InvestmentMonitorService:
                 external_id=f"intel:{row.id}", event_type="news", perspective="investor",
                 title=row.title, summary=row.summary or "", symbols=symbols,
                 sentiment=self._sentiment(text), importance=self._text_importance(text, symbols),
-                event_at=row.published_at or row.fetched_at, tags=self._text_tags(text),
+                event_at=self._parse_datetime(row.published_at) or self._parse_datetime(row.fetched_at) or utc_naive_now(),
+                tags=self._text_tags(text),
                 url=row.url, actors=[row.source_name or row.source or ""],
                 raw={"intelligence_item_id": row.id, "market": row.market},
             ))

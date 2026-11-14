@@ -237,7 +237,14 @@ class StockDaily(Base):
     ma10 = Column(Float)
     ma20 = Column(Float)
     volume_ratio = Column(Float)  # 量比
-    
+
+    # 估值与基本面指标（Tushare daily_basic 批量同步写入）
+    pe = Column(Float)              # 市盈率(总市值/净利润)
+    pb = Column(Float)              # 市净率(总市值/净资产)
+    total_mv = Column(Float)        # 总市值（万元）
+    circ_mv = Column(Float)          # 流通市值（万元）
+    turnover_rate = Column(Float)    # 换手率（%）
+
     # 数据来源
     data_source = Column(String(50))  # 记录数据来源（如 AkshareFetcher）
     
@@ -1068,6 +1075,27 @@ class MonitoringEventRecord(Base):
         Index('ix_monitoring_event_type_time', 'event_type', 'event_at'),
         Index('ix_monitoring_event_source_time', 'source_key', 'event_at'),
     )
+
+
+class MonitoringEventContentRecord(Base):
+    """按需抽取的单条情报正文缓存。
+
+    与 ``MonitoringEventRecord.summary`` 刻意分开：summary 是入库时数据源给出的
+    摘录，每次重新同步都会被覆盖；正文是打开快讯时才抓取的派生缓存，需要
+    在重新同步后继续可用，并记住失败/空结果，避免每次点开都重抓坏链接。
+    """
+
+    __tablename__ = 'monitoring_event_contents'
+
+    # 软引用 monitoring_events.id：事件清理后本行可残留，读取方以事件是否存在为准。
+    event_id = Column(Integer, primary_key=True, autoincrement=False)
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    content = Column(Text)
+    error = Column(String(200))
+    source_url = Column(String(1000))
+    fetched_at = Column(DateTime)
+    attempted_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False)
 
 
 class WatchlistBackfillRecord(Base):
@@ -2063,6 +2091,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_schema_migration_record()
             self._ensure_intelligence_items_unique_index()
             self._apply_sqlite_runtime_index_optimization()
+            self._ensure_research_notes_fts()
 
             self._initialized = True
             logger.info(f"数据库初始化完成: {db_url}")
@@ -2080,6 +2109,45 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._SessionLocal = None
             self.__class__._instance = None
             raise
+
+    def _ensure_research_notes_fts(self) -> None:
+        """建立纪要全文索引（FTS5）与同步触发器。
+
+        LIKE '%kw%' 在 12 万行纪要上是全表扫描，实测 12.9 秒。FTS5 虚表命中后 1–14ms。
+        幂等：表/触发器已存在则跳过；索引为空而源表有数据时做一次 rebuild。
+        FTS5 不可用（极少数 SQLite 构建）时只记日志，不影响启动，搜索自动退回 LIKE。
+        """
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS research_notes_fts "
+                    "USING fts5(title, content, content='research_notes', content_rowid='id', tokenize='unicode61')"
+                ))
+                conn.execute(text(
+                    "CREATE TRIGGER IF NOT EXISTS research_notes_fts_ai AFTER INSERT ON research_notes BEGIN "
+                    "INSERT INTO research_notes_fts(rowid, title, content) VALUES (new.id, new.title, new.content); END"
+                ))
+                conn.execute(text(
+                    "CREATE TRIGGER IF NOT EXISTS research_notes_fts_ad AFTER DELETE ON research_notes BEGIN "
+                    "INSERT INTO research_notes_fts(research_notes_fts, rowid, title, content) "
+                    "VALUES ('delete', old.id, old.title, old.content); END"
+                ))
+                conn.execute(text(
+                    "CREATE TRIGGER IF NOT EXISTS research_notes_fts_au AFTER UPDATE ON research_notes BEGIN "
+                    "INSERT INTO research_notes_fts(research_notes_fts, rowid, title, content) "
+                    "VALUES ('delete', old.id, old.title, old.content); "
+                    "INSERT INTO research_notes_fts(rowid, title, content) VALUES (new.id, new.title, new.content); END"
+                ))
+                # 外部内容表的 count(*) 读的是源表，判断不了索引是否为空；
+                # FTS5 的 docsize 影子表才反映真实索引文档数。
+                indexed = conn.execute(text("SELECT count(*) FROM research_notes_fts_docsize")).scalar() or 0
+                total = conn.execute(text("SELECT count(*) FROM research_notes")).scalar() or 0
+                if total and not indexed:
+                    logger.info("正在建立纪要全文索引（FTS5），共 %s 条…", total)
+                    conn.execute(text("INSERT INTO research_notes_fts(research_notes_fts) VALUES('rebuild')"))
+                    logger.info("纪要全文索引建立完成")
+        except Exception as exc:  # noqa: BLE001 - FTS5 缺失时不应阻断启动
+            logger.warning("纪要全文索引不可用，搜索将退回 LIKE: %s", exc)
 
     def _ensure_user_scope_columns(self) -> None:
         """Add additive ownership columns to legacy personalized-data tables."""

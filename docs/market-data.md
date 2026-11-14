@@ -14,6 +14,8 @@
 ## 存储口径
 
 - `stock_daily`：个股日线事实库。远端补取成功后按股票代码和交易日 UPSERT。
+  - 日线有两个写入方：按股票补取（分析流程触发，只覆盖自选与相关标的）和按交易日批量同步（`BulkMarketDataSyncService`，一次拉全市场 5500+ 只）。两者都写同一张表，批量同步只更新自己负责的 OHLCV、成交与估值列，不覆盖其它链路算好的 `ma5/ma10/ma20/volume_ratio`。
+  - 估值列 `pe`/`pb`/`total_mv`/`circ_mv`/`turnover_rate` 来自 Tushare `daily_basic`，随日线一并落库；`total_mv`/`circ_mv` 单位为万元。
 - `stock_intraday`：一分钟 OHLCV，作为长期压缩数据和秒级源异常时的兜底。
 - `stock_ticks`：自选股 1 秒实时快照，按股票代码和本机采集秒 UPSERT；同时保存行情源返回的当日累计成交量/额，以及相邻真实快照差分得到的本秒成交量/额。每个交易日首笔没有可靠前值，秒量保持空值，不把开盘前累计量伪装成一秒成交。
 - `market_index_bars`：保留交易所后缀的指数日线/分钟线，避免 `000001.SH` 与 `000001.SZ` 冲突；`1SEC` 指数快照使用相同的累计量与秒增量双口径。
@@ -30,6 +32,37 @@ MARKET_DAILY_HISTORY_DAYS=7300
 MARKET_BOOTSTRAP_DELAY_SECONDS=90
 MARKET_INDEX_LIST=000001.SH,000016.SH,000300.SH,000688.SH,000905.SH,000852.SH,399001.SZ,399006.SZ
 ```
+
+### 全市场日线批量同步
+
+按股票逐只补取时，每天的覆盖量受自选股和请求配额限制，历史深度也只能一点点积累。
+`BulkMarketDataSyncService` 改为**按交易日拉全市场**：Tushare 的 `daily` /
+`daily_basic` 支持只传 `trade_date`，一次请求 0.4~1 秒返回 5500+ 行，同样的配额
+能覆盖全市场，且天然对齐交易日历。
+
+```dotenv
+BULK_MARKET_SYNC_ENABLED=true
+BULK_MARKET_SYNC_BOOTSTRAP_DAYS=30
+BULK_MARKET_SYNC_INTERVAL_SEC=3600
+```
+
+- 采集守护进程启动后先回补 `BULK_MARKET_SYNC_BOOTSTRAP_DAYS` 个交易日，之后每
+  `BULK_MARKET_SYNC_INTERVAL_SEC` 秒补一次最近缺口，默认关闭以外的行为不变。
+- **缺口判断是自适应的**：A 股 2015 年约 2800 只在市、2026 年约 5580 只。服务用
+  `stock_basic` 的上市/退市日期推算每个交易日应有的在市数量，覆盖不足 90% 才算缺口。
+  用固定阈值会把全部历史日期误判成缺口并大量重拉。
+- 服务不维护同步状态表：数据库本身既是数据也是进度条，中断后重跑只补真正缺失的交易日。
+- 历史回填用 CLI：
+
+```bash
+python scripts/bulk_daily_sync.py --dry-run      # 只看缺口
+python scripts/bulk_daily_sync.py --days 490     # 补近 2 年
+python scripts/bulk_daily_sync.py --full         # 全量历史
+python scripts/bulk_daily_sync.py --start 20240101 --end 20241231
+```
+
+批量写入会临时把连接设为 `synchronous=NORMAL` 并延后 WAL 自动检查点，整批结束后统一
+`wal_checkpoint(TRUNCATE)`；单日写入耗时由此前的约 4.9 秒降到约 2.4 秒。
 
 `MARKET_INDEX_LIST` 是可扩展的秒级指数池。默认覆盖上证指数、上证50、沪深300、科创50、中证500、中证1000、深证成指和创业板指。`MARKET_BOOTSTRAP_DELAY_SECONDS` 让开机后的首个看板请求优先于全量历史维护；已有鲜活日线不会因标的上市时间短而在每次启动时被重复全量下载。运行中新增自选股会立即采集首笔行情，并自动进入近半年全渠道回填；即使从设置页直接修改 `STOCK_LIST`，采集器也会检测新增标的。
 
