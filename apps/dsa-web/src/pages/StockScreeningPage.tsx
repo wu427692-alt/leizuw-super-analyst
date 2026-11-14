@@ -903,37 +903,45 @@ const StockScreeningPage: React.FC = () => {
                 : `当前策略：${displayedStrategy} · ${marketLabel}`}
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] tabular-nums text-muted-text">
-            <span>任务：{activeTaskId ? activeTaskId.slice(0, 12) : '-'}</span>
-            <span>Run：{screenMeta?.runId || '-'}</span>
-            <span>DSA增强：{screenMeta?.dsaEnrichment?.enrichedCount ?? '-'} / {screenMeta?.dsaEnrichment?.requestedCount ?? '-'}</span>
-          </div>
+          {/* 没有跑过选股时不铺一排「任务：- / Run：- / DSA增强：-/-」的假占位。 */}
+          {activeTaskId || screenMeta ? (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] tabular-nums text-muted-text">
+              <span>任务：{activeTaskId ? activeTaskId.slice(0, 12) : '-'}</span>
+              <span>Run：{screenMeta?.runId || '-'}</span>
+              <span>DSA增强：{screenMeta?.dsaEnrichment?.enrichedCount ?? '-'} / {screenMeta?.dsaEnrichment?.requestedCount ?? '-'}</span>
+            </div>
+          ) : null}
         </div>
 
-        <div className="border-b border-line-1 px-4 py-3">
-          <MetricRow
-            columns={4}
-            items={[
-              { label: '快照', value: screenMeta?.snapshotCount ?? null },
-              { label: '过滤后', value: screenMeta?.afterFilterCount ?? null },
-              { label: '候选', value: screenMeta?.candidateCount ?? (candidates.length || null) },
-              {
-                label: 'LLM 覆盖',
-                value: screenMeta?.llmCoverage != null ? formatPercent(screenMeta.llmCoverage) : null,
-              },
-            ]}
-          />
-        </div>
+        {/* 四个「—」的指标行不是信息，只在真的有一次运行结果时出现。 */}
+        {screenMeta || candidates.length > 0 ? (
+          <div className="border-b border-line-1 px-4 py-3">
+            <MetricRow
+              columns={4}
+              items={[
+                { label: '快照', value: screenMeta?.snapshotCount ?? null },
+                { label: '过滤后', value: screenMeta?.afterFilterCount ?? null },
+                { label: '候选', value: screenMeta?.candidateCount ?? (candidates.length || null) },
+                {
+                  label: 'LLM 覆盖',
+                  value: screenMeta?.llmCoverage != null ? formatPercent(screenMeta.llmCoverage) : null,
+                },
+              ]}
+            />
+          </div>
+        ) : null}
 
         {candidates.length === 0 ? (
-          <div className="px-4 py-10 text-center">
-            <p className="text-sm font-medium text-foreground">暂无结果</p>
-            <p className="mt-1 text-xs text-secondary-text">开启 AlphaSift 后点击「运行选股」生成候选列表。</p>
+          <div className="px-4 py-8 text-center">
+            <p className="text-[15px] font-medium text-foreground">还没有候选</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] leading-[20px] text-secondary-text">
+              选股结果会在这里按评分排序，并附上行内评分条与 LLM 重排结论；需要先开启 AlphaSift 再运行一次。
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[880px] border-collapse text-[13px]">
-              <thead className="bg-bg-2 text-[11px] text-muted-text">
+              <thead className="bg-bg-2 text-[12px] text-muted-text">
                 <tr>
                   <th className="w-10 px-3 py-2 text-left font-medium">#</th>
                   <th className="px-3 py-2 text-left font-medium">代码</th>
@@ -991,7 +999,7 @@ const StockScreeningPage: React.FC = () => {
                           {llmDegraded ? '未重排' : formatScore(item.llmScore)}
                         </td>
                         <td className="px-3 py-1.5">
-                          <span className="inline-flex rounded bg-bg-2 px-1.5 py-0.5 text-[11px] text-secondary-text">
+                          <span className="inline-flex rounded bg-bg-2 px-1.5 py-0.5 text-[12px] text-secondary-text">
                             {item.riskLevel || 'unknown'}
                           </span>
                         </td>
@@ -1011,34 +1019,34 @@ const StockScreeningPage: React.FC = () => {
                             <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
                               <div className="space-y-2.5">
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">摘要</p>
+                                  <p className="text-[12px] font-medium text-muted-text">摘要</p>
                                   <p className="mt-0.5 text-[13px] leading-5 text-foreground">{getCandidateReason(item)}</p>
                                 </div>
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">操作信号</p>
+                                  <p className="text-[12px] font-medium text-muted-text">操作信号</p>
                                   <p className="mt-0.5 text-[13px] text-foreground">{getSignal(item)}</p>
                                 </div>
                                 {item.dsaAnalysisSummary ? (
                                   <div>
-                                    <p className="text-[11px] font-medium text-muted-text">DSA 增强摘要</p>
+                                    <p className="text-[12px] font-medium text-muted-text">DSA 增强摘要</p>
                                     <p className="mt-0.5 text-[13px] leading-5 text-foreground">{item.dsaAnalysisSummary}</p>
                                   </div>
                                 ) : null}
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">LLM 判断</p>
+                                  <p className="text-[12px] font-medium text-muted-text">LLM 判断</p>
                                   <p className="mt-0.5 text-[13px] leading-5 text-foreground">
                                     {item.llmThesis || llmFallbackText}
                                   </p>
                                   {llmInsightAvailable ? (
-                                    <p className="mt-0.5 text-[11px] text-muted-text">
+                                    <p className="mt-0.5 text-[12px] text-muted-text">
                                       板块 {item.llmSector || '-'} · 主题 {item.llmTheme || '-'} · 置信度 {formatPercent(item.llmConfidence)}
                                     </p>
                                   ) : (
-                                    <p className="mt-0.5 text-[11px] text-muted-text">LLM 元数据未返回</p>
+                                    <p className="mt-0.5 text-[12px] text-muted-text">LLM 元数据未返回</p>
                                   )}
                                 </div>
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">风险标签</p>
+                                  <p className="text-[12px] font-medium text-muted-text">风险标签</p>
                                   <p className="mt-0.5 text-[13px] text-foreground">
                                     {[...(item.riskFlags || []), ...(item.llmRisks || [])].length
                                       ? [...(item.riskFlags || []), ...(item.llmRisks || [])].join('，')
@@ -1048,7 +1056,7 @@ const StockScreeningPage: React.FC = () => {
                               </div>
                               <div className="space-y-2.5">
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">主要因子</p>
+                                  <p className="text-[12px] font-medium text-muted-text">主要因子</p>
                                   {factors.length > 0 ? (
                                     <>
                                       <ShareBar
@@ -1062,7 +1070,7 @@ const StockScreeningPage: React.FC = () => {
                                       />
                                       <div className="mt-2 grid grid-cols-3 gap-x-3 gap-y-1">
                                         {factors.map(([key, value]) => (
-                                          <span key={key} className="flex items-baseline justify-between gap-2 text-[11px]">
+                                          <span key={key} className="flex items-baseline justify-between gap-2 text-[12px]">
                                             <span className="truncate text-muted-text">{key}</span>
                                             <b className="font-medium tabular-nums text-foreground">{formatNumber(value)}</b>
                                           </span>
@@ -1074,7 +1082,7 @@ const StockScreeningPage: React.FC = () => {
                                   )}
                                 </div>
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">成交额</p>
+                                  <p className="text-[12px] font-medium text-muted-text">成交额</p>
                                   <p className="mt-0.5 text-[13px] tabular-nums text-foreground">{formatAmount(item.amount)}</p>
                                   <BarMeter
                                     className="mt-1 w-40"
@@ -1087,19 +1095,19 @@ const StockScreeningPage: React.FC = () => {
                                   />
                                 </div>
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">LLM 关注项</p>
+                                  <p className="text-[12px] font-medium text-muted-text">LLM 关注项</p>
                                   <p className="mt-0.5 text-[13px] text-foreground">
                                     {item.llmWatchItems?.length ? item.llmWatchItems.join('，') : llmDegraded ? '未返回（LLM 已降级）' : '无'}
                                   </p>
                                 </div>
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">催化因素</p>
+                                  <p className="text-[12px] font-medium text-muted-text">催化因素</p>
                                   <p className="mt-0.5 text-[13px] text-foreground">
                                     {item.llmCatalysts?.length ? item.llmCatalysts.join('，') : llmDegraded ? '未返回（LLM 已降级）' : '无'}
                                   </p>
                                 </div>
                                 <div>
-                                  <p className="text-[11px] font-medium text-muted-text">DSA 新闻</p>
+                                  <p className="text-[12px] font-medium text-muted-text">DSA 新闻</p>
                                   {dsaNews.length > 0 ? (
                                     <ul className="mt-0.5 space-y-0.5 text-[13px] text-foreground">
                                       {dsaNews.slice(0, 3).map((newsItem, newsIndex) => (
@@ -1114,7 +1122,7 @@ const StockScreeningPage: React.FC = () => {
                                 </div>
                                 {dsaWarnings.length > 0 ? (
                                   <div>
-                                    <p className="text-[11px] font-medium text-muted-text">DSA 增强提示</p>
+                                    <p className="text-[12px] font-medium text-muted-text">DSA 增强提示</p>
                                     <p className="mt-0.5 text-[13px] text-secondary-text">{dsaWarnings.join('，')}</p>
                                   </div>
                                 ) : null}
@@ -1177,7 +1185,7 @@ const StockScreeningPage: React.FC = () => {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] tabular-nums text-muted-text">更新：{formatHotspotUpdatedAt(hotspotsUpdatedAt)}</span>
+            <span className="text-[12px] tabular-nums text-muted-text">更新：{formatHotspotUpdatedAt(hotspotsUpdatedAt)}</span>
             <Button
               size="sm"
               variant="secondary"
@@ -1238,7 +1246,7 @@ const StockScreeningPage: React.FC = () => {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="w-3 flex-shrink-0 text-[11px] tabular-nums text-muted-text">{index + 1}</span>
+                      <span className="w-3 flex-shrink-0 text-[12px] tabular-nums text-muted-text">{index + 1}</span>
                       <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-text" aria-hidden="true" />
                       <span className="truncate text-[13px] font-medium text-foreground">{item.name || item.topic}</span>
                       <Badge variant={strength.tone}>{strength.label}</Badge>
@@ -1255,11 +1263,11 @@ const StockScreeningPage: React.FC = () => {
                     height={3}
                     ariaLabel={`热度 ${formatNumber(item.heatScore, 0)}`}
                   />
-                  <div className="mt-1 flex items-baseline justify-between gap-2 text-[11px] text-secondary-text">
+                  <div className="mt-1 flex items-baseline justify-between gap-2 text-[12px] text-secondary-text">
                     <span>涨跌幅 <b className="font-medium tabular-nums text-foreground">{formatHotspotMetric(item.changePct)}%</b></span>
                     <span>{getHotspotSampleText(item)}</span>
                   </div>
-                  <div className="mt-0.5 truncate text-[11px] text-muted-text">
+                  <div className="mt-0.5 truncate text-[12px] text-muted-text">
                     龙头 {getHotspotLeadersText(item)} · 趋势 {formatHotspotMetric(item.trendScore)} · 持续 {formatHotspotMetric(item.persistenceScore)}
                   </div>
                 </button>
@@ -1279,7 +1287,7 @@ const StockScreeningPage: React.FC = () => {
                   {loadingHotspotDetail ? '正在读取发酵路线与概念股...' : hotspotDetail?.summary || '点击题材查看发酵路线与概念股。'}
                 </p>
                 {hotspotDetail?.canonicalTopic && hotspotDetail.canonicalTopic !== selectedHotspotTopic ? (
-                  <p className="mt-0.5 text-[11px] text-muted-text">标准题材：{hotspotDetail.canonicalTopic}</p>
+                  <p className="mt-0.5 text-[12px] text-muted-text">标准题材：{hotspotDetail.canonicalTopic}</p>
                 ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1320,7 +1328,7 @@ const StockScreeningPage: React.FC = () => {
             {hotspotDetail ? (
               <div className="mt-3 grid gap-4 lg:grid-cols-[1fr_1.3fr]">
                 <div>
-                  <p className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-text">
+                  <p className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-muted-text">
                     <Clock3 className="h-3 w-3" aria-hidden="true" />
                     发酵时间线
                   </p>
@@ -1328,33 +1336,33 @@ const StockScreeningPage: React.FC = () => {
                     {getHotspotRouteItems(hotspotDetail).map((item, index) => (
                       <div key={`${item.title}-${index}`} className="relative pb-2.5 last:pb-0">
                         <span className="absolute -left-3 top-1.5 h-1.5 w-1.5 rounded-full border border-line-2 bg-bg-1" />
-                        <p className="text-[11px] font-medium tabular-nums text-secondary-text">{getRouteTimeLabel(item)}</p>
+                        <p className="text-[12px] font-medium tabular-nums text-secondary-text">{getRouteTimeLabel(item)}</p>
                         <p className="mt-0.5 text-xs font-medium text-foreground">{item.title}</p>
                         <p className="mt-0.5 text-xs leading-5 text-secondary-text">{item.description}</p>
-                        {item.source ? <p className="mt-1 text-[11px] text-muted-text">来源 {item.source}</p> : null}
+                        {item.source ? <p className="mt-1 text-[12px] text-muted-text">来源 {item.source}</p> : null}
                       </div>
                     ))}
                   </div>
                 </div>
                 <div>
-                  <p className="mb-2 text-[11px] font-medium text-muted-text">概念股</p>
+                  <p className="mb-2 text-[12px] font-medium text-muted-text">概念股</p>
                   <div className="grid gap-1.5 sm:grid-cols-2">
                     {(hotspotDetail.stocks || []).slice(0, 10).map((stock) => (
                       <div key={`${stock.code || stock.name}`} className="rounded border border-line-1 bg-bg-1 px-2.5 py-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-xs font-medium text-foreground">{stock.name || stock.code || '-'}</p>
-                            <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted-text">{stock.code || '-'}</p>
+                            <p className="mt-0.5 font-mono text-[12px] tabular-nums text-muted-text">{stock.code || '-'}</p>
                           </div>
                           <div className="flex flex-shrink-0 items-center gap-1">
-                            <span className="rounded bg-bg-2 px-1.5 py-0.5 text-[11px] text-secondary-text">
+                            <span className="rounded bg-bg-2 px-1.5 py-0.5 text-[12px] text-secondary-text">
                               {stock.role || '概念股'}
                             </span>
                             {stock.code ? (
                               <button
                                 type="button"
                                 aria-label={`分析 ${stock.name || stock.code}`}
-                                className="inline-flex h-6 items-center gap-1 rounded border border-line-2 px-1.5 text-[11px] font-medium text-brand-text transition-colors hover:border-brand hover:text-foreground"
+                                className="inline-flex h-6 items-center gap-1 rounded border border-line-2 px-1.5 text-[12px] font-medium text-brand-text transition-colors hover:border-brand hover:text-foreground"
                                 onClick={() => handleAnalyzeHotspotStock(stock)}
                               >
                                 <Play className="h-2.5 w-2.5" aria-hidden="true" />
@@ -1363,11 +1371,11 @@ const StockScreeningPage: React.FC = () => {
                             ) : null}
                           </div>
                         </div>
-                        <p className="mt-1 text-[11px] tabular-nums text-secondary-text">
+                        <p className="mt-1 text-[12px] tabular-nums text-secondary-text">
                           涨跌幅 {formatStockChangeText(stock.changePct)} · 热度 {formatNumber(stock.hotStockScore, 0)}
                         </p>
                         {stock.source || stock.sourceConfidence != null || stock.fallbackUsed ? (
-                          <p className="mt-0.5 text-[11px] text-muted-text">
+                          <p className="mt-0.5 text-[12px] text-muted-text">
                             来源 {stock.source || '-'}
                             {stock.sourceConfidence != null ? ` · 置信 ${formatPercent(stock.sourceConfidence)}` : ''}
                             {stock.fallbackUsed ? ' · 回退' : ''}
@@ -1429,10 +1437,10 @@ const StockScreeningPage: React.FC = () => {
                       <span className="block truncate text-[13px] font-medium text-foreground">
                         {item.name || item.title || item.id}
                       </span>
-                      <span className="mt-0.5 block truncate text-[11px] text-muted-text">
+                      <span className="mt-0.5 block truncate text-[12px] text-muted-text">
                         {item.description || item.id}
                       </span>
-                      <span className="mt-1 block text-[11px] font-medium text-secondary-text">
+                      <span className="mt-1 block text-[12px] font-medium text-secondary-text">
                         {item.category || item.tag || item.tags?.[0] || item.id}
                       </span>
                     </button>
@@ -1443,7 +1451,7 @@ const StockScreeningPage: React.FC = () => {
           </div>
 
           <div className="grid gap-3 border-t border-line-1 px-4 py-3 lg:grid-cols-[1fr_1.2fr_140px] lg:items-end">
-            <label className="space-y-1 text-[11px] font-medium text-secondary-text">
+            <label className="space-y-1 text-[12px] font-medium text-secondary-text">
               市场
               <select
                 className="h-9 w-full rounded-lg border border-line-2 bg-bg-2 px-2 text-sm text-foreground outline-none focus:border-brand"
@@ -1459,7 +1467,7 @@ const StockScreeningPage: React.FC = () => {
               </select>
             </label>
 
-            <label className="space-y-1 text-[11px] font-medium text-secondary-text">
+            <label className="space-y-1 text-[12px] font-medium text-secondary-text">
               策略参数
               <input
                 className="h-9 w-full rounded-lg border border-line-2 bg-bg-2 px-2 text-sm text-foreground outline-none focus:border-brand"
@@ -1469,7 +1477,7 @@ const StockScreeningPage: React.FC = () => {
               />
             </label>
 
-            <label className="space-y-1 text-[11px] font-medium text-secondary-text">
+            <label className="space-y-1 text-[12px] font-medium text-secondary-text">
               返回数量
               <input
                 className="h-9 w-full rounded-lg border border-line-2 bg-bg-2 px-2 text-sm tabular-nums text-foreground outline-none focus:border-brand"

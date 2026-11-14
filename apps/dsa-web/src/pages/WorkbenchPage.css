@@ -777,6 +777,24 @@
   flex-direction: column;
 }
 
+/* 列名行：给「左名右数」一个可读的列结构，数值列右对齐。 */
+.wb-rank__head {
+  display: grid;
+  grid-template-columns: minmax(72px, 132px) minmax(0, 1fr) 76px;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line-1);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.wb-rank__head b {
+  justify-self: end;
+  font-weight: 400;
+}
+
 .wb-rank__row {
   display: grid;
   grid-template-columns: minmax(72px, 132px) minmax(0, 1fr) 76px;
@@ -811,8 +829,20 @@
 /* 涨跌色由 BarMeter 依据数值符号自行决定，这里不再覆盖颜色。 */
 .wb-rank__bar {
   display: flex;
+  position: relative;
   align-items: center;
   min-width: 0;
+}
+
+/* 零轴：中线基线必须有可见的零点，否则「向左长 / 向右长」不可解读（§11）。 */
+.wb-rank__bar::before {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: 50%;
+  width: 1px;
+  background: var(--line-2);
+  content: "";
 }
 
 /* 我的关注：自选行 = 名称 / 走势 / 情报结构 / 价格 / 涨跌 */

@@ -164,7 +164,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
           )}
         >
           <LockKeyhole aria-hidden="true" className={itemIconClass} />
-          {!collapsed ? <span className={itemLabelClass}>管理员</span> : null}
+          {/* 原来写死中文「管理员」：切到 English 后整条侧栏只有这一项还是中文。 */}
+          {!collapsed ? <span className={itemLabelClass}>{t('layout.nav.admin')}</span> : null}
       </NavLink>
       </div>
     </div>

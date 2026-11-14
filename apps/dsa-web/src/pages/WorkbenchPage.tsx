@@ -89,9 +89,11 @@ function DistributionMatrix({ buckets, ariaLabel }: { buckets: Array<{ label: st
     <div className="wb-heat" role="img" aria-label={ariaLabel}>
       {buckets.map((bucket, index) => {
         const sign = index < midpoint ? -1 : index > midpoint ? 1 : 0;
+        // 强度上限压到 0.7：HeatCell 的 0.8 档在浅色下接近纯色平涂（§11 禁止大面积平涂）。
+        const intensity = sign === 0 ? 0 : Math.min(0.7, (bucket.count / max)) * sign;
         return (
           <div className="wb-heat__col" key={bucket.label}>
-            <HeatCell size={22} intensity={sign === 0 ? 0 : (bucket.count / max) * sign} ariaLabel={`${bucket.label} ${bucket.count} 家`} />
+            <HeatCell size={22} intensity={intensity} ariaLabel={`${bucket.label} ${bucket.count} 家`} />
             <span className={`wb-heat__count is-${sign < 0 ? 'down' : sign > 0 ? 'up' : 'flat'}`}>{bucket.count}</span>
             <span className="wb-heat__label">{bucket.label}</span>
           </div>
@@ -153,6 +155,12 @@ const WorkbenchPage = () => {
   const running = projects.filter((item) => RUNNING.has(item.status));
   const finished = projects.filter((item) => !RUNNING.has(item.status)).slice(0, 3);
   const leadIndex = dashboard?.cnIndices?.[0];
+  /** 标题行只显示时刻：日期已经在同一行的前面出现过，秒级时间戳是数据管道细节。 */
+  const marketClock = () => {
+    const raw = dashboard?.marketTime ?? leadIndex?.tradeDate ?? '';
+    const clock = raw.match(/(\d{2}):(\d{2})/);
+    return clock ? `${clock[1]}:${clock[2]}` : '';
+  };
   // 快讯列表 / 正文弹层要用完整事件（summary、url、sourceName、eventAt），
   // 不再拍扁成 {id,title,time}，否则抽屉里没有正文可展示。
   const news = useMemo(() => {
@@ -389,7 +397,8 @@ const WorkbenchPage = () => {
           <h1 data-type-free className="wb-head__greeting">{greeting(new Date())}{user?.name ? `，${user.name}` : ''}</h1>
           <p className="wb-head__meta">
             {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}
-            {dashboard?.marketTime || leadIndex ? ` · ${dashboard?.marketTime ?? leadIndex?.tradeDate ?? ''}` : ''}
+            {/* 日期已在前面，这里只补「几点」；秒级时间戳是数据管道细节，不进标题行。 */}
+            {marketClock() ? ` · ${marketClock()}` : ''}
           </p>
         </div>
         {leadIndex ? (
@@ -413,7 +422,7 @@ const WorkbenchPage = () => {
         <div className="wb-stack">
           <Panel
             title="主要指数"
-            meta={loading && !dashboard ? '读取中…' : `点数 / 涨跌幅 / 近期走势`}
+            meta={loading && !dashboard ? '读取中…' : `${indexMetrics.length} 个`}
             action={<button type="button" className="wb-link-btn" onClick={() => navigate('/app')}>全部行情</button>}
           >
             {indexMetrics.length
@@ -455,6 +464,12 @@ const WorkbenchPage = () => {
             {sectorRows.length ? (
               <>
                 <div className="wb-rank">
+                  {/* 没有表头时「左右两条数字」无法解读；表头只做列名，不重复统计。 */}
+                  <div className="wb-rank__head" aria-hidden="true">
+                    <span>行业</span>
+                    <span>强弱（中线为零轴）</span>
+                    <b>涨跌幅</b>
+                  </div>
                   {sectorRows.map((item) => (
                     <div className="wb-rank__row" key={`${item.name}-${item.changePct}`}>
                       <span className="wb-rank__name">{item.name}</span>

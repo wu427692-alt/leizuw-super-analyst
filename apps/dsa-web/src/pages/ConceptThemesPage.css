@@ -500,3 +500,135 @@ html.light .concept-page [data-tone="down"] { color: var(--down); }
   .concept-stock-reason { display: none; }
   .concept-alpha-heat__row { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ==========================================================================
+   首屏收敛（docs/ui-design-system.md §10 预算 / §12 收紧 / §13 反 AI 味）
+   截图判据：1440 宽浅色下，hero 占 154px 却只有标题与两个状态位；研究入口与
+   Beta 说明各是一排 4 张同尺寸卡片，属「三等分同尺寸卡片网格」的变体。
+   ========================================================================== */
+
+/* 1) hero 降到一行高度，标题回到 --fs-h1 阶梯，去掉负字距与 48px 巨标题。 */
+.concept-hero {
+  min-height: 0;
+  align-items: center;
+  padding: 14px 20px;
+}
+
+.concept-hero h1 {
+  margin: 0;
+  font-size: var(--fs-h1);
+  font-weight: 600;
+  line-height: var(--lh-h1);
+  letter-spacing: 0;
+}
+
+/* 2) 研究入口：4 张同尺寸卡 → 4 行可扫读的入口列表（1px 分割，不套卡片）。 */
+.concept-start-grid > div {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-2);
+}
+
+.concept-start-grid > div > button {
+  min-height: 0;
+  grid-template-columns: 18px minmax(0, 1fr) 14px;
+  border-right: 0;
+  border-bottom: 1px solid var(--line-2);
+  padding: 10px 12px;
+}
+
+.concept-start-grid > div > button:last-child {
+  border-bottom: 0;
+}
+
+.concept-start-grid > div > button small {
+  margin-top: 2px;
+}
+
+/* 3) Beta/Alpha 说明：4 张卡 + 箭头 → 4 行带序号的步骤，箭头装饰去掉。 */
+.concept-method__flow {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 8px;
+}
+
+.concept-method__flow > div {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
+  border: 0;
+  border-top: 1px solid var(--line-2);
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 0;
+}
+
+.concept-method__flow > div > svg {
+  align-self: start;
+  grid-row: 1 / span 2;
+  margin-top: 2px;
+}
+
+.concept-method__flow > div > strong,
+.concept-method__flow > div > p {
+  grid-column: 2;
+}
+
+.concept-method__flow > div > strong {
+  margin: 0;
+}
+
+.concept-method__flow > svg {
+  display: none;
+}
+
+.concept-method__formula {
+  margin-top: 8px;
+  padding: 6px 8px;
+}
+
+/* 4) 更新节奏收成一行说明：技术参数不进用户界面（§7）。 */
+.concept-cadence-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  border-bottom: 1px solid var(--concept-line);
+  background: var(--bg-1);
+  padding: 8px 16px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.concept-cadence-note svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-3);
+}
+
+html.light .concept-page .concept-method__flow > div,
+html.light .concept-page .concept-start-grid > div > button {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* GlassWorkspace.css 的 `:root .glass-workspace .concept-page :is(...)` 会把这排方法卡
+   刷回 bg-2 + 圆角（优先级高于页面规则）。这里显式收成「用分割线的步骤列表」。 */
+:root .glass-workspace .concept-page .concept-method__flow > div {
+  border: 0 !important;
+  border-top: 1px solid var(--line-2) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+:root .glass-workspace .concept-page .concept-method__flow > div:first-child {
+  border-top: 0 !important;
+}

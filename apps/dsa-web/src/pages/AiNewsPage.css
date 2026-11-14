@@ -7,7 +7,10 @@
 .ai-news button:disabled { cursor: wait; opacity: .5; }
 .ai-news :is(a,button,input,select,summary):focus-visible { outline: 2px solid var(--news-accent); outline-offset: 3px; }
 .ai-news h1, .ai-news h2, .ai-news h3, .ai-news p { margin: 0; }
-.ai-news-skip { position: absolute; left: -64px; z-index: 100; padding: 8px; background: var(--workspace-sheet); }
+/* 跳转链接默认必须完全移出视觉区：之前用 left:-64px，文字仍会从页面左边缘探出，
+   在带侧栏的外壳里直接压到侧栏上（截图可见「…闻列表」压在品牌名左侧）。 */
+.ai-news-skip { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; z-index: 100; padding: 8px; background: var(--workspace-sheet); }
+.ai-news-skip:focus { width: auto; height: auto; overflow: visible; clip-path: none; left: 16px; top: 16px; }
 .ai-news-skip:focus { left: 16px; top: 16px; }
 .ai-news-heading, .ai-news-filter-panel, .ai-news-toolbar, .ai-news-article-main, .ai-news-source-card, .ai-news-aside > section, .ai-news-methodology { border: 1px solid var(--workspace-rim); background: var(--workspace-material); box-shadow: var(--workspace-shadow); border-radius: 12px; }
 .ai-news-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; }

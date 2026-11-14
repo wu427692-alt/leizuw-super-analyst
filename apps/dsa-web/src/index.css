@@ -10,8 +10,11 @@
 :root {
   /* Typography: tokens live in styles/design-tokens.css */
   font-family: var(--font-sans);
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
+  /* 根字号必须是 16px：Tailwind 的 rem 阶梯（p-4 / gap-4 / h-10 / max-w-7xl）按 16px 换算，
+     写在根上用 var(--fs-body)=14px 会把全站 rem 间距整体缩到 87.5%（侧栏 210 而非 240、
+     max-w-7xl 1120 而非 1280、控件高度 35 而非 40）。正文尺寸由下面的 body 规则给。 */
+  font-size: 16px;
+  line-height: 1.5;
   font-weight: 400;
   letter-spacing: 0;
   font-synthesis: none;
@@ -2726,6 +2729,8 @@ textarea {
    Research OS V5 — one visual language across every workspace
    ========================================================== */
 body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   background-color: hsl(var(--background));
   background-image:
     linear-gradient(var(--research-grid) 1px, transparent 1px),
@@ -2743,18 +2748,22 @@ body {
   outline-offset: 2px;
 }
 
+/* 侧栏是贴边面板，不是浮在页面上的卡片：不要圆角与投影（否则左上角露出背景缺口，
+   与 sticky + border-r 的外壳结构冲突）。 */
 .research-sidebar {
-  border-radius: 12px;
-  box-shadow: var(--research-shadow);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .research-sidebar nav {
   padding-right: 2px;
 }
 
+/* 导航行高按设计系统 §6 固定 40px（此前 42px 会让每行多 2px、整列错位）。
+   40 不是控件高度令牌（28/32/36/44）里的值，是导航行专用尺寸，与行内 h-10 一致。 */
 .research-sidebar nav > a,
 .research-sidebar nav > div > button {
-  min-height: 42px;
+  min-height: 40px;
 }
 
 .research-sidebar nav > a[aria-current="page"]::before {
@@ -2773,30 +2782,22 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 页头是页面第一块内容，不是卡片：保留描边分层，去掉投影、左侧品牌竖条与底部渐变装饰
+   （设计系统 §12「阴影只允许出现在浮层」「去掉装饰性元素」）。 */
 .research-page-header {
   position: relative;
-  overflow: hidden;
   border: 1px solid var(--research-rule);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   background: var(--research-surface);
-  box-shadow: var(--research-shadow);
+  box-shadow: none;
 }
 
 .research-page-header::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  content: "";
-  background: var(--research-blue);
+  display: none;
 }
 
 .research-page-header::after {
-  position: absolute;
-  inset: auto 0 0;
-  height: 1px;
-  content: "";
-  background: linear-gradient(90deg, var(--research-blue), transparent 58%);
-  opacity: 0.45;
+  display: none;
 }
 
 .research-card,

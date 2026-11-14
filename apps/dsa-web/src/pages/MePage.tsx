@@ -79,7 +79,7 @@ export const MePage: React.FC = () => {
           { label: '进行中', value: counts.running, hint: '后台任务' },
         ]}
       />
-      {counts.reports != null || counts.running != null ? (
+      {(counts.reports ?? 0) + (counts.running ?? 0) > 0 ? (
         <div className="flex items-center gap-[var(--gap-sm)]">
           <span className="shrink-0 text-[length:var(--fs-caption)] text-[color:var(--text-3)]">研究记录构成</span>
           <ShareBar

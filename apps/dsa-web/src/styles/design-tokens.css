@@ -222,7 +222,7 @@ main h1:not(.mobile-app-bar__large-title):not([data-type-free]) {
   font-size: var(--fs-h1) !important;
   line-height: var(--lh-h1) !important;
   font-weight: 600 !important;
-  letter-spacing: -0.01em !important;
+  letter-spacing: 0 !important; /* §12：字距只允许 --tracking-* 或 0 */
 }
 main h2:not([data-type-free]) {
   font-size: var(--fs-h2) !important;

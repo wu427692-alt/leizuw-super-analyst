@@ -206,7 +206,7 @@ const InvestmentMeetingMobile = () => {
         onCancel={cancelEditor}
       />
       <div className="meeting-chat-embed">
-        <ChatPage />
+        <ChatPage researchTeam />
       </div>
     </div>
   );

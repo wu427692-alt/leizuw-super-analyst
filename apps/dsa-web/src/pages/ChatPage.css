@@ -1,0 +1,135 @@
+/* 对话页（/chat，以及 /meeting 内嵌的对话本体）页面级样式。
+   index.css 里的通用 chat 规则保持不动，这里只补三件事：
+   历史对话分组、会话行收紧、空态收口。颜色/字号/间距全部走令牌。 */
+
+/* ---------- 历史对话：计数与分组 ---------- */
+.chat-session-head__count {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+/* 时间锚点：粘在列表顶部，滚到哪都知道这一段是哪几天。 */
+.chat-session-group__label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 var(--gap-2xs);
+  padding: 2px 0;
+  background: var(--bg-1);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: var(--lh-caption);
+}
+
+.chat-session-group__items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ---------- 会话行：一行标题 + 一行元信息，行高 40 左右 ----------
+   原来每条是「圆角大卡片 + 14px/600 可换行标题 + 10px 内边距」，
+   长标题换 4 行、10 条就顶满整列。列表项不该按卡片做。 */
+.chat-session-list .session-item {
+  gap: var(--gap-xs);
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  border-color: transparent;
+  background: transparent;
+}
+
+.chat-session-list .session-item:hover,
+.chat-session-list .session-item:focus-visible {
+  border-color: var(--line-1);
+  background: var(--bg-2);
+  box-shadow: none;
+  transform: none;
+}
+
+.chat-session-list .session-item.active {
+  border-color: transparent;
+  background: var(--brand-tint-08);
+  box-shadow: none;
+}
+
+/* 左侧竖条只作选中标记：未选中的灰色 40px 药丸是纯装饰噪音。 */
+.chat-session-list .session-item .indicator {
+  width: 3px;
+  height: 16px;
+  background: transparent;
+}
+
+.chat-session-list .session-item.active .indicator {
+  background: var(--brand);
+}
+
+/* 标题单行截断；完整标题走 title 属性与 aria-label。 */
+.chat-session-list .session-item .title {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: var(--lh-sm);
+  letter-spacing: 0;
+}
+
+.chat-session-list .session-item .meta {
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 空态：去掉虚线大盒子 ----------
+   EmptyState 自带的虚线描边 + 底色放在对话主区里显得像「一个空卡片」，
+   去掉后是一段居中的欢迎文字 + 快捷提问，留白不再像未加载。 */
+.chat-empty-wrap > .chat-empty-state {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.chat-empty-wrap {
+  padding-block: var(--gap-lg);
+}
+
+/* ---------- 桌面端对话页：整屏，页脚在首屏内 ----------
+   index.css 给 .chat-workspace 定的是 100dvh - 48px（只扣了外壳上下 24 内边距），
+   页脚免责声明（32 + 16 + 8）于是被顶到折叠线以下，整页多出 56px 可滚。
+   这里按「一屏 = 48 内边距 + 32 页脚上边距 + 16 页脚行高 + 8 页脚下边距」扣掉，
+   路由包装层 > 工作区这一层选择器保证只作用于 /chat，不影响 /meeting 的内嵌。 */
+@media (min-width: 1024px) {
+  .shell-content > div > .chat-workspace {
+    height: calc(100dvh - 104px);
+    min-height: 420px;
+  }
+
+  .chat-page-header {
+    margin-bottom: var(--gap-sm);
+  }
+
+  .chat-page-header h1 {
+    font-size: var(--fs-h1);
+    line-height: var(--lh-h1);
+  }
+}

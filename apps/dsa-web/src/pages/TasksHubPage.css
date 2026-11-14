@@ -1,5 +1,5 @@
 /* Personal task ledger: clear scope, quiet status and readable history. */
-.tasks-hub { --task-paper: var(--bg-1); --task-soft: var(--bg-1); --task-ink: var(--text-2); --task-muted: var(--text-3); --task-line: var(--line-1); --task-accent: var(--brand); min-height: 100svh; padding: 16px; color: var(--task-ink); background: transparent; font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", sans-serif; font-size: var(--fs-sm); line-height: 1.6; font-variant-numeric: tabular-nums; }
+.tasks-hub { --task-paper: var(--bg-1); --task-soft: var(--bg-1); --task-ink: var(--text-2); --task-muted: var(--text-3); --task-line: var(--line-1); --task-accent: var(--brand); min-height: 100svh; padding: 16px; color: var(--task-ink); background: transparent; font-family: var(--font-sans); font-size: var(--fs-sm); line-height: 1.6; font-variant-numeric: tabular-nums; }
 .dark .tasks-hub { --task-paper: var(--bg-2); --task-soft: var(--bg-2); --task-ink: var(--text-1); --task-muted: var(--text-3); --task-line: var(--line-2); }
 .tasks-hub :is(button, select) { font-family: inherit; font-size: var(--fs-sm); }
 .tasks-hub button { cursor: pointer; }

@@ -492,7 +492,7 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
     return {
       label: item.name,
       value: formatNumber(item.close),
-      delta: session.canShowChange ? percent(verified) : '待核验',
+      delta: session.canShowChange ? percent(verified) : '—',
       trend: trendOf(verified),
       viz: <Sparkline values={sparkValues(item.history)} width={64} height={18} ariaLabel={`${item.name}近期走势`} />,
     };
@@ -633,7 +633,6 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
           <p className="market-desk__meta">{data?.marketTime ? `更新于 ${shortTime(data.marketTime)}` : '正在同步市场时间'}</p>
         </div>
         <div className="market-desk__actions">
-          <span className="market-desk__meta">{leadIndexSession.label} · {sourceLabel(leadIndex?.source)}</span>
           <button className="btn-secondary inline-flex items-center gap-2" disabled={refreshing} onClick={() => void load(true)}>
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />刷新数据
           </button>
@@ -656,7 +655,7 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
         <div className="market-tab-body">
           <Panel
             title="主要指数"
-            meta={cnIndices.length ? `${cnIndices.length} 个 · 点数 / 涨跌幅 / 近期走势` : '等待数据'}
+            meta={cnIndices.length ? `${cnIndices.length} 个` : '等待数据'}
           >
             {indexMetrics.length
               ? <MetricRow columns={4} items={indexMetrics} className="market-index-metrics" />
@@ -682,7 +681,7 @@ function MarketDashboardContent({ ownerScope }: { ownerScope: string }) {
             <div className="market-lead-quote">
               <b className={`tabular-nums ${tone(leadIndexChangePct)}`}>{formatNumber(leadIndex?.close)}</b>
               <span className={`tabular-nums ${tone(leadIndexChangePct)}`}>
-                {leadIndexSession.canShowChange ? percent(leadIndexChangePct) : '涨跌幅待核验'}
+                {leadIndexSession.canShowChange ? percent(leadIndexChangePct) : '—'}
               </span>
               <Sparkline values={sparkValues(leadIndex?.history)} width={120} height={22} ariaLabel={`${leadIndex?.name ?? '指数'}近期走势`} />
             </div>

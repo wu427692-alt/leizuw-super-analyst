@@ -1,4 +1,4 @@
-.source-record-reader { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 16px; color: hsl(var(--foreground)); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: var(--fs-body); line-height: 1.75; }
+.source-record-reader { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 16px; color: hsl(var(--foreground)); font-family: var(--font-sans); font-size: var(--fs-body); line-height: 1.75; }
 .source-record-reader h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: var(--fs-h3); font-weight: 600; }
 .source-record-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-bottom: 12px; border-bottom: 1px solid hsl(var(--border)); color: hsl(var(--secondary-text)); font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .source-record-boundary, .source-record-empty { margin: 8px 0; color: hsl(var(--secondary-text)); font-size: var(--fs-sm); }

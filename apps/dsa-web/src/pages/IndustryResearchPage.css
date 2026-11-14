@@ -548,3 +548,113 @@
     padding: 16px;
   }
 }
+
+/* ============================================================
+   桌面端视觉修正（本轮）
+   1) 页面不再自带「卡片」外框：外壳已经提供 24px 页边，再套一层描边 +
+      圆角 + 投影，会把整页做成「面板里的面板」，浅色下还多一层灰底。
+   2) 蓝图加载态原来是一个 180px 高的空灰块，改成一行状态条。
+   3) 右上「多层证据统一固化 / 后台分章研究」原来是一个 240×104 的装饰卡，
+      只有两行字却占掉整块右上角，改成标题右侧一行元信息。
+   4) 清掉硬编码的深色 #0f1d33（浅色主题下会变成深色块）。
+   ============================================================ */
+
+.ir-shell {
+  --ir-panel-2: var(--bg-3);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ir-shell .ir-hero h1 {
+  font-size: var(--fs-h1);
+  line-height: var(--lh-h1);
+  letter-spacing: -0.02em;
+}
+
+/* 蓝图加载态：一行状态条，不再用 180px 的空盒子表达「正在加载」。 */
+.ir-loading {
+  min-height: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--gap-xs);
+  margin: var(--gap-sm) 0 0;
+  padding: var(--gap-xs) 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-1);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.ir-loading > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.ir-loading strong {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: var(--lh-sm);
+}
+
+/* 第二行解释在状态条里只是噪音，留在读屏里即可。 */
+.ir-loading span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* hero 右侧元信息：去掉卡片外壳，只留「状态点 + 两段说明」。 */
+.ir-live {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+.ir-live i {
+  width: 6px;
+  height: 6px;
+  margin: 0;
+  background: var(--success);
+  box-shadow: none;
+}
+
+.ir-live span,
+.ir-live strong {
+  display: inline;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: 400;
+  line-height: var(--lh-caption);
+}
+
+.ir-live strong {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.ir-live strong::before {
+  content: '· ';
+  color: var(--text-3);
+  font-weight: 400;
+}

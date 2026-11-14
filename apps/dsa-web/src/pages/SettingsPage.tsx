@@ -22,6 +22,7 @@ import {
 } from '../components/settings';
 import { WEB_BUILD_INFO } from '../utils/constants';
 import { getCategoryDescription, getCategoryTitle } from '../utils/systemConfigI18n';
+import './SettingsPage.css';
 import type {
   ConfigValidationIssue,
   SchedulerStatusResponse,

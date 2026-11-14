@@ -1,214 +1,244 @@
 /* 投研团队 = 合并后的唯一对话入口（05 研投团队 / 06 会议进行中）。
-   规格：页边 16、行高 40 的团队条、圆角 12、字号只用 --fs-* 档位。
-   桌面端仍走 /meeting-embed iframe，不进这套样式。 */
+   规格：团队条高 44（手机 40）、行内 chip 26、圆角只用 --radius-*、字号只用 --fs-* 档位。
+   桌面与手机渲染同一个组件：桌面是「团队条 + 对话工作区」，手机是整页对话。 */
 
-/* ---------- 手机端：团队角色条 + 议题 + ChatPage 对话 ---------- */
-@media (max-width: 1023px) {
+/* ---------- 页面骨架：团队条固定，对话区吃掉剩余高度 ---------- */
+.meeting-chat-page {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.meeting-chat-embed {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+/* ---------- 团队角色条：一行 chip，不抢对话空间 ----------
+   之前只写在 ≤1023 的媒体查询里，桌面端拿不到样式，角色被渲染成
+   竖排的「头像 + 名字」列表（高 250+），把整页顶出视口。现在全局生效。 */
+.meeting-chat-team {
+  display: flex;
+  height: 44px;
+  flex: none;
+  align-items: center;
+  gap: var(--gap-xs);
+  padding: 0;
+  border-bottom: 1px solid var(--line-1);
+  background: transparent;
+}
+
+.meeting-chat-team__label {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.meeting-chat-team__list {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.meeting-chat-team__list::-webkit-scrollbar { display: none; }
+
+.meeting-chat-team__chip {
+  display: inline-flex;
+  height: 26px;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 4px;
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.meeting-chat-team__note {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meeting-chat-team__action {
+  display: inline-flex;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 0 9px;
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: 1;
+}
+
+.meeting-chat-team__action:hover { background: var(--bg-2); color: var(--text-1); }
+.meeting-chat-team__action:active { background: var(--bg-2); }
+.meeting-chat-team__action svg { width: 13px; height: 13px; flex: none; }
+.meeting-chat-team__action[aria-expanded='true'] {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+/* ---------- 议题标题：ChatPage 没展示页头议题时才出现，只占一行 ---------- */
+.meeting-chat-topic {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: var(--gap-xs);
+  margin: 0;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+
+.meeting-chat-topic > span { flex: none; color: var(--text-3); }
+
+.meeting-chat-topic > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-1);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 议题编辑：只在点开时出现，弹出即聚焦 ---------- */
+.meeting-chat-editor {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--line-1);
+  background: transparent;
+}
+
+.meeting-chat-editor__input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  resize: none;
+}
+
+.meeting-chat-editor__input:focus { outline: none; border-color: var(--brand); }
+
+.meeting-chat-editor__acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--gap-xs);
+}
+
+.meeting-chat-editor__acts button {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+
+.meeting-chat-editor__cancel {
+  border: 1px solid var(--line-1);
+  background: transparent;
+  color: var(--text-2);
+}
+
+.meeting-chat-editor__save {
+  border: 1px solid transparent;
+  background: var(--brand);
+  color: var(--brand-on);
+  font-weight: 500;
+}
+
+.meeting-chat-editor__error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+
+/* ---------- 桌面端：应用式视口 ----------
+   对话页不该让整页随 document 滚动：团队条固定 44，对话工作区吃掉剩余高度，
+   消息列表自己滚。高度扣掉外壳上下内边距（24 + 24）与页脚免责声明（32 + 16 + 8），
+   保证整页正好一屏，页脚紧贴内容而不是被顶到很下面。
+   ------------------------------------------------------------------ */
+@media (min-width: 1024px) {
   .meeting-chat-page {
-    display: flex;
-    min-width: 0;
+    height: calc(100dvh - 104px);
+    min-height: 420px;
+  }
+
+  .meeting-chat-embed .chat-workspace {
+    height: 100%;
     min-height: 0;
-    flex-direction: column;
   }
 
-  .meeting-chat-embed {
-    display: flex;
-    min-width: 0;
-    min-height: 0;
-    flex: 1 1 auto;
-    flex-direction: column;
-  }
-
-  /* ---------- 团队角色条：一行 chip，高 40，不抢对话空间 ---------- */
-  .meeting-chat-team {
-    display: flex;
-    height: 40px;
-    flex: none;
-    align-items: center;
-    gap: var(--gap-xs);
-    padding: 0 var(--page-x);
-    border-bottom: 1px solid var(--line-1);
-    background: var(--bg-0);
-  }
-
-  .meeting-chat-team__label {
-    flex: none;
-    color: var(--text-3);
-    font-size: var(--fs-caption);
-    line-height: 1;
-    white-space: nowrap;
-  }
-
-  .meeting-chat-team__list {
-    display: flex;
-    min-width: 0;
-    flex: 1 1 auto;
-    align-items: center;
-    gap: 6px;
-    margin: 0;
-    padding: 0;
-    overflow-x: auto;
-    list-style: none;
-    scrollbar-width: none;
-  }
-
-  .meeting-chat-team__list::-webkit-scrollbar { display: none; }
-
-  .meeting-chat-team__chip {
-    display: inline-flex;
-    height: 26px;
-    flex: none;
-    align-items: center;
-    gap: 4px;
-    padding: 0 8px 0 4px;
-    border: 1px solid var(--line-1);
-    border-radius: 999px;
-    background: var(--bg-1);
-    color: var(--text-2);
-    font-size: var(--fs-caption);
-    line-height: 1;
-    white-space: nowrap;
-  }
-
-  .meeting-chat-team__note {
-    min-width: 0;
-    flex: 1 1 auto;
-    overflow: hidden;
-    color: var(--text-3);
-    font-size: var(--fs-caption);
-    line-height: 1;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .meeting-chat-team__action {
-    display: inline-flex;
-    height: 28px;
-    flex: none;
-    align-items: center;
-    gap: 3px;
-    padding: 0 9px;
-    border: 1px solid var(--line-1);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--text-2);
-    font-size: var(--fs-caption);
-    line-height: 1;
-  }
-
-  .meeting-chat-team__action:active { background: var(--bg-2); }
-  .meeting-chat-team__action svg { width: 13px; height: 13px; flex: none; }
-  .meeting-chat-team__action[aria-expanded='true'] {
-    border-color: var(--brand);
-    color: var(--brand);
-  }
-
-  /* ---------- 议题标题：ChatPage 没展示页头议题时才出现，只占一行 ---------- */
-  .meeting-chat-topic {
-    display: flex;
-    flex: none;
-    align-items: baseline;
-    gap: var(--gap-xs);
-    margin: 0;
-    padding: 6px var(--page-x);
-    border-bottom: 1px solid var(--line-1);
-    font-size: var(--fs-sm);
-    line-height: var(--lh-sm);
-  }
-
-  .meeting-chat-topic > span { flex: none; color: var(--text-3); }
-
-  .meeting-chat-topic > strong {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--text-1);
-    font-weight: 500;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* ---------- 议题编辑：只在点开时出现，弹出即聚焦 ---------- */
+  /* 团队条与对话工作区左右对齐：工作区自带 0 页边，外壳负责 24。 */
+  .meeting-chat-team,
+  .meeting-chat-topic,
   .meeting-chat-editor {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    gap: var(--gap-xs);
-    padding: 10px var(--page-x) 12px;
-    border-bottom: 1px solid var(--line-1);
-    background: var(--bg-1);
+    padding-right: 0;
+    padding-left: 0;
   }
 
-  .meeting-chat-editor__input {
-    width: 100%;
-    min-height: 44px;
-    padding: 8px 10px;
-    border: 1px solid var(--line-2);
-    border-radius: var(--radius-control);
-    background: var(--bg-2);
-    color: var(--text-1);
-    font-size: var(--fs-body);
-    line-height: var(--lh-body);
-    resize: none;
-  }
-
-  .meeting-chat-editor__input:focus { outline: none; border-color: var(--brand); }
-
-  .meeting-chat-editor__acts {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--gap-xs);
-  }
-
-  .meeting-chat-editor__acts button {
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--radius-control);
-    font-size: var(--fs-sm);
-    line-height: var(--lh-sm);
-  }
-
-  .meeting-chat-editor__cancel {
-    border: 1px solid var(--line-1);
-    background: transparent;
-    color: var(--text-2);
-  }
-
-  .meeting-chat-editor__save {
-    border: 1px solid transparent;
-    background: var(--brand);
-    color: var(--brand-on);
-    font-weight: 500;
-  }
-
-  .meeting-chat-editor__error {
-    margin: 0;
-    color: var(--danger);
-    font-size: var(--fs-caption);
-    line-height: var(--lh-caption);
-  }
+  .meeting-chat-topic { padding-top: 8px; padding-bottom: 8px; }
 }
 
 /* 手机竖屏：把外壳锁成应用式视口，对话区自己滚动（与 /chat 同一套规则）。 */
+@media (max-width: 1023px) {
+  .meeting-chat-team {
+    height: 40px;
+    padding: 0 var(--page-x);
+    background: var(--bg-0);
+  }
+
+  .meeting-chat-topic,
+  .meeting-chat-editor {
+    padding-right: var(--page-x);
+    padding-left: var(--page-x);
+  }
+
+  .meeting-chat-editor { background: var(--bg-1); }
+}
+
 @media (max-width: 767px) {
   .meeting-chat-page {
     height: 100%;
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
-  }
-}
-
-/* ---------- 桌面端外层容器 ----------
-   桌面端页面自身不放业务内容：iframe 指向 /meeting-embed（独立渲染的团队工作台）。
-   这里只对齐应用外壳（shell-content 上下 24px + 免责声明一行）的高度与描边，
-   避免 iframe 把整页顶出视口，产生页面级滚动。 */
-@media (min-width: 1024px) {
-  .meeting-frame.meeting-frame--desktop {
-    height: calc(100dvh - 100px);
-    min-height: 520px;
-    border: 1px solid var(--line-1);
-    border-radius: var(--radius-card);
-    background: var(--bg-1);
   }
 }

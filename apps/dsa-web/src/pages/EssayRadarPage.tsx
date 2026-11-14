@@ -161,9 +161,8 @@ function sentimentVariant(value?: string | null) {
 function RadarNavigation({ active }: { active: RadarView }) {
   return (
     <nav className="essay-tabs" aria-label="机构段子与录音工作台页面">
-      {VIEW_META.map(({ view, path, label, icon: Icon }) => (
+      {VIEW_META.map(({ view, path, label }) => (
         <Link key={view} to={path} className={active === view ? 'is-active' : ''}>
-          <Icon className="h-4 w-4" />
           <span>{label}</span>
         </Link>
       ))}
@@ -179,6 +178,17 @@ function Metric({ label, value, note, tone = 'plain' }: { label: string; value: 
       {note ? <small>{note}</small> : null}
     </div>
   );
+}
+
+/** 行情数据源在界面上只说人话：`tushare:daily.cross_section` 这类标识是管道内部命名（§7）。 */
+function marketSourceLabel(raw?: string | null) {
+  if (!raw) return '本地行情库';
+  if (/tushare/i.test(raw)) return 'Tushare 日线';
+  if (/akshare/i.test(raw)) return 'Akshare 行情';
+  if (/tencent/i.test(raw)) return '腾讯行情';
+  if (/sina/i.test(raw)) return '新浪行情';
+  const head = raw.split(/[:._]/)[0];
+  return head ? head.replace(/^\w/, char => char.toUpperCase()) : '本地行情库';
 }
 
 function heatLevel(score: number, sortedScores: number[]): number {
@@ -290,7 +300,7 @@ function DeepInsightsView({ data, horizon, startDate, endDate, onPeriodChange, o
 
       <div className="essay-atlas-primary">
         <section className="essay-panel essay-market-link-panel">
-          <div className="essay-panel-head"><div><span>真实日线 × 小作文事件日</span><h2>个股行情与提及关联</h2></div><strong>{selectedMarket?.dataSource || '本地行情库'}</strong></div>
+          <div className="essay-panel-head"><div><span>真实日线 × 小作文事件日</span><h2>个股行情与提及关联</h2></div><strong>{marketSourceLabel(selectedMarket?.dataSource)}</strong></div>
           <div className="essay-market-stock-tabs">{data.marketImpact.items.map((item) => <button type="button" key={item.tsCode} className={item.tsCode === selectedMarket?.tsCode ? 'is-active' : ''} onClick={() => { setSelectedCode(item.tsCode); setAiError(null); }}><strong>{item.name}</strong><small>{item.mentionCount}篇</small></button>)}</div>
           {selectedMarket ? <>
             <div className="essay-market-chart"><ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 720, height: 300 }}><ComposedChart data={selectedMarket.series}><CartesianGrid vertical={false} stroke="var(--line-1)" /><XAxis dataKey="date" tickFormatter={(value) => String(value).slice(5)} tick={{ fontSize: 12 }} minTickGap={24} /><YAxis yAxisId="price" tickFormatter={(value) => `${Number(value).toFixed(0)}%`} tick={{ fontSize: 12 }} width={42} /><YAxis yAxisId="mention" orientation="right" allowDecimals={false} tick={{ fontSize: 12 }} width={28} /><Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value, name) => [name === '阶段涨跌' ? `${Number(value).toFixed(2)}%` : `${value} 篇`, name]} labelFormatter={(value) => `交易日 ${value}`} /><Bar yAxisId="mention" dataKey="mentionCount" name="小作文" fill="var(--chart-2)" opacity={0.55} /><Line yAxisId="price" type="monotone" dataKey="priceReturn" name="阶段涨跌" stroke="var(--success)" strokeWidth={2} dot={false} /></ComposedChart></ResponsiveContainer></div>
@@ -1425,14 +1435,14 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
         <div>
           <div className="essay-live-line"><span className={workerActive ? 'is-live' : ''} />知识星球自动增量库 · 最近入库 {formatTime(insights?.latestDataAt || status?.mcpSync.lastSyncAt || historicalBacklog?.latestSyncedAt, true)}</div>
           <h1>{view === 'atlas' ? '机构段子洞察图谱' : '机构段子与录音'}</h1>
-          <p>{view === 'atlas' ? '按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。' : '新增机构段子自动入库、自动分析，录音可检索获取；页面静默更新，不需要手动刷新。'}</p>
+          {view === 'atlas' ? <p>按短中长期或自定义窗口，把主题提及与真实行情放在同一时间轴验证。</p> : null}
         </div>
-        <div className="essay-auto-state" aria-label="自动更新状态"><strong>{view === 'feed' && feedFailure ? '检索待重试' : workerActive ? '全自动运行中' : '自动恢复中'}</strong><span>{view === 'feed' && feedFailure && feedFailure !== 'temporary' ? '检索自动刷新已暂停' : `MCP ${status?.mcpSync.pollSeconds ?? 10} 秒 · 页面 15 秒`}</span><small>本页更新 {formatClock(lastAutoRefreshAt)}</small></div>
+        <div className="essay-auto-state" aria-label="自动更新状态"><strong>{view === 'feed' && feedFailure ? '检索待重试' : workerActive ? '自动更新中' : '自动更新待恢复'}</strong><span>{view === 'feed' && feedFailure && feedFailure !== 'temporary' ? '检索自动刷新已暂停' : `最近更新 ${formatClock(lastAutoRefreshAt)}`}</span></div>
       </header>
 
       <RadarNavigation active={view} />
       {error ? <div className="essay-error">{error}</div> : null}
-      {loading && view !== 'feed' ? <div className="essay-loading"><RefreshCw className="h-4 w-4 animate-spin" />正在读取当前页真实数据…</div> : null}
+      {loading && view !== 'feed' ? <div className="essay-loading" role="status"><RefreshCw className="h-4 w-4 animate-spin" />正在读取数据…</div> : null}
 
       {view === 'overview' ? (
         <div className="essay-view">
@@ -1446,11 +1456,11 @@ function EssayRadarContent({ identityScope }: { identityScope: string }) {
           </section>
 
           <section className="essay-panel essay-pulse-panel" aria-label="近 14 日关注度与构成">
-            <div className="essay-panel-head"><div><span>近 {insights?.trend.length ?? 0} 天完成分析记录 · {latestTrend?.date || '等待数据'}</span><h2>关注度与构成</h2></div><strong>峰值 {trendMax}</strong></div>
+            <div className="essay-panel-head"><div><span>{insights?.trend.length ? `近 ${insights.trend.length} 天完成分析记录 · ${latestTrend?.date ?? ''}` : '等待分析记录'}</span><h2>关注度与构成</h2></div>{insights?.trend.length ? <strong>峰值 {trendMax}</strong> : null}</div>
             <div className="essay-pulse-grid">
               <div className="essay-pulse-block">
                 <header><span>每日新增</span><strong>{(trendTotals.at(-1) ?? 0).toLocaleString()}</strong><small>最近一天</small></header>
-                <Sparkline values={trendTotals} width={210} height={26} ariaLabel="近 14 天每日新增已分析条目" />
+                {trendTotals.length >= 2 ? <Sparkline values={trendTotals} width={210} height={26} ariaLabel="近 14 天每日新增已分析条目" /> : null}
                 <p>只统计已完成分析的条目，未完成不计入</p>
               </div>
               <div className="essay-pulse-block">

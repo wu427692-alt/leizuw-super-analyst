@@ -173,7 +173,13 @@ export default function InvestmentMonitorPage() {
         <div><Badge variant={label.tone}>{label.label}</Badge></div>
         <p className="text-[12px] text-[var(--text-3)]">{time(evidence.dataTimestamp || event.eventAt)}</p>
         <div className="min-w-0"><div className="flex flex-wrap gap-1">{event.symbols.map(item => <span key={item} className="text-[12px] text-[var(--success)]">{item}</span>)}</div><p className="mt-1 line-clamp-2 text-[12px] font-semibold leading-4 text-white">{event.title}</p></div>
-        <p className="line-clamp-2 text-[12px] leading-4 text-[var(--text-3)]">{stripHtmlText(event.summary) || '此条暂无正文摘录，可查看已保存的资料信息。'}</p>
+        {/* 媒体快讯的 summary 常与 title 完全同文，重复渲染会让一行里出现同一句话两遍。 */}
+        {(() => {
+          const summary = stripHtmlText(event.summary);
+          if (summary && summary !== event.title) return <p className="line-clamp-2 text-[12px] leading-4 text-[var(--text-3)]">{summary}</p>;
+          if (!summary) return <p className="line-clamp-2 text-[12px] leading-4 text-[var(--text-3)]">此条暂无正文摘录，可查看已保存的资料信息。</p>;
+          return <p className="line-clamp-2 text-[12px] leading-4 text-[color:var(--text-4)]">—</p>;
+        })()}
         <span className="text-[var(--text-3)]"><FileText className="h-3.5 w-3.5"/></span>
       </button>; })}</div>
       <div className="flex items-center justify-between px-4 py-2 text-[12px] text-[var(--text-3)]" aria-live="polite"><span>{query !== deferredQuery ? '等待输入完成…' : loading ? '正在读取本地索引，保留当前结果…' : notice || `显示 ${events?.items.length ?? 0} / ${events?.total ?? 0} 条`}</span><span>每 10 秒刷新本地索引</span></div>

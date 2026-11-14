@@ -32,7 +32,7 @@
 .essay-tabs a.is-active { color: var(--essay-signal); box-shadow: inset 0 -2px var(--essay-signal); background: color-mix(in srgb, var(--success) 4%, transparent); }
 .essay-view { display: grid; gap: 12px; padding-top: 12px; }
 .essay-error { margin-top: 12px; border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 18%, transparent); padding: 12px 12px; color: var(--danger); font-size: var(--fs-sm); }
-.essay-loading { display: flex; align-items: center; gap: 8px; margin-top: 8px; border-left: 2px solid var(--essay-signal); padding: 8px 12px; background: color-mix(in srgb, var(--success) 4%, transparent); color: var(--text-3); font-size: var(--fs-sm); }
+.essay-loading { display: flex; align-items: center; gap: 8px; margin-top: 8px; border-left: 2px solid var(--line-2); padding: 8px 12px; color: var(--text-3); font-size: var(--fs-sm); line-height: var(--lh-sm); }
 
 .essay-panel { position: relative; min-width: 0; border: 1px solid var(--essay-line); background: var(--bg-1); padding: 16px; }
 .essay-panel::before { content: ""; position: absolute; left: -1px; top: -1px; width: 34px; height: 2px; background: var(--essay-signal); }
@@ -827,4 +827,9 @@
   .essay-pulse-grid { grid-template-columns: 1fr; }
   .essay-watch-table-head, .essay-watch-table > button { grid-template-columns: minmax(96px, 1fr) 44px repeat(4, 40px); gap: 4px; }
   .essay-tabs a { min-height: 44px; }
+}
+
+/* 加载提示是过渡态：去掉块底色，只留左侧竖线与文案（§12）。 */
+.essay-loading {
+  background: transparent;
 }

@@ -1,0 +1,29 @@
+/* 设置页（/admin/settings、/admin/api-models）页面级样式。
+   只覆盖设置页内部，不碰 components/settings 的结构；颜色/圆角/间距走设计令牌。 */
+
+/* ---------- 卡片：统一 12px 圆角、去掉大投影 ----------
+   SettingsSectionCard 自带 rounded-[1.5rem]（24px，不在 4/8/12/9999 圆角集合内）
+   与 shadow-soft-card-strong（= --shadow-pop，本意是弹层阴影）。设置页是一组并列
+   的表单卡片，不该长得像浮起来的弹窗。 */
+.settings-page .rounded-\[1\.5rem\] {
+  border-radius: var(--radius-card);
+}
+
+.settings-page .shadow-soft-card-strong,
+.settings-page .shadow-soft-card {
+  box-shadow: none;
+}
+
+/* 卡片说明文字：13px 配 24px 行高太松（--lh-sm 是 20px）。 */
+.settings-page section p.text-xs {
+  line-height: var(--lh-sm);
+}
+
+/* 卡片头与正文的距离、卡片之间的距离按 4pt 阶梯收一档。 */
+.settings-page section > div > div.mb-5 {
+  margin-bottom: var(--gap-md);
+}
+
+.settings-page section.space-y-3 > * + * {
+  margin-top: var(--gap-md);
+}

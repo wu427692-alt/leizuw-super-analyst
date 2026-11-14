@@ -775,7 +775,7 @@ export default function ConceptThemesPage() {
   return <AppPage className="concept-page max-w-[1840px]">
     <div className="concept-shell">
       <header className="concept-hero">
-        <div className="concept-hero__copy"><span><Network /> CONCEPT CONSENSUS GRAPH</span><h1>概念题材查看</h1><p>把分散的市场题材、行业层级和成分股归属，变成有来源、有权重、有 Beta/Alpha 解释的共识地图。</p></div>
+        <div className="concept-hero__copy"><h1>概念题材查看</h1></div>
         <div className="concept-hero__status"><i className={loading || detailLoading ? 'is-loading' : ''} /><span>{(!selectedStock && status) || (loading ? '正在读取题材目录…' : overview ? `${overview.summary.marketDate || '最新入库'} · ${number(overview.total)} 个题材` : '题材目录读取未完成')}</span><b><RefreshCw />自动更新</b></div>
         <div className="concept-orbit" aria-hidden="true"><span /><span /><span /><b /></div>
       </header>
@@ -797,26 +797,13 @@ export default function ConceptThemesPage() {
         <section className="concept-kpis" aria-label="题材库规模">
           <MetricRow columns={4} items={[
             { label: '源题材节点', value: number(overview?.summary.themes), hint: `语义分层 ${metric(overview?.summary.semanticCoveragePct, 1)}% · 六套原始口径保留` },
-            { label: '成分关系', value: number(overview?.summary.memberships), hint: `已扫描 ${number(overview?.summary.attemptedThemes)} 个节点`, viz: <BarMeter value={overview?.summary.scanCoveragePct ?? 0} max={100} height={3} tone="accent" ariaLabel="成分扫描进度" /> },
+            { label: '成分关系', value: number(overview?.summary.memberships), hint: `已扫描 ${number(overview?.summary.attemptedThemes)} 个节点`, viz: <BarMeter value={overview?.summary.scanCoveragePct ?? 0} max={100} height={3} tone="neutral" ariaLabel="成分扫描进度" /> },
             { label: '归因结果', value: number(overview?.summary.exposures), hint: `${number(overview?.summary.exposureThemes)} 题材 / ${number(overview?.summary.exposureStocks)} 股票 · 可研究 ${number(overview?.summary.researchableThemes)}` },
             { label: '最新交易日', value: overview?.summary.marketDate || null, hint: overview?.sync?.stage || '共享题材库' },
           ]} />
         </section>
-        <section className="concept-quality-strip" data-tone={!overview || overview.summary.quality.warnings.length ? 'attention' : 'ready'} aria-label="题材数据质量与截止时间">
-          <div><span>目录交易日</span><strong>{overview?.summary.quality.catalogDate || '—'}</strong></div>
-          <div><span>独立目录就绪</span><strong>{overview ? `${overview.summary.quality.freshCatalogs}/${overview.summary.quality.totalCatalogs}` : '—'}</strong></div>
-          <div><span>成分扫描</span><strong>{metric(overview?.summary.scanCoveragePct, 1)}%</strong></div>
-          <div><span>归因截止</span><strong>{overview?.summary.quality.exposureDate || '—'}</strong></div>
-          <p>{!overview ? '正在读取数据边界；尚不能判断目录与归因是否对齐。' : overview.summary.quality.warnings.join(' · ') || '目录、成分与归因截止时间一致；仍需结合原始证据核验。'}</p>
-        </section>
         <ConceptOverviewStart overview={overview} onSelect={selectSection} />
-        <section className="concept-cadence" aria-label="概念题材数据更新节奏">
-          <header><Clock3 /><div><strong>数据更新节奏</strong><small>按数据本身的生成频率更新，不把页面轮询冒充上游实时数据</small></div></header>
-          <div><span>供应商题材目录</span><strong>每日交易日同步</strong><small>保留六套原始口径与各自交易日</small></div>
-          <div><span>全市场成分扫描</span><strong>每 5 分钟续跑</strong><small>断点续扫 · 单轮 120 个源节点</small></div>
-          <div><span>我的自选校验</span><strong>每 6 小时复核</strong><small>优先补齐新增自选的题材和归因</small></div>
-          <div><span>当前页面</span><strong>切回即刷新</strong><small>停留期间每 60 秒静默读取共享库</small></div>
-        </section>
+        <p className="concept-cadence-note"><Clock3 aria-hidden="true" />数据按各自来源节奏更新：题材目录随交易日、成分扫描近实时、自选校验每 6 小时。</p>
       </> : null}
 
       {activeSection === 'catalog' ? <>

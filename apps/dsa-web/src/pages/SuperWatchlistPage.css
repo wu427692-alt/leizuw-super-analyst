@@ -6,7 +6,7 @@
   --sw-selected: var(--brand-tint-08); --sw-up: var(--up); --sw-down: var(--down);
   padding: 16px !important;
   color: var(--sw-ink); background: transparent;
-  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-sans);
   font-size: var(--fs-sm); line-height: 1.55; font-variant-numeric: tabular-nums;
 }
 .dark .super-watchlist-page {
@@ -27,14 +27,14 @@
 .super-metric { min-width: 0; padding: 0 16px; border-right: 1px solid var(--sw-line, var(--line-1)); }
 .super-metric:last-child { border-right: 0; }
 .super-metric > p { margin: 0 0 8px; color: var(--sw-muted, var(--text-3)); font-size: var(--fs-caption); line-height: 1.6; }
-.super-metric > strong { display: block; font-size: var(--fs-h1); font-weight: 600; line-height: 1.35; letter-spacing: -.025em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.super-metric > strong { display: block; font-size: var(--fs-h1); font-weight: 600; line-height: 1.35;  overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .super-metric > small { display: block; margin-top: 8px; color: var(--sw-muted); font-size: var(--fs-caption); line-height: 1.5; }
 .dark .super-metric { border-color: var(--sw-line, var(--line-2)); }
 .dark .super-metric > p { color: var(--sw-muted, var(--text-3)); }
 
 /* Header, list and selected company. */
 :root .super-watchlist-page .super-watchlist-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--sw-line); background: transparent; }
-.super-watchlist-header h1 { margin: 0; font-size: var(--fs-h1); font-weight: 600; letter-spacing: -.035em; line-height: 1.25; }
+.super-watchlist-header h1 { margin: 0; font-size: var(--fs-h1); font-weight: 600;  line-height: 1.25; }
 .super-watchlist-header p { margin-top: 4px; color: var(--sw-muted); font-size: var(--fs-caption); }
 .super-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 16px; }
 .super-header-actions > a { display: inline-flex; align-items: center; gap: 4px; color: var(--sw-muted); font-size: var(--fs-caption); text-decoration: underline; text-underline-offset: 4px; }
@@ -61,11 +61,11 @@
 :root .super-watchlist-page .super-watchlist-main { min-width: 0; border-radius: 0; color: var(--sw-ink); background: var(--sw-surface); box-shadow: none; }
 :root .super-watchlist-page .super-market-band { display: flex; align-items: center; gap: 24px; padding: 24px 24px; border-bottom: 1px solid var(--sw-line); background: var(--sw-surface); }
 .super-stock-identity { min-width: 0; }
-.super-stock-identity h2 { display: inline; margin-right: 8px; font-size: var(--fs-h1); line-height: 1.2; font-weight: 600; letter-spacing: -.035em; }
+.super-stock-identity h2 { display: inline; margin-right: 8px; font-size: var(--fs-h1); line-height: 1.2; font-weight: 600;  }
 .super-stock-identity > span, .super-stock-identity p { color: var(--sw-muted); font-size: var(--fs-caption); }
 .super-stock-identity p { margin-top: 8px; }
 .super-stock-price { display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: baseline; gap: 12px; color: var(--sw-ink); }
-.super-stock-price strong { font-size: var(--fs-display); font-weight: 600; line-height: 1.15; letter-spacing: -.045em; }
+.super-stock-price strong { font-size: var(--fs-display); font-weight: 600; line-height: 1.15;  }
 .super-stock-price > span { font-size: var(--fs-h3); font-weight: 600; }
 .super-stock-price.is-up { color: var(--sw-up); }
 .super-stock-price.is-down { color: var(--sw-down); }
@@ -224,7 +224,7 @@
 .super-consensus-title { display: flex; min-width: 0; flex: 1 1 380px; gap: 12px; }
 .super-consensus-title > div > p { margin-bottom: 4px; color: var(--sw-muted); font-size: var(--fs-caption); }
 .super-consensus-title > div > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.super-consensus-title h3 { font-size: var(--fs-h1); font-weight: 600; letter-spacing: -.035em; }
+.super-consensus-title h3 { font-size: var(--fs-h1); font-weight: 600;  }
 .super-consensus-title small { display: block; margin-top: 8px; color: var(--sw-muted); font-size: var(--fs-caption); line-height: 1.7; }
 .super-consensus-orb { display: flex; width: 40px; height: 40px; flex: 0 0 auto; align-items: center; justify-content: center; border: 1px solid var(--sw-line); border-radius: 4px; color: var(--sw-accent); background: var(--sw-soft); }
 .super-consensus-orb svg { width: 20px; height: 20px; }
@@ -587,7 +587,7 @@
 }
 
 .super-watch-row-main { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-xs); }
-.super-watch-row-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-xs); margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-caption); color: var(--sw-muted); }
+.super-watch-row-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-xs); margin-top: 4px; font-family: inherit; font-size: var(--fs-caption); color: var(--sw-muted); font-variant-numeric: tabular-nums; }
 .super-watch-row-spark { display: inline-flex; flex: 0 0 auto; align-items: center; }
 .super-watch-row-meter { display: block; margin-top: 4px; }
 .super-watchlist-stock-rail .super-watchlist-select { min-height: 68px; padding: var(--gap-xs) var(--gap-sm); }
@@ -609,4 +609,36 @@
 .super-broker-panel { padding: var(--gap-md); }
 @media (max-width: 768px) {
   .super-market-spark { display: none; }
+}
+
+/* 详情加载骨架：形状对齐真实内容（行情条 + 图 + 正文行），描边保证浅色下可见。 */
+.super-detail-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--gap-md);
+}
+.super-detail-skeleton__bar {
+  height: 56px;
+  border: 1px solid var(--sw-line);
+  border-radius: var(--radius-control);
+  background: var(--bg-2);
+  animation: super-skeleton-pulse 1.6s var(--ease-standard, ease) infinite;
+}
+.super-detail-skeleton__block {
+  height: 240px;
+  border: 1px solid var(--sw-line);
+  border-radius: var(--radius-control);
+  background: var(--bg-2);
+  animation: super-skeleton-pulse 1.6s var(--ease-standard, ease) infinite;
+}
+.super-detail-skeleton p {
+  margin: 0;
+  color: var(--sw-muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: left;
+}
+@keyframes super-skeleton-pulse {
+  50% { background: var(--bg-3); }
 }

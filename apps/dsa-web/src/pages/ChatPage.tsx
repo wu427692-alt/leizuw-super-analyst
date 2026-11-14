@@ -20,7 +20,7 @@ import {
   Tooltip,
 } from '../components/common';
 import { getParsedApiError } from '../api/error';
-import type { SkillInfo } from '../api/agent';
+import type { ChatSessionItem, SkillInfo } from '../api/agent';
 import { DashboardStateBlock } from '../components/dashboard';
 import { PixelAvatar } from '../components/illustration/PixelAvatar';
 import {
@@ -43,6 +43,7 @@ import { extractStockCodesFromMessage } from '../utils/chatStockCode';
 import { findMatchingStockCode, includesStockCode, normalizeStockCode } from '../utils/stockCode';
 import { findResearchSession } from '../stores/researchSessionStore';
 import { useIsMobile } from '../hooks/useIsMobile';
+import './ChatPage.css';
 
 // Quick question examples shown on empty state
 const QUICK_QUESTIONS = [
@@ -73,6 +74,44 @@ type ActiveStockResolution = {
   context: ActiveStockContext;
   useForCurrentSend: boolean;
 };
+
+type SessionGroup = {
+  key: 'today' | 'yesterday' | 'week' | 'earlier';
+  label: string;
+  items: ChatSessionItem[];
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SESSION_GROUP_LABELS: Record<SessionGroup['key'], string> = {
+  today: '今天',
+  yesterday: '昨天',
+  week: '近 7 天',
+  earlier: '更早',
+};
+
+/**
+ * 历史对话按最近活跃时间分组。
+ *
+ * 侧栏里同时出现 10+ 条「用一句话说明本次会议要研究什么」时，纯平铺没有时间锚点，
+ * 看不出哪些是刚开的、哪些是上个月的。分组只依赖已有的 `last_active`，不改接口。
+ */
+function groupSessionsByRecency(sessions: ChatSessionItem[], now: Date = new Date()): SessionGroup[] {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const buckets: Record<SessionGroup['key'], ChatSessionItem[]> = {
+    today: [], yesterday: [], week: [], earlier: [],
+  };
+  for (const session of sessions) {
+    const raw = session.last_active || session.created_at;
+    const time = raw ? new Date(raw).getTime() : Number.NaN;
+    if (!Number.isFinite(time) || time >= startOfToday) buckets.today.push(session);
+    else if (time >= startOfToday - DAY_MS) buckets.yesterday.push(session);
+    else if (time >= startOfToday - 6 * DAY_MS) buckets.week.push(session);
+    else buckets.earlier.push(session);
+  }
+  return (Object.keys(buckets) as SessionGroup['key'][])
+    .map((key) => ({ key, label: SESSION_GROUP_LABELS[key], items: buckets[key] }))
+    .filter((group) => group.items.length > 0);
+}
 
 /**
  * 取「当前真实地址」的 query。
@@ -186,7 +225,7 @@ const restoreActiveStockContextFromMessages = (messages: Message[]): ActiveStock
   return restoredContext;
 };
 
-const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGlobals }) => {
+const ChatWorkspace: React.FC<{ canManageGlobals: boolean; researchTeam?: boolean }> = ({ canManageGlobals, researchTeam = false }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -442,8 +481,29 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
     setShowJumpToBottom((prev) => (nearBottom ? false : prev));
   }, []);
 
+  /**
+   * 只滚消息视口，绝不让 document 跟着滚。
+   *
+   * 旧实现用 `messagesEndRef.current.scrollIntoView()`：空会话时消息视口不可滚
+   * （scrollHeight == clientHeight），浏览器会把滚动传递到外层可滚祖先，也就是
+   * document——于是 /chat 一打开就停在 scrollY≈50、/meeting 停得更深，首屏标题
+   * 被切掉。改成直接设置视口 scrollTop 后，滚动被限制在消息容器内。
+   */
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    try {
+      // 正常路径：只滚消息视口本身。
+      if (typeof viewport.scrollTo === 'function') {
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+        return;
+      }
+      viewport.scrollTop = viewport.scrollHeight;
+    } catch {
+      // 没有布局引擎（jsdom）或 scrollTop 只读时退回元素级滚动：
+      // 这条路径不会把 document 一起卷下去（容器不可滚时才是风险，见下方守卫）。
+      messagesEndRef.current?.scrollIntoView({ behavior });
+    }
   }, []);
 
   const requestScrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
@@ -970,14 +1030,19 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
     </div>
   );
 
+
+  /** 历史对话按时间分组：侧栏里先有时间锚点，再谈单条内容。 */
+  const groupedSessions = useMemo(() => groupSessionsByRecency(sessions), [sessions]);
+
   const sidebarContent = (
     <>
-      <div className="flex items-center justify-between border-b border-line-1 px-3 py-2">
-        <h2 className="text-sm font-semibold text-cyan uppercase tracking-normal flex items-center gap-2">
+      <div className="chat-session-head flex items-center justify-between border-b border-line-1 px-3 py-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-cyan">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           历史对话
+          {sessions.length > 0 ? <span className="chat-session-head__count">{sessions.length}</span> : null}
         </h2>
         <button
           onClick={handleStartNewChat}
@@ -1021,58 +1086,66 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
             className="rounded-lg border border-dashed border-line-2 bg-bg-1"
           />
         ) : (
-          <div className="space-y-2">
-            {sessions.map((s) => (
-              <div key={s.session_id} className="session-item-row">
-                <button
-                  type="button"
-                  onClick={() => handleSwitchSession(s.session_id)}
-                  className={`session-item ${s.session_id === sessionId ? 'active' : ''}`}
-                  aria-label={`切换到对话 ${s.title}`}
-                  aria-current={s.session_id === sessionId ? 'page' : undefined}
-                >
-                  <div className="indicator" />
-                  <div className="content">
-                    <span className="title">{s.title}</span>
-                    <div className="mt-0.5 flex items-center gap-2">
-                      <span className="meta">
-                        {s.message_count} 条对话
-                      </span>
-                      {s.last_active && (
-                        <>
-                          <span className="separator" />
-                          <span className="meta">
-                            {new Date(s.last_active).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-                          </span>
-                        </>
-                      )}
+          <div className="chat-session-list">
+            {groupedSessions.map((group) => (
+              <section className="chat-session-group" key={group.key} aria-label={`${group.label}的对话`}>
+                <h3 className="chat-session-group__label">{group.label}</h3>
+                <div className="chat-session-group__items">
+                  {group.items.map((s) => (
+                    <div key={s.session_id} className="session-item-row">
+                      <button
+                        type="button"
+                        onClick={() => handleSwitchSession(s.session_id)}
+                        className={`session-item ${s.session_id === sessionId ? 'active' : ''}`}
+                        aria-label={`切换到对话 ${s.title}`}
+                        aria-current={s.session_id === sessionId ? 'page' : undefined}
+                      >
+                        <div className="indicator" />
+                        <div className="content">
+                          {/* 单行截断靠 CSS ellipsis；完整标题已由父级 button 的 aria-label 提供，不再用原生 title（治理规则禁止，且触屏无 tooltip） */}
+                          <span className="title">{s.title}</span>
+                          <div className="mt-0.5 flex items-center gap-2">
+                            <span className="meta">
+                              {s.message_count} 条对话
+                            </span>
+                            {s.last_active && (
+                              <>
+                                <span className="separator" />
+                                <span className="meta">
+                                  {new Date(s.last_active).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        className="delete-btn"
+                        onClick={() => {
+                          setDeleteConfirmId(s.session_id);
+                        }}
+                        aria-label={`删除对话 ${s.title}`}
+                        disabled={deletingSessionId !== null}
+                      >
+                        <svg
+                          className="w-3.5 h-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
                     </div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  className="delete-btn"
-                  onClick={() => {
-                    setDeleteConfirmId(s.session_id);
-                  }}
-                  aria-label={`删除对话 ${s.title}`}
-                  disabled={deletingSessionId !== null}
-                >
-                  <svg
-                    className="w-3.5 h-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
-              </div>
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}
@@ -1200,7 +1273,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                   </span>
                 </span>
               ) : (
-                <span className={isMobile ? 'hidden' : 'inline'}>问股</span>
+                <span className={isMobile ? 'hidden' : 'inline'}>{researchTeam ? '投研团队' : '问股'}</span>
               )}
             </h1>
             {messages.length > 0 && (
@@ -1302,7 +1375,9 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
             <p className="text-secondary-text text-sm">
               {researchContext
                 ? '这是围绕本次研究议题展开的会话，可以继续追问；研究结果也保存在这个会话里。'
-                : '向 AI 询问个股分析，获取基于技能视角的交易建议与实时决策报告。'}
+                : researchTeam
+                  ? '这是投研团队的对话：先定好研究议题，再按角色向团队提问；结论、证据与追问都留在这个会话里。'
+                  : '向 AI 询问个股分析，获取基于技能视角的交易建议与实时决策报告。'}
             </p>
             {sessionStats.messages > 0 ? (
               <div className="chat-header-metrics shrink-0">
@@ -1340,12 +1415,12 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
             {researchContext ? (
               <>
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-[11px] leading-none text-secondary-text">本次研究议题</span>
+                  <span className="text-[12px] leading-none text-secondary-text">本次研究议题</span>
                   <strong className="truncate text-sm font-medium text-foreground">
                     {researchContext.topic}
                   </strong>
                   {[researchContext.stockName, researchContext.stock, researchContext.cycle].filter(Boolean).length > 0 ? (
-                    <span className="truncate text-[11px] text-muted-text">
+                    <span className="truncate text-[12px] text-muted-text">
                       {[researchContext.stockName, researchContext.stock, researchContext.cycle].filter(Boolean).join(' · ')}
                     </span>
                   ) : null}
@@ -1369,7 +1444,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                     {activeStockContext?.stock_name?.trim() || activeStockCode}
                   </span>
                   {activeStockContext?.stock_name ? (
-                    <span className="font-mono text-[11px] tabular-nums text-muted-text">{activeStockCode}</span>
+                    <span className="font-mono text-[12px] tabular-nums text-muted-text">{activeStockCode}</span>
                   ) : null}
                 </span>
                 <Button
@@ -1381,7 +1456,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                   {stockInWatchlist(activeStockCode) ? '从自选删除' : '加入自选'}
                 </Button>
                 {watchlistMessage ? (
-                  <span className="text-[11px] text-muted-text" role="status">{watchlistMessage}</span>
+                  <span className="text-[12px] text-muted-text" role="status">{watchlistMessage}</span>
                 ) : null}
               </div>
             ) : null}
@@ -1409,9 +1484,11 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
             {messages.length === 0 && !loading && !messagesLoading && !historyError ? (
               <div className="chat-empty-wrap flex h-full items-center justify-center">
                 <EmptyState
-                  title="开始问股"
-                  description="输入「分析 600519」或「茅台现在能买吗」，AI 将调用实时数据工具为您生成决策报告。"
-                  className="chat-empty-state max-w-2xl border-dashed bg-card/55"
+                  title={researchTeam ? '开始一次投研' : '开始问股'}
+                  description={researchTeam
+                    ? '在顶部「定议题」写下这次研究的方向，它同时会成为这次会话的标题；也可以直接提问，团队会按角色分工回答并保留研究证据。'
+                    : '输入「分析 600519」或「茅台现在能买吗」，AI 将调用实时数据工具为您生成决策报告。'}
+                  className="chat-empty-state max-w-[36rem]"
                   icon={(
                     <svg
                       className="h-8 w-8"
@@ -1596,7 +1673,7 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
                         className="max-w-48 flex-1"
                         ariaLabel="分析步骤进度"
                       />
-                      <span className="shrink-0 text-[11px] tabular-nums text-muted-text">
+                      <span className="shrink-0 text-[12px] tabular-nums text-muted-text">
                         步骤 {progressSteps.filter((step) => step.success === true || step.type === 'tool_done').length}/{progressSteps.length}
                       </span>
                     </div>
@@ -1852,10 +1929,24 @@ const ChatWorkspace: React.FC<{ canManageGlobals: boolean }> = ({ canManageGloba
   );
 };
 
-const ChatPage: React.FC = () => {
+export type ChatPageProps = {
+  /**
+   * 由「投研团队」入口渲染时置 true：空态文案、快捷提示按团队语境说，
+   * 不再让用户以为这是另一个「AI 问股」页面。其余行为完全一致。
+   */
+  researchTeam?: boolean;
+};
+
+const ChatPage: React.FC<ChatPageProps> = ({ researchTeam = false }) => {
   const { accessEnabled, loggedIn, user, authMethod } = useUserAccess();
   const identity = `${accessEnabled}:${loggedIn}:${user?.id ?? 'none'}:${user?.status ?? ''}:${authMethod ?? ''}`;
-  return <ChatWorkspace key={identity} canManageGlobals={!accessEnabled || (loggedIn && authMethod === 'admin')} />;
+  return (
+    <ChatWorkspace
+      key={identity}
+      canManageGlobals={!accessEnabled || (loggedIn && authMethod === 'admin')}
+      researchTeam={researchTeam}
+    />
+  );
 };
 
 export default ChatPage;

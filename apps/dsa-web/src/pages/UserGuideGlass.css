@@ -18,7 +18,7 @@
     var(--bg-2);
   background-size: 100% 1040px, 100% 1220px, 100% 1600px;
   background-repeat: no-repeat;
-  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-sans);
   font-size: var(--fs-body);
   -webkit-font-smoothing: antialiased;
 }

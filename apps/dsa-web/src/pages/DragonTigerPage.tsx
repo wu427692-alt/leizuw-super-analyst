@@ -75,7 +75,7 @@ export default function DragonTigerPage() {
     try {
       const value = await investmentMonitorApi.dragonTigerDaily(date, refresh);
       setDaily(value); setTradeDate(compactDate(value.tradeDate));
-      setStatus(`${value.source.provider} · ${value.source.apis.join(' + ')} · ${value.source.updateNote}`);
+      setStatus(`${value.source.provider} · ${value.source.updateNote}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '龙虎榜暂时不可用');
     } finally { setLoading(false); }
@@ -85,7 +85,7 @@ export default function DragonTigerPage() {
     setLoading(true); setStatus('正在检索本地龙虎榜历史库…');
     try {
       const value = await investmentMonitorApi.dragonTigerHistory({ startDate, endDate, symbol, query, pageSize: 100 });
-      setHistory(value); setStatus(`本地 SQLite · 已缓存 ${value.cachedTradeDays} 个交易日 · 当前条件 ${value.total} 条`);
+      setHistory(value); setStatus(`本地缓存 · 已缓存 ${value.cachedTradeDays} 个交易日 · 当前条件 ${value.total} 条`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '历史龙虎榜暂时不可用');
     } finally { setLoading(false); }
@@ -143,7 +143,7 @@ export default function DragonTigerPage() {
         <section className="dragon-date-control"><label>交易日<input type="date" value={tradeDate} onChange={event => setTradeDate(event.target.value)} /></label><button onClick={() => void loadDaily(tradeDate)} disabled={loading}>读取该日</button><button onClick={() => void loadDaily(tradeDate || undefined, true)} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} />直接刷新接口</button></section>
         <section className="dragon-stats">
           <SummaryCell label="上榜股票" value={summary?.symbolCount ?? '—'} note={`${summary?.rowCount ?? 0} 条上榜原因`} />
-          <SummaryCell label="营业部席位" value={summary?.seatCount ?? '—'} note="top_inst 原始席位行" />
+          <SummaryCell label="营业部席位" value={summary?.seatCount ?? '—'} note="原始席位明细" />
           <SummaryCell label="榜单买入" value={amount(summary?.buyAmount)} note="买入前五合计" />
           <SummaryCell label="榜单卖出" value={amount(summary?.sellAmount)} note="卖出前五合计" />
           <SummaryCell label="榜单净额" value={amount(summary?.netAmount)} note={`${summary?.positiveCount ?? 0} 正 / ${summary?.negativeCount ?? 0} 负`} />

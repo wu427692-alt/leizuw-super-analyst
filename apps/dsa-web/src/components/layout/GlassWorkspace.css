@@ -14,7 +14,9 @@
   --workspace-soft: var(--bg-2);
   --workspace-line: var(--line-1);
   --workspace-rim: var(--line-1);
-  --workspace-shadow: var(--shadow-card);
+  /* 设计系统 §12：页面内卡片一律不投影，靠 1px 描边与底色分层；阴影只留给浮层
+     （--shadow-pop：抽屉、下拉、弹层，走各自的令牌，不受这里影响）。 */
+  --workspace-shadow: none;
   --workspace-accent: var(--brand-text);
   --workspace-accent-soft: var(--brand-tint-08);
   --workspace-radius: var(--radius-card);

@@ -11,7 +11,7 @@
   min-height: 100svh;
   color: var(--guide-text);
   background: var(--guide-bg);
-  font-family: Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   scroll-behavior: smooth;
 }

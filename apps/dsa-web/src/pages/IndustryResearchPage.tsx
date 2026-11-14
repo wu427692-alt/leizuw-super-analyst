@@ -782,7 +782,7 @@ export default function IndustryResearchPage() {
     <div className="ir-section-heading"><div><span>数据覆盖</span><h2>本次课题实际取得的材料</h2></div><small>{blueprint.methodology.evidenceRule}</small></div>
     <div className="mb-2 flex items-center gap-3">
       <ShareBar className="max-w-64 flex-1" segments={coverageShareSegments} height={4} ariaLabel="数据覆盖构成" />
-      <span className="shrink-0 text-[11px] tabular-nums text-[var(--text-3)]">已覆盖 {coveredChannels}/{coverageList.length}</span>
+      <span className="shrink-0 text-[12px] tabular-nums text-[var(--text-3)]">已覆盖 {coveredChannels}/{coverageList.length}</span>
     </div>
     <div>{activeSnapshot?.coverage.map(item => <article className={item.status !== 'covered' ? 'is-missing' : ''} key={item.key}>
       <span>{item.status === 'covered' ? <CheckCircle2 /> : <CircleAlert />}</span><div><strong>{item.name}</strong><small>{item.evidenceLevel} · {item.mediaFiles ? `${item.mediaFiles} 个文件` : '可追溯来源'}</small></div><em>{compact(item.count)}</em>
