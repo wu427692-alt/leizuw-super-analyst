@@ -20,6 +20,7 @@ from src.services.investment_monitor_worker import InvestmentMonitorWorker
 from src.services.sync_watchdog_worker import SyncWatchdogWorker
 from src.services.watchlist_backfill_worker import WatchlistBackfillWorker
 from src.services.icloud_knowledge_service import ICloudKnowledgeError, ICloudKnowledgeService, ICloudKnowledgeWorker
+from src.services.news_content_service import NewsContentError, NewsContentService
 
 router = APIRouter()
 
@@ -377,4 +378,18 @@ def verify_cloud_snapshot(filename: str):
     try:
         return ICloudKnowledgeService().verify(filename)
     except ICloudKnowledgeError as exc:
+        raise _error(exc, 404)
+
+
+@router.get("/events/{event_id}/content", summary="读取单条快讯正文，缺失时按需抓取原文并缓存")
+def event_content(event_id: int):
+    """点开一条快讯时取正文。
+
+    已入库的 summary 直接用（不发网络请求）；没有正文但有原文链接时抓一次
+    原文、抽正文、落库缓存。抓取失败返回结构化 ``status: "failed"``，不抛 500。
+    只在打开单条快讯时调用，列表页不要批量调用。
+    """
+    try:
+        return NewsContentService().get_event_content(event_id)
+    except NewsContentError as exc:
         raise _error(exc, 404)

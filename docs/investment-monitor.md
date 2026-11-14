@@ -13,7 +13,7 @@
 - 报价、估值、财务指标、利润表和现金流量表各自保留实际日期或报告期；估值日期缺失时不借用报价日期，单季与累计同比也不混写。非实时行情、未知日期和缺失值明确展示，不当作今日数据或零值。
 - 行情图按资产、股票、周期和区间识别数据；切换时旧曲线与数值退出显示，迟到结果不覆盖新选择，同一查询的后台刷新才保留旧图。图表显示实际最后数据时间，不因轮询就宣称实时；周、月、年线比较的是“上期收盘”，不是“昨收”。
 - 公告、研报与字段型资料使用共享页内阅读窗口，旧流水的 `?event=` 深链接也读取同一详情；来源网页/PDF 仅为可选入口，不把保存摘要说成全文。字段按来源含义、独立日期分组，长表就地分页且保留有效尾部记录；详细边界见[页内资料核对](watchlist-workspace.md#页内资料如何核对)。
-- `GET /events/{id}` 不再初始化来源配置或加载不用的完整 `raw_payload`，保留既有事件响应契约；读取失败在窗口内重试，权限失败清空摘录与链接，切换条目不接受迟到或错 ID 的响应。接口不自动获取外部原文，不代表生产鉴权与上游可用性已通过验收。
+- `GET /events/{id}` 不再初始化来源配置或加载不用的完整 `raw_payload`，保留既有事件响应契约；读取失败在窗口内重试，权限失败清空摘录与链接，切换条目不接受迟到或错 ID 的响应。该接口本身仍不抓外网：点开某条快讯要看正文时，改用 `GET /events/{id}/content`（见“按需正文抽取”），不代表生产鉴权与上游可用性已通过验收。
 
 超级看板本身不维护私有行情副本：最新价、分时和日线读取 `market_ticks` / `market_intraday` / `stock_daily` 共享行情库；公告、研报、财务、资金、知识星球和天眼查读取 `monitoring_events` 统一事实库。页面显式查询最近 183 天：`overview` 只读最新快照和每类最多三条资料，不执行完整计数；`full` 通过 SQL 聚合取得范围内统计，但只载入限量近期正文。快照按类型独立读取，不依赖流水前 200 条，因此高频新闻不会挤掉范围内的财务快照。工作区轮询只读本地库，后台行情与投资情报 worker 负责增量写入；独立行情图接口在本地数据缺失或分时不完整时仍可能按既有逻辑向上游补采，不应把整个浏览页面称为严格离线。
 
@@ -114,11 +114,42 @@ Tushare 数据不再只是通用 API 转发，以下领域会归一化进 `monit
 - `POST /api/v1/investment-monitor/super-watchlist/{symbol}/essay-consensus/analyze`：强制把该股票最近 20 篇匹配原文重新排队给 DeepSeek 分析；任务异步执行并持久化，前端只轮询这一块状态。
 - `GET /api/v1/investment-monitor/dashboard?days=7`：自选股评分、三视角数量、高优先级事件和来源状态。
 - `GET /api/v1/investment-monitor/events`：按股票、视角、事件类型、来源、频道、证据等级、关键词和重要度筛选事件。`evidence_level=factual` 排除待核验观点；`channel` 可传逗号分隔的多个频道。
+- `GET /api/v1/investment-monitor/events/{event_id}/content`：单条快讯的可读正文。已有摘要直接返回；缺正文但有原文链接时抓取原文、抽正文并落库缓存；失败返回结构化 `status=failed`，不会 500。
 - `GET /api/v1/investment-monitor/symbols/{symbol}`：单只股票的三视角证据流。
 - `POST /api/v1/investment-monitor/sync`：立即同步全部或指定类别来源。
 - `GET /api/v1/investment-monitor/status`：轮询器和来源健康状态。
 - `POST /api/v1/investment-monitor/watchdog/audit`：立即检查同步心跳，自动重启停止的 worker 并唤醒到期来源。
 - `POST /api/v1/investment-monitor/worker/start`、`/stop`：运行时启停轮询。
+
+
+## 按需正文抽取
+
+RSS/NewsNow 媒体流只保证标题和原文链接，`raw_payload` 里才有发布方链接（`url` 列常为空）；Tushare 快讯入库时自带摘要。手机端「点开一条快讯就要看到具体正文」，因此正文不在列表接口里返回，而是在打开单条时按需取：
+
+`GET /api/v1/investment-monitor/events/{event_id}/content`
+
+| 字段 | 含义 |
+| --- | --- |
+| `eventId` | 事件 ID |
+| `title` | 事件标题（正文里重复的首行会被去掉） |
+| `status` | `ok` 有正文、`empty` 没有可读正文、`failed` 抓取失败 |
+| `content` | 纯文本正文；`status != ok` 时为 `null` |
+| `contentChars` | 正文字符数 |
+| `source` | `db` 取自入库摘要、`cache` 命中本地缓存、`fetched` 本次抓取 |
+| `url` | 实际使用的原文链接（`url` 列、`metrics.url`、`raw_payload.url` 依次回退） |
+| `fetchedAt` | 抓取成功时间（UTC ISO8601），取自入库摘要时为 `null` |
+| `reason` | 机器可读原因，成功时为 `null` |
+| `message` | 直接可展示的中文说明 |
+| `retryAfterSeconds` | 冷却剩余秒数，`0` 表示可立即重试 |
+
+行为边界：
+
+- 已有 `summary` 时直接返回，不发起任何网络请求；正文抽取结果写进独立的 `monitoring_event_contents` 表，不改写 `monitoring_events.summary`（摘要属于数据源原文，重新同步会覆盖；派生缓存要能跨同步存活）。
+- 同一事件 300 秒内不重复抓取：成功结果走缓存，失败结果在冷却期内返回上次的结构化原因，避免坏链接被反复点开重抓。
+- 前端按纯文本渲染（按换行分段）即可，返回内容已去掉 script/style/导航和 APP 导流行，不需要 `dangerouslySetInnerHTML`；列表页不要批量调用这个接口，只在打开单条时调。
+- 抓取是唯一会访问任意外部 URL 的路径，边界固定为：只允许 http/https、不带账号密码、只允许 80/443；每一跳重定向都重新校验；域名只解析一次并把连接钉在解析出的 IP 上；私网/回环/链路本地/保留/组播地址一律拒绝；连接 5s、读取 8s、总时限 10s；线上与解压后各 2MB 上限；最多 3 次重定向；只接受 `text/html` 与 `application/xhtml+xml`。
+- 部署在 fake-IP 代理后面时（所有域名解析成 `198.18.x.x`），默认会被 SSRF 校验拒绝；此时由运维显式设置 `NEWS_CONTENT_ALLOW_PROXY_DNS=true` 放行该合成网段，真实内网网段仍然拒绝。
+- 抽取顺序为 JSON-LD `articleBody` → lxml 正文密度（项目已有 lxml，实测 0.01s）→ `newspaper3k` 兜底。`newspaper3k` 的中文分词首次加载约 9 秒，超出一轮抓取预算，因此只在前两档抽不出正文时才运行；未新增依赖。
 
 ## 龙虎榜工作台
 

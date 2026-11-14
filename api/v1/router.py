@@ -33,6 +33,7 @@ from api.v1.endpoints import (
     intelligence,
     investment_monitor,
     portfolio,
+    stock_logo,
     stocks,
     system_config,
     usage,
@@ -93,6 +94,13 @@ router.include_router(
 
 router.include_router(
     stocks.router,
+    prefix="/stocks",
+    tags=["Stocks"]
+)
+
+# 公司 logo 单独一个 router（抓取 + 本地缓存），路径仍是 /api/v1/stocks/{code}/logo
+router.include_router(
+    stock_logo.router,
     prefix="/stocks",
     tags=["Stocks"]
 )
