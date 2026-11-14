@@ -119,7 +119,16 @@ function StockAutocompleteInner({
 
   const inputRef = useRef<HTMLInputElement>(null);
   const prevValueRef = useRef(value);
-  const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number; width: string } | null>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number; width: string; minWidth: string } | null>(null);
+
+  /**
+   * 下拉宽度不能直接等于输入框宽度。
+   *
+   * 自选看板左侧搜索框只有 ~147px，而这个下拉里一行要放「市场徽标 + 名称/代码 + 匹配类型」，
+   * 按 147px 渲染时名称列被压到 30px 左右，中文变成一个字一行（线上就是这样）。
+   * 所以给一个可读下限（320px），同时保证不超出视口右侧。
+   */
+  const DROPDOWN_MIN_WIDTH = 320;
 
   const updateDropdownPosition = () => {
     if (!inputRef.current) {
@@ -128,10 +137,16 @@ function StockAutocompleteInner({
     }
 
     const rect = inputRef.current.getBoundingClientRect();
+    const viewportGutter = 12;
+    const available = Math.max(DROPDOWN_MIN_WIDTH, window.innerWidth - rect.left - viewportGutter);
+    const width = Math.min(Math.max(rect.width, DROPDOWN_MIN_WIDTH), available);
+    // 靠右时向左回收，避免溢出视口
+    const left = Math.max(viewportGutter, Math.min(rect.left, window.innerWidth - width - viewportGutter));
     setDropdownStyle({
       top: rect.bottom,
-      left: rect.left,
-      width: `${rect.width}px`,
+      left,
+      width: `${width}px`,
+      minWidth: `${Math.min(DROPDOWN_MIN_WIDTH, available)}px`,
     });
   };
 

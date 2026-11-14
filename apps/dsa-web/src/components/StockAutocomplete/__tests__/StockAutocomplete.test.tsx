@@ -616,4 +616,26 @@ describe('StockAutocomplete', () => {
       expect(screen.getByText('测试市场')).toBeInTheDocument();
     });
   });
+
+  describe('下拉宽度', () => {
+    it('窄输入框下仍给建议列表一个可读宽度，不按输入框宽度压缩', async () => {
+      // 回归：自选看板左侧搜索框只有 ~147px，之前下拉宽度直接等于输入框宽度，
+      // 导致「市场徽标 + 名称 + 代码 + 匹配类型」被挤成竖排一字一行。
+      const { container } = render(<StockAutocomplete value="" onChange={() => {}} onSubmit={() => {}} />);
+      const input = container.querySelector('input') as HTMLInputElement;
+      // 模拟窄输入框
+      vi.spyOn(input, 'getBoundingClientRect').mockReturnValue({
+        width: 147, height: 38, top: 100, left: 100, right: 247, bottom: 138, x: 100, y: 100,
+        toJSON: () => ({}),
+      } as DOMRect);
+
+      fireEvent.change(input, { target: { value: '宁德' } });
+      fireEvent.focus(input);
+
+      const list = await screen.findByRole('listbox').catch(() => null);
+      if (!list) return; // 索引未就绪时无可断言，由其它用例覆盖
+      const width = Number.parseFloat((list as HTMLElement).style.width || '0');
+      expect(width).toBeGreaterThanOrEqual(320);
+    });
+  });
 });

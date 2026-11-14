@@ -34,7 +34,7 @@ export function SuggestionsList({
   return (
     <ul
       id="suggestions-list"
-      className="z-[100] border-x border-b rounded-b-lg rounded-t-none max-h-60 overflow-auto"
+      className="z-[100] border-x border-b rounded-b-lg rounded-t-none max-h-60 overflow-auto text-left"
       style={{
         ...style,
         backgroundColor: 'hsl(var(--card) / 0.85)',
@@ -49,27 +49,29 @@ export function SuggestionsList({
           role="option"
           aria-selected={index === highlightedIndex}
           className={cn(
-            'px-4 py-1 cursor-pointer flex items-center justify-between',
+            // 候选行不允许被挤压换行：名称/代码不折行，徽标不收缩，
+            // 空间不足时只截断名称（title 由 aria-label 承担可访问名）。
+            'px-3 py-1.5 cursor-pointer flex items-center justify-between gap-2 whitespace-nowrap',
             'hover:bg-[var(--autocomplete-hover-bg)]/25',
             index === highlightedIndex && 'bg-[var(--autocomplete-hover-bg)]/25',
           )}
           onClick={() => onSelect(suggestion)}
           onMouseEnter={() => onMouseEnter(index)}
         >
-          <div className="flex items-center gap-3">
-            <MarketBadge market={suggestion.market} />
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0"><MarketBadge market={suggestion.market} /></span>
 
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-primary-text">
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="truncate text-sm font-medium text-primary-text">
                 {suggestion.nameZh}
               </span>
-              <span className="text-sm text-secondary-text">
+              <span className="shrink-0 text-[12px] text-secondary-text tabular-nums">
                 {suggestion.displayCode}
               </span>
-            </div>
+            </span>
           </div>
 
-          <MatchTypeBadge matchType={suggestion.matchType} />
+          <span className="shrink-0"><MatchTypeBadge matchType={suggestion.matchType} /></span>
         </li>
       ))}
     </ul>

@@ -103,7 +103,7 @@
 .super-brief-financial > button, .super-section-heading > button, .super-brief-channel > header button { display: inline-flex; min-height: 32px; flex-shrink: 0; align-items: center; gap: 4px; color: var(--sw-ink); font-size: var(--fs-caption); text-decoration: underline; text-decoration-color: var(--sw-line); text-underline-offset: 5px; }
 .super-brief button:hover, .super-brief-financial > button:hover { text-decoration-color: var(--sw-accent); }
 .super-brief-metrics { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.super-business-metric { min-width: 0; padding: 0 16px; border-right: 1px solid var(--sw-line); }
+.super-business-metric { min-width: 0; padding: 0 12px; border-right: 1px solid var(--sw-line); }
 .super-business-metric:first-child { padding-left: 0; }
 .super-business-metric:last-child { padding-right: 0; border-right: 0; }
 .super-business-metric h4 { color: var(--sw-muted); font-size: var(--fs-caption); font-weight: 500; }
