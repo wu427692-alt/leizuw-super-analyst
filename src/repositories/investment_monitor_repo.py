@@ -19,6 +19,7 @@ from src.storage import (
     DatabaseManager,
     MonitoringEventContentRecord,
     MonitoringEventRecord,
+    MonitoringEventSymbolRecord,
     MonitoringSourceRecord,
     ResearchNote,
     WatchlistBackfillRecord,
@@ -68,14 +69,23 @@ _READ_SENTIMENT = case(
 def _event_symbol_condition(symbol: str) -> Any:
     """Match one complete stored CSV token, not a substring or LIKE pattern.
 
+    The token is resolved through ``monitoring_event_symbols``, whose primary
+    key is ``(event_id, symbol)``. The correlated ``EXISTS`` lets SQLite keep the
+    selective outer access path (``event_at`` range) and turn the symbol test
+    into a primary-key probe. It is deliberately not ``id IN (SELECT ...)``: a
+    materialized set of a popular symbol's event_ids makes the planner scan the
+    outer table by rowid, which measured ~36x slower than the old ``LIKE``.
+
     Callers retain responsibility for market-code canonicalization; do not
     collapse distinct exchanges or introduce aliases while selecting facts.
     """
     value = str(symbol or "").strip()
     if not value or "," in value:
         return false()
-    tokens = literal(",") + func.coalesce(MonitoringEventRecord.symbol_codes, "") + literal(",")
-    return tokens.contains(f",{value},", autoescape=True)
+    return select(MonitoringEventSymbolRecord.event_id).where(
+        MonitoringEventSymbolRecord.event_id == MonitoringEventRecord.id,
+        MonitoringEventSymbolRecord.symbol == value,
+    ).correlate(MonitoringEventRecord).exists()
 
 
 def _financial_calendar_date_expr(value: Any) -> Any:

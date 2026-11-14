@@ -130,6 +130,90 @@ class StartupWarmupService:
             ("watchlist-keyword-index", monitor.reindex_watchlist_keywords),
         )
 
+    def page_critical_tasks(self) -> tuple[WarmupTask, ...]:
+        """**轻量**页面关键缓存：每轮保温都跑，成本约 5–10 秒。
+
+        只放「重建便宜、但冷掉会让用户干等」的读路径。
+        """
+        from src.services.concept_theme_service import ConceptThemeService
+        from src.services.essay_analysis_service import EssayAnalysisService
+        from src.services.home_dashboard_service import HomeDashboardService
+        from src.services.investment_monitor_service import InvestmentMonitorService
+
+        monitor = InvestmentMonitorService()
+        essays = EssayAnalysisService()
+        home = HomeDashboardService(monitor=monitor, background_refresh=True)
+        concepts = ConceptThemeService()
+
+        # 保温只负责「让缓存不过期」，不能走强制重建：
+        # 实测 force=True 一轮要 223 秒（会同步去上游拉数据）。
+        return (
+            ("home-dashboard", lambda: home.dashboard(force=False)),
+            ("essay-deep-insights-short", lambda: essays.deep_insights(horizon="short")),
+            ("concept-themes-overview", lambda: concepts.overview()),
+        )
+
+    def heavyweight_warm_tasks(self) -> tuple[WarmupTask, ...]:
+        """**重量**页面缓存：单个就要 45–65 秒，不能每轮都跑。
+
+        这两个的重建路径会去上游取行情，实测自选工作台 46s、超级自选 63s。
+        策略是每轮保温只挑一个跑（轮转），把间隔摊到 2 轮以上：
+        它们的 stale 窗口有 900 秒，只要在窗口内被刷新过，用户请求拿到的就是
+        「旧数据 + 后台刷新」（毫秒级），而不是同步重建（几十秒）。
+
+        更彻底的解法是把上游拉取从重建路径里拆出去交给后台 worker，
+        那属于架构改造，不在保温机制的职责内。
+        """
+        from src.services.investment_monitor_service import InvestmentMonitorService
+
+        monitor = InvestmentMonitorService()
+
+        def warm_watchlist_workspaces() -> None:
+            symbols = self._watchlist_symbols(monitor)
+            if not symbols:
+                return
+            workers = _warmup_workers("WATCHLIST_WORKSPACE_WARMUP_WORKERS", 2)
+            with ThreadPoolExecutor(max_workers=min(workers, len(symbols))) as executor:
+                for view in ("overview", "full"):
+                    list(executor.map(
+                        lambda symbol: monitor.stock_workspace(symbol, days=183, refresh=False, view=view),
+                        symbols,
+                    ))
+
+        return (
+            ("watchlist-stock-workspaces", warm_watchlist_workspaces),
+            ("super-watchlist", lambda: monitor.super_watchlist(days=183)),
+        )
+
+    def keep_warm(self, round_index: int = 0) -> Dict[str, Any]:
+        """跑一轮「保温」。
+
+        - 轻任务每轮都跑（5–10s）
+        - 重任务按 round_index 轮转，每轮只跑一个（45–65s）
+
+        任何一步失败都只记录，绝不影响线上请求。
+        """
+        warmed: list[str] = []
+        failed: list[str] = []
+
+        def run(name: str, fn: Any) -> None:
+            try:
+                fn()
+                warmed.append(name)
+            except Exception as exc:  # noqa: BLE001 - 保温失败不能影响服务
+                failed.append(f"{name}:{type(exc).__name__}")
+                logger.debug("keep-warm task %s failed: %s", name, exc)
+
+        for name, fn in self.page_critical_tasks():
+            run(name, fn)
+
+        heavy = self.heavyweight_warm_tasks()
+        if heavy:
+            name, fn = heavy[round_index % len(heavy)]
+            run(name, fn)
+
+        return {"warmed": warmed, "failed": failed, "round": round_index}
+
     def warm(self) -> Dict[str, Any]:
         started_at = time.monotonic()
         tasks = list(self._tasks if self._tasks is not None else self._default_tasks())

@@ -7,7 +7,7 @@ from datetime import datetime
 import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select, text
 
 from src.storage import DatabaseManager, ResearchNote, ZsxqSyncState, utc_naive_now
 from src.research_note_fingerprint import research_note_information_hash
@@ -191,11 +191,19 @@ class ResearchNoteRepository:
             conditions.append(ResearchNote.group_id == group_id)
         if query:
             pattern = f"%{query.strip()}%"
-            conditions.append(or_(
-                ResearchNote.title.like(pattern),
-                ResearchNote.content.like(pattern),
-                ResearchNote.files_json.like(pattern),
-            ))
+            # 12 万行 LIKE '%kw%' 全表扫描实测 12.9s；FTS5 虚表命中后 1–14ms。
+            # 虚表不可用（未被构建、或查询含 FTS 语法字符）时退回 LIKE，不影响正确性。
+            match_ids = self._fulltext_match_ids(query)
+            if match_ids is not None:
+                # FTS 命中即按相关度取候选，不再叠加昂贵的 LIKE 扫描。
+                # 语义：关键词检索返回相关度最高的前 2000 条（分页在此基础上进行）。
+                conditions.append(ResearchNote.id.in_(match_ids))
+            else:
+                conditions.append(or_(
+                    ResearchNote.title.like(pattern),
+                    ResearchNote.content.like(pattern),
+                    ResearchNote.files_json.like(pattern),
+                ))
         if symbol:
             conditions.append(ResearchNote.symbol_codes.like(f"%{symbol.strip().upper()}%"))
         if digested is not None:
@@ -295,6 +303,40 @@ class ResearchNoteRepository:
                 select(ResearchNote.group_id, func.min(ResearchNote.created_at)).group_by(ResearchNote.group_id)
             ).all()
         return {str(group_id): created_at for group_id, created_at in rows if created_at is not None}
+
+    @staticmethod
+    def _fts_query(raw: str) -> Optional[str]:
+        """把用户输入转成安全的 FTS5 查询：只保留词元，全部按 AND 组合前缀匹配。"""
+        import re as _re
+
+        tokens = [t for t in _re.split(r"[\s,，、;；]+", str(raw or "").strip()) if t]
+        if not tokens:
+            return None
+        cleaned = []
+        for token in tokens:
+            # FTS5 语法字符和引号全部剔除，避免匹配表达式报错
+            safe = _re.sub(r'["*():^\-]', " ", token).strip()
+            if safe:
+                cleaned.append('"' + safe.replace('"', "") + '"*')
+        return " AND ".join(cleaned) if cleaned else None
+
+    def _fulltext_match_ids(self, raw: str) -> Optional[List[int]]:
+        """用 FTS5 取候选 id；不可用时返回 None 让调用方退回 LIKE。"""
+        expression = self._fts_query(raw)
+        if not expression:
+            return None
+        try:
+            with self.db.get_session() as session:
+                rows = session.execute(
+                    text(
+                        "SELECT rowid FROM research_notes_fts "
+                        "WHERE research_notes_fts MATCH :expr ORDER BY rank LIMIT 2000"
+                    ),
+                    {"expr": expression},
+                ).all()
+            return [int(row[0]) for row in rows]
+        except Exception:  # FTS 表未建或表达式不被接受
+            return None
 
     def update_sync_state(self, group_id: str, group_name: str, **fields: Any) -> None:
         with self.db.get_session() as session:

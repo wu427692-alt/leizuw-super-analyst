@@ -12,7 +12,9 @@ from sqlalchemy import create_engine, event as sqlalchemy_event, select
 from sqlalchemy.orm import sessionmaker
 
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
-from src.storage import MonitoringEventRecord, utc_naive_now
+from src.storage import (
+    MonitoringEventRecord, install_monitoring_event_symbol_projection, utc_naive_now,
+)
 from src.utils.financial_statement_selection import (
     financial_announcement_date, financial_calendar_date, financial_selection_rank,
 )
@@ -23,6 +25,7 @@ def repository(tmp_path):
     # Create only the table under test; never construct the configured global DB.
     engine = create_engine(f"sqlite:///{tmp_path / 'financial-versions.db'}", connect_args={"timeout": 10})
     MonitoringEventRecord.__table__.create(engine)
+    install_monitoring_event_symbol_projection(engine)
     repo = InvestmentMonitorRepository(SimpleNamespace(get_session=sessionmaker(bind=engine)))
     yield repo, engine
     engine.dispose()

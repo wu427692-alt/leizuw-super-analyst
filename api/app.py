@@ -253,6 +253,41 @@ def _schedule_stock_index_background_refresh(app: FastAPI, reason: str) -> None:
     )
 
 
+async def _keep_page_caches_warm_in_background(app: FastAPI) -> None:
+    """周期重跑页面关键聚合缓存，让它们永远不冷。
+
+    为什么需要这个：聚合缓存的新鲜期只有 120 秒，过期后 900 秒内还能返回旧数据
+    并后台刷新，再往后就彻底冷掉——下一次请求同步重建。线上实测冷态一次
+    自选工作台 3.5s、纪要洞察 1.3s，而热态 7–31ms。只用「启动预热」的话，
+    服务跑满 15 分钟后用户再次点开任何页面都在等重建。
+
+    这里改成持续保温（对标东方财富/同花顺的做法：数据一直在刷新，
+    用户请求永远只读到热数据）。默认 240 秒一轮，可用
+    APP_PAGE_CACHE_KEEP_WARM_SECONDS 调整，设 0 关闭。
+    """
+    try:
+        interval = float(os.getenv("APP_PAGE_CACHE_KEEP_WARM_SECONDS", "240"))
+    except ValueError:
+        interval = 240.0
+    if interval <= 0:
+        return
+    interval = max(60.0, min(interval, 3600.0))
+
+    from src.services.startup_warmup_service import StartupWarmupService
+
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            result = await run_in_threadpool(StartupWarmupService().keep_warm)
+            app.state.page_cache_keep_warm_result = result
+            if result.get("failed"):
+                logger.debug("Page cache keep-warm had failures: %s", result["failed"])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 保温失败绝不能影响请求
+            logger.warning("Page cache keep-warm failed: %s", type(exc).__name__)
+
+
 async def _warm_application_views_in_background(app: FastAPI) -> None:
     """Warm local SQLite/cache-backed screens after the server can start listening."""
     try:
@@ -262,6 +297,15 @@ async def _warm_application_views_in_background(app: FastAPI) -> None:
     try:
         await asyncio.sleep(delay)
         from src.services.startup_warmup_service import StartupWarmupService
+
+        # 先用页面关键缓存把关：用户最先点开的几个页面必须先热起来，
+        # 再跑其余 essential 任务（后者包含维护型工作，耗时较长）。
+        try:
+            app.state.page_cache_keep_warm_result = await run_in_threadpool(
+                StartupWarmupService().keep_warm,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Page cache warmup failed: %s", type(exc).__name__)
 
         result = await run_in_threadpool(StartupWarmupService().warm)
         app.state.startup_warmup_result = result
@@ -278,6 +322,10 @@ def _schedule_application_view_warmup(app: FastAPI) -> None:
     task = getattr(app.state, "startup_warmup_task", None)
     if task is None or task.done():
         app.state.startup_warmup_task = asyncio.create_task(_warm_application_views_in_background(app))
+    # 持续保温：仅启动预热不够，跑满 15 分钟后缓存会再次冷掉。
+    keep_task = getattr(app.state, "page_cache_keep_warm_task", None)
+    if keep_task is None or keep_task.done():
+        app.state.page_cache_keep_warm_task = asyncio.create_task(_keep_page_caches_warm_in_background(app))
 
 
 def _load_runtime_scheduler_args() -> dict:

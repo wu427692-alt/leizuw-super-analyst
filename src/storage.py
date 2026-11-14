@@ -68,7 +68,12 @@ SQLITE_RUNTIME_INDEX_MIGRATION = "2026-08-20-sqlite-runtime-index-optimization"
 MARKET_TICK_VOLUME_MIGRATION = "2026-08-20-second-level-volume-deltas"
 MONITOR_SOURCE_TELEMETRY_MIGRATION = "2026-08-20-monitor-source-run-telemetry"
 USER_SCOPE_MIGRATION = "2026-08-22-user-scope-columns"
+MONITOR_EVENT_SYMBOL_MIGRATION = "2026-11-15-monitoring-event-symbol-index"
 INTELLIGENCE_ITEM_NULL_SCOPE_VALUE = "__dsa_null_scope__"
+# Short per-transaction window for the one-off symbol projection backfill: SQLite
+# keeps its single writer lock only for one batch, so readers and collectors on
+# a WAL database are never blocked by a minutes-long migration.
+MONITOR_EVENT_SYMBOL_BACKFILL_BATCH = 20000
 
 # SQLAlchemy ORM 基类
 Base = declarative_base()
@@ -97,6 +102,19 @@ def normalize_daily_storage_code(value: str) -> str:
     if len(code) == 8 and code[:2] in {"SH", "SZ", "BJ"} and code[2:].isdigit():
         return code[2:]
     return code
+
+
+def event_symbol_tokens(symbol_codes: Optional[str]) -> List[str]:
+    """Split a stored ``monitoring_events.symbol_codes`` CSV into whole tokens.
+
+    The legacy reader matched ``LIKE '%token%'`` against
+    ``',' || symbol_codes || ','``, so only tokens delimited by commas on both
+    sides ever matched — never substrings and never padded values. Splitting on
+    commas and dropping empty tokens reproduces that predicate exactly: no
+    stripping, no case folding, no alias expansion. Callers still canonicalize
+    market codes before querying; this helper only projects stored bytes.
+    """
+    return sorted({token for token in str(symbol_codes or "").split(",") if token})
 
 
 # === 数据模型定义 ===
@@ -1077,6 +1095,37 @@ class MonitoringEventRecord(Base):
     )
 
 
+class MonitoringEventSymbolRecord(Base):
+    """Indexed symbol projection of one ``MonitoringEventRecord`` row.
+
+    Symbol-filtered event queries used to apply ``LIKE '%token%'`` to
+    ``',' || symbol_codes || ','``. A leading wildcard disables every index and
+    the predicate is evaluated on an expression rather than a column, so each
+    homepage card rescanned the whole 420k-row event table. One row per stored
+    CSV token keeps the whole-token semantics and turns the predicate into a
+    primary-key probe, with ``(symbol, event_id)`` for lookups by symbol.
+
+    The table is a projection, not an authority: ``symbol_codes`` on the event
+    row stays the stored fact. SQLite triggers installed alongside the table
+    (``install_monitoring_event_symbol_projection``) rewrite the projection on
+    every event insert, symbol change and delete, so no application writer has to
+    remember it. A ``WITHOUT ROWID`` table keeps the projection compact because
+    ``(event_id, symbol)`` already is the access path it is read by.
+    """
+
+    __tablename__ = 'monitoring_event_symbols'
+
+    # Soft reference: projecting symbols never blocks event writes, and the
+    # projection is rebuilt in the same transaction that changes an event.
+    event_id = Column(Integer, primary_key=True, autoincrement=False)
+    symbol = Column(String(32), primary_key=True)
+
+    __table_args__ = (
+        Index('ix_monitoring_event_symbols_symbol', 'symbol', 'event_id'),
+        {'sqlite_with_rowid': False},
+    )
+
+
 class MonitoringEventContentRecord(Base):
     """按需抽取的单条情报正文缓存。
 
@@ -1989,6 +2038,66 @@ class _DatabaseManagerMeta(type):
             return super().__call__(*args, **kwargs)
 
 
+# SQLite triggers are the single writer of the symbol projection: every insert,
+# symbol update or delete on ``monitoring_events`` keeps it consistent, including
+# writers in processes that were started before this projection existed. The
+# recursive CTE splits the stored CSV exactly like ``event_symbol_tokens`` does
+# (whole tokens between commas, empty tokens dropped, no whitespace stripping).
+_MONITORING_EVENT_SYMBOL_TRIGGER_DDL = (
+    # IF NOT EXISTS keeps concurrent process starts idempotent and read-only in
+    # the common case: no DDL write lock, no drop/create race between the API and
+    # collector processes. A future trigger change ships as a new migration.
+    """
+    CREATE TRIGGER IF NOT EXISTS monitoring_event_symbols_ai AFTER INSERT ON monitoring_events
+    WHEN coalesce(new.symbol_codes, '') != ''
+    BEGIN
+        INSERT OR IGNORE INTO monitoring_event_symbols(event_id, symbol)
+        WITH RECURSIVE split(value, rest) AS (
+            SELECT '', new.symbol_codes || ','
+            UNION ALL
+            SELECT substr(rest, 1, instr(rest, ',') - 1), substr(rest, instr(rest, ',') + 1)
+            FROM split WHERE rest != ''
+        )
+        SELECT new.id, value FROM split WHERE value != '';
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS monitoring_event_symbols_au AFTER UPDATE OF symbol_codes ON monitoring_events
+    WHEN coalesce(new.symbol_codes, '') != coalesce(old.symbol_codes, '')
+    BEGIN
+        DELETE FROM monitoring_event_symbols WHERE event_id = new.id;
+        INSERT OR IGNORE INTO monitoring_event_symbols(event_id, symbol)
+        WITH RECURSIVE split(value, rest) AS (
+            SELECT '', coalesce(new.symbol_codes, '') || ','
+            UNION ALL
+            SELECT substr(rest, 1, instr(rest, ',') - 1), substr(rest, instr(rest, ',') + 1)
+            FROM split WHERE rest != ''
+        )
+        SELECT new.id, value FROM split WHERE value != '';
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS monitoring_event_symbols_ad AFTER DELETE ON monitoring_events
+    BEGIN
+        DELETE FROM monitoring_event_symbols WHERE event_id = old.id;
+    END
+    """,
+)
+
+
+def install_monitoring_event_symbol_projection(engine) -> None:
+    """Create the event-symbol projection table and its maintenance triggers.
+
+    ``DatabaseManager`` runs this for every SQLite database it opens. Tests that
+    build a disposable engine and insert events directly call it as well, so the
+    projection invariant under test is the same one production relies on.
+    """
+    MonitoringEventSymbolRecord.__table__.create(engine, checkfirst=True)
+    with engine.begin() as connection:
+        for statement in _MONITORING_EVENT_SYMBOL_TRIGGER_DDL:
+            connection.exec_driver_sql(statement)
+
+
 class DatabaseManager(metaclass=_DatabaseManagerMeta):
     """
     数据库管理器 - 单例模式
@@ -2091,6 +2200,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_schema_migration_record()
             self._ensure_intelligence_items_unique_index()
             self._apply_sqlite_runtime_index_optimization()
+            self._ensure_monitoring_event_symbol_index()
             self._ensure_research_notes_fts()
 
             self._initialized = True
@@ -2109,6 +2219,112 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._SessionLocal = None
             self.__class__._instance = None
             raise
+
+    def _ensure_monitoring_event_symbol_index(self) -> None:
+        """Create and (re)fill the indexed symbol projection of monitoring events.
+
+        The projection replaces a ``LIKE '%token%'`` predicate over a
+        comma-concatenated expression, which forced a full scan of the event
+        table for every symbol-filtered query. SQLite triggers installed with the
+        table keep it current for all writers, so this migration only has to:
+
+        * create the table and triggers (idempotent, on every start);
+        * project existing rows once, in bounded batches (one commit per batch, so
+          a WAL database keeps taking collector writes instead of being locked by
+          one long transaction), then write the schema marker;
+        * on later starts, compare the projection with the event table and rebuild
+          when it drifted. Drift means events were written by a process that was
+          still running the pre-projection code, and a stale projection would
+          silently hide those events from every symbol-filtered reader.
+
+        Failures are not fatal: the projection is left incomplete and the next
+        start detects and repairs it.
+        """
+        if not self._is_sqlite_engine:
+            return
+        with self._SessionLocal() as session:
+            applied = session.get(DatabaseSchemaMigration, MONITOR_EVENT_SYMBOL_MIGRATION) is not None
+        install_monitoring_event_symbol_projection(self._engine)
+        if applied and not self._monitoring_event_symbols_incomplete():
+            return
+        projected = self._rebuild_monitoring_event_symbol_index()
+        with self._engine.begin() as connection:
+            connection.execute(sqlite_insert(DatabaseSchemaMigration).values(
+                version=MONITOR_EVENT_SYMBOL_MIGRATION,
+                description="Project monitoring event symbol_codes into an indexed token table",
+            ).on_conflict_do_nothing(index_elements=["version"]))
+        logger.info(
+            "情报符号索引%s完成：%s 个 (event, symbol) 投影",
+            "回填" if not applied else "重建", projected,
+        )
+
+    def _monitoring_event_symbols_incomplete(self) -> bool:
+        """Detect a stale or missing symbol projection with two cheap count probes."""
+        with self._engine.connect() as connection:
+            events = connection.exec_driver_sql(
+                "SELECT count(*) FROM monitoring_events "
+                "WHERE symbol_codes IS NOT NULL AND symbol_codes != ''"
+            ).scalar() or 0
+            projected = connection.exec_driver_sql(
+                "SELECT count(DISTINCT event_id) FROM monitoring_event_symbols"
+            ).scalar() or 0
+            if int(events) == int(projected):
+                return False
+            if int(projected) > int(events):
+                return True
+            # Fewer projected events can also mean an event whose CSV held only
+            # separators, so confirm with the anti-join before rebuilding.
+            missing = connection.exec_driver_sql(
+                "SELECT count(*) FROM monitoring_events e "
+                "WHERE e.symbol_codes IS NOT NULL AND e.symbol_codes != '' "
+                "AND NOT EXISTS (SELECT 1 FROM monitoring_event_symbols s WHERE s.event_id = e.id)"
+            ).scalar() or 0
+        return int(missing) > 0
+
+    def _rebuild_monitoring_event_symbol_index(self) -> int:
+        """Rewrite the whole symbol projection in short, resumable batches.
+
+        Pages over the existing ``(symbol_codes)`` covering index instead of
+        walking event ids: an id-ordered read has to pull whole event rows, and
+        those carry multi-kilobyte payloads, so reading 150k ``symbol_codes``
+        that way measured 25s on a 5 GB database versus ~1.3s from the covering
+        index. Rows are inserted in primary-key order through a plain executemany
+        (measured ~3x faster than multi-row VALUES here), and each page commits
+        on its own so collectors are never blocked for more than one batch.
+        """
+        table = MonitoringEventSymbolRecord.__table__
+        projected = 0
+        cursor_symbol, cursor_id = "", 0
+        clear = True
+        while True:
+            with self._engine.begin() as connection:
+                if clear:
+                    # Drop stale tokens once; a re-run after an interrupted
+                    # rebuild starts from an empty projection.
+                    connection.execute(delete(table))
+                    clear = False
+                rows = connection.exec_driver_sql(
+                    "SELECT rowid, symbol_codes FROM monitoring_events "
+                    "WHERE symbol_codes IS NOT NULL AND symbol_codes != '' "
+                    "AND (symbol_codes, rowid) > (?, ?) "
+                    "ORDER BY symbol_codes, rowid LIMIT ?",
+                    (cursor_symbol, cursor_id, MONITOR_EVENT_SYMBOL_BACKFILL_BATCH),
+                ).fetchall()
+                if not rows:
+                    break
+                payload = sorted(
+                    (int(event_id), token)
+                    for event_id, symbol_codes in rows
+                    for token in event_symbol_tokens(symbol_codes)
+                )
+                if payload:
+                    connection.exec_driver_sql(
+                        "INSERT OR IGNORE INTO monitoring_event_symbols(event_id, symbol) VALUES (?, ?)",
+                        payload,
+                    )
+                projected += len(payload)
+                cursor_symbol, cursor_id = str(rows[-1][1]), int(rows[-1][0])
+        return projected
 
     def _ensure_research_notes_fts(self) -> None:
         """建立纪要全文索引（FTS5）与同步触发器。

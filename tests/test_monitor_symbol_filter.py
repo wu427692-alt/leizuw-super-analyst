@@ -13,7 +13,7 @@ from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
 from src.services.investment_monitor_service import InvestmentMonitorService
 from src.storage import (
     DatabaseManager, MonitoringEventRecord, MonitoringSourceRecord, ResearchNote,
-    StockDaily, utc_naive_now,
+    StockDaily, install_monitoring_event_symbol_projection, utc_naive_now,
 )
 
 
@@ -22,6 +22,9 @@ def symbol_repository(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'symbol-filter.db'}")
     for model in (MonitoringEventRecord, MonitoringSourceRecord, ResearchNote, StockDaily):
         model.__table__.create(engine)
+    # Symbol filters resolve through the indexed projection; the disposable
+    # engine needs the same table + maintenance triggers production installs.
+    install_monitoring_event_symbol_projection(engine)
 
     class TemporaryDatabase:
         @contextmanager

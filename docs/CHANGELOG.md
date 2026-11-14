@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+- [改进] 首页看板符号过滤改用索引关联表：`monitoring_events.symbol_codes` 上的 `LIKE '%code%'` 拼接表达式无法走索引，每次全表扫描 42.7 万行且看板一页调用 3 次。新增 `monitoring_event_symbols` 投影表（触发器维护 + 启动自愈审计）后，那 3 条查询从 6.1 秒降到 0.25 秒，看板冷构建 10.5s→4.4s，慢 SQL 合计 8.5s→0.9s。
+- [改进] 页面首屏缓存持续保温：启动预热只跑一次，聚合缓存冷掉后下一次点击要同步重建（自选工作台 3.5s）。新增 `APP_PAGE_CACHE_KEEP_WARM_SECONDS`（默认 240，0 关闭）周期保温，轻任务每轮都跑、重任务轮转，只走非强制读路径不触发上游拉网。
+- [测试] 新增 `apps/dsa-web/scripts/visual_audit.mjs`（逐路由两主题截图并度量主题一致性、真实可滚动性、横向溢出、字号、面板数、控制台错误）与 `measure_page_load.mjs`（按页面统计 API 请求数与耗时）。
 - [修复] 行情接口离线过慢：`DataFetcherManager` 的实时行情/历史行情降级链加整体时间预算（`REALTIME_QUOTE_BUDGET_SECONDS` 默认 8s、`HISTORY_DATA_BUDGET_SECONDS` 默认 20s，<=0 不限制），预算耗尽立即返回当前最好结果并记录被跳过的数据源，不再各源串行各等超时（实测单次报价 35s、历史 87s）；同时用 `BaseFetcher.supports_capability()` 做能力声明，缺少 `get_realtime_quote` 的源（如 Baostock）被优雅跳过而不是 `AttributeError` 崩溃，`PytdxFetcher` 连接收敛为最多 `PYTDX_MAX_CONNECT_ATTEMPTS`（默认 3）台、单台 `PYTDX_CONNECT_TIMEOUT_SECONDS`（默认 3s）。
 - [测试] 新增一键发布门禁 `scripts/release_gate.sh`：把静态检查、后端全量 pytest、前端全量 vitest、界面规范（页面预算 + UI 治理断言）、构建、E2E 串成六层，支持 `--fast`（1+4+5）/`--full`（1–6）/`--layer=N`（单层调试）；失败打印失败用例名与单条复现命令，产出 `release-gate-report.md`，历史遗留失败白名单单列不阻断，E2E 无密码时跳过不报错。
 - [测试] 新增 E2E 主流程 `apps/dsa-web/e2e/user-flows.spec.ts`：桌面端登录→总览切 Tab→点快讯抽屉看正文且不跳路由、主要页面无横向溢出且可见文本 ≥12px；手机端 390×844 下 `/meeting` 渲染团队条与对话输入框、`/chat` 重定向保留 query、主要可点热区 ≥44×44。

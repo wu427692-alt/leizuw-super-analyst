@@ -9,7 +9,10 @@ from sqlalchemy import create_engine, event as sqlalchemy_event, select
 from sqlalchemy.orm import Session
 
 from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
-from src.storage import DatabaseManager, MonitoringEventRecord, MonitoringSourceRecord, utc_naive_now
+from src.storage import (
+    DatabaseManager, MonitoringEventRecord, MonitoringSourceRecord,
+    install_monitoring_event_symbol_projection, utc_naive_now,
+)
 
 
 @pytest.fixture()
@@ -18,6 +21,7 @@ def saved_sentiments(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'capital-sentiment.db'}")
     for model in (MonitoringSourceRecord, MonitoringEventRecord):
         model.__table__.create(engine)
+    install_monitoring_event_symbol_projection(engine)
     now = utc_naive_now()
     rows = [
         ("capital-bull", "capital_chip_snapshot", "bullish", 90, "unit.capital"),
