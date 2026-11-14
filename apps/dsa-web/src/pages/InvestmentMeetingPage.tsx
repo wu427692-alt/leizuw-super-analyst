@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MeetingChatHeader, type MeetingChatRole } from '../components/chat/MeetingChatHeader';
-import { useIsMobile } from '../hooks/useIsMobile';
 import { useAgentChatStore } from '../stores';
 import {
   findResearchSession,
@@ -214,31 +213,17 @@ const InvestmentMeetingMobile = () => {
 };
 
 const InvestmentMeetingPage = () => {
-  const [searchParams] = useSearchParams();
-  const isMobile = useIsMobile();
-  const taskId = searchParams.get('export_task') || '';
-  const embedParams = new URLSearchParams({ embed: '1' });
-  if (/^essay-export-[a-zA-Z0-9-]{1,100}$/.test(taskId)) embedParams.set('export_task', taskId);
-
   useEffect(() => {
     document.title = '投研团队 - 乐子乌智能投研平台';
   }, []);
 
-  if (isMobile) {
-    return <InvestmentMeetingMobile />;
-  }
-
-  // 桌面端整页内容由 /meeting-embed 独立渲染（见 docs/smart-research-team.md），
-  // 本页只负责外层容器：按应用外壳的 padding 与免责声明高度收敛，避免 iframe 把页面顶出视口。
-  return (
-    <div className="meeting-frame meeting-frame--desktop w-full overflow-hidden">
-      <iframe
-        src={`/meeting-embed?${embedParams}`}
-        title="投研团队"
-        className="h-full w-full border-0"
-      />
-    </div>
-  );
+  // 桌面端与手机端渲染同一个 React 对话界面。
+  //
+  // 历史实现把桌面端塞进 `/meeting-embed` iframe（指向 static/home.html 那个
+  // 2617 行的独立静态 SPA）。结果是「应用套应用」：外层侧栏 + iframe 内又一套
+  // 侧栏和手机底栏、主题由 iframe 自己决定（所以浅色主题下这里是黑的）、
+  // iframe 固定高度把页面滚动锁死。现在统一走同一个组件。
+  return <InvestmentMeetingMobile />;
 };
 
 export default InvestmentMeetingPage;
