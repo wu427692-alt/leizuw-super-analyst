@@ -2201,11 +2201,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_intelligence_items_unique_index()
             self._apply_sqlite_runtime_index_optimization()
             self._ensure_monitoring_event_symbol_index()
-            self._prune_quote_snapshot_feed_events()
             self._ensure_research_notes_fts()
 
             self._initialized = True
             logger.info(f"数据库初始化完成: {db_url}")
+            # 必须等 _initialized 置位后再跑：清理要构造 Repository，
+            # 而 Repository 依赖 DatabaseManager.get_instance() 的单例检查。
+            self._prune_quote_snapshot_feed_events()
 
             # 注册退出钩子，确保程序退出时关闭数据库连接
             atexit.register(DatabaseManager._cleanup_engine, self._engine)
