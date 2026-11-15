@@ -56,6 +56,38 @@ from src.storage import (
 
 logger = logging.getLogger(__name__)
 
+# 行情快照被当成新闻的问题：
+# RSS/NewsNow 上游里有「雪球个股页」这类订阅源，它们把个股行情当作 feed 条目输出——
+# 标题就是股票名（"中国石油"），摘要就是涨跌幅+市场（"2.99% SH"），
+# URL 是个股页（xueqiu.com/s/SH601857）而不是文章。
+# 这些条目没有任何新闻内容，进到快讯里就是噪音（线上 4000 条样本里约 33 条，
+# 历史累计 362 条）。这里在生成事件前统一剔除。
+_QUOTE_SNAPSHOT_SUMMARY = re.compile(r"^\s*[+-]?\d+(?:\.\d+)?%\s*[A-Za-z]{1,6}\s*$")
+_QUOTE_SNAPSHOT_URL_HINTS = ("xueqiu.com/s/", "/quote/", "/quotes/", "stockpage")
+_NEWS_PUNCTUATION = re.compile(r"[，。！？；：、“”‘’（）《》,.!?;:\"'()\[\]]")
+
+
+def _is_quote_snapshot_item(title: Any, summary: Any, url: Any) -> bool:
+    """判断一条 feed 条目是不是「行情快照」而不是新闻。
+
+    需要同时满足：摘要是纯涨跌幅、标题短且没有句子标点。
+    只要摘要不是这个形状就一律保留，避免误杀真实快讯。
+    """
+    summary_text = str(summary or "").strip()
+    if not summary_text or not _QUOTE_SNAPSHOT_SUMMARY.match(summary_text):
+        return False
+    title_text = str(title or "").strip()
+    if not title_text or len(title_text) > 12:
+        return False
+    if _NEWS_PUNCTUATION.search(title_text):
+        return False
+    # 个股页 URL 是强旁证；没有 URL 时上面的组合已经足够判定
+    url_text = str(url or "").lower()
+    if url_text and not any(hint in url_text for hint in _QUOTE_SNAPSHOT_URL_HINTS):
+        # URL 指向文章却只有涨跌幅摘要，更可能是解析错误的正文，交给别的逻辑处理
+        return False
+    return True
+
 _STOCK_WORKSPACE_CACHE_TTL_SECONDS = 120
 _STOCK_WORKSPACE_CACHE_STALE_SECONDS = 900
 _STOCK_OVERVIEW_CACHE_TTL_SECONDS = 30
@@ -3291,6 +3323,9 @@ class InvestmentMonitorService:
         names = {symbol: self._stock_name(symbol) for symbol in self.watchlist()}
         events = []
         for row in rows:
+            if _is_quote_snapshot_item(row.title, row.summary, row.url):
+                # 行情快照不是新闻：标题只是股票名、摘要是涨跌幅、URL 是个股页。
+                continue
             text = f"{row.title} {row.summary or ''}"
             symbols = self._symbols_for_text(text, names)
             if row.scope_type == "symbol" and row.scope_value:

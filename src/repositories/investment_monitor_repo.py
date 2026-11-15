@@ -1100,6 +1100,42 @@ class InvestmentMonitorRepository:
                 session.commit()
         return removed
 
+    def delete_quote_snapshot_feed_events(self, limit: int = 20000) -> int:
+        """删除历史上被误当新闻入库的「行情快照」条目。
+
+        RSS/NewsNow 上游里有雪球个股页这类订阅源，把个股行情当 feed 条目输出：
+        标题是股票名、摘要是「2.99% SH」、URL 是个股页。它们在生成事件的入口
+        已经被 `_is_quote_snapshot_item` 拦截，但存量数据仍会出现在快讯列表里，
+        这里按同样的判据一次性清掉。只删没有正文的纯行情行，不影响真实新闻。
+        """
+        from src.services.investment_monitor_service import _is_quote_snapshot_item
+
+        removed = 0
+        batch = 2000
+        with self.db.get_session() as session:
+            offset = 0
+            while offset < limit:
+                rows = session.execute(
+                    select(MonitoringEventRecord)
+                    .where(
+                        MonitoringEventRecord.source_key == "feeds.intelligence",
+                        MonitoringEventRecord.event_type == "news",
+                    )
+                    .order_by(MonitoringEventRecord.id)
+                    .offset(offset)
+                    .limit(batch)
+                ).scalars().all()
+                if not rows:
+                    break
+                offset += batch
+                for row in rows:
+                    if _is_quote_snapshot_item(row.title, row.summary, row.url):
+                        session.delete(row)
+                        removed += 1
+                if removed:
+                    session.commit()
+        return removed
+
     def delete_audio_memo_events_for_topics(self, topic_ids: Iterable[str]) -> int:
         """Remove both native and essay projections for deleted audio memos."""
         targets = {str(value).strip() for value in topic_ids if str(value).strip()}

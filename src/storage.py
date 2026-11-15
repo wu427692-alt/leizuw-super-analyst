@@ -2201,6 +2201,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_intelligence_items_unique_index()
             self._apply_sqlite_runtime_index_optimization()
             self._ensure_monitoring_event_symbol_index()
+            self._prune_quote_snapshot_feed_events()
             self._ensure_research_notes_fts()
 
             self._initialized = True
@@ -2438,6 +2439,26 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                     connection.exec_driver_sql(
                         f"ALTER TABLE zsxq_sync_states ADD COLUMN {name} TEXT DEFAULT '{{}}'"
                     )
+
+    def _prune_quote_snapshot_feed_events(self) -> None:
+        """一次性清掉历史误入库的「行情快照」新闻。
+
+        RSS/NewsNow 上游里的雪球个股页会把行情当 feed 条目输出（标题=股票名、
+        摘要="2.99% SH"、URL=个股页）。生成入口已加拦截，存量数据在这里清一次。
+        用环境变量标记避免每次启动都全表扫描；默认开启，设 0 可跳过。
+        """
+        import os
+
+        if os.getenv("PRUNE_QUOTE_SNAPSHOT_EVENTS", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return
+        try:
+            from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
+
+            removed = InvestmentMonitorRepository().delete_quote_snapshot_feed_events()
+            if removed:
+                logger.info("清理历史行情快照新闻 %s 条", removed)
+        except Exception as exc:  # noqa: BLE001 - 清理失败不能阻止启动
+            logger.warning("清理行情快照新闻失败，已跳过: %s", exc)
 
     def _ensure_schema_migration_record(self) -> None:
         session = self._SessionLocal()
