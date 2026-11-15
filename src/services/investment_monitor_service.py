@@ -70,6 +70,7 @@ _QUOTE_SNAPSHOT_SUMMARY = re.compile(
     re.IGNORECASE,
 )
 _QUOTE_SNAPSHOT_URL_HINTS = ("xueqiu.com/s/", "/quote/", "/quotes/", "stockpage")
+_QUOTE_SNAPSHOT_TITLE_MAX_LENGTH = 30
 _NEWS_PUNCTUATION = re.compile(r"[，。！？；：、“”‘’（）《》,.!?;:\"'()\[\]]")
 
 
@@ -83,7 +84,11 @@ def _is_quote_snapshot_item(title: Any, summary: Any, url: Any) -> bool:
     if not summary_text or not _QUOTE_SNAPSHOT_SUMMARY.match(summary_text):
         return False
     title_text = str(title or "").strip()
-    if not title_text or len(title_text) > 12:
+    # 上限 30 而不是更短：海外 ETF 的名字本身就长
+    # （「中概互联网指数ETF-KraneShares」「半导体板块指数ETF-iShares」），
+    # 太短的阈值会让它们漏过去。真正的新闻标题几乎都带句读或更长，
+    # 而「摘要恰好是纯涨跌幅+市场」这个条件本身已经足够强。
+    if not title_text or len(title_text) > _QUOTE_SNAPSHOT_TITLE_MAX_LENGTH:
         return False
     if _NEWS_PUNCTUATION.search(title_text):
         return False

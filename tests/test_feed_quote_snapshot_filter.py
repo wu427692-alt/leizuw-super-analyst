@@ -23,6 +23,10 @@ class TestQuoteSnapshotDetection:
         ("微创医疗", "null% HK", "https://xueqiu.com/s/00853"),
         ("Anthropic", "null% NASDAQ", "https://xueqiu.com/s/ANT"),
         ("某公司", "None% SH", "https://xueqiu.com/s/SH1"),
+        # 海外 ETF 名字本身就长，不能被标题长度阈值放过
+        ("巴西ETF-iShares MSCI", "1.7682% ARCA", "https://xueqiu.com/s/BRAZ"),
+        ("中概互联网指数ETF-KraneShares", "-2.4719% ARCA", "https://xueqiu.com/s/KWEB"),
+        ("半导体3X多-Direxion", "22.25% ARCA", "https://xueqiu.com/s/SOXL"),
     ])
     def test_detects_quote_snapshots(self, title, summary, url):
         assert _is_quote_snapshot_item(title, summary, url) is True
@@ -40,6 +44,9 @@ class TestQuoteSnapshotDetection:
         ("", "2.99% SH", "https://xueqiu.com/s/SH"),
         # 标题过长
         ("中国石油天然气股份有限公司发布年度业绩预告说明", "2.99% SH", "https://xueqiu.com/s/SH"),
+        # 长标题 + 无涨跌幅摘要：不能因为标题长就误判
+        ("下周资本市场大事提醒：国家统计局将公布一系列重磅数据", "", None),
+        ("【环球下周看点】英伟达迎财报日大考 Anthropic、GTA VI同日上市", "", None),
         # 正文里出现 Nullmax（公司名）不能被当成 null% 快照
         ("【黑芝麻智能发布中期业绩】与元戎、Nullmax等合作", "与元戎、Nullmax等算法合作伙伴联合开发", None),
     ])
