@@ -163,6 +163,23 @@ _EVENT_ORIGIN_APIS: Dict[str, Sequence[str]] = {
     "stock_forum_post": ("mguba_public_list",),
 }
 
+def _cadence_env(name: str, default: int) -> int:
+    """允许用环境变量覆盖某个源的轮询间隔（秒）。
+
+    实测 RSS/NewsNow 每 15 秒跑一轮、单轮要 14.8 秒（要拉 8 个远端 feed），
+    光这一个源就吃掉了 worker 整个核。新闻类数据 60 秒足够"近实时"，
+    所以默认值调成 60，并留出环境变量便于按需再调。
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return default
+    return max(10, min(value, 3600))
+
+
 def _source(source_key: str, name: str, adapter_type: str, provider: str, category: str,
             cadence: int, *, level: str = "licensed", apis: Sequence[str] = (),
             config: Optional[Dict[str, Any]] = None, enabled: bool = True) -> Dict[str, Any]:
@@ -241,7 +258,8 @@ BUILTIN_MONITORING_SOURCES = [
     # 仅用于显式手动查询，默认不再后台采集；存量由 storage 的一次性迁移停用+清理。
     _source("eastmoney.guba_posts", "东方财富股吧公开股评", "html", "eastmoney_guba", "comment", 30,
             level="unverified", apis=("mguba_public_list",), enabled=False),
-    _source("feeds.intelligence", "RSS / NewsNow 媒体流", "feed", "configurable", "news", 15,
+    _source("feeds.intelligence", "RSS / NewsNow 媒体流", "feed", "configurable", "news",
+            _cadence_env("MONITOR_FEEDS_INTERVAL_SECONDS", 60),
             level="reported", apis=("rss", "atom", "newsnow")),
 ]
 

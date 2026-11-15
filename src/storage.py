@@ -3019,6 +3019,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                     cursor.execute("PRAGMA journal_mode=WAL")
                     cursor.execute("PRAGMA synchronous=NORMAL")
                     cursor.execute("PRAGMA wal_autocheckpoint=1000")
+                    # 不加这个上限时 WAL 永不截断（SQLite 默认 -1），一旦有大批量写入
+                    # 就会一路涨上去——生产上实测涨到 905 MB，既占磁盘也让读变慢。
+                    # 设上限后每次 checkpoint 会把 WAL 截回该尺寸附近（实测 4.4 MB）。
+                    try:
+                        wal_limit_kib = max(1024, min(int(os.getenv("SQLITE_WAL_SIZE_LIMIT_KIB", "65536")), 1_048_576))
+                    except ValueError:
+                        wal_limit_kib = 65_536
+                    cursor.execute(f"PRAGMA journal_size_limit={wal_limit_kib * 1024}")
                     cursor.execute(f"PRAGMA cache_size=-{cache_kib}")
                     cursor.execute(f"PRAGMA mmap_size={mmap_mb * 1024 * 1024}")
                 cursor.execute("PRAGMA foreign_keys=ON")

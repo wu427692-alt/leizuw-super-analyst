@@ -285,3 +285,22 @@ ICLOUD_KNOWLEDGE_RETENTION=12
 - `GET /api/v1/investment-monitor/cloud/snapshots/{filename}/verify`：重新计算校验值并执行 SQLite 完整性检查。
 
 不要将 `DATABASE_PATH` 直接指向 iCloud Drive。iCloud Documents 会产生离线版本和冲突，SQLite WAL 也需要协调多个关联文件；本功能始终让活动库保持本地单写者，再向 iCloud 发布不可变快照。当前属于备份、跨设备查阅和灾备模式，不提供多设备同时写入。真正的增量双向同步需要为桌面应用配置 Apple Developer Team、iCloud entitlement 和 CloudKit Container，再实现记录级变更合并。
+
+## 资源占用与轮询间隔
+
+Mac mini 上 worker 曾长期跑满单核，根因是 RSS/NewsNow 源的轮询成本：
+
+| 源 | 间隔 | 单轮耗时 | 每小时 CPU |
+| --- | --- | --- | --- |
+| `feeds.intelligence`（8 个远端 feed） | 15s | 14.8s | ~3,556 秒 |
+
+15 秒间隔配 14.8 秒耗时等于 100% 占空比。调整后：
+
+- 停用产出「用户明确不要的内容」的 feed：`SEC Latest Filings`、`HKEX Market News`、
+  `MarketWatch Top Stories`（纯英文）与 `NewsNow 雪球热门股票`（行情快照来源），
+  启用源从 8 降到 4，单轮耗时 14.8s → 5.1s
+- 间隔改为 `MONITOR_FEEDS_INTERVAL_SECONDS`（默认 60）：worker CPU 94% → 约 30%
+- 停用已死监测源：`sse.announcements` / `szse.announcements`（数据停在 9 月）、
+  `akshare.stock_comments`（每次 25 秒超时）
+- SQLite 的 `journal_size_limit` 之前是 -1（WAL 永不截断），实测 WAL 涨到 905 MB；
+  截断后 4.4 MB
