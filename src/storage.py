@@ -69,6 +69,11 @@ MARKET_TICK_VOLUME_MIGRATION = "2026-08-20-second-level-volume-deltas"
 MONITOR_SOURCE_TELEMETRY_MIGRATION = "2026-08-20-monitor-source-run-telemetry"
 USER_SCOPE_MIGRATION = "2026-08-22-user-scope-columns"
 MONITOR_EVENT_SYMBOL_MIGRATION = "2026-11-15-monitoring-event-symbol-index"
+MONITOR_EVENT_DEDUPE_KEY_MIGRATION = "2026-11-15-monitoring-event-dedupe-key"
+REJECTED_MONITOR_SOURCE_MIGRATION = "2026-11-15-rejected-monitor-source-disabled"
+REJECTED_MONITOR_NOISE_MIGRATION = "2026-11-15-rejected-monitor-noise-prune"
+# 用户明确不要的监测源（东方财富股吧帖子）：默认停采，并把存量整源行置为停用。
+REJECTED_MONITORING_SOURCE_KEYS = ("eastmoney.guba_posts",)
 INTELLIGENCE_ITEM_NULL_SCOPE_VALUE = "__dsa_null_scope__"
 # Short per-transaction window for the one-off symbol projection backfill: SQLite
 # keeps its single writer lock only for one batch, so readers and collectors on
@@ -1086,12 +1091,17 @@ class MonitoringEventRecord(Base):
     event_at = Column(DateTime, nullable=False, index=True)
     ingested_at = Column(DateTime, default=utc_naive_now, nullable=False, index=True)
     updated_at = Column(DateTime, default=utc_naive_now, onupdate=utc_naive_now, nullable=False, index=True)
+    # 新闻「同标题多源重复」的归一化标题哈希（见
+    # ``investment_monitor_repo.news_dedupe_key``）。只有 news / long_news 有值，
+    # 其余事件为 NULL；写入路径用 (dedupe_key, event_at) 做等值探测。
+    dedupe_key = Column(String(40), nullable=True)
 
     __table_args__ = (
         UniqueConstraint('source_key', 'external_id', name='uix_monitoring_event_source_external'),
         Index('ix_monitoring_event_perspective_time', 'perspective', 'event_at'),
         Index('ix_monitoring_event_type_time', 'event_type', 'event_at'),
         Index('ix_monitoring_event_source_time', 'source_key', 'event_at'),
+        Index('ix_monitoring_event_dedupe_time', 'dedupe_key', 'event_at'),
     )
 
 
@@ -2201,6 +2211,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_intelligence_items_unique_index()
             self._apply_sqlite_runtime_index_optimization()
             self._ensure_monitoring_event_symbol_index()
+            self._ensure_monitoring_event_dedupe_key()
             self._ensure_research_notes_fts()
 
             self._initialized = True
@@ -2208,6 +2219,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             # 必须等 _initialized 置位后再跑：清理要构造 Repository，
             # 而 Repository 依赖 DatabaseManager.get_instance() 的单例检查。
             self._prune_quote_snapshot_feed_events()
+            self._disable_rejected_monitor_source()
+            self._prune_rejected_monitor_noise()
 
             # 注册退出钩子，确保程序退出时关闭数据库连接
             atexit.register(DatabaseManager._cleanup_engine, self._engine)
@@ -2260,6 +2273,81 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "情报符号索引%s完成：%s 个 (event, symbol) 投影",
             "回填" if not applied else "重建", projected,
         )
+
+    def _ensure_monitoring_event_dedupe_key(self) -> None:
+        """Add the news dedupe-key column/index and backfill the recent window.
+
+        The write path only compares a new news event against events inside the
+        12-hour dedupe window, so 8 days of headroom is more than any fresh sync
+        (or explicit historical backfill) can need. Older rows would never become
+        candidates, and skipping them keeps startup from running Python title
+        normalization over the whole news history.
+        """
+        if not self._is_sqlite_engine:
+            return
+        table_name = MonitoringEventRecord.__tablename__
+        existing = {column["name"] for column in inspect(self._engine).get_columns(table_name)}
+        if "dedupe_key" not in existing:
+            with self._engine.begin() as connection:
+                connection.exec_driver_sql(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN "dedupe_key" VARCHAR(40)'
+                )
+        with self._engine.begin() as connection:
+            connection.exec_driver_sql(
+                'CREATE INDEX IF NOT EXISTS ix_monitoring_event_dedupe_time '
+                f'ON "{table_name}" ("dedupe_key", "event_at")'
+            )
+        with self._SessionLocal() as session:
+            if session.get(DatabaseSchemaMigration, MONITOR_EVENT_DEDUPE_KEY_MIGRATION) is not None:
+                return
+        from src.repositories.investment_monitor_repo import news_dedupe_key
+
+        cutoff = utc_naive_now() - timedelta(days=8)
+        backfilled = 0
+        cursor = 0
+        while True:
+            with self._engine.begin() as connection:
+                rows = connection.execute(text(
+                    "SELECT id, title, actors_json FROM monitoring_events "
+                    "WHERE event_type IN ('news', 'long_news') AND dedupe_key IS NULL "
+                    "AND event_at >= :cutoff AND id > :cursor ORDER BY id LIMIT 2000"
+                ), {"cutoff": cutoff, "cursor": cursor}).fetchall()
+                if not rows:
+                    break
+                cursor = int(rows[-1][0])
+                updates = []
+                for row in rows:
+                    key = news_dedupe_key(row[1], row[2])
+                    if key:
+                        updates.append({"event_id": int(row[0]), "key": key})
+                if updates:
+                    connection.execute(text(
+                        "UPDATE monitoring_events SET dedupe_key = :key WHERE id = :event_id"
+                    ), updates)
+                backfilled += len(updates)
+        self._mark_schema_migration(
+            MONITOR_EVENT_DEDUPE_KEY_MIGRATION,
+            "Add and backfill the news dedupe key used by multi-source deduplication",
+        )
+        logger.info("情报新闻去重键回填完成：%s 行（近 8 天窗口）", backfilled)
+
+    def _mark_schema_migration(self, version: str, description: str) -> None:
+        """Record a completed one-off migration (works on SQLite and Postgres)."""
+        values = {"version": version, "description": description}
+        with self._SessionLocal() as session:
+            try:
+                if self._is_sqlite_engine:
+                    statement = sqlite_insert(DatabaseSchemaMigration).values(**values)
+                    statement = statement.on_conflict_do_nothing(index_elements=["version"])
+                    session.execute(statement)
+                else:
+                    session.add(DatabaseSchemaMigration(**values))
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+            except Exception:
+                session.rollback()
+                raise
 
     def _monitoring_event_symbols_incomplete(self) -> bool:
         """Detect a stale or missing symbol projection with two cheap count probes."""
@@ -2461,6 +2549,69 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 logger.info("清理历史行情快照新闻 %s 条", removed)
         except Exception as exc:  # noqa: BLE001 - 清理失败不能阻止启动
             logger.warning("清理行情快照新闻失败，已跳过: %s", exc)
+
+    def _disable_rejected_monitor_source(self) -> None:
+        """一次性停用用户明确不要的监测源（东方财富股吧帖子）。
+
+        源声明里已把 ``enabled`` 默认改成 False，这一步只处理存量库：生产库该行
+        仍是 1，不停用的话采集容器会继续按旧逻辑采集。只做一次并写迁移标记——
+        之后有人显式重新启用是人的决定，不再覆盖。
+        """
+        with self._SessionLocal() as session:
+            if session.get(DatabaseSchemaMigration, REJECTED_MONITOR_SOURCE_MIGRATION) is not None:
+                return
+        try:
+            with self._engine.begin() as connection:
+                for source_key in REJECTED_MONITORING_SOURCE_KEYS:
+                    result = connection.execute(text(
+                        "UPDATE monitoring_sources SET enabled = 0, updated_at = :now "
+                        "WHERE source_key = :source_key AND enabled != 0"
+                    ), {"now": utc_naive_now(), "source_key": source_key})
+                    if result.rowcount:
+                        logger.info("停用用户明确不要的监测源 %s：%s 行", source_key, result.rowcount)
+        except Exception as exc:  # noqa: BLE001 - 停用失败不能阻止启动
+            logger.warning("停用被拒绝的监测源失败，已跳过: %s", exc)
+            return
+        self._mark_schema_migration(
+            REJECTED_MONITOR_SOURCE_MIGRATION,
+            "Disable the monitoring source the user explicitly rejected (guba posts)",
+        )
+
+    def _prune_rejected_monitor_noise(self) -> None:
+        """一次性清掉用户明确不要的三类情报事件存量。
+
+        东方财富股吧帖子 / 纯英文标题 / 同标题多源重复。生成入口已经拦截，这里
+        清存量：要对全部新闻做 Python 侧归一化并删除十万级行，所以只跑一次
+        （schema 迁移标记），并且**默认不执行，需要显式设置
+        ``PRUNE_REJECTED_MONITOR_NOISE=1``**。
+
+        为什么不像 ``_prune_quote_snapshot_feed_events`` 那样默认开启：那条清理
+        只影响 362 行，误触代价小；这条会删掉十万级事件，而任何以默认
+        ``DATABASE_PATH`` 初始化 DatabaseManager 的测试/脚本都会触发它
+        （实测本机跑测试时就把开发库清了）。破坏性迁移必须是显式动作。
+        """
+        if os.getenv("PRUNE_REJECTED_MONITOR_NOISE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            return
+        with self._SessionLocal() as session:
+            if session.get(DatabaseSchemaMigration, REJECTED_MONITOR_NOISE_MIGRATION) is not None:
+                return
+        try:
+            from src.repositories.investment_monitor_repo import InvestmentMonitorRepository
+
+            result = InvestmentMonitorRepository().delete_rejected_monitoring_noise()
+            logger.info(
+                "清理用户明确不要的情报噪音：股吧 %s 条、纯英文标题 %s 条、"
+                "同标题重复 %s 条，实际删除 %s 条",
+                result.get("guba"), result.get("english"), result.get("duplicate"),
+                result.get("removed"),
+            )
+        except Exception as exc:  # noqa: BLE001 - 清理失败不能阻止启动
+            logger.warning("清理情报噪音失败，已跳过（下次启动重试）: %s", exc)
+            return
+        self._mark_schema_migration(
+            REJECTED_MONITOR_NOISE_MIGRATION,
+            "Prune monitoring events the user explicitly rejected (guba/English/duplicates)",
+        )
 
     def _ensure_schema_migration_record(self) -> None:
         session = self._SessionLocal()

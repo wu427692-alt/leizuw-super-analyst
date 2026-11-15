@@ -88,6 +88,21 @@ def _is_quote_snapshot_item(title: Any, summary: Any, url: Any) -> bool:
         return False
     return True
 
+
+# 纯英文标题（港交所 RSS 的英文公告这类）用户明确不要。判据刻意保守：
+# 一个中文字符都没有、且长度超过 20 才算——中英混排（「AI交易依然颠簸」）
+# 和纯英文短标题（「AAPL」「HKEX Q1」）都保留。
+_ENGLISH_ONLY_TITLE_MIN_LENGTH = 20
+_CJK_CHARACTER = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def _is_english_only_title(value: Any) -> bool:
+    """标题里一个中文都没有且足够长，才判为纯英文（可安全丢弃）。"""
+    text = str(value or "").strip()
+    if len(text) <= _ENGLISH_ONLY_TITLE_MIN_LENGTH:
+        return False
+    return _CJK_CHARACTER.search(text) is None
+
 _STOCK_WORKSPACE_CACHE_TTL_SECONDS = 120
 _STOCK_WORKSPACE_CACHE_STALE_SECONDS = 900
 _STOCK_OVERVIEW_CACHE_TTL_SECONDS = 30
@@ -204,13 +219,17 @@ BUILTIN_MONITORING_SOURCES = [
     _source("zsxq.essays", "知识星球小作文（待核验）", "mcp", "zsxq", "essay", 10,
             level="unverified", apis=("zsxq_mcp",)),
     # stock_comment_em downloads the full A-share universe and is not a real
-    # comment stream.  Keep the adapter available for explicit/manual use but
-    # do not run it in the background; genuine watchlist comments are provided
-    # by the bounded eastmoney.guba_posts adapter below.
+    # comment stream.  Keep the adapter available for explicit/manual use but do
+    # not run it in the background. Genuine watchlist comments came from the
+    # bounded eastmoney.guba_posts adapter, which is now disabled by default
+    # because the user explicitly rejected 股吧 posts as noise.
     _source("akshare.stock_comments", "东方财富千股千评指标", "akshare", "eastmoney", "comment", 600,
             level="reported", apis=("stock_comment_em",), enabled=False),
+    # 用户明确不要东方财富股吧帖子：这类内容是零信息量情绪贴（「今天割肉了，
+    # 好难受」「破防了，1折起步」），实测占监测源里最大的一块。适配器保留下来
+    # 仅用于显式手动查询，默认不再后台采集；存量由 storage 的一次性迁移停用+清理。
     _source("eastmoney.guba_posts", "东方财富股吧公开股评", "html", "eastmoney_guba", "comment", 30,
-            level="unverified", apis=("mguba_public_list",)),
+            level="unverified", apis=("mguba_public_list",), enabled=False),
     _source("feeds.intelligence", "RSS / NewsNow 媒体流", "feed", "configurable", "news", 15,
             level="reported", apis=("rss", "atom", "newsnow")),
 ]
@@ -2125,6 +2144,31 @@ class InvestmentMonitorService:
                     "received": 0, "duration_ms": duration_ms, "error": safe_error}
 
     def _events_for_source(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """采集公共出口：先按各源生成事件，再统一剔除用户明确不要的噪音。
+
+        放在这里而不是每个适配器里，是为了让 tushare 快讯、长篇新闻、RSS /
+        NewsNow 媒体流这三条新闻路径共用同一套判据，新来源自动生效。
+        """
+        return self._drop_rejected_news_events(self._fetch_events_for_source(source))
+
+    @staticmethod
+    def _drop_rejected_news_events(events: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """丢掉纯英文标题的新闻事件（港交所 RSS 英文公告这类）。"""
+        kept: List[Dict[str, Any]] = []
+        dropped = 0
+        for event in events:
+            if (
+                event.get("event_type") in {"news", "long_news"}
+                and _is_english_only_title(event.get("title"))
+            ):
+                dropped += 1
+                continue
+            kept.append(event)
+        if dropped:
+            logger.info("[investment-monitor] 过滤纯英文标题新闻 %s 条", dropped)
+        return kept
+
+    def _fetch_events_for_source(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
         key = source["source_key"]
         if key == "realtime.quotes":
             return self._realtime_quote_events(source)

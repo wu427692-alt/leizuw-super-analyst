@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import hashlib
 import html
 import json
 import re
@@ -56,6 +57,35 @@ _ANNOUNCEMENT_SOURCE_KEYS = (
     "szse.announcements",
 )
 _SHANGHAI = timezone(timedelta(hours=8))
+
+# 用户明确不要「同一篇新闻多源重复」。判据是归一化标题相同 + 时间相邻。
+#
+# 时间窗口刻意收在 12 小时而不是「近 7 天」：同一篇新闻被多个来源转载几乎都发生
+# 在分钟级（生产库实测跨源重复的时间差 p90 = 0.4 小时），而盘面/策划类标题
+# （「周五美股盘前你需要了解的全球要闻」「A股开盘：三大指数集体低开」
+# 「南向资金净买入额达10亿港元」）每周/每天都会以完全相同的标题重新发布。
+# 用 7 天窗口会把这类真实的不同事件当重复删掉——生产库副本实测会多删 1,470 条，
+# 其中 1,325 条是同源周期性栏目。窗口改为 12 小时后，这类周期性标题（间隔 ≥ 24h）
+# 全部保留，只合并真正的重复转载。
+_NEWS_EVENT_TYPES = ("news", "long_news")
+_NEWS_DEDUPE_WINDOW = timedelta(hours=12)
+# 归一化后不足 12 个字符的标题（「早盘」「涨停」这类）没有区分度，不参与去重。
+_NEWS_DEDUPE_MIN_LENGTH = 12
+# 同标题重复时保留谁：主流财经媒体 > tushare 长篇新闻 > RSS/NewsNow。
+# 未知来源用默认值，保证不会被 RSS/NewsNow 反超。
+_NEWS_SOURCE_AUTHORITY = {
+    "tushare.news.cls": 100,
+    "tushare.news.yicai": 95,
+    "tushare.news.sina": 90,
+    "tushare.news.eastmoney": 85,
+    "tushare.news.wallstreetcn": 80,
+    "tushare.news.10jqka": 75,
+    "tushare.long_news": 50,
+    "feeds.intelligence": 20,
+}
+_NEWS_SOURCE_AUTHORITY_DEFAULT = 60
+# 用户已明确不要的监测源（东方财富股吧帖子）：停采，存量也清理。
+_REJECTED_MONITORING_SOURCE_KEYS = ("eastmoney.guba_posts",)
 # A modeled cost/profit distribution is not a directional investment opinion.
 # Project legacy snapshot labels consistently at read time, without rewriting
 # saved rows or changing sentiment for news, research or other event types.
@@ -137,6 +167,75 @@ def _load(value: Optional[str], fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def normalized_title_key(value: Any, actors_json: Any = "[]") -> str:
+    """把标题归一成可比较的 key，公告与新闻共用同一套实现。
+
+    依次做 HTML 反转义、去标签、NFKC、casefold、去空白，并剥离 ``actors``
+    里记录的来源名前缀（``新华网:`` 这类），让同一篇内容在不同来源的标题
+    写法落到同一个 key 上。新闻多源去重直接复用它，不另写平行实现。
+    """
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]*>", "", text)
+    text = unicodedata.normalize("NFKC", text).casefold()
+    text = re.sub(r"\s+", "", text)
+    actors = _load(actors_json, []) if isinstance(actors_json, str) else actors_json
+    if isinstance(actors, list):
+        for actor in actors:
+            actor_text = html.unescape(str(actor or ""))
+            actor_text = unicodedata.normalize("NFKC", actor_text).casefold()
+            actor_text = re.sub(r"\s+", "", actor_text)
+            prefix = f"{actor_text}:"
+            if actor_text and text.startswith(prefix):
+                return text[len(prefix):]
+    return text
+
+
+def news_dedupe_key(title: Any, actors_json: Any = "[]") -> Optional[str]:
+    """新闻去重键：归一化标题的哈希；归一化后太短时返回 None（不参与去重）。
+
+    存哈希而不是整段中文标题，是为了让 ``monitoring_events.dedupe_key`` 上的
+    索引保持小、与文本排序规则无关；只做等值比较，32 位十六进制足够。
+    """
+    normalized = normalized_title_key(title, actors_json)
+    if len(normalized) < _NEWS_DEDUPE_MIN_LENGTH:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+
+
+def is_news_event_type(value: Any) -> bool:
+    """新闻类事件（快讯 / 长篇新闻）才参与英文过滤与多源去重。"""
+    return str(value or "") in _NEWS_EVENT_TYPES
+
+
+def news_source_authority(source_key: Any) -> int:
+    """来源权威度：同标题多来源重复时决定保留哪一条。"""
+    return _NEWS_SOURCE_AUTHORITY.get(
+        str(source_key or "").strip(), _NEWS_SOURCE_AUTHORITY_DEFAULT,
+    )
+
+
+def news_dedupe_window_match(left: Any, right: Any) -> bool:
+    """两个事件时间是否落在同一个去重窗口内（``_NEWS_DEDUPE_WINDOW``）。
+
+    任一侧不是 datetime 时返回 False：宁可多留一条，也不要有未定义时间的事件
+    被当成重复删掉。
+    """
+    if not isinstance(left, datetime) or not isinstance(right, datetime):
+        return False
+    try:
+        return abs(left - right) <= _NEWS_DEDUPE_WINDOW
+    except TypeError:
+        # naive / aware 混用：这两个列在库里都是 naive UTC，出现混用说明调用方
+        # 传错了数据，保守跳过比较。
+        return False
+
+
+def news_dedupe_keeper_rank(source_key: Any, ingested_at: Any, event_id: Any) -> Tuple[int, datetime, int]:
+    """同标题重复组里「该留哪一条」的排序键：越权威越前，同权威越早入库越前。"""
+    ingested = ingested_at if isinstance(ingested_at, datetime) else datetime.max
+    return (-news_source_authority(source_key), ingested, int(event_id or 0))
 
 
 class InvestmentMonitorRepository:
@@ -720,6 +819,7 @@ class InvestmentMonitorRepository:
                 self._index_announcement_candidate(
                     row, announcement_by_alias, announcement_by_external, announcement_by_content,
                 )
+            news_dedupe_candidates = self._news_dedupe_candidates(session, serialized_events)
 
             for serialized in serialized_events:
                 event_key = (serialized["source_key"], serialized["external_id"])
@@ -738,6 +838,14 @@ class InvestmentMonitorRepository:
                             announcement_by_external, announcement_by_content,
                         )
                         continue
+                    duplicate = self._news_duplicate_match(serialized, news_dedupe_candidates)
+                    if duplicate is not None:
+                        # 同一篇新闻已经在窗口内入库：不再新增一条，只把新来源
+                        # 记进 _source_provenance，保留原 ID，列表不会抖动。
+                        if self._append_announcement_provenance(duplicate, serialized):
+                            duplicate.updated_at = utc_naive_now()
+                            updated += 1
+                        continue
                     existing = MonitoringEventRecord(**serialized)
                     session.add(existing)
                     existing_by_key[event_key] = existing
@@ -745,6 +853,10 @@ class InvestmentMonitorRepository:
                         existing, announcement_by_alias,
                         announcement_by_external, announcement_by_content,
                     )
+                    if serialized.get("dedupe_key"):
+                        news_dedupe_candidates.setdefault(
+                            serialized["dedupe_key"], [],
+                        ).append(existing)
                     created += 1
                     continue
                 self._preserve_announcement_provenance(existing, serialized)
@@ -760,6 +872,59 @@ class InvestmentMonitorRepository:
                     updated += 1
             session.commit()
         return {"created": created, "updated": updated, "received": len(normalized)}
+
+    @classmethod
+    def _news_dedupe_candidates(
+        cls, session: Any, serialized_events: Iterable[Dict[str, Any]],
+    ) -> Dict[str, List[MonitoringEventRecord]]:
+        """按去重键捞出窗口内已入库的新闻行，供写入路径判断是否重复。
+
+        键是归一化标题的哈希，走 ``(dedupe_key, event_at)`` 索引；只取本批
+        事件前后一个去重窗口，避免一次历史回填把整段新闻史读进内存。
+        """
+        keyed = [item for item in serialized_events if item.get("dedupe_key")]
+        moments = [
+            item["event_at"] for item in keyed if isinstance(item.get("event_at"), datetime)
+        ]
+        if not keyed or not moments:
+            return {}
+        keys = sorted({str(item["dedupe_key"]) for item in keyed})
+        start = min(moments) - _NEWS_DEDUPE_WINDOW
+        end = max(moments) + _NEWS_DEDUPE_WINDOW
+        candidates: Dict[str, List[MonitoringEventRecord]] = {}
+        for offset in range(0, len(keys), 500):
+            chunk = keys[offset:offset + 500]
+            rows = session.execute(
+                select(MonitoringEventRecord).where(
+                    MonitoringEventRecord.dedupe_key.in_(chunk),
+                    MonitoringEventRecord.event_at >= start,
+                    MonitoringEventRecord.event_at < end,
+                )
+            ).scalars().all()
+            for row in rows:
+                candidates.setdefault(str(row.dedupe_key), []).append(row)
+        return candidates
+
+    @classmethod
+    def _news_duplicate_match(
+        cls,
+        serialized: Dict[str, Any],
+        candidates: Dict[str, List[MonitoringEventRecord]],
+    ) -> Optional[MonitoringEventRecord]:
+        """同归一化标题且落在去重窗口内 = 同一篇新闻；返回窗口内最权威的一条。"""
+        key = serialized.get("dedupe_key")
+        event_at = serialized.get("event_at")
+        if not key or not isinstance(event_at, datetime):
+            return None
+        best: Optional[MonitoringEventRecord] = None
+        best_rank: Optional[Tuple[int, datetime, int]] = None
+        for row in candidates.get(str(key), []):
+            if not news_dedupe_window_match(row.event_at, event_at):
+                continue
+            rank = news_dedupe_keeper_rank(row.source_key, row.ingested_at, row.id)
+            if best_rank is None or rank < best_rank:
+                best, best_rank = row, rank
+        return best
 
     @classmethod
     def _announcement_dedup_candidates(
@@ -1035,20 +1200,8 @@ class InvestmentMonitorRepository:
 
     @staticmethod
     def _normalized_announcement_title(value: Any, actors_json: Any = "[]") -> str:
-        text = html.unescape(str(value or ""))
-        text = re.sub(r"<[^>]*>", "", text)
-        text = unicodedata.normalize("NFKC", text).casefold()
-        text = re.sub(r"\s+", "", text)
-        actors = _load(actors_json, []) if isinstance(actors_json, str) else actors_json
-        if isinstance(actors, list):
-            for actor in actors:
-                actor_text = html.unescape(str(actor or ""))
-                actor_text = unicodedata.normalize("NFKC", actor_text).casefold()
-                actor_text = re.sub(r"\s+", "", actor_text)
-                prefix = f"{actor_text}:"
-                if actor_text and text.startswith(prefix):
-                    return text[len(prefix):]
-        return text
+        """公告标题归一化；实现与新闻去重共用 ``normalized_title_key``。"""
+        return normalized_title_key(value, actors_json)
 
     @staticmethod
     def _announcement_disclosure_date(metrics_json: Any, event_at: Any) -> Optional[str]:
@@ -1148,6 +1301,220 @@ class InvestmentMonitorRepository:
                     removed += 1
                 session.commit()
         return removed
+
+    def collect_rejected_monitoring_noise(self, *, sample_size: int = 10) -> Dict[str, Any]:
+        """只读：收集用户明确不要的三类情报事件的 id 与样本，不删除任何数据。
+
+        三类：
+        * 东方财富股吧帖子（整源停采后，存量零信息量情绪贴也没有价值）；
+        * 纯英文标题新闻（港交所 RSS 这类英文公告，判据见
+          ``_is_english_only_title``）；
+        * 同标题多源重复里被淘汰的那些（归一化标题相同 + 12 小时窗口，保留最
+          权威来源，同权威取最早入库）。
+
+        判据含 Python 侧逻辑（标题归一化、英文判定），所以先把命中的 id 全部
+        收集完，再交给 ``delete_monitoring_events_by_ids`` 分批删除。不能边
+        offset 分页边删——删除会让后续 offset 错位，实测漏删 7/362。
+        """
+        from src.services.investment_monitor_service import _is_english_only_title
+
+        samples: Dict[str, List[Dict[str, Any]]] = {"delete": [], "keep": []}
+        with self.db.get_session() as session:
+            rejected_rows = session.execute(
+                select(
+                    MonitoringEventRecord.id,
+                    MonitoringEventRecord.source_key,
+                    MonitoringEventRecord.title,
+                    MonitoringEventRecord.event_at,
+                ).where(
+                    MonitoringEventRecord.source_key.in_(_REJECTED_MONITORING_SOURCE_KEYS),
+                ).order_by(MonitoringEventRecord.id)
+            ).all()
+            guba_ids = [int(row.id) for row in rejected_rows]
+
+            groups: Dict[str, List[Tuple[int, str, Any, Any]]] = {}
+            english_ids: List[int] = []
+            news_rows = session.execute(
+                select(
+                    MonitoringEventRecord.id,
+                    MonitoringEventRecord.source_key,
+                    MonitoringEventRecord.title,
+                    MonitoringEventRecord.actors_json,
+                    MonitoringEventRecord.event_at,
+                    MonitoringEventRecord.ingested_at,
+                    MonitoringEventRecord.dedupe_key,
+                ).where(MonitoringEventRecord.event_type.in_(_NEWS_EVENT_TYPES))
+            ).yield_per(5000)
+            for row in news_rows:
+                if _is_english_only_title(row.title):
+                    english_ids.append(int(row.id))
+                    continue
+                key = row.dedupe_key or news_dedupe_key(row.title, row.actors_json)
+                if not key:
+                    continue
+                groups.setdefault(str(key), []).append((
+                    int(row.id), str(row.source_key or ""), row.event_at, row.ingested_at,
+                ))
+
+        duplicate_ids: List[int] = []
+        keeper_by_loser: Dict[int, int] = {}
+        for group in groups.values():
+            if len(group) < 2:
+                continue
+            ordered = sorted(group, key=lambda item: (item[2] or datetime.min, item[0]))
+            index = 0
+            while index < len(ordered):
+                anchor = ordered[index][2]
+                cluster = [ordered[index]]
+                cursor = index + 1
+                while cursor < len(ordered):
+                    if news_dedupe_window_match(anchor, ordered[cursor][2]):
+                        cluster.append(ordered[cursor])
+                        cursor += 1
+                    else:
+                        break
+                keeper = min(
+                    cluster,
+                    key=lambda item: news_dedupe_keeper_rank(item[1], item[3], item[0]),
+                )
+                for item in cluster:
+                    event_id = int(item[0])
+                    if event_id == int(keeper[0]):
+                        continue
+                    duplicate_ids.append(event_id)
+                    keeper_by_loser[event_id] = int(keeper[0])
+                index = cursor
+
+        delete_ids = sorted(set(guba_ids) | set(english_ids) | set(duplicate_ids))
+        per_category = max(1, int(sample_size) // 3)
+        samples["delete"].extend(self._noise_samples(
+            [int(row.id) for row in rejected_rows[:per_category]], "股吧帖子（停采源存量）",
+        ))
+        samples["delete"].extend(self._noise_samples(
+            english_ids[:per_category], "纯英文标题",
+        ))
+        duplicate_samples = self._noise_samples(
+            duplicate_ids[:max(1, int(sample_size) - per_category * 2)],
+            "同标题多源重复（被淘汰）",
+        )
+        for item in duplicate_samples:
+            item["kept_event_id"] = keeper_by_loser.get(item["id"])
+        samples["delete"].extend(duplicate_samples)
+        samples["keep"].extend(self._noise_samples(
+            [item["kept_event_id"] for item in duplicate_samples if item["kept_event_id"]],
+            "同标题重复组里保留的最权威/最早一条",
+        ))
+        samples["keep"].extend(self._kept_news_samples(
+            set(delete_ids), max(0, int(sample_size) - len(samples["keep"])),
+        ))
+        return {
+            "guba": len(guba_ids),
+            "english": len(english_ids),
+            "duplicate": len(duplicate_ids),
+            "total": len(delete_ids),
+            "guba_ids": guba_ids,
+            "english_ids": english_ids,
+            "duplicate_ids": duplicate_ids,
+            "delete_ids": delete_ids,
+            "samples": samples,
+        }
+
+    def _noise_samples(self, ids: Iterable[int], reason: str) -> List[Dict[str, Any]]:
+        """给报告用的样本行：说清楚删的是哪一条、为什么删。"""
+        targets = [int(value) for value in ids if value]
+        if not targets:
+            return []
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(
+                    MonitoringEventRecord.id,
+                    MonitoringEventRecord.source_key,
+                    MonitoringEventRecord.event_type,
+                    MonitoringEventRecord.title,
+                    MonitoringEventRecord.event_at,
+                ).where(MonitoringEventRecord.id.in_(targets))
+            ).all()
+        by_id = {int(row.id): row for row in rows}
+        samples: List[Dict[str, Any]] = []
+        for event_id in targets:
+            row = by_id.get(event_id)
+            if row is None:
+                continue
+            samples.append({
+                "id": int(row.id),
+                "source_key": str(row.source_key or ""),
+                "event_type": str(row.event_type or ""),
+                "title": str(row.title or "")[:120],
+                "event_at": str(row.event_at or ""),
+                "reason": reason,
+            })
+        return samples
+
+    def _kept_news_samples(self, delete_ids: set, limit: int) -> List[Dict[str, Any]]:
+        """给报告用的「保留」样本：最近入库且不在删除集里的真实新闻。"""
+        if limit <= 0:
+            return []
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(
+                    MonitoringEventRecord.id,
+                    MonitoringEventRecord.source_key,
+                    MonitoringEventRecord.event_type,
+                    MonitoringEventRecord.title,
+                    MonitoringEventRecord.event_at,
+                )
+                .where(MonitoringEventRecord.event_type.in_(_NEWS_EVENT_TYPES))
+                .order_by(desc(MonitoringEventRecord.event_at), desc(MonitoringEventRecord.id))
+                .limit(max(limit * 4, 40))
+            ).all()
+        samples: List[Dict[str, Any]] = []
+        for row in rows:
+            if int(row.id) in delete_ids:
+                continue
+            samples.append({
+                "id": int(row.id),
+                "source_key": str(row.source_key or ""),
+                "event_type": str(row.event_type or ""),
+                "title": str(row.title or "")[:120],
+                "event_at": str(row.event_at or ""),
+                "reason": "保留：真实新闻",
+            })
+            if len(samples) >= limit:
+                break
+        return samples
+
+    def delete_monitoring_events_by_ids(
+        self, event_ids: Iterable[int], *, batch_size: int = 500,
+    ) -> int:
+        """按 id 分批删除事件；符号投影表由数据库触发器同步清理。"""
+        targets = sorted({int(value) for value in event_ids if value})
+        if not targets:
+            return 0
+        removed = 0
+        with self.db.get_session() as session:
+            for start in range(0, len(targets), max(1, int(batch_size))):
+                chunk = targets[start:start + max(1, int(batch_size))]
+                rows = session.execute(
+                    select(MonitoringEventRecord).where(MonitoringEventRecord.id.in_(chunk))
+                ).scalars().all()
+                for row in rows:
+                    session.delete(row)
+                    removed += 1
+                session.commit()
+        return removed
+
+    def delete_rejected_monitoring_noise(self, *, sample_size: int = 10) -> Dict[str, Any]:
+        """按用户明确不要的三类判据清理存量事件，返回各类条数与样本。"""
+        report = self.collect_rejected_monitoring_noise(sample_size=sample_size)
+        removed = self.delete_monitoring_events_by_ids(report["delete_ids"])
+        return {
+            "guba": report["guba"],
+            "english": report["english"],
+            "duplicate": report["duplicate"],
+            "total": report["total"],
+            "removed": removed,
+            "samples": report["samples"],
+        }
 
     def delete_audio_memo_events_for_topics(self, topic_ids: Iterable[str]) -> int:
         """Remove both native and essay projections for deleted audio memos."""
@@ -1994,6 +2361,12 @@ class InvestmentMonitorRepository:
             "raw_payload": _dump(fields.get("raw_payload") or {}),
             "event_at": fields.get("event_at") or utc_naive_now(),
             "ingested_at": fields.get("ingested_at") or utc_naive_now(),
+            # 只有新闻类事件参与「同标题多源重复」判重，其余类型保持 NULL，
+            # 由 (dedupe_key, event_at) 索引在写入路径做等值探测。
+            "dedupe_key": (
+                news_dedupe_key(fields.get("title"), fields.get("actors") or [])
+                if is_news_event_type(fields.get("event_type")) else None
+            ),
         }
 
     @staticmethod
