@@ -19,6 +19,10 @@ class TestQuoteSnapshotDetection:
         ("英伟达", "-2.0097% NASDAQ", "https://xueqiu.com/s/NVDA"),
         ("胜宏科技", "-10.57% SZ", "https://xueqiu.com/s/SZ300476"),
         ("中国石油", "2.99% SH", None),  # 无 URL 时组合判据已足够
+        # 上游缺数据时涨跌幅位置会出现字面量 null/none/nan
+        ("微创医疗", "null% HK", "https://xueqiu.com/s/00853"),
+        ("Anthropic", "null% NASDAQ", "https://xueqiu.com/s/ANT"),
+        ("某公司", "None% SH", "https://xueqiu.com/s/SH1"),
     ])
     def test_detects_quote_snapshots(self, title, summary, url):
         assert _is_quote_snapshot_item(title, summary, url) is True
@@ -36,6 +40,8 @@ class TestQuoteSnapshotDetection:
         ("", "2.99% SH", "https://xueqiu.com/s/SH"),
         # 标题过长
         ("中国石油天然气股份有限公司发布年度业绩预告说明", "2.99% SH", "https://xueqiu.com/s/SH"),
+        # 正文里出现 Nullmax（公司名）不能被当成 null% 快照
+        ("【黑芝麻智能发布中期业绩】与元戎、Nullmax等合作", "与元戎、Nullmax等算法合作伙伴联合开发", None),
     ])
     def test_keeps_real_news(self, title, summary, url):
         assert _is_quote_snapshot_item(title, summary, url) is False

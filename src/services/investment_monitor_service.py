@@ -62,7 +62,13 @@ logger = logging.getLogger(__name__)
 # URL 是个股页（xueqiu.com/s/SH601857）而不是文章。
 # 这些条目没有任何新闻内容，进到快讯里就是噪音（线上 4000 条样本里约 33 条，
 # 历史累计 362 条）。这里在生成事件前统一剔除。
-_QUOTE_SNAPSHOT_SUMMARY = re.compile(r"^\s*[+-]?\d+(?:\.\d+)?%\s*[A-Za-z]{1,6}\s*$")
+# 涨跌幅位置除了数字，还会出现上游缺数据时的字面量 null/none/nan
+# （线上实例：标题「微创医疗」+ 摘要「null% HK」、标题「Anthropic」+ 摘要「null% NASDAQ」）。
+# 这类同样是行情快照，不是新闻。
+_QUOTE_SNAPSHOT_SUMMARY = re.compile(
+    r"^\s*(?:[+-]?\d+(?:\.\d+)?|null|none|nan)%\s*[A-Za-z]{1,6}\s*$",
+    re.IGNORECASE,
+)
 _QUOTE_SNAPSHOT_URL_HINTS = ("xueqiu.com/s/", "/quote/", "/quotes/", "stockpage")
 _NEWS_PUNCTUATION = re.compile(r"[，。！？；：、“”‘’（）《》,.!?;:\"'()\[\]]")
 
