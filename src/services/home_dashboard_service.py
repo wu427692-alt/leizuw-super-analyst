@@ -468,12 +468,111 @@ class HomeDashboardService:
             "intelligence_summary": intelligence.get("summary") or {}, "warnings": warnings,
         }
 
+    @staticmethod
+    def _local_breadth_changes(trade_date: str) -> List[float]:
+        """从本地 `stock_daily` 聚合当日全市场涨跌幅。一次索引查询，无上游。"""
+        from sqlalchemy import select
+        from src.repositories.market_data_repo import MarketDataRepository
+        from src.storage import StockDaily
+
+        day = datetime.strptime(trade_date, "%Y%m%d").date()
+        repo = MarketDataRepository()
+        with repo.db.get_session() as session:
+            values = session.execute(
+                select(StockDaily.pct_chg).where(StockDaily.date == day, StockDaily.pct_chg.is_not(None))
+            ).scalars().all()
+        return [float(v) for v in values if v is not None]
+
+    @staticmethod
+    def _local_daily_rows(symbol: str, start: str, end: str) -> List[Dict[str, Any]]:
+        """从本地 `stock_daily` 读个股日线，返回与 Tushare daily 同形状的行。"""
+        from sqlalchemy import select
+        from src.repositories.market_data_repo import MarketDataRepository
+        from src.storage import StockDaily
+
+        code = str(symbol or "").split(".")[0]
+        if not code:
+            return []
+        try:
+            start_day = datetime.strptime(start, "%Y%m%d").date()
+            end_day = datetime.strptime(end, "%Y%m%d").date()
+        except ValueError:
+            return []
+        repo = MarketDataRepository()
+        with repo.db.get_session() as session:
+            bars = session.execute(
+                select(StockDaily)
+                .where(StockDaily.code == code, StockDaily.date >= start_day, StockDaily.date <= end_day)
+                .order_by(StockDaily.date)
+            ).scalars().all()
+        return [
+            {
+                "ts_code": symbol, "trade_date": bar.date.strftime("%Y%m%d"),
+                "open": bar.open, "high": bar.high, "low": bar.low, "close": bar.close,
+                "pct_chg": bar.pct_chg, "vol": bar.volume, "amount": bar.amount,
+            }
+            for bar in bars
+        ]
+
+    @staticmethod
+    def _index_payload(rows: List[Dict[str, Any]], api_name: str, code: str, name: str,
+                       region: str, *, source: str) -> Dict[str, Any]:
+        """把日线行组装成看板指数卡。上游路径与本地路径共用，避免两份格式漂移。"""
+        latest = rows[-1] if rows else {}
+        amount = latest.get("amount")
+        amount_yi = None
+        if api_name == "index_daily" and amount not in (None, ""):
+            # Tushare index_daily.amount is denominated in CNY thousands.
+            amount_yi = round(float(amount) / 100_000, 2)
+        return {"code": code, "name": name, "region": region,
+                "trade_date": latest.get("trade_date"), "close": latest.get("close"),
+                "change": latest.get("change"), "change_pct": latest.get("pct_chg"),
+                "open": latest.get("open"), "high": latest.get("high"), "low": latest.get("low"),
+                "amount": amount, "amount_yi": amount_yi,
+                "source": source, "update_time": latest.get("trade_date"),
+                "history": [{"date": row.get("trade_date"), "value": row.get("close")} for row in rows[-12:]]}
+
+    def _local_index_rows(self, api_name: str, code: str, start: str, end: str) -> List[Dict[str, Any]]:
+        """把本地 `market_index_bars` 读成与 Tushare 返回同形状的行。
+
+        看板一次构建原本会对 Tushare 发 20+ 次 POST（每个指数一次，150–450ms），
+        请求路径直接等第三方接口。同样的数据已经在本地 `market_index_bars` 里，
+        由采集 worker 持续写入。改成先读本地后，热态构建不再产生任何上游调用——
+        这正是行情软件的做法：用户请求只读本地热数据。
+        """
+        if api_name not in {"index_daily", "index_global"}:
+            return []
+        try:
+            from src.repositories.market_data_repo import MarketDataRepository
+            start_dt = datetime.strptime(start, "%Y%m%d")
+            end_dt = datetime.strptime(end, "%Y%m%d").replace(hour=23, minute=59, second=59)
+            bars = MarketDataRepository().index_range(code, start_dt, end_dt, frequency="1D")
+        except Exception as exc:  # noqa: BLE001 - 本地读失败就退回上游
+            logger.info("Home dashboard local index read failed code=%s error=%s", code, type(exc).__name__)
+            return []
+        if not bars:
+            return []
+        return [
+            {
+                "trade_date": bar.timestamp.strftime("%Y%m%d"),
+                "close": bar.close, "open": bar.open, "high": bar.high, "low": bar.low,
+                "pct_chg": bar.pct_chg, "vol": bar.volume, "amount": bar.amount,
+            }
+            for bar in bars
+        ]
+
+
     def _index_item(self, api_name: str, code: str, name: str, start: str, end: str,
                     warnings: List[str], *, region: str = "中国A股") -> Dict[str, Any]:
+        # 本地优先：有本地日线就完全不碰上游。
+        local_rows = self._local_index_rows(api_name, code, start, end)
+        if local_rows:
+            return self._index_payload(local_rows, api_name, code, name, region,
+                                       source=f"local.market_index_bars.{api_name}")
         try:
             result = self.tushare.query(api_name, params={"ts_code": code, "start_date": start, "end_date": end})
             rows = sorted(result["rows"], key=lambda row: str(row.get("trade_date") or ""))
-            if api_name == "index_daily" and rows:
+            if api_name in {"index_daily", "index_global"} and rows:
                 try:
                     from src.repositories.market_data_repo import MarketDataRepository
                     persisted = []
@@ -493,26 +592,37 @@ class HomeDashboardService:
                     )
                 except Exception as exc:  # noqa: BLE001 - dashboard facts remain usable if cache write fails.
                     logger.info("Home dashboard index cache write failed code=%s error=%s", code, type(exc).__name__)
-            latest = rows[-1] if rows else {}
-            amount = latest.get("amount")
-            amount_yi = None
-            if api_name == "index_daily" and amount not in (None, ""):
-                # Tushare index_daily.amount is denominated in CNY thousands.
-                amount_yi = round(float(amount) / 100_000, 2)
-            return {"code": code, "name": name, "region": region,
-                    "trade_date": latest.get("trade_date"), "close": latest.get("close"),
-                    "change": latest.get("change"), "change_pct": latest.get("pct_chg"),
-                    "open": latest.get("open"), "high": latest.get("high"), "low": latest.get("low"),
-                    "amount": amount, "amount_yi": amount_yi,
-                    "source": f"tushare.{api_name}", "update_time": latest.get("trade_date"),
-                    "history": [{"date": row.get("trade_date"), "value": row.get("close")} for row in rows[-12:]]}
+            return self._index_payload(rows, api_name, code, name, region, source=f"tushare.{api_name}")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Home dashboard index failed api=%s code=%s error=%s", api_name, code, type(exc).__name__)
             warnings.append(f"{name}行情暂不可用")
             return {"code": code, "name": name, "region": region, "history": []}
 
     def _is_trading_day(self, trade_date: str) -> bool:
-        """Use the exchange calendar so a holiday never inherits the prior session snapshot."""
+        """Use the exchange calendar so a holiday never inherits the prior session snapshot.
+
+        完全本地判断，不联网：`stock_daily` 里有当日数据就必然是交易日；
+        没有则看库里最新交易日是哪天——目标日晚于最新交易日说明还没开盘/未采集。
+        仅当本地完全空库（首次部署）时才退回上游日历。
+        """
+        try:
+            from sqlalchemy import func, select
+            from src.repositories.market_data_repo import MarketDataRepository
+            from src.storage import StockDaily
+
+            day = datetime.strptime(trade_date, "%Y%m%d").date()
+            with MarketDataRepository().db.get_session() as session:
+                has_day = session.execute(
+                    select(StockDaily.id).where(StockDaily.date == day).limit(1)
+                ).first()
+                if has_day is not None:
+                    return True
+                latest = session.execute(select(func.max(StockDaily.date))).scalar()
+            if latest is not None:
+                # 本地已有交易记录：目标日不是交易日（周末/节假日/尚未采集）
+                return False
+        except Exception as exc:  # noqa: BLE001 - 本地判断失败就走上游
+            logger.info("Home dashboard local trading-day check failed: %s", type(exc).__name__)
         try:
             rows = self.tushare.query(
                 "trade_cal",
@@ -617,6 +727,19 @@ class HomeDashboardService:
                 return self._sina_stock_snapshot(trade_date, now)
             except Exception as exc:  # noqa: BLE001 - Tushare current-day close remains a fallback.
                 logger.warning("Home dashboard Sina breadth failed: %s", type(exc).__name__)
+        # 本地优先：`stock_daily` 已由采集 worker 写入全市场当日行情，
+        # 直接聚合即可，不必为了一次涨跌统计去调用上游全市场接口。
+        try:
+            changes = self._local_breadth_changes(trade_date)
+            if changes:
+                return {"available": True, "up": sum(v > 0 for v in changes), "down": sum(v < 0 for v in changes),
+                        "flat": sum(v == 0 for v in changes), "limit_up": sum(v >= 9.5 for v in changes),
+                        "limit_down": sum(v <= -9.5 for v in changes), "total": len(changes),
+                        "trade_date": trade_date, "updated_at": f"{trade_date}T15:00:00",
+                        "source": "local.stock_daily", "reason": None,
+                        "distribution": self._change_distribution(changes)}
+        except Exception as exc:  # noqa: BLE001 - 本地失败退回上游
+            logger.info("Home dashboard local breadth failed: %s", type(exc).__name__)
         try:
             rows = self.tushare.query(
                 "daily", params={"trade_date": trade_date},
@@ -746,11 +869,14 @@ class HomeDashboardService:
         for card in cards:
             symbol = str(card.get("symbol") or "")
             try:
-                rows = self.tushare.query(
-                    "daily", params={"ts_code": symbol, "start_date": start, "end_date": end},
-                    fields=["ts_code", "trade_date", "open", "high", "low", "close", "pre_close",
-                            "change", "pct_chg", "vol", "amount"],
-                )["rows"]
+                # 本地优先：自选股日线同样已在库里。
+                rows = self._local_daily_rows(symbol, start, end)
+                if not rows:
+                    rows = self.tushare.query(
+                        "daily", params={"ts_code": symbol, "start_date": start, "end_date": end},
+                        fields=["ts_code", "trade_date", "open", "high", "low", "close", "pre_close",
+                                "change", "pct_chg", "vol", "amount"],
+                    )["rows"]
                 rows = sorted(rows, key=lambda row: str(row.get("trade_date") or ""))
                 history = [{"date": row.get("trade_date"), "value": row.get("close")} for row in rows[-12:]]
                 latest_daily = rows[-1] if rows else {}

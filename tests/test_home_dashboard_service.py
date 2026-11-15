@@ -284,3 +284,92 @@ def test_closed_day_uses_latest_index_session_for_market_summary(monkeypatch, tm
     assert result["breadth"]["available"] is True
     assert result["breadth"]["trade_date"] == "20260819"
     assert result["breadth"]["total"] == 3
+
+
+class TestLocalFirstReads:
+    """看板首屏必须能只靠本地库完成，不产生上游调用。
+
+    线上实测：改造前一次构建会对 Tushare 发 20+ 次 POST（每指数一次，150–450ms），
+    请求路径直接等第三方接口。改造后热态 0 次上游调用、冷态也从 10.5s 降到约 2s。
+    这里锁住「本地有数据就不联网」这个契约，避免以后又被改回同步拉取。
+    """
+
+    @staticmethod
+    def _seed_local_bars(days: int = 16):
+        from datetime import date, timedelta
+        from src.repositories.market_data_repo import MarketDataRepository
+
+        repo = MarketDataRepository()
+        start = date(2026, 1, 5)
+        rows = []
+        for offset in range(days):
+            rows.append({
+                "timestamp": datetime.combine(start + timedelta(days=offset), datetime.min.time()),
+                "open": 3000.0 + offset, "high": 3010.0 + offset,
+                "low": 2990.0 + offset, "close": 3005.0 + offset,
+                "volume": 1.0e8, "amount": 1.0e10, "pct_chg": 0.5,
+            })
+        repo.upsert_index("000001.SH", rows, frequency="1D", source="test.seed")
+        return start, start + timedelta(days=days - 1)
+
+    def test_index_item_reads_local_bars_without_calling_upstream(self):
+        fake = FakeTushare()
+        self._seed_local_bars()
+        service = HomeDashboardService(tushare=fake)
+
+        item = service._index_item(
+            "index_daily", "000001.SH", "上证指数", "20260105", "20260120", warnings=[],
+        )
+
+        assert item["source"].startswith("local."), item["source"]
+        assert item["close"] == pytest.approx(3005.0 + 15)
+        assert len(item["history"]) == 12
+        assert fake.calls == [], f"本地已有数据却仍调用了上游: {fake.calls}"
+
+    def test_index_item_falls_back_to_upstream_when_local_is_empty(self):
+        fake = FakeTushare()
+        service = HomeDashboardService(tushare=fake)
+
+        item = service._index_item(
+            "index_daily", "000001.SH", "上证指数", "20260105", "20260120", warnings=[],
+        )
+
+        assert any(name == "index_daily" for name, _ in fake.calls), fake.calls
+        assert item["source"].startswith("tushare.")
+
+    def test_breadth_uses_local_stock_daily(self):
+        from src.repositories.market_data_repo import MarketDataRepository
+
+        fake = FakeTushare()
+        repo = MarketDataRepository()
+        day = datetime(2026, 11, 13)
+        with repo.db.get_session() as session:
+            from src.storage import StockDaily
+            session.add_all([
+                StockDaily(code="600000", date=day.date(), close=10.0, pct_chg=1.5),
+                StockDaily(code="600001", date=day.date(), close=9.0, pct_chg=-2.0),
+                StockDaily(code="600002", date=day.date(), close=5.0, pct_chg=0.0),
+            ])
+            session.commit()
+
+        breadth = HomeDashboardService(tushare=fake)._breadth("20261113", datetime.now(), False, [])
+
+        assert breadth["source"].startswith("local."), breadth
+        assert (breadth["up"], breadth["down"], breadth["flat"]) == (1, 1, 1)
+        assert breadth["total"] == 3
+        assert fake.calls == [], f"本地已有全市场行情却仍调用了上游: {fake.calls}"
+
+    def test_trading_day_is_decided_locally(self):
+        from src.repositories.market_data_repo import MarketDataRepository
+        from src.storage import StockDaily
+
+        fake = FakeTushare()
+        repo = MarketDataRepository()
+        with repo.db.get_session() as session:
+            session.add(StockDaily(code="600000", date=datetime(2026, 11, 13).date(), close=10.0, pct_chg=1.0))
+            session.commit()
+
+        service = HomeDashboardService(tushare=fake)
+        assert service._is_trading_day("20261113") is True   # 本地有当日行情
+        assert service._is_trading_day("20261114") is False  # 晚于本地最新交易日
+        assert fake.calls == [], f"判断交易日不应联网: {fake.calls}"

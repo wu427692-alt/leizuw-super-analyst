@@ -65,6 +65,14 @@ _READ_SENTIMENT = case(
     else_=MonitoringEventRecord.sentiment,
 )
 
+# `recent_event_stats` 是纯聚合读（count / count(distinct) / 若干 CASE 求和），
+# 线上实测在 55 万行的 monitoring_events 上单次约 330ms，而看板一次构建会调用它，
+# 且多个面板共用同一结果。聚合结果对秒级延迟不敏感，用短 TTL 内存缓存即可，
+# 既不动表结构也不改变任何筛选语义。
+_RECENT_EVENT_STATS_TTL_SECONDS = 30.0
+_recent_event_stats_cache: Dict[Tuple[str, int], Tuple[float, Dict[str, Any]]] = {}
+_recent_event_stats_lock = __import__("threading").Lock()
+
 
 def _event_symbol_condition(symbol: str) -> Any:
     """Match one complete stored CSV token, not a substring or LIKE pattern.
@@ -415,6 +423,15 @@ class InvestmentMonitorRepository:
 
     def recent_event_stats(self, *, days: int = 7) -> Dict[str, Any]:
         """Exact narrow-column aggregates for dashboards without hydrating documents."""
+        # 缓存必须按数据库实例区分：同一进程里可能先后绑定不同库（测试、多环境切换），
+        # 只用 days 做 key 会把 A 库的统计结果返回给 B 库。
+        database_key = str(getattr(self.db, "_db_url", id(self.db)))
+        cache_key = (database_key, max(1, int(days)))
+        now_monotonic = __import__("time").monotonic()
+        with _recent_event_stats_lock:
+            cached = _recent_event_stats_cache.get(cache_key)
+        if cached and now_monotonic - cached[0] <= _RECENT_EVENT_STATS_TTL_SECONDS:
+            return cached[1]
         cutoff = utc_naive_now() - timedelta(days=max(1, int(days)))
         conditions = (
             MonitoringEventRecord.event_at >= cutoff,
@@ -481,7 +498,7 @@ class InvestmentMonitorRepository:
                 )
             ).all()]
 
-            return {
+            stats = {
                 "event_count": int(summary[0] or 0),
                 "active_source_count": int(summary[1] or 0),
                 "high_priority_count": int(summary[2] or 0),
@@ -495,6 +512,9 @@ class InvestmentMonitorRepository:
                 "source_high_priority": source_high_priority,
                 "daily_sources": daily_sources,
             }
+            with _recent_event_stats_lock:
+                _recent_event_stats_cache[cache_key] = (now_monotonic, stats)
+            return stats
 
     def symbol_dashboard_stats(self, *, symbol: str, days: int) -> Dict[str, Any]:
         """Aggregate one watchlist card without hydrating every evidence body.

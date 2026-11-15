@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- [改进] 首页看板改为本地优先读取：指数、市场广度、自选趋势、交易日判断原先在请求路径里同步调用 Tushare（一次构建 20+ 次 POST，每次 150–450ms），现优先读本地 `market_index_bars` / `stock_daily`，本地无数据才回退上游并把结果落库。冷态构建 10.5s→2.1s、热态 1.05s、零上游调用；保温一轮 117s→38s。
+- [改进] `recent_event_stats` 聚合结果加 30 秒进程内缓存（按数据库实例隔离），单次 1726ms→命中 0ms。
 - [改进] 首页看板符号过滤改用索引关联表：`monitoring_events.symbol_codes` 上的 `LIKE '%code%'` 拼接表达式无法走索引，每次全表扫描 42.7 万行且看板一页调用 3 次。新增 `monitoring_event_symbols` 投影表（触发器维护 + 启动自愈审计）后，那 3 条查询从 6.1 秒降到 0.25 秒，看板冷构建 10.5s→4.4s，慢 SQL 合计 8.5s→0.9s。
 - [改进] 页面首屏缓存持续保温：启动预热只跑一次，聚合缓存冷掉后下一次点击要同步重建（自选工作台 3.5s）。新增 `APP_PAGE_CACHE_KEEP_WARM_SECONDS`（默认 240，0 关闭）周期保温，轻任务每轮都跑、重任务轮转，只走非强制读路径不触发上游拉网。
 - [测试] 新增 `apps/dsa-web/scripts/visual_audit.mjs`（逐路由两主题截图并度量主题一致性、真实可滚动性、横向溢出、字号、面板数、控制台错误）与 `measure_page_load.mjs`（按页面统计 API 请求数与耗时）。
